@@ -1864,10 +1864,9 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
-    /// Whether something other than a queued immediate keeps the loop alive: the rule for what must not do so by itself.
-    #[cold]
-    pub fn is_event_loop_kept_alive(&self) -> bool {
-        // `bun test` runs on after an unhandled error.
+    /// `is_event_loop_alive_excluding_immediates` for the hand-off of a `gc` performance entry, which must not keep the loop alive by itself.
+    pub(crate) fn is_event_loop_kept_alive(&self) -> bool {
+        // `bun test` runs on after an unhandled error, and its tests still get their entries.
         (self.unhandled_error_counter == 0 || isBunTest.load(core::sync::atomic::Ordering::Relaxed))
             && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
     }
@@ -4444,7 +4443,7 @@ pub fn collect_macro_vm_garbage() {
     }
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
-    vm_ref.jsc_vm().run_gc_by_itself();
+    vm_ref.jsc_vm().run_gc(true);
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

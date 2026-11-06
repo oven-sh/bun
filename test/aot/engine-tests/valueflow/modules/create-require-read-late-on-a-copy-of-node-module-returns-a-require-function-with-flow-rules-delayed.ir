@@ -2,7 +2,6 @@
 # The copy and node:module are in unknown hands long before the function that calls createRequire is reached, so the callee may be anything beside createRequire.
 # The call still returns a require function, and the call of that function loads code by name.
 # OPTIONS: testing=DelayFlowRules
-# TODO: nobody: flow follows the order of its rules here. Under this order the callee set of the second call is the unknown object alone, and the record has no call site
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsCodeByName ModuleRequire f1:v6
 # CHECK: unseen-code yes

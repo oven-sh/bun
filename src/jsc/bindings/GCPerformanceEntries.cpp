@@ -13,6 +13,7 @@
 
 extern "C" uint64_t Bun__readOriginTimerWithoutFakeTimers(void* bunVM);
 extern "C" bool Bun__VM__isEventLoopKeptAlive(void* bunVM);
+extern "C" bool Bun__VM__isEventLoopKeptAliveBehindItsTasks(void* bunVM);
 extern "C" bool Bun__VM__hasPendingTasks(void* bunVM);
 extern "C" void Bun__VM__queueTask(void* bunVM, WebCore::EventLoopTask*);
 
@@ -48,9 +49,41 @@ void GCPerformanceEntries::didGarbageCollect(CollectionScope scope)
         m_records.append({ *start, MonotonicTime::now() - *start, scope == CollectionScope::Full, false });
     }
     setTimeUntilFire(0_s);
-    // The timer runs when the loop turns, and a loop that sleeps, or is about to, does not turn for it.
-    if (auto* vmHandle = WebCore::clientData(m_vm)->vmHandle)
+    // A timer that is due does not end a wait of the JS thread in the loop. Another thread that ends the collection wakes it here. When it ends one itself, eventLoopWillWait() decides before its next wait.
+    if (auto* vmHandle = WebCore::clientData(m_vm)->vmHandle; vmHandle && !m_vm.currentThreadIsHoldingAPILock())
         Bun__VmHandle__wake(vmHandle);
+}
+
+bool GCPerformanceEntries::eventLoopWillWait(bool canWaitWithoutHeapAccess)
+{
+    bool isCollecting = canWaitWithoutHeapAccess && m_collectionStart;
+    if (isCollecting) {
+        // The phase that waits for this thread runs now, and it can be the last one. The rest runs on the collector thread during the wait, and does not wait for the loop to wake.
+        m_vm.heap.stopIfNecessary();
+        isCollecting = !!m_collectionStart;
+    }
+    bool hasRecords;
+    {
+        Locker locker { m_lock };
+        hasRecords = !m_records.isEmpty();
+    }
+    if (!hasRecords && !isCollecting)
+        return false;
+    auto* clientData = WebCore::clientData(m_vm);
+    if (!Bun__VM__isEventLoopKeptAlive(clientData->bunVM)) {
+        // Nothing else holds the loop, so these reach no observer: a process that exits here has delivered none either.
+        cancelTimer();
+        Locker locker { m_lock };
+        m_records.clear();
+        m_synchronousRecordEnd = 0;
+        return false;
+    }
+    if (hasRecords) {
+        if (auto* vmHandle = clientData->vmHandle)
+            Bun__VmHandle__wake(vmHandle);
+        return false;
+    }
+    return true;
 }
 
 RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
@@ -59,8 +92,6 @@ RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
         Locker locker { m_lock };
         m_synchronousRecordEnd = 0;
     }
-    if (!m_observesHeap)
-        return nullptr;
     if (!m_synchronousCollectionDidEnd) {
         // A request runs it in the end phase of its own collection, right after didGarbageCollect().
         m_synchronousCollectionDidEnd = createSharedTask<void()>([this] {
@@ -129,7 +160,7 @@ void GCPerformanceEntries::doWork(VM& vm)
     // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: the hand-off waits for a turn that something else asks for.
     if (Bun__VM__hasPendingTasks(bunVM))
         queueHandOff(HandOff::GoBehindQueuedTasks);
-    else if (Bun__VM__isEventLoopKeptAlive(bunVM))
+    else if (Bun__VM__isEventLoopKeptAliveBehindItsTasks(bunVM))
         queueHandOff(HandOff::CallListeners);
     else
         setTimeUntilFire(0_s);
@@ -147,14 +178,14 @@ void GCPerformanceEntries::handOff(HandOff step)
     auto* bunVM = WebCore::clientData(m_vm)->bunVM;
     switch (step) {
     case HandOff::GoBehindQueuedTasks:
-        // A queued task can be the doing of the collection itself (the cleanup of a FinalizationRegistry), and it holds the loop until it has run. So those that are queued now run first.
+        // A queued task can be the doing of the collection itself (the cleanup of a FinalizationRegistry), and it holds the loop until it has run. The timer runs before the tick takes the tasks of other threads, so this task is ahead of those, and goes behind them here.
         if (Bun__VM__hasPendingTasks(bunVM)) {
             queueHandOff(HandOff::AskBehindQueuedTasks);
             return;
         }
         [[fallthrough]];
     case HandOff::AskBehindQueuedTasks:
-        if (!Bun__VM__isEventLoopKeptAlive(bunVM)) {
+        if (!Bun__VM__isEventLoopKeptAliveBehindItsTasks(bunVM)) {
             setTimeUntilFire(0_s);
             return;
         }

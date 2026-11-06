@@ -27,10 +27,13 @@ public:
     void discardRecords();
     void stop();
 
-    // For the request of a synchronous collection: what tells which record is its own. Null while the heap is not observed.
+    bool observesHeap() const { return m_observesHeap; }
+    // For the request of a synchronous collection: what tells which record is its own.
     RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
     // After a synchronous collection that the program asked for, and the sweep that follows it.
     void didForceCollection();
+    // Right before this thread waits in the event loop. True: a collection is under way, and the wait is to leave it to the collector thread.
+    bool eventLoopWillWait(bool canWaitWithoutHeapAccess);
 
 private:
     explicit GCPerformanceEntries(JSC::VM&);

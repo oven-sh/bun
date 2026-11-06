@@ -5485,7 +5485,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 // allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
 // every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
 // Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
-// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
+// dropped fails: node-sqlite.test.ts did on x64 ASAN, and programs of test/aot/parallel/gc did in release builds.
 //
 // The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
 // stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
@@ -5504,41 +5504,9 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
         dead[i] = 0;
 }
 
-// runGC(vm, true) for a VM with an observer of 'gc' performance entries: the collection is one that the program forces.
-static NEVER_INLINE size_t runGCWithPerformanceEntry(JSC::VM* vm, Bun::GCPerformanceEntries& gcPerformanceEntries)
-{
-    JSC::JSLockHolder lock(vm);
-
-#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    if (!malloc_zone_check(nullptr)) {
-        BUN_PANIC("Heap corruption detected!!");
-    }
-#endif
-
-    vm->finalizeSynchronousJSExecution();
-    vm->sourceProviderCacheMap.clear();
-
-    JSC::GCRequest request(JSC::CollectionScope::Full);
-    request.didFinishEndPhase = gcPerformanceEntries.willCollectSynchronously();
-    vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-    clearStackBelowCaller();
-    vm->heap.collectNow(JSC::Sync, request);
-    gcPerformanceEntries.didForceCollection();
-#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    malloc_zone_pressure_relief(nullptr, 0);
-#endif
-
-    vm->finalizeSynchronousJSExecution();
-
-#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
-    if (!malloc_zone_check(nullptr)) {
-        BUN_PANIC("Heap corruption detected after GC!!");
-    }
-#endif
-
-    return vm->heap.sizeAfterLastFullCollection();
-}
-
+extern "C++" {
+// runGC<false> is JSC__VM__runGC as it was before 'gc' performance entries, statement for statement. runGC<true> is for a VM that observes them: the collection is one that the program forces.
+template<bool observed>
 static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
@@ -5558,7 +5526,14 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
         clearStackBelowCaller();
-        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+        if constexpr (observed) {
+            auto& gcPerformanceEntries = *WebCore::clientData(*vm)->gcPerformanceEntries;
+            JSC::GCRequest request(JSC::CollectionScope::Full);
+            request.didFinishEndPhase = gcPerformanceEntries.willCollectSynchronously();
+            vm->heap.collectNow(JSC::Sync, request);
+            gcPerformanceEntries.didForceCollection();
+        } else
+            vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
@@ -5578,21 +5553,29 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 
     return vm->heap.sizeAfterLastFullCollection();
 }
+}
+
+// The frame of runGC<true> holds a GCRequest, and nothing writes the padding of one. So that frame is built over zeroes: over what earlier calls left, the collection scans the dead words under the padding.
+static NEVER_INLINE size_t runGCWithPerformanceEntry(JSC::VM* vm)
+{
+    clearStackBelowCaller();
+    return runGC<true>(vm, true);
+}
 
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     if (sync) {
-        if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get()) [[unlikely]]
-            return runGCWithPerformanceEntry(vm, *gcPerformanceEntries);
+        if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get(); gcPerformanceEntries && gcPerformanceEntries->observesHeap()) [[unlikely]]
+            return runGCWithPerformanceEntry(vm);
     }
-    // A tail call to a function of its own: runGC then has the frame that it has without the branch above. A frame with other slots shows the collection other dead words (clearStackBelowCaller()).
-    MUST_TAIL_CALL return runGC(vm, sync);
+    // A tail call: runGC<false> then has the frame that this function had before it had the branch above. In another frame the collection scans other dead words (clearStackBelowCaller()).
+    MUST_TAIL_CALL return runGC<false>(vm, sync);
 }
 
-// The synchronous collection that Bun makes by itself (BUN_GARBAGE_COLLECTOR_LEVEL=2, the VM of a macro). Unlike that of Bun.gc(true) and gc(), no 'gc' performance entry calls it forced.
+// The synchronous collection that Bun makes by itself (BUN_GARBAGE_COLLECTOR_LEVEL=2). Unlike that of Bun.gc(true) and gc(), no 'gc' performance entry calls it forced.
 size_t JSC__VM__runGCByItself(JSC::VM* vm)
 {
-    return runGC(vm, true);
+    return runGC<false>(vm, true);
 }
 
 NEVER_INLINE bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)

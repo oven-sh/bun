@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x = this.foo(a)
+
+  .bar(b);
+x = _.b(c)
+
+  .b(a);
+const someLongVariableNameForIt = this.fooFooFooFooFooFoo(aaaaaaaaaaaaaaa)
+
+  .barBarBarBarBarBar(bbbbbbbbbbbbbbbbb);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x = this.foo(a)
+
+  .bar(b);
+x = _.b(c)
+
+  .b(a);
+const someLongVariableNameForIt = this.fooFooFooFooFooFoo(aaaaaaaaaaaaaaa)
+
+  .barBarBarBarBarBar(bbbbbbbbbbbbbbbbb);
+
+===================== End =====================

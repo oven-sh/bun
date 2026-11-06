@@ -1,0 +1,9 @@
+const x = this.foo(a)
+
+  .bar(b);
+x = _.b(c)
+
+  .b(a);
+const someLongVariableNameForIt = this.fooFooFooFooFooFoo(aaaaaaaaaaaaaaa)
+
+  .barBarBarBarBarBar(bbbbbbbbbbbbbbbbb);

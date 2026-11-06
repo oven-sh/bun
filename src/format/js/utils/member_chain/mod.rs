@@ -558,7 +558,7 @@ fn is_factory(name: &[u8]) -> bool {
 }
 
 /// True if the call `expression` is printed as a member chain that can break before each group: it has more than one
-/// group after the head, or a comment between its links.
+/// group after the head, a comment between its links, or an empty line after a call.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut members = Members::new();
     if has_single_group_after_head(push_chain_members(expression, &mut members, f), f) {
@@ -566,7 +566,9 @@ pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) 
     }
     members.reverse();
     let chain = MemberChain::new(expression, &members, f);
-    chain.tail_len() > 1 || chain.has_comment(f)
+    chain.tail_len() > 1
+        || chain.has_comment(f)
+        || (!lays_out_by_comment_position(f) && chain.find_empty_lines(f).1)
 }
 
 /// `a.#b().c()`: in oxfmt `a.#b` isn't a link of the chain. It, or the call of it, is the head of the chain.

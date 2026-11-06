@@ -1105,11 +1105,20 @@ impl StandaloneModuleGraph {
     }
 
     /// Whether `key` is that of a directory under the root: one that holds a file, or a module compiled ahead of time.
-    #[inline]
     pub(crate) fn is_directory_key(&self, key: &[u8]) -> bool {
+        self.is_directory_key_inline(key)
+    }
+
+    /// `is_directory_key` without a call, for a lookup that mostly gets a directory.
+    #[inline(always)]
+    pub(crate) fn is_directory_key_inline(&self, key: &[u8]) -> bool {
+        self.dirs.contains_key(key) || self.holds_module_below(key)
+    }
+
+    #[inline(never)]
+    fn holds_module_below(&self, key: &[u8]) -> bool {
         let program = self.compiled_program.as_ref();
-        self.dirs.contains_key(key)
-            || program.is_some_and(|program| program.holds_module_below(key))
+        program.is_some_and(|program| program.holds_module_below(key))
     }
 
     pub(crate) fn directory_key<'a>(
@@ -1119,7 +1128,7 @@ impl StandaloneModuleGraph {
     ) -> Option<&'a [u8]> {
         if is_bun_standalone_file_path(name) {
             let key = Self::normalize_dir_path(name, buffer);
-            if self.is_directory_key(key) {
+            if self.is_directory_key_inline(key) {
                 return Some(key);
             }
             return self.find_folded(name, |graph, key| {

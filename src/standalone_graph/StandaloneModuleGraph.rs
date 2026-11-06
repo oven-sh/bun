@@ -297,7 +297,7 @@ impl StandaloneModuleGraph {
             };
         }
         let mut buffer = bun_paths::path_buffer_pool::get();
-        if self.is_directory_key(Self::normalize_dir_path(name, &mut buffer)) {
+        if self.is_directory_key_inline(Self::normalize_dir_path(name, &mut buffer)) {
             return Some(Entry::Directory);
         }
         if let Some(file) = self.lookup_file(name) {
@@ -306,7 +306,7 @@ impl StandaloneModuleGraph {
         self.find_entry_folded(name, &mut buffer)
     }
 
-    #[cold]
+    #[inline(always)]
     fn find_entry_folded(&self, name: &[u8], buffer: &mut PathBuffer) -> Option<Entry<'_>> {
         let FoldedPath::Shorter(key) = self.fold(name, buffer) else {
             return None;

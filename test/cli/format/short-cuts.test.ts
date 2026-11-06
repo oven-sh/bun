@@ -4178,6 +4178,11 @@ describe("templates in another language", () => {
     // Queries.
     "const q = gql`\n  query Foo($a: Int) { a(b: $a) { c d } }\n\n  ${fragment}\n\n  # comment\n  ${other}\n`;\nconst r = graphql(schema, `{ a }`);\nconst s = /* GraphQL */ `{ a }`;\nconst t = graphql.experimental`{a}`;\n",
     's={a:/* GraphQL */`#\\ud800`}\nt = gql`{ a(b: "\\\\") }`;\nu = gql`# a ${b}`;\nv = gql`\n# a\n\n# b\n`;\nw = gql`{a}\u00a0`;\n',
+    // What is left as it is, on several lines.
+    "a = gql`\n  # prettier-ignore\n  type A {\n    a:   Int\n  }\n`;\nb = gql`\n  # prettier-ignore\n  type A {\n    a:   Int\n  }\n\n  ${c}\n`;\n",
+    'a = gql`\n  {\n    # prettier-ignore\n    a(b:   """\n      c\n    """)\n  }\n`;\nb = gql`\n  """\n  c\n\n  d\n  """\n  type A\n`;\n',
+    "a = css`\n  /* b\n     c */\n  // prettier-ignore\n  d   {\n    e:   f;\n  }\n`;\nb = html`\n  <!-- prettier-ignore -->\n  <p>\n    a   b\n  </p>\n  <pre>\n  c\n  </pre>\n`;\n",
+    "a = markdown`\n  <!-- prettier-ignore -->\n  | a | b |\n  |--|--|\n\n  \\`\\`\\`\n  c\n\n  d\n  \\`\\`\\`\n`;\n",
     // Markdown.
     "const m = markdown`\n  # Title\n  * a\n  * b\n\n  some   text\n`;\nconst n = md`\n# Title\n\n\\`\\`\\`js\nlet  a\n\\`\\`\\`\n`;\n",
     "someFunction(markdown`>c\n`);\na.c(md`>c\n`).d();\nmd`a|||\n-|-|-`;\na=markdown` \\`\n\\``;\nconst b=await foo(async()=>md` this is a long long long long long long long long paragraph.`);\n",
@@ -4199,6 +4204,7 @@ describe("templates in another language", () => {
     ["--use-tabs"],
     ["--tab-width=0"],
     ["--end-of-line=crlf"],
+    ["--end-of-line=cr"],
     ["--html-whitespace-sensitivity=ignore"],
     ["--html-whitespace-sensitivity=strict", "--print-width=40"],
     ["--prose-wrap=never"],

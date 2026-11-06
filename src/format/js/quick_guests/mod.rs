@@ -16,6 +16,7 @@ use self::from_doc::{FromDoc, Unwritten};
 use self::from_ir::{FromIr, Last};
 use crate::html::writer::{QuickBuffers, ToQuick};
 use crate::js::context::JsFormatContext;
+use crate::options::LineEnding;
 use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 use bun_format_quick::{Answer, Guest, Guests, Sink};
@@ -87,8 +88,12 @@ impl QuickGuests {
         if !crate::graphql::embed::parse_text(text, &mut self.graphql) {
             return Answer::NotRead;
         }
-        let context =
-            JsFormatContext::without_file(self.options.clone(), &crate::js::comments::NO_COMMENTS);
+        // The printer of the file writes the end of line that's asked for in the place of each `\n` of a text.
+        let options = FormatOptions {
+            line_ending: LineEnding::Lf,
+            ..self.options.clone()
+        };
+        let context = JsFormatContext::without_file(options, &crate::js::comments::NO_COMMENTS);
         let graphql = &self.graphql;
         let root = crate::ir::run::write_with(context, text, &mut self.document, |f| {
             crate::graphql::embed::write_text(text, graphql, false, f);

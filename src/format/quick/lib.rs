@@ -43,6 +43,8 @@ mod scan;
 mod stands;
 #[cfg(feature = "tally")]
 pub mod tally;
+#[cfg(test)]
+mod tests;
 mod text;
 #[path = "../ir/width_tables.rs"]
 #[expect(dead_code, reason = "one of the tables is for another flavor")]
@@ -153,7 +155,7 @@ pub(crate) mod rare {
 }
 
 thread_local! {
-    /// Something was written beyond the end of a buffer, or read beyond the end of a buffer of numbers, since forget_losses().
+    /// Something was written beyond the end of a buffer, or read beyond the end of a buffer of numbers, in the run at hand: see OwnLosses.
     static LOST: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -168,8 +170,24 @@ pub(crate) fn has_lost_something() -> bool {
     LOST.get()
 }
 
-pub(crate) fn forget_losses() {
-    LOST.set(false);
+/// The mark belongs to the thread, and a guest of one run can start another one on it (code in Markdown in a template). For the time that this lives
+/// the mark is that of a new run; then it is again what it was.
+pub(crate) struct OwnLosses {
+    of_the_run_around: bool,
+}
+
+impl OwnLosses {
+    pub(crate) fn start() -> Self {
+        Self {
+            of_the_run_around: LOST.replace(false),
+        }
+    }
+}
+
+impl Drop for OwnLosses {
+    fn drop(&mut self) {
+        LOST.set(self.of_the_run_around);
+    }
 }
 
 /// Reads and writes that have an answer for every index: a read beyond the end gives 0, a write there does nothing but to note that it is lost.

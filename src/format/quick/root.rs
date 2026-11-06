@@ -9,7 +9,7 @@ use crate::options::{
     WHITESPACE_CSS, WHITESPACE_IGNORE,
 };
 use crate::text::SRC_BASE;
-use crate::{Bytes, Quick, R, Stop, Words, rare, why};
+use crate::{Bytes, OwnLosses, Quick, R, Stop, Words, rare, why};
 
 impl Quick {
     /// Turns "\r\n" and "\r" into "\n" in place. Returns the new length.
@@ -243,6 +243,7 @@ pub fn format(
         scratch.why.set(why::RARE);
         return Err(Refused);
     }
+    let _losses = OwnLosses::start();
     match scratch.format_buffer(text, dialect, options) {
         Ok(()) => {
             if scratch.had_bom {
@@ -284,8 +285,8 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
         return false;
     }
     let length = text.len() as i32;
+    let _losses = OwnLosses::start();
     scratch.why.set(why::NONE);
-    crate::forget_losses();
     scratch.stack_check = bun_core::StackCheck::init();
     scratch.set_options(options, dialect);
     scratch.source_buffer(length, 0);
@@ -352,6 +353,7 @@ pub fn format_expression(
         scratch.why.set(why::RARE);
         return Err(Refused);
     }
+    let _losses = OwnLosses::start();
     let dialect = Dialect {
         language: if expression.is_typescript {
             Language::TypeScript
@@ -402,7 +404,6 @@ impl Quick {
     ) -> R<()> {
         let length = expression.text.len() as i32 + 3;
         self.why.set(why::NONE);
-        crate::forget_losses();
         self.stack_check = bun_core::StackCheck::init();
         self.set_options(options, dialect);
         self.source_buffer(length, 0);
@@ -469,7 +470,6 @@ impl Quick {
         let mut length = text.len() as i32;
         self.why.set(why::NONE);
         self.which_rare.set(rare::OTHER);
-        crate::forget_losses();
         self.stack_check = bun_core::StackCheck::init();
         self.set_options(options, dialect);
         self.source_buffer(length, 0);

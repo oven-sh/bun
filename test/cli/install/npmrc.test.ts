@@ -2,7 +2,17 @@ import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isIPv6,
+  isLinux,
+  isWindows,
+  serveBothSchemes,
+  tempDir,
+  tls,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { createServer as createTlsServer } from "node:tls";
 import { dirname, join } from "path";
 import { once } from "node:events";
@@ -6566,6 +6576,39 @@ describe.concurrent("npmrc client TLS identity", () => {
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain("4 packages installed");
     expect(requests.sort()).toEqual(names.flatMap(name => [name, `${name}.tgz`]).sort());
+    expect(exitCode).toBe(0);
+  });
+
+  test("an HTTP to HTTPS upgrade on the same port retains the registry client identity", async () => {
+    await using target = await certificateServer();
+    using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => Response.redirect(`https://localhost:${bothSchemes.port}${new URL(req.url).pathname}`, 302),
+    });
+    await using bothSchemes = await serveBothSchemes(origin.port!, target.port);
+    using dir = tempDir("npmrc-mtls-upgrade", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      ".npmrc": `registry=http://localhost:${bothSchemes.port}/
+//localhost:${bothSchemes.port}/:certfile=client.pem
+//localhost:${bothSchemes.port}/:keyfile=client.key
+//localhost:${bothSchemes.port}/:_authToken=identity-token
+cafile=client.pem
+`,
+      "client.pem": tls.cert,
+      "client.key": tls.key,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "view", "pkg", "version"],
+      cwd: String(dir),
+      env: { ...env, HOME: String(dir), USERPROFILE: String(dir), XDG_CONFIG_HOME: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("1.0.0");
+    expect(stderr).toBe("");
+    expect(target.seen).toEqual([{ certificate: true, authorization: "Bearer identity-token" }]);
     expect(exitCode).toBe(0);
   });
 

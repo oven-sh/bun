@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, serveBothSchemes, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -133,6 +133,22 @@ describe.concurrent("fetch-tls", () => {
         fetch: () => Response.redirect(`${target.url}/final`, 302),
       });
       const response = await fetch(`http://127.0.0.1:${origin.port}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(target.seen).toEqual([{ path: "/final", certificate: null, authorization: null }]);
+    });
+
+    it("strips client identity on an HTTP to HTTPS upgrade on the same port", async () => {
+      await using target = await server();
+      using origin = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => Response.redirect(`https://127.0.0.1:${bothSchemes.port}/final`, 302),
+      });
+      await using bothSchemes = await serveBothSchemes(origin.port!, Number(new URL(target.url).port));
+      const response = await fetch(`http://127.0.0.1:${bothSchemes.port}/start`, {
         tls: identity,
         headers: { Authorization: "Bearer redirect-test" },
       });

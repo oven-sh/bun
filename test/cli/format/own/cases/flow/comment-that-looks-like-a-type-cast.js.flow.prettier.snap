@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = /** @type {T} */ a;
+x = /** @type {T} */ a;
+f(/** @type {T} */ a);
+/** @type {T} */ a.b();
+const value =
+  /** @type {SomeRatherLongTypeName} */ someObject.someProperty
+    .someOtherProperty.last;
+list.reduce(
+  (acc, item) => {
+    return acc;
+  },
+  /** @type {Record<string, number>} */ {},
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = /** @type {T} */ a;
+x = /** @type {T} */ a;
+f(/** @type {T} */ a);
+/** @type {T} */ a.b();
+const value = /** @type {SomeRatherLongTypeName} */ someObject.someProperty.someOtherProperty.last;
+list.reduce(
+  (acc, item) => {
+    return acc;
+  },
+  /** @type {Record<string, number>} */ {},
+);
+
+===================== End =====================

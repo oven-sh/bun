@@ -278,9 +278,9 @@ impl FileComments {
 pub(crate) static NO_COMMENTS: FileComments = FileComments::EMPTY;
 
 /// Only Babel, which Prettier uses for JavaScript, keeps the parentheses after `/** @type {T} */` in its tree. In
-/// TypeScript they're ordinary parentheses. oxfmt keeps them there too.
-fn keeps_type_casts(file: &File<'_>, flavor: Flavor, has_babel_tree: bool) -> bool {
-    has_babel_tree || file.is_javascript() || flavor.is_oxfmt()
+/// TypeScript, and in what Prettier reads with its `flow` parser, they're ordinary parentheses. oxfmt keeps them there too.
+fn keeps_type_casts(flavor: Flavor, has_babel_tree: bool) -> bool {
+    has_babel_tree || flavor.is_oxfmt()
 }
 
 /// Returns the sorted offsets of every `(` that directly follows a type cast comment. If such a `(` wraps an
@@ -290,7 +290,7 @@ pub(crate) fn cast_parens<'a>(
     flavor: Flavor,
     has_babel_tree: bool,
 ) -> Vec<u32> {
-    if !keeps_type_casts(file, flavor, has_babel_tree) {
+    if !keeps_type_casts(flavor, has_babel_tree) {
         return Vec::new();
     }
     let text = file.text();

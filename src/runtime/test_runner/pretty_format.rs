@@ -2196,8 +2196,7 @@ impl<'a> Formatter<'a> {
                             if let Some(children) = children_prop {
                                 let tag = Tag::get(children, self.global_this)?;
 
-                                // Older versions printed a child only if it was a string, an element or an array.
-                                // A React 19 element was a plain object to them.
+                                // Older versions printed a string, an element or an array here, and took a React 19 element for an object.
                                 let older_bun_printed =
                                     matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array)
                                         && !(self.like_older_bun.is_some()

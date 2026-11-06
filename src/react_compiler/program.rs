@@ -10,7 +10,7 @@
 //! `visit_stmts(body)` has consumed every `scopes_in_order` entry for that
 //! body and resolved all identifier refs. JSX has been lowered to
 //! `E::Call { was_jsx_element: true }`. The compiled body replaces the
-//! original in place; a final `finish()` call emits the runtime import and
+//! original in place; a final `finish()` call binds the runtime import and emits
 //! any outlined function decls as a separate `Part`.
 
 use crate::diagnostics::{CompilerError, ErrorCategory, cold_diagnostic};
@@ -151,6 +151,11 @@ pub trait Host {
 
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
+
+    /// Upstream emits a `require()` where an `import` statement can't stand. A host for such a module binds each symbol of `imports` to the export of `module` with its name itself, and returns true.
+    fn bind_import(&mut self, _module: &'static [u8], _imports: &[(&'static [u8], Ref)]) -> bool {
+        false
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -1532,7 +1537,7 @@ fn maybe_compile_node(
 // -----------------------------------------------------------------------
 
 /// Consume the state after the visit pass. If any function was compiled,
-/// `out_stmts` receives the `react/compiler-runtime` import statement
+/// `out_stmts` receives each import statement that [`Host::bind_import`] did not bind
 /// (prepended) plus any outlined function decls (appended). Returns the
 /// summary `CompileOutput`.
 #[inline(never)]

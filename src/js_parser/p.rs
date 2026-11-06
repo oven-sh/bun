@@ -2364,20 +2364,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `var { a, b } = require("bun:wrap")`. An import statement can't stand in the function that wraps a CommonJS module.
+    /// `var { name: symbol } = require(import_path)` as the part at `*at`, ahead of the hoisted classes. An import statement can't stand in the function that wraps a CommonJS module, and a `require()` is not hoisted.
     #[optimize(size)]
     #[inline(never)]
-    pub(crate) fn generate_runtime_require_stmt(
+    pub(crate) fn generate_require_stmt(
         &mut self,
-        imports: &[u8],
+        import_path: &'a [u8],
+        imports: &[(&'a [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
+        at: &mut usize,
+        kind: js_ast::LocalKind,
+        is_internal: bool,
+        tag: bun_ast::PartTag,
     ) -> Result<(), crate::Error> {
-        let import_record_id = self.add_import_record(
-            ImportKind::Require,
-            bun_ast::Loc::EMPTY,
-            RuntimeImports::NAME,
-        );
-        {
+        let import_record_id =
+            self.add_import_record(ImportKind::Require, bun_ast::Loc::EMPTY, import_path);
+        if is_internal {
             let record = &mut self.import_records.items_mut()[import_record_id as usize];
             record.path.namespace = b"runtime";
             record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
@@ -2385,14 +2387,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(imports.len())?;
         let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
-        for &import in imports {
-            let r = self
-                .runtime_imports
-                .get(import as usize)
-                .expect("unreachable");
+        for &(name, r) in imports {
             let key = self.new_expr(
                 E::String {
-                    data: RuntimeImports::ALL[import as usize].into(),
+                    data: name.into(),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
@@ -2412,7 +2410,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let binding = self.b(
             B::Object {
                 properties: bun_ast::StoreSlice::from_bump(properties),
-                is_single_line: true,
+                // The `const` of the globals of `bun test` has one name on a line, as their `import` has.
+                is_single_line: kind != js_ast::LocalKind::KConst,
                 close_brace_loc: bun_ast::Loc::EMPTY,
             },
             bun_ast::Loc::EMPTY,
@@ -2431,19 +2430,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         let stmt = self.s(
             S::Local {
-                kind: js_ast::LocalKind::KVar,
+                kind,
                 decls,
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
         );
-        parts.push(js_ast::Part {
-            stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
-            declared_symbols,
-            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
-            tag: bun_ast::PartTag::Runtime,
-            ..Default::default()
-        });
+        parts.insert(
+            *at,
+            js_ast::Part {
+                stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
+                declared_symbols,
+                import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
+                tag,
+                ..Default::default()
+            },
+        );
+        *at += 1;
         Ok(())
     }
 
@@ -2457,7 +2460,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         prefix: &'static [u8],
         is_internal: bool,
         tag: bun_ast::PartTag,
+        wrap_mode: WrapMode,
+        require_at: &mut usize,
     ) -> Result<(), crate::Error> {
+        if wrap_mode == WrapMode::BunCommonjs {
+            debug_assert!(additional_stmt.is_none());
+            return self.generate_require_stmt(
+                import_path,
+                imports,
+                parts,
+                require_at,
+                js_ast::LocalKind::KVar,
+                is_internal,
+                tag,
+            );
+        }
+
         let arena = self.arena;
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
@@ -4401,7 +4419,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && path.text == b"vitest"
                 && let Some(name) = crate::parser::ChaiImports::name(alias)
             {
-                self.chai_imports.0.push((name, r#ref));
+                self.chai_imports.names.push((name, r#ref));
+                self.chai_imports.import_record_index = stmt.import_record_index;
                 self.did_apply_test_feature = true;
                 continue;
             }

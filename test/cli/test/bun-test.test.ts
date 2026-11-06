@@ -2245,6 +2245,39 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // An `import` statement can't stand in a CommonJS module. There the compiler's runtime is bound with require().
+  test("a CommonJS file is compiled", async () => {
+    const result = await compiled(
+      {
+        "src/Cjs.jsx": `
+          const { useState } = require("react");
+          function useScaled(items) {
+            const [factor] = useState(2);
+            const scaled = items.map(item => item * factor);
+            return { scaled, factor };
+          }
+          function Cjs({ items }) {
+            const doubled = items.map(item => item * 2);
+            return <ul>{doubled.map(item => <li key={item}>{item}</li>)}</ul>;
+          }
+          module.exports = { Cjs, useScaled };
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import all from "./src/Cjs";
+          test("which are compiled", () => {
+            ${printCompiled}
+            expect(all.useScaled([1, 2])).toEqual({ scaled: [2, 4], factor: 2 });
+            expect(all.Cjs({ items: [1] }).type).toBe("ul");
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("Cjs useScaled");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

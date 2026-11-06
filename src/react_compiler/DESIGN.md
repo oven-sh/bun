@@ -118,7 +118,8 @@ explicit `&Arena` (the `Codegen` context carries one).
 
 New symbols (`$`, `t0`, `c`, `_c`) are minted via the `Host` trait
 implemented by the parser's `P`; the import of `react/compiler-runtime` is
-registered via `Host::add_import_record`.
+registered via `Host::add_import_record`, unless `Host::bind_import` binds it
+(the parser does, with `require()`, in a module that is wrapped as CommonJS).
 
 Every local of a compiled function is a new symbol, also one the source
 declared. `Host::new_local` registers it in the body scope of that function

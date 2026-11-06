@@ -1069,6 +1069,8 @@ impl<'a> Parser<'a> {
                 ..Default::default()
             });
         }
+        // Where a `require()` that the parser generates for a CommonJS module goes: behind the parts that stay at the head of `before`, ahead of the classes that the visit pass moves there.
+        let mut require_at = before.len();
 
         // When "using" declarations appear at the top level, we change all TDZ
         // variables in the top-level scope into "var" so that they aren't harmed
@@ -2024,6 +2026,7 @@ impl<'a> Parser<'a> {
         if reject_import_statements {
             p.reject_eager_import_meta_globs();
         }
+        debug_assert!(wrap_mode != WrapMode::BunCommonjs || p.import_meta_glob_imports.is_empty());
         // Glob imports go before the file's own imports, whether or not they're lowered.
         let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
         for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
@@ -2056,6 +2059,7 @@ impl<'a> Parser<'a> {
                     ..Default::default()
                 },
             );
+            require_at += 1;
         }
 
         // Handle dirname and filename at runtime.
@@ -2207,83 +2211,24 @@ impl<'a> Parser<'a> {
             }
             p.did_apply_test_feature = true;
 
-            let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-            declared_symbols.ensure_total_capacity(used.len())?;
-
-            // For CommonJS modules, use require instead of import
-            if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
-                    import_path,
-                );
-
-                // Create object binding pattern for destructuring
-                let mut properties = BumpVec::<B::Property>::with_capacity_in(used.len(), p.arena);
-                for &(symbol_name, r) in used.iter() {
-                    let key = p.new_expr(
-                        E::String {
-                            data: symbol_name.as_bytes().into(),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                    let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
-                    properties.push(B::Property {
-                        flags: bun_ast::flags::PROPERTY_NONE,
-                        key,
-                        value,
-                        default_value: None,
-                    });
-                    declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: r,
-                        is_top_level: true,
-                    });
+            // A module that is wrapped as CommonJS gets the globals with `require()`, as `const`: an assignment to one of them throws, as it does to an `import` binding.
+            if wrap_mode == WrapMode::BunCommonjs {
+                let mut imports = bun_core::BoundedArray::<_, { Jest::GLOBALS.len() }>::new();
+                for &(name, global) in used.iter() {
+                    imports.append_assume_capacity((name.as_bytes(), global));
                 }
-                let properties = bun_ast::StoreSlice::from_bump(properties);
-
-                // Create: const { test, expect, ... } = require("bun:test")
-                let binding = p.b(
-                    B::Object {
-                        properties,
-                        is_single_line: false,
-                        close_brace_loc: bun_ast::Loc::EMPTY,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let value = p.new_expr(
-                    E::RequireString {
-                        import_record_index: import_record_id,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl {
-                    binding,
-                    value: Some(value),
-                });
-
-                let local_stmt = p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KConst,
-                        decls,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
-
-                before.push(js_ast::Part {
-                    stmts: part_stmts.into(),
-                    declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
-                    tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
-                });
+                p.generate_require_stmt(
+                    import_path,
+                    imports.const_slice(),
+                    &mut before,
+                    &mut require_at,
+                    js_ast::LocalKind::KConst,
+                    false,
+                    bun_ast::PartTag::BunTest,
+                )?;
             } else {
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                declared_symbols.ensure_total_capacity(used.len())?;
                 let import_record_id = p.add_import_record(
                     bun_ast::ImportKind::Stmt,
                     bun_ast::Loc::EMPTY,
@@ -2361,24 +2306,24 @@ impl<'a> Parser<'a> {
                 },
             );
 
-            if i > 0 && wrap_mode == WrapMode::BunCommonjs {
-                p.generate_runtime_require_stmt(&runtime_imports[0..i], &mut before)?;
-            } else if i > 0 {
-                let imports: Vec<(&'static [u8], js_ast::Ref)> = runtime_imports[0..i]
-                    .iter()
-                    .map(|&key| {
-                        let symbol = p.runtime_imports.get(key as usize).expect("unreachable");
-                        (RuntimeImports::ALL[key as usize], symbol)
-                    })
-                    .collect();
+            if i > 0 {
+                let mut imports = bun_core::BoundedArray::<_, { RuntimeImports::ALL.len() }>::new();
+                for &key in &runtime_imports[0..i] {
+                    imports.append_assume_capacity((
+                        RuntimeImports::ALL[key as usize],
+                        p.runtime_imports.get(key as usize).expect("unreachable"),
+                    ));
+                }
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
-                    &imports,
+                    imports.const_slice(),
                     &mut before,
                     None,
                     b"import_",
                     true,
                     js_ast::PartTag::Runtime,
+                    wrap_mode,
+                    &mut require_at,
                 )
                 .expect("unreachable");
             }
@@ -2393,56 +2338,67 @@ impl<'a> Parser<'a> {
             // paths are copied into the bump arena.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
-            let with_symbols = |names: &[&'static [u8]]| -> Vec<(&'static [u8], js_ast::Ref)> {
-                names
-                    .iter()
-                    .map(|&name| (name, p.jsx_imports.get(name).expect("unreachable")))
-                    .collect()
-            };
 
-            let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
-            let runtime_imports = with_symbols(p.jsx_imports.runtime_import_names(&mut buf));
-            let source_imports = with_symbols(p.jsx_imports.source_import_names());
+            let mut buf = [(&b""[..], js_ast::Ref::NONE); 3];
+            let runtime_imports = p.jsx_imports.runtime_imports(&mut buf);
 
             if !runtime_imports.is_empty() {
                 p.generate_import_stmt(
                     import_source,
-                    &runtime_imports,
+                    runtime_imports,
                     &mut before,
                     None,
                     b"",
                     false,
                     js_ast::PartTag::JsxImport,
+                    wrap_mode,
+                    &mut require_at,
                 )
                 .expect("unreachable");
             }
 
-            if !source_imports.is_empty() {
+            if let Some(create_element) = p.jsx_imports.create_element {
                 p.generate_import_stmt(
                     package_name,
-                    &source_imports,
+                    &[(b"createElement", create_element.ref_)],
                     &mut before,
                     None,
                     b"",
                     false,
                     js_ast::PartTag::JsxImport,
+                    wrap_mode,
+                    &mut require_at,
                 )
                 .expect("unreachable");
             }
         }
 
-        if !p.chai_imports.0.is_empty() {
+        // `assert` and `should` stand for an `import .. from "vitest"` that the user wrote. A CommonJS module can't have it, so it is reported below, also when TypeScript drops what is left of it.
+        let mut import_of_chai_names: Option<u32> = None;
+        if !p.chai_imports.names.is_empty() {
             let chai_imports = core::mem::take(&mut p.chai_imports);
-            p.generate_import_stmt(
-                b"chai",
-                &chai_imports.0,
-                &mut before,
-                None,
-                b"import_",
-                false,
-                js_ast::PartTag::None,
-            )
-            .expect("unreachable");
+            if wrap_mode == WrapMode::BunCommonjs {
+                debug_assert!(reject_import_statements);
+                let symbols = p.symbols.as_slice();
+                if (chai_imports.names.iter())
+                    .any(|(_, name)| symbols[name.inner_index() as usize].use_count_estimate > 0)
+                {
+                    import_of_chai_names = Some(chai_imports.import_record_index);
+                }
+            } else {
+                p.generate_import_stmt(
+                    b"chai",
+                    &chai_imports.names,
+                    &mut before,
+                    None,
+                    b"import_",
+                    false,
+                    js_ast::PartTag::None,
+                    wrap_mode,
+                    &mut require_at,
+                )
+                .expect("unreachable");
+            }
         }
 
         if p.server_components_wrap_ref.is_valid() {
@@ -2463,11 +2419,16 @@ impl<'a> Parser<'a> {
 
         if let Some(rc_state) = p.react_compiler.take() {
             let mut rc_stmts: Vec<Stmt> = Vec::new();
-            let result = bun_react_compiler::finish(
-                *rc_state,
-                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
-                &mut rc_stmts,
-            );
+            let mut host = if wrap_mode == WrapMode::BunCommonjs {
+                crate::react_compiler_host::ReactCompilerHost::with_requires(
+                    p,
+                    &mut before,
+                    &mut require_at,
+                )
+            } else {
+                crate::react_compiler_host::ReactCompilerHost::new(p)
+            };
+            let result = bun_react_compiler::finish(*rc_state, &mut host, &mut rc_stmts);
             if let bun_react_compiler::CompileOutput::Error { error, .. } = result {
                 p.log().add_range_error_fmt(
                     Some(p.source),
@@ -2558,6 +2519,24 @@ impl<'a> Parser<'a> {
             exports_kind,
         );
 
+        debug_assert!(
+            wrap_mode != WrapMode::BunCommonjs
+                || !before[require_at..].iter().any(|part| {
+                    part.stmts.iter().any(|stmt| match &stmt.data {
+                        js_ast::StmtData::SLocal(local) if stmt.loc.is_empty() => {
+                            local.decls.slice().iter().any(|decl| {
+                                matches!(
+                                    decl.value.map(|value| value.data),
+                                    Some(js_ast::ExprData::ERequireString(_))
+                                )
+                            })
+                        }
+                        _ => false,
+                    })
+                }),
+            "a generated `require()` is behind what the visit pass moved to the head of the CommonJS module"
+        );
+
         if !before.is_empty() || !after.is_empty() {
             // Single up-front reserve; the inner
             // reserve() calls in prepend_from / append become no-ops.
@@ -2589,15 +2568,27 @@ impl<'a> Parser<'a> {
 
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
 
+        // A record with no range is one that the parser generated. The scan below reports one that the user wrote.
+        debug_assert!(
+            wrap_mode != WrapMode::BunCommonjs
+                || !ast.import_records.as_slice().iter().any(|import_record| {
+                    import_record.kind == bun_ast::ImportKind::Stmt
+                        && import_record.range.is_empty()
+                        && !import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                }),
+            "a generated `import` statement is inside the CommonJS wrapper"
+        );
+
         if reject_import_statements {
-            // An empty range marks a parser-generated record, like the JSX runtime import.
-            let import_record: Option<&ImportRecord> =
-                ast.import_records.as_slice().iter().find(|import_record| {
+            let import_record: Option<&ImportRecord> = (ast.import_records.as_slice().iter())
+                .find(|import_record| {
                     !import_record
                         .flags
                         .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
                         && import_record.kind == bun_ast::ImportKind::Stmt
-                        && !import_record.range.is_empty()
+                })
+                .or_else(|| {
+                    import_of_chai_names.map(|index| &ast.import_records.as_slice()[index as usize])
                 });
 
             if let Some(record) = import_record {

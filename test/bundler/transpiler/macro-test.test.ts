@@ -726,6 +726,42 @@ test("bun build of a macro call next to a property read of the same import", asy
   expect(exitCode).toBe(0);
 });
 
+// The runtime loads a macro module, so one that is CommonJS runs inside the CommonJS wrapper.
+// There the parser binds the JSX runtime and the helpers of "bun:wrap" with require().
+test("a CommonJS macro module with JSX and a static accessor loads under bun and bun build", async () => {
+  using dir = tempDir("bundler-macro-cjs-jsx", {
+    "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
+    "node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    "macro.jsx": `
+      const { basename } = require("node:path");
+      class Box {
+        static accessor count = 7;
+      }
+      module.exports.tag = () => (<div title={basename("/m/macro.txt")} />).props.title + Box.count;
+    `,
+    "entry.ts": `import { tag } from "./macro.jsx" with { type: "macro" };\nconsole.log(tag());\n`,
+  });
+  const run = async (args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  };
+
+  // A debug build prints a line for each macro call first.
+  const ran = await run(["entry.ts"]);
+  expect(ran.stdout.trim().split("\n").pop()).toBe("macro.txt7");
+  expect(ran.exitCode).toBe(0);
+  const built = await run(["build", "./entry.ts"]);
+  expect(built.stdout).toContain(`console.log("macro.txt7");`);
+  expect(built.exitCode).toBe(0);
+});
+
 test("bun build reports a macro result that is nested too deeply", async () => {
   using dir = tempDir("bundler-macro-deep-result", {
     "macro.ts": `export function m() {\n  let list = null;\n  for (let i = 0; i < 100000; i++) list = { i, next: list };\n  return list;\n}\n`,

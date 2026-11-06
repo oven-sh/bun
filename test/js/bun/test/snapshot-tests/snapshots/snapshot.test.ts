@@ -3017,6 +3017,223 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
   });
 
+  test("of a URL is the text of its href, and fails when the address has changed", async () => {
+    using dir = tempDir("snapshot-url", {
+      "a.test.js": `
+          const base = "http://user:pw@made-up.example:8080/a?x=1#top";
+          const changed = {
+            path: "http://user:pw@made-up.example:8080/b?x=1#top",
+            query: "http://user:pw@made-up.example:8080/a?x=2#top",
+            host: "http://user:pw@other.example:8080/a?x=1#top",
+            port: "http://user:pw@made-up.example:8081/a?x=1#top",
+            hash: "http://user:pw@made-up.example:8080/a?x=1#end",
+            password: "http://user:other@made-up.example:8080/a?x=1#top",
+          };
+          const { AS, CHANGED } = process.env;
+          const url = (part = "path", URLClass = URL) => {
+            const address = CHANGED ? changed[part] : base;
+            return AS === "href" ? address : new URLClass(address);
+          };
+          class Address extends URL { region = "eu"; }
+          class Config { endpoint = url(); }
+
+          test.each(Object.keys(changed))("only the %s changes", part => { expect(url(part)).toMatchSnapshot(); });
+          test("inside other values", () => {
+            const same = url();
+            expect({ endpoint: url(), config: new Config(), list: [same, same], map: new Map([[url(), url()]]), set: new Set([url()]) }).toMatchSnapshot();
+          });
+          test("with property matchers", () => { expect({ id: 1, endpoint: url() }).toMatchSnapshot({ id: expect.any(Number) }); });
+          test("resolved", async () => { await expect(Promise.resolve(url())).resolves.toMatchSnapshot(); });
+          test("thrown", () => { expect(() => { throw Object.assign(new Error(), { message: url() }); }).toThrowErrorMatchingSnapshot(); });
+          test("of a subclass", () => { expect(url("path", Address)).toMatchSnapshot(); });
+          test("with a property of its own", () => {
+            const tagged = url();
+            if (AS !== "href") tagged.tag = "x";
+            expect(tagged).toMatchSnapshot();
+          });
+          test("inline", () => {
+            expect(url()).toMatchInlineSnapshot();
+            expect({ endpoint: url() }).toMatchInlineSnapshot();
+          });
+        `,
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    const testFile = () => readFileSync(join(String(dir), "a.test.js"), "utf8");
+    const outcome = ({ pass, fail, exitCode }: Awaited<ReturnType<typeof runTests>>) => ({ pass, fail, exitCode });
+
+    const written = await runTests(String(dir), { CI: "false" });
+    const stored = { snap: snap(), testFile: testFile() };
+    expect(stored.snap).toContain(
+      'exports[`only the path changes 1`] = `"http://user:pw@made-up.example:8080/a?x=1#top"`;',
+    );
+    expect(stored.testFile).toContain(
+      'expect(url()).toMatchInlineSnapshot(`"http://user:pw@made-up.example:8080/a?x=1#top"`);',
+    );
+    expect(stored.testFile).toContain('"endpoint": "http://user:pw@made-up.example:8080/a?x=1#top",');
+    // In each of these places the stored entry is the text that the href string prints as, so the strings pass too.
+    const asHref = await runTests(String(dir), { CI: "true", AS: "href" });
+    const changed = await runTests(String(dir), { CI: "true", CHANGED: "1" });
+    expect(changed.stderr).toContain('Received: "http://user:pw@other.example:8080/a?x=1#top"');
+    expect({ snap: snap(), testFile: testFile() }).toEqual(stored);
+    expect({ written: outcome(written), asHref: outcome(asHref), changed: outcome(changed) }).toEqual({
+      written: { pass: 13, fail: 0, exitCode: 0 },
+      asHref: { pass: 13, fail: 0, exitCode: 0 },
+      changed: { pass: 0, fail: 13, exitCode: 1 },
+    });
+  });
+
+  test("of a URL has the href of the time of the matcher, and runs no toJSON", async () => {
+    using dir = tempDir("snapshot-url-read", {
+      "a.test.js": `
+          import { test, expect, spyOn } from "bun:test";
+          const url = (path = "/a") => new URL("http://made-up.example" + path);
+          test("after a setter", () => {
+            const changing = url();
+            expect(changing).toMatchSnapshot();
+            changing.pathname = "/b";
+            changing.searchParams.set("q", "1");
+            expect(changing).toMatchSnapshot();
+          });
+          test("toJSON", () => {
+            const ofTheClass = spyOn(URL.prototype, "toJSON");
+            const own = Object.assign(url("/own"), { toJSON() { throw new Error("not called"); } });
+            expect([url(), own]).toMatchSnapshot();
+            expect(ofTheClass).not.toHaveBeenCalled();
+            ofTheClass.mockRestore();
+          });
+          test("a child of a React element", () => {
+            const children = ["to", url(), "after"];
+            expect({ $$typeof: Symbol.for("react.transitional.element"), type: "a", key: null, props: { children }, _owner: null }).toMatchSnapshot();
+          });
+          test("a serializer", () => {
+            expect.addSnapshotSerializer({ test: value => typeof value === "string", serialize: value => "text<" + value + ">" });
+            expect({ endpoint: url() }).toMatchSnapshot();
+            expect.addSnapshotSerializer({ test: value => value instanceof URL, serialize: value => "URL<" + value.pathname + ">" });
+            expect({ endpoint: url() }).toMatchSnapshot();
+          });
+          // A failure message is not a snapshot. With the href there, the two sides would print alike.
+          test("a failure message", () => { expect(() => expect(url()).toEqual(url().href)).toThrow("URL {"); });
+        `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+    const snap = readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    const entries = Object.fromEntries(
+      Array.from(snap.matchAll(/^exports\[`(.+)`\] = `([^]*?)`;$/gm), match => [match[1], match[2]]),
+    );
+    expect(entries).toEqual({
+      "after a setter 1": '"http://made-up.example/a"',
+      "after a setter 2": '"http://made-up.example/b?q=1"',
+      "toJSON 1": '\n[\n  "http://made-up.example/a",\n  "http://made-up.example/own",\n]\n',
+      "a child of a React element 1": '<a>\n  to\n  "http://made-up.example/a"\n  after\n</a>',
+      // As with pretty-format, a serializer of strings is asked for the href, and a serializer of the URL comes first.
+      "a serializer 1": '\n{\n  "endpoint": text<http://made-up.example/a>,\n}\n',
+      "a serializer 2": '\n{\n  "endpoint": URL</a>,\n}\n',
+    });
+    expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  // Before Bun stored the href, every URL was `URL {}`, a subclass was its name, and a property of its own made it an object.
+  const urlValues = (module: string) => `
+      import { test, expect } from ${JSON.stringify(module)};
+      const address = process.env.ADDRESS;
+      class Address extends URL {}
+      const values = () => ({
+        endpoint: new URL(address),
+        list: [new URL(address)],
+        subclass: new Address(address),
+        tagged: Object.assign(new URL(address), { tag: "x" }),
+        headers: new Headers({ "x-a": "1" }),
+        request: new Request("http://made-up.example/r", { headers: { "x-a": "1" } }),
+      });
+    `;
+  const printedURLValues = (url: string, subclass = url, tagged = url) => `{
+  "endpoint": ${url},
+  "headers": Headers {},
+  "list": [
+    ${url},
+  ],
+  "request": Request (0 KB) {
+    method: "GET",
+    url: "http://made-up.example/r",
+    headers: Headers {}
+  },
+  "subclass": ${subclass},
+  "tagged": ${tagged},
+}`;
+  const olderBunURLValues = printedURLValues("URL {}", "Address {}", 'URL URL {\n    "tag": "x",\n  }');
+  const urlSnapshotFile = (alone: string, inside: string) =>
+    headers.bun + `\nexports[\`alone 1\`] = \`${alone}\`;\n\nexports[\`inside 1\`] = \`\n${inside}\n\`;\n`;
+
+  test.each(["bun:test", "vitest"])(
+    "passes when it is what an older Bun wrote for a URL, whatever the address, in a test of %j",
+    async module => {
+      using dir = tempDir("snapshot-url-older-bun", {
+        "a.test.js": `
+            ${urlValues(module)}
+            test("alone", () => { expect(new URL(address)).toMatchSnapshot(); });
+            test("inside", () => { expect(values()).toMatchSnapshot(); });
+            test("inline", () => {
+              expect(new URL(address)).toMatchInlineSnapshot(\`URL {}\`);
+              expect(new URL(address)).toMatchInlineSnapshot(\`"http://made-up.example/b"\`);
+              expect(values()).toMatchInlineSnapshot(\`\n${olderBunURLValues}\n\`);
+            });
+            test("but for one line", () => {
+              expect(() => expect({ ...values(), more: 1 }).toMatchInlineSnapshot(\`\n${olderBunURLValues}\n\`)).toThrow();
+              expect(() => expect({ endpoint: new URL(address), more: 1 }).toMatchInlineSnapshot(\`\n{\n  "endpoint": URL {},\n}\n\`)).toThrow();
+            });
+          `,
+        "__snapshots__/a.test.js.snap": urlSnapshotFile("URL {}", olderBunURLValues),
+      });
+      const { stderr, exitCode, pass, fail } = await runTests(String(dir), {
+        CI: "true",
+        ADDRESS: "http://made-up.example/b",
+      });
+      expect({ stderr: exitCode ? stderr : "", exitCode, pass, fail }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        pass: 4,
+        fail: 0,
+      });
+    },
+  );
+
+  test("what an older Bun wrote for a URL stays as it is, and --update-snapshots rewrites it to the href", async () => {
+    const older = urlSnapshotFile("URL {}", olderBunURLValues);
+    using dir = tempDir("snapshot-url-update", {
+      "a.test.js": `
+          ${urlValues("bun:test")}
+          test("alone", () => { expect(new URL(address)).toMatchSnapshot(); });
+          test("inside", () => { expect(values()).toMatchSnapshot(); });
+          test("inline", () => { expect(new URL(address)).toMatchInlineSnapshot(\`URL {}\`); });
+        `,
+      "__snapshots__/a.test.js.snap": older,
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    const testFile = () => readFileSync(join(String(dir), "a.test.js"), "utf8");
+    const olderTestFile = testFile();
+    const b = { ADDRESS: "http://made-up.example/b" };
+    for (const CI of ["true", "false"]) {
+      const { stderr, exitCode } = await runTests(String(dir), { CI, ...b });
+      expect(stderr).toContain(" 3 snapshots, ");
+      expect({ snap: snap(), testFile: testFile() }).toEqual({ snap: older, testFile: olderTestFile });
+      expect(exitCode).toBe(0);
+    }
+
+    // Only the URLs change. A `Headers` keeps its text, alone and in a `Request`.
+    const href = '"http://made-up.example/b"';
+    const updated = {
+      snap: urlSnapshotFile(href, printedURLValues(href)),
+      testFile: olderTestFile.replace("`URL {}`", "`" + href + "`"),
+    };
+    const first = await runTests(String(dir), { CI: "true", ...b }, "--update-snapshots");
+    expect({ snap: snap(), testFile: testFile() }).toEqual(updated);
+    const second = await runTests(String(dir), { CI: "true", ...b }, "--update-snapshots");
+    expect({ snap: snap(), testFile: testFile() }).toEqual(updated);
+    const other = await runTests(String(dir), { CI: "true", ADDRESS: "http://made-up.example/c" });
+    expect(other.stderr).toContain('Received: "http://made-up.example/c"');
+    expect([first.exitCode, second.exitCode, other.exitCode, other.fail]).toEqual([0, 0, 1, 3]);
+  });
+
   test("of import.meta.env fails when a variable has another value", async () => {
     using dir = tempDir("snapshot-import-meta-env", {
       "a.test.js": `

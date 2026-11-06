@@ -444,8 +444,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
     }
 
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/sig.js#L133-L156
+    auto preparedKey = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    RETURN_IF_EXCEPTION(scope, {});
+
     // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
+    std::optional<int32_t> paddingOption = getPadding(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
     std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
@@ -455,30 +459,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    KeyObject keyObject = KeyObject::importPreparedKey(lexicalGlobalObject, scope, WTF::move(preparedKey));
     RETURN_IF_EXCEPTION(scope, {});
-
-    KeyObject keyObject;
-    if (prepareResult.keyData) {
-        keyObject = KeyObject::create(CryptoKeyType::Private, WTF::move(*prepareResult.keyData));
-    } else {
-        keyObject = KeyObject::getPublicOrPrivateKey(
-            lexicalGlobalObject,
-            scope,
-            prepareResult.keyDataView,
-            CryptoKeyType::Private,
-            prepareResult.formatType,
-            prepareResult.encodingType,
-            prepareResult.cipher,
-            WTF::move(prepareResult.passphrase));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
 
     const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
 
     if (keyPtr.isOneShotVariant()) {
         return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, lexicalGlobalObject);
     }
+
+    int32_t padding = paddingOption.value_or(keyPtr.getDefaultSignPadding());
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);

@@ -56,7 +56,7 @@ bool isArrayBufferOrView(JSValue value);
 JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message);
 void throwCryptoError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, uint32_t err, const char* message = nullptr);
 std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options, WTF::ASCIILiteral name);
-int32_t getPadding(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options, const ncrypto::EVPKeyPointer& pkey);
+std::optional<int32_t> getPadding(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options);
 std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options);
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options);
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, const ncrypto::EVPKeyPointer& pkey, WTF::Vector<uint8_t>& derBuffer);
@@ -96,7 +96,8 @@ std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObje
 // For output encoding
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
 void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
-void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config);
+// With `passphraseOwner`, the passphrase comes back as the buffer that holds it and `config.passphrase` stays empty.
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config, BufferArgument* passphraseOwner = nullptr);
 
 // Modified version of ByteSource from node
 //

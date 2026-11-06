@@ -267,11 +267,6 @@ void SignJob::createAndSchedule(JSGlobalObject* globalObject, SignJobCtx&& ctx, 
     Bun__SignJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
-std::optional<int32_t> getPadding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
-{
-    return getIntOption(globalObject, scope, options, "padding"_s);
-}
-
 std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScope& scope, Mode mode,
     JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue)
 {
@@ -328,33 +323,12 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         signatureData = WTF::move(*copy);
     }
 
-    auto prepareResult = mode == Mode::Verify
-        ? KeyObject::preparePublicOrPrivateKey(globalObject, scope, keyValue)
-        : KeyObject::preparePrivateKey(globalObject, scope, keyValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
     ClearErrorOnReturn clearError;
-    auto keyType = mode == Mode::Verify
-        ? CryptoKeyType::Public
-        : CryptoKeyType::Private;
-
-    KeyObject keyObject;
-
-    if (prepareResult.keyData) {
-        keyObject = KeyObject::create(keyType, WTF::move(*prepareResult.keyData));
-    } else {
-
-        keyObject = KeyObject::getPublicOrPrivateKey(
-            globalObject,
-            scope,
-            prepareResult.keyDataView,
-            keyType,
-            prepareResult.formatType,
-            prepareResult.encodingType,
-            prepareResult.cipher,
-            WTF::move(prepareResult.passphrase));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    auto keyMode = mode == Mode::Verify
+        ? KeyObject::PrepareAsymmetricKeyMode::ConsumePublic
+        : KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate;
+    KeyObject keyObject = KeyObject::getAsymmetricKeyFromJS(globalObject, scope, keyValue, keyMode);
+    RETURN_IF_EXCEPTION(scope, {});
 
     Digest digest = {};
 

@@ -70,16 +70,10 @@ void DhJob::createAndSchedule(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSVa
 
 static KeyObject keyFromOption(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, CryptoKeyType type, ASCIILiteral name)
 {
-    auto prepared = type == CryptoKeyType::Private
-        ? KeyObject::preparePrivateKey(globalObject, scope, value, name)
-        : KeyObject::preparePublicOrPrivateKey(globalObject, scope, value, name);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (prepared.keyData) {
-        return KeyObject::create(type, WTF::move(*prepared.keyData));
-    }
-
-    RELEASE_AND_RETURN(scope, KeyObject::getPublicOrPrivateKey(globalObject, scope, prepared.keyDataView, type, prepared.formatType, prepared.encodingType, prepared.cipher, WTF::move(prepared.passphrase)));
+    auto mode = type == CryptoKeyType::Private
+        ? KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate
+        : KeyObject::PrepareAsymmetricKeyMode::ConsumePublic;
+    RELEASE_AND_RETURN(scope, KeyObject::getAsymmetricKeyFromJS(globalObject, scope, value, mode, name));
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/diffiehellman.js#L289-L343

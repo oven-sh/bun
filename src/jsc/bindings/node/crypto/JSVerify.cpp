@@ -331,32 +331,12 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSValue signatureValue = callFrame->argument(1);
     JSValue sigEncodingValue = callFrame->argument(2);
 
-    auto signatureArgument = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/sig.js#L235-L257
+    auto preparedKey = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
-
-    auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    KeyObject keyObject;
-    if (prepareResult.keyData) {
-        keyObject = KeyObject::create(CryptoKeyType::Public, WTF::move(*prepareResult.keyData));
-    } else {
-        keyObject = KeyObject::getPublicOrPrivateKey(
-            globalObject,
-            scope,
-            prepareResult.keyDataView,
-            CryptoKeyType::Public,
-            prepareResult.formatType,
-            prepareResult.encodingType,
-            prepareResult.cipher,
-            WTF::move(prepareResult.passphrase));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    const auto& keyPtr = keyObject.asymmetricKey();
 
     // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(globalObject, scope, options, keyPtr);
+    std::optional<int32_t> paddingOption = getPadding(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
     std::optional<int> saltLen = getSaltLength(globalObject, scope, options);
@@ -366,11 +346,22 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto signatureArgument = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    KeyObject keyObject = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedKey));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    const auto& keyPtr = keyObject.asymmetricKey();
+
     // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_sig.cc#L530-L607
     if (keyPtr.isOneShotVariant()) {
         return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
     }
 
+    int32_t padding = paddingOption.value_or(keyPtr.getDefaultSignPadding());
+
+    // Read after the import, which runs the getters of a JWK.
     auto signature = signatureArgument.span();
     ncrypto::Buffer<const unsigned char> sigBuf {
         .data = signature.data(),

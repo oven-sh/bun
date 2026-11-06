@@ -471,10 +471,9 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, ThrowScop
     return std::nullopt;
 }
 
-int32_t getPadding(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, const ncrypto::EVPKeyPointer& pkey)
+std::optional<int32_t> getPadding(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
-    auto padding = getIntOption(globalObject, scope, options, "padding"_s);
-    return padding.value_or(pkey.getDefaultSignPadding());
+    return getIntOption(globalObject, scope, options, "padding"_s);
 }
 
 std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
@@ -872,7 +871,7 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
     }
 }
 
-void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config, BufferArgument* passphraseOwner)
 {
     VM& vm = globalObject->vm();
 
@@ -924,13 +923,17 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!passphraseValue.isUndefined()) {
         auto passphrase = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
-        auto passphraseBytes = passphrase.span();
-        // BoringSSL's length parameter is an `int`.
-        if (passphraseBytes.size() > INT_MAX) {
-            ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
-            return;
+        if (passphraseOwner) {
+            *passphraseOwner = passphrase;
+        } else {
+            auto passphraseBytes = passphrase.span();
+            // BoringSSL's length parameter is an `int`.
+            if (passphraseBytes.size() > INT_MAX) {
+                ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
+                return;
+            }
+            config.passphrase = DataPointer::FromSpan(passphraseBytes);
         }
-        config.passphrase = DataPointer::FromSpan(passphraseBytes);
     }
 
     if (config.output_key_object) {

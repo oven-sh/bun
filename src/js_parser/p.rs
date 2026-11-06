@@ -467,7 +467,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) jest: Jest,
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
-    /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
+    /// The imports of "vitest" that name `assert` or `should`. `redirect_chai_names` takes them once the visit pass knows which names the file uses.
     pub(crate) chai_imports: crate::parser::ChaiImports,
     /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
     pub(crate) did_apply_test_feature: bool,
@@ -4397,15 +4397,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
-            if self.options.features.inject_jest_globals
-                && path.text == b"vitest"
-                && let Some(name) = crate::parser::ChaiImports::name(alias)
-            {
-                self.chai_imports.0.push((name, r#ref));
-                self.did_apply_test_feature = true;
-                continue;
-            }
-
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
@@ -4495,6 +4486,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
             item_refs.shrink_and_free(stmt.items.len() + usize::from(stmt.default_name.is_some()));
         }
+        // `ImportScanner` keeps a statement that has no names as a side-effect import the user wrote.
+        debug_assert!(
+            count_excluding_namespace == 0 || !stmt.items.is_empty() || stmt.default_name.is_some()
+        );
 
         if path.import_tag != bun_ast::ImportRecordTag::None || path.loader.is_some() {
             self.validate_and_set_import_type(&path, &mut stmt)?;
@@ -4506,12 +4501,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.imported_mock_apis.insert(item.name.ref_, api);
                 }
             }
+            if path.text == b"vitest" && stmt.items.iter().any(crate::parser::ChaiImports::is_item)
+            {
+                return Ok(self.remember_chai_import(stmt, loc, item_refs));
+            }
         }
 
         // Track the items for this namespace
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
         Ok(self.s(stmt, loc))
+    }
+
+    /// The tail of `process_import_statement`, for a statement `redirect_chai_names` takes after the visit pass.
+    #[cold]
+    #[inline(never)]
+    fn remember_chai_import(
+        &mut self,
+        stmt: S::Import,
+        loc: bun_ast::Loc,
+        item_refs: ImportItemForNamespaceMap,
+    ) -> Stmt {
+        self.import_items_for_namespace
+            .insert(stmt.namespace_ref, item_refs);
+        let stmt = self.s(stmt, loc);
+        self.chai_imports.0.push(stmt);
+        self.did_apply_test_feature = true;
+        stmt
     }
 
     #[cold]

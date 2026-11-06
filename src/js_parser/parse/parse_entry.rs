@@ -2431,18 +2431,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if !p.chai_imports.0.is_empty() {
-            let chai_imports = core::mem::take(&mut p.chai_imports);
-            p.generate_import_stmt(
-                b"chai",
-                &chai_imports.0,
-                &mut before,
-                None,
-                b"import_",
-                false,
-                js_ast::PartTag::None,
-            )
-            .expect("unreachable");
+        for stmt in core::mem::take(&mut p.chai_imports).0 {
+            p.redirect_chai_names(stmt, &mut before)?;
         }
 
         if p.server_components_wrap_ref.is_valid() {
@@ -2591,17 +2581,32 @@ impl<'a> Parser<'a> {
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.
-            let import_record: Option<&ImportRecord> =
-                ast.import_records.as_slice().iter().find(|import_record| {
-                    !import_record
-                        .flags
-                        .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
-                        && import_record.kind == bun_ast::ImportKind::Stmt
-                        && !import_record.range.is_empty()
-                });
+            let is_written_import = |import_record: &&ImportRecord| {
+                !import_record
+                    .flags
+                    .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
+                    && import_record.kind == bun_ast::ImportKind::Stmt
+                    && !import_record.range.is_empty()
+            };
+            // The first in the source. The record that `redirect_chai_names` adds comes after those of later statements.
+            let import_record: Option<&ImportRecord> = ast
+                .import_records
+                .as_slice()
+                .iter()
+                .filter(is_written_import)
+                .min_by_key(|import_record| import_record.range.loc.start);
 
             if let Some(record) = import_record {
                 let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
+
+                // A statement that names `assert` of "vitest" and other things has a second record, for "chai".
+                let of_chai = ast
+                    .import_records
+                    .as_slice()
+                    .iter()
+                    .filter(is_written_import)
+                    .filter(|other| other.range == record.range)
+                    .nth(1);
 
                 notes.push(bun_ast::Data {
                     text: {
@@ -2614,6 +2619,16 @@ impl<'a> Parser<'a> {
                                 text: record.path.text
                             }
                         );
+                        if let Some(of_chai) = of_chai {
+                            let _ = write!(
+                                &mut v,
+                                ", and require({}) for {}",
+                                bun_core::fmt::QuotedFormatter {
+                                    text: of_chai.path.text
+                                },
+                                crate::parser::ChaiImports::NAMES
+                            );
+                        }
                         std::borrow::Cow::Owned(v)
                     },
                     ..Default::default()

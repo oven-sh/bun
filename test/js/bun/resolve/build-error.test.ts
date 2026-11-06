@@ -140,6 +140,161 @@ test.concurrent(
   },
 );
 
+// Under `bun test`, `assert` and `should` of "vitest" come from the project's
+// chai. An `import` that names them is an import like any other: TypeScript
+// drops it when the file uses none of its names at run time, and one that stays
+// next to `module.exports` is reported at the line the user wrote, with the
+// module that a require() gets the names from.
+test.concurrent(
+  "chai names of vitest next to module.exports: an unused import loads, a used one says what to require()",
+  async () => {
+    const checked = `{ check() { return "checked"; } }`;
+    const asserts = `{ check(value) { assert.ok(value); } }`;
+    // Each file loads, and its `check()` returns "checked".
+    const loads: Record<string, string> = {
+      "unused.ts": `import { assert } from "vitest";\nmodule.exports = ${checked};`,
+      "unused.tsx": `import { assert } from "vitest";\nmodule.exports = ${checked};`,
+      "unused.cts": `import { assert } from "vitest";\nmodule.exports = ${checked};`,
+      "should.ts": `import { should } from "vitest";\nmodule.exports = ${checked};`,
+      "renamed.ts": `import { assert as a, should as s } from "vitest";\nmodule.exports = ${checked};`,
+      "type-only.ts": `import { assert } from "vitest";\ntype Assert = typeof assert;\nmodule.exports = { check(_?: Assert) { return "checked"; } };`,
+      "type-sibling.ts": `import { assert, type TestContext } from "vitest";\nmodule.exports = { check(_?: TestContext) { return "checked"; } };`,
+      "other-name.ts": `import { assert, vi } from "vitest";\nmodule.exports = ${checked};`,
+      "default-name.ts": `import vitest, { assert } from "vitest";\nmodule.exports = ${checked};`,
+      "two-statements.ts": `import { assert } from "vitest";\nimport { vi } from "vitest";\nmodule.exports = ${checked};`,
+      "exports.ts": `import { assert } from "vitest";\nexports.check = () => "checked";`,
+      "export-equals.ts": `import { assert } from "vitest";\nexport = ${checked};`,
+      // What the note of the rejected files advises.
+      "requires-chai.ts": `const { assert } = require("chai");\nmodule.exports = { check() { assert.ok(true); return "checked"; } };`,
+    };
+    const chai = `Try require("chai") instead`;
+    const vitest = `Try require("vitest") instead`;
+    const both = `Try require("vitest") instead, and require("chai") for "assert" and "should"`;
+    // The import on `line` is reported, with `note`.
+    const rejects: Record<string, [source: string, note: string, line?: number]> = {
+      "used.ts": [`import { assert } from "vitest";\nmodule.exports = ${asserts};`, chai],
+      // JavaScript keeps an import that the file doesn't use.
+      "unused.js": [`import { assert } from "vitest";\nmodule.exports = ${checked};`, chai],
+      "both-used.ts": [
+        `import { assert, vi } from "vitest";\nmodule.exports = { check(value) { assert.ok(value); return vi; } };`,
+        both,
+      ],
+      "both-used.js": [
+        `import { assert, vi } from "vitest";\nmodule.exports = { check(value) { assert.ok(value); return vi; } };`,
+        both,
+      ],
+      "default-name-used.ts": [
+        `import vitest, { assert } from "vitest";\nmodule.exports = { check(value) { assert.ok(value); return vitest; } };`,
+        both,
+      ],
+      "default-name-used.js": [
+        `import vitest, { assert } from "vitest";\nmodule.exports = { check(value) { assert.ok(value); return vitest; } };`,
+        both,
+      ],
+      // TypeScript drops the names that the file doesn't use, and the import of the others stays.
+      "other-name-unused.ts": [`import { assert, vi } from "vitest";\nmodule.exports = ${asserts};`, chai],
+      "default-name-unused.ts": [`import vitest, { assert } from "vitest";\nmodule.exports = ${asserts};`, chai],
+      "default-name-only.ts": [
+        `import vitest, { assert } from "vitest";\nmodule.exports = { check() { return vitest; } };`,
+        vitest,
+      ],
+      // Of the imports that stay, the first one in the source is reported.
+      "before-another.ts": [
+        `import { assert } from "vitest";\nimport { sep } from "node:path";\nmodule.exports = { check(value) { assert.ok(value); return sep; } };`,
+        chai,
+      ],
+      "after-unused.ts": [
+        `import { assert } from "vitest";\nimport { sep } from "node:path";\nimport { should } from "vitest";\nmodule.exports = { check() { return should(); } };`,
+        chai,
+        3,
+      ],
+      // An import of "vitest" without a chai name is reported as before.
+      "no-names.ts": [`import "vitest";\nmodule.exports = ${checked};`, vitest],
+      "empty-clause.ts": [`import {} from "vitest";\nmodule.exports = ${checked};`, vitest],
+      "vi-used.ts": [`import { vi } from "vitest";\nmodule.exports = { check() { return vi; } };`, vitest],
+    };
+    const expected = {
+      ...Object.fromEntries(Object.keys(loads).map(file => [file, "checked"])),
+      ...Object.fromEntries(
+        Object.entries(rejects).map(([file, [source, note, line = 1]]) => [
+          file,
+          [
+            "BuildMessage",
+            "Cannot use import statement with CommonJS-only features",
+            [note, "This file is CommonJS because 'module' was used"],
+            line,
+            source.split("\n")[line - 1],
+          ],
+        ]),
+      ),
+    };
+
+    using dir = tempDir("build-error-chai-names", {
+      "node_modules/chai/package.json": `{ "name": "chai", "version": "0.0.0", "main": "index.js" }`,
+      "node_modules/chai/index.js": `exports.assert = { ok(value) { if (!value) throw new Error("not ok"); } };\nexports.should = () => {};`,
+      ...loads,
+      ...Object.fromEntries(Object.entries(rejects).map(([file, [source]]) => [file, source])),
+      "rows.test.js": `
+        const files = ${JSON.stringify(Object.keys(expected))};
+        test("rows", async () => {
+          const results = {};
+          for (const file of files) {
+            try {
+              const loaded = process.env.LOAD_WITH === "import" ? (await import("./" + file)).default : require("./" + file);
+              results[file] = loaded.check();
+            } catch (error) {
+              results[file] = [error.name, error.message, error.notes?.map(note => note.message), error.position?.line, error.position?.lineText];
+            }
+          }
+          console.log(JSON.stringify(results));
+        });
+      `,
+      "mocked.js": `exports.value = "real";`,
+      // A hoisted mock moves the import of "vitest" ahead of the other statements of the file.
+      "entry-mock.test.ts": `import { assert } from "vitest";\nvi.mock("./mocked.js", () => ({ value: "mocked" }));\ntest("the entry file with a mock runs", () => console.log(require("./mocked.js").value));\nmodule.exports = {};`,
+      "entry-unused.test.ts": `import { assert } from "vitest";\ntest("the entry file runs", () => console.log("ran"));\nmodule.exports = {};`,
+      "entry-used.test.ts": `import { assert } from "vitest";\ntest("is never registered", () => assert.ok(true));\nmodule.exports = {};`,
+    });
+
+    const run = async (files: string[], env: Record<string, string> = {}) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...files],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const [byRequire, byImport, asEntry] = await Promise.all([
+      run(["./rows.test.js"], { LOAD_WITH: "require" }),
+      run(["./rows.test.js"], { LOAD_WITH: "import" }),
+      run(["./entry-mock.test.ts", "./entry-unused.test.ts", "./entry-used.test.ts"]),
+    ]);
+
+    const rowsOf = ({ stdout }: { stdout: string }) => JSON.parse(stdout.slice(stdout.indexOf("{")));
+    expect({ require: rowsOf(byRequire), import: rowsOf(byImport) }).toEqual({ require: expected, import: expected });
+    expect([byRequire.exitCode, byImport.exitCode]).toEqual([0, 0]);
+
+    expect({
+      stdout: asEntry.stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      stderr: asEntry.stderr.split("\n").filter(line => /^(error|note): |^ \d+ (pass|fail)$/.test(line)),
+      exitCode: asEntry.exitCode,
+    }).toEqual({
+      stdout: ["mocked", "ran"],
+      stderr: [
+        "error: Cannot use import statement with CommonJS-only features",
+        `note: Try require("chai") instead`,
+        "note: This file is CommonJS because 'module' was used",
+        " 2 pass",
+        " 1 fail",
+      ],
+      exitCode: 1,
+    });
+  },
+);
+
 test("import whose transpile log holds a resolve error rejects with a ResolveMessage next to the BuildMessage", async () => {
   // A macro import that cannot be resolved is logged by the resolver while the
   // file is being transpiled, so process_fetch_log sees one Resolve-metadata

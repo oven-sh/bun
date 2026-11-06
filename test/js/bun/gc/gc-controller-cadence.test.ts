@@ -165,8 +165,10 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
 // The tick requested an eden collection whether or not there was anything to collect (#48013: a server with 190 MB live
 // that allocated 1.5 MB/s got one per second, each reclaiming under 1%, where JSC's own pacing would have waited for the
 // heap to double). The tick now requests one only once the program has allocated 1/16 of JSC's own allocation budget
-// since the last request. Both cases build and collect 100k objects (about 10 MB) before MARK, so the budget is at least
-// 10 MB and a request needs 600 KB of allocation, then allocate `objectsPerTick` objects of about 100 bytes every 20 ms
+// since the last request. Both cases build and collect 100k objects (about 10 MB) before MARK. A heap that small is under
+// a quarter of any machine's RAM, where JSC's growth factor is 2 or more, so its budget is at least the live heap: a request
+// needs 600 KB of allocation and JSC collects by itself at most once per 10 MB. Then they allocate `objectsPerTick` objects
+// of 100 bytes every 20 ms
 // for 100 ticks. A debug build tells the two apart too, unlike the counts above: the allocation goes through the
 // allocator's slow path, which is what lets a requested collection run to its end on a parked debug build.
 describe("the tick requests an eden collection only once the allocation adds up", () => {

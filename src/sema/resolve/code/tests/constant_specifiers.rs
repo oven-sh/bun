@@ -225,6 +225,38 @@ fn query_string_is_not_supported() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn query_string_names_one_more_module_of_the_file_in_front_of_it() {
+    let files = [
+        "/p/a.ts",
+        "/p/b?x.ts",
+        "/p/d.json",
+        "/p/node_modules/k/index.js",
+    ];
+    let host = empty_files(&files)
+        .module("node:fs", 1)
+        .module("fs", 1)
+        .holding_modules_with_queries();
+    assert_eq!(import(&host, "./a.ts?x"), "/p/a.ts?x");
+    assert_eq!(import(&host, "./a?x"), "/p/a.ts?x");
+    assert_eq!(import(&host, "./a.ts?"), "/p/a.ts?");
+    assert_eq!(import(&host, "./a.ts?x?y#z"), "/p/a.ts?x?y#z");
+    assert_eq!(import(&host, "./a.ts?../b"), "/p/a.ts?../b");
+    assert_eq!(import(&host, "k?x"), "/p/node_modules/k/index.js?x");
+    assert_eq!(import(&host, "./a.ts"), "/p/a.ts");
+    assert_eq!(import(&host, "./b?x.ts"), MODULE_NOT_FOUND);
+    assert_eq!(import(&host, "./missing.ts?x"), MODULE_NOT_FOUND);
+    assert_eq!(import(&host, "?x"), MODULE_NOT_FOUND);
+    assert_eq!(import(&host, "./d.json?x"), "NotFound(QueryString)");
+    assert_eq!(
+        import(&host, "node:fs?x"),
+        "NotFound(BuiltinModuleNotFound)"
+    );
+    assert_eq!(import(&host, "fs?x"), "NotFound(PackageNotFound)");
+    assert_eq!(entry_point(&host, "b?x.ts"), "/p/b?x.ts");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn empty_and_nul_specifiers_find_nothing() {
     let host = empty_files(&["/p/a.ts", "/p/index.ts"]);
     assert_eq!(import(&host, ""), MODULE_NOT_FOUND);

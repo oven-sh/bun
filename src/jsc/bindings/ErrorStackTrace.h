@@ -206,6 +206,7 @@ inline bool hasExternalSourceMap()
 String externalSourceMapFileURL();
 
 String sourceURL(const JSC::AOT::SourcePosition&);
+String sourceURL(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
 #endif
 
 // The position of a compiled frame was recorded at build time, in the original source or in an external source map: no source map applies to it at run time.

@@ -48,30 +48,30 @@ console.log(all(new A()));
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="all"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v2 = NewClosure v0 function=[[f_3]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v2 = NewClosure v0 function=[[f_4]]
 // CHECK-NEXT: v3 = Call v1, -, v2 calleeName="attempt"
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v6 = NewClosure v0 function=[[f_4]]
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v6 = NewClosure v0 function=[[f_5]]
 // CHECK-NEXT: v7 = Call v5, -, v6 calleeName="attempt"
 // CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v10 = NewClosure v0 function=[[f_5]]
+// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v10 = NewClosure v0 function=[[f_6]]
 // CHECK-NEXT: v11 = Call v9, -, v10 calleeName="attempt"
 // CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v14 = NewClosure v0 function=[[f_6]]
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v14 = NewClosure v0 function=[[f_7]]
 // CHECK-NEXT: v15 = Call v13, -, v14 calleeName="attempt"
 // CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v17 = NewArray v4, v8, v12, v16 contents=anything
 // CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|Array flags=[IsExpected]}
 // CHECK-NEXT: v19 = PropGet v18 key="join"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
 // CHECK-NEXT: v21 = Call v20, v18 calleeKey="join" calleeName="join"
 // CHECK-NEXT: ReturnCall v21 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
 // CHECK-NEXT: }
@@ -80,9 +80,9 @@ console.log(all(new A()));
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_8]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: v4 = CallDirect v3 function=[[f_9]]
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }

@@ -10,7 +10,7 @@ use bun_alloc::Arena as Bump;
 use bun_ast::Log;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::strings;
+use bun_core::{StackCheck, strings};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 //
@@ -555,7 +555,9 @@ fn nested_block_enter(parser: &mut Parser) -> CssResult<NestedBlockState> {
     }
 
     parser.input.nesting_depth += 1;
-    if parser.input.nesting_depth > MAX_NESTING_DEPTH {
+    let out_of_stack = !parser.input.stack_check.is_safe_to_recurse();
+    parser.input.out_of_stack |= out_of_stack;
+    if out_of_stack || parser.input.nesting_depth > MAX_NESTING_DEPTH {
         parser.input.nesting_depth -= 1;
         let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
         let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
@@ -675,6 +677,10 @@ pub trait CustomAtRuleParser {
     fn take_layer_names(_this: &mut Self) -> Vec<LayerName> {
         Vec::new()
     }
+
+    fn take_layers_pre_import(_this: &mut Self) -> Vec<LayerName> {
+        Vec::new()
+    }
 }
 
 /// At rules are rules that have the `@` symbol.
@@ -723,6 +729,8 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub(crate) import_records: *mut Vec<ImportRecord<'static>>,
     pub(crate) layer_names: Vec<LayerName>,
+    /// `layer_names` as it was at the first `@import`. `None` until then.
+    pub(crate) layers_pre_import: Option<Vec<LayerName>>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
@@ -771,6 +779,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     ) {
         if !this.track_layers_and_imports {
             return;
+        }
+        if this.layers_pre_import.is_none() {
+            this.layers_pre_import = Some(core::mem::take(&mut this.layer_names));
         }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
@@ -838,6 +849,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn take_layer_names(this: &mut Self) -> Vec<LayerName> {
         core::mem::take(&mut this.layer_names)
+    }
+
+    fn take_layers_pre_import(this: &mut Self) -> Vec<LayerName> {
+        this.layers_pre_import.take().unwrap_or_default()
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -1306,7 +1321,7 @@ mod rule_parsers {
                     let mut import_rule = ImportRule {
                         url,
                         conditions: ImportConditions {
-                            layer: layer.map(|v| css_rules::import::Layer { v }),
+                            layer: layer.map(|v| css_rules::import::Layer { v, anonymous_id: 0 }),
                             supports,
                             media,
                         },
@@ -2411,6 +2426,8 @@ pub struct StyleSheet<AtRule> {
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
+    /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`.
+    pub layers_pre_import: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2432,6 +2449,7 @@ impl<AtRule> StyleSheet<AtRule> {
             css_modules: None,
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
+            layers_pre_import: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2654,6 +2672,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: false,
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
+                layers_pre_import: None,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2735,11 +2754,15 @@ mod stylesheet_impl {
                 if let Err(e) = result {
                     let result_options = rule_list_parser.parser.options;
                     if result_options.error_recovery {
-                        // todo_stuff.warn
+                        result_options.warn(&e);
                         continue;
                     }
                     return Err(Err::from_parse_error(e, options.filename));
                 }
+            }
+            if parser.input.out_of_stack {
+                let e = parser.new_custom_error(ParserError::maximum_nesting_depth);
+                return Err(Err::from_parse_error(e, options.filename));
             }
 
             let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
@@ -2750,6 +2773,7 @@ mod stylesheet_impl {
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
+            let layers_pre_import = P::take_layers_pre_import(at_rule_parser);
             let may_revert_rule = parser.input.may_revert_rule;
 
             Ok((
@@ -2762,6 +2786,7 @@ mod stylesheet_impl {
                     css_modules: options.css_modules,
                     flags: options.flags,
                     layer_names,
+                    layers_pre_import,
                     local_scope: parser_extra.local_scope,
                     local_properties,
                     composes,
@@ -2865,6 +2890,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
+                layers_pre_import: None,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -3020,7 +3046,7 @@ pub struct ParserOptions<'a> {
     /// when the style sheet is serialized.
     pub(crate) source_index: u32,
     /// Whether to ignore invalid rules and declarations rather than erroring.
-    pub(crate) error_recovery: bool,
+    pub error_recovery: bool,
     /// A list that will be appended to when a warning occurs.
     ///
     /// Stored as a raw `NonNull<Log>` so `warn(&self)`
@@ -3942,6 +3968,9 @@ pub struct ParserInput<'a> {
     pub(crate) tokenizer: Tokenizer<'a>,
     pub(crate) cached_token: Option<CachedToken>,
     pub(crate) nesting_depth: u32,
+    stack_check: StackCheck,
+    /// Sticky, so backtracking and error recovery can't hide a block that was skipped for lack of stack.
+    out_of_stack: bool,
     /// Set once a nested block fails to parse and the end of input is reached
     /// without ever finding its closing token, i.e. the stylesheet is
     /// truncated somewhere inside that block. Everything from
@@ -3988,6 +4017,8 @@ impl<'a> ParserInput<'a> {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
             nesting_depth: 0,
+            stack_check: StackCheck::init(),
+            out_of_stack: false,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,

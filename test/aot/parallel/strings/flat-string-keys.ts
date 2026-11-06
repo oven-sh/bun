@@ -1,18 +1,18 @@
-// A short concatenation of strings and numbers that is used as a lookup key in the same function is built as a flat string.
-// CALLS+ getPair operationAOTConcatenate
-// CALLS- getPair IntToString|DoubleToString
+// A short concatenation of strings and numbers that is used as a lookup key in the same function is built as a flat string. A key of two parts is looked for by its parts in a stub first.
+// CALLS+ getPair operationAOTConcatenate|ConcatenateKeyOfPair
+// CALLS- getPair IntegerToString|DoubleToString
 // CALLS+ hasTemplate operationAOTConcatenate
-// CALLS+ cached operationAOTConcatenate
+// CALLS+ cached operationAOTConcatenate|ConcatenateKeyOfPair
 // CALLS+ addToSet operationAOTConcatenate
-// CALLS+ throughJoin operationAOTConcatenate
-// CALLS+ property operationAOTConcatenate
+// CALLS+ throughJoin operationAOTConcatenate|ConcatenateKeyOfPair
+// CALLS+ property operationAOTConcatenate|ConcatenateKeyOfPair
 // CALLS- returned operationAOTConcatenate
 // CALLS- pixels operationAOTConcatenate
 // CALLS- asValue operationAOTConcatenate
 // CALLS- pushed operationAOTConcatenate
-// CALLS+ handled operationAOTConcatenate
-// CALLS+ twoStrings operationAOTConcatenate
-// CALLS+ templateOfStrings operationAOTConcatenate
+// CALLS+ handled operationAOTConcatenate|ConcatenateKeyOfPair
+// CALLS+ twoStrings operationAOTMapGetByKeyParts
+// CALLS+ templateOfStrings operationAOTHasByKeyParts
 // CALLS- threeStrings operationAOTConcatenate
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {

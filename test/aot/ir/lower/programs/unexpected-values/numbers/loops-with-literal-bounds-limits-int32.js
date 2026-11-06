@@ -212,22 +212,19 @@ for (const round of ["first", "second"]) for (const use of uses) attempt(round +
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Integer integer=2147483647
 // CHECK-NEXT: v1 = Convert v0 declared={type=2147483647 flags=[IsExpected]}
-// CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v5 = Negate v1
-// CHECK-NEXT: v6 = Integer integer=-2147483647
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: v8 = Sub v6, v7
-// CHECK-NEXT: v9 = Integer integer=-2147483648
-// CHECK-NEXT: v10 = Convert v9 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v11 = Decrement v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v13 = Integer
-// CHECK-NEXT: v14 = BitOr v4, v13
-// CHECK-NEXT: v15 = Integer
-// CHECK-NEXT: v16 = BitOr v12, v15
-// CHECK-NEXT: v17 = NewArray v4, v12, v14, v16 contents=number
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|Array<number> flags=[IsExpected]}
-// CHECK-NEXT: Return v18
+// CHECK-NEXT: v2 = Integer integer=2147483647
+// CHECK-NEXT: v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v4 = Increment v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v6 = Integer integer=-2147483648
+// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v8 = Decrement v7
+// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v10 = Integer
+// CHECK-NEXT: v11 = BitOr v5, v10
+// CHECK-NEXT: v12 = Integer
+// CHECK-NEXT: v13 = BitOr v9, v12
+// CHECK-NEXT: v14 = NewArray v5, v9, v11, v13 contents=number
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+// CHECK-NEXT: Return v15
 // CHECK-NEXT: }

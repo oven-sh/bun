@@ -875,7 +875,9 @@ pub struct NewSource<C: SourceContext> {
     /// stream settles every read its script is waiting on.
     pub reader_context: Cell<Option<jsc::ContextId>>,
     /// Armed while this is the source of a stream script of a `Bun.ModuleGraph` was given: what it
-    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph.
+    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph. The same
+    /// for a test file under `bun test --isolate`: a read that never ends would keep its buffer,
+    /// and with it the file's whole realm, for the rest of the run.
     pub abort_handle: jsc::AbortHandle,
 }
 
@@ -1033,18 +1035,6 @@ impl<C: SourceContext> NewSource<C> {
         )
     }
 
-    /// Heap-allocate and hand back the raw pointer.
-    ///
-    /// Ownership is **not** retained by Rust: the returned pointer is intended to
-    /// be handed to the JS wrapper via [`Self::to_readable_stream`],
-    /// after which the GC finalizer drives
-    /// teardown through [`Self::decrement_count`] → context `deinit_fn` →
-    /// [`Self::deinit`]. Dropping a `Box` here would free the allocation while
-    /// the JS cell still points at it (UAF), so this returns `*mut Self`.
-    pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
     /// Inverse of the `*mut Self as *mut C` cast [`ReadableStream::from_js`]
     /// performs: `ctx` must be that pointer (whole-allocation provenance), not
     /// one derived from a `&C`/`&mut C` — use the context's
@@ -1055,21 +1045,13 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { bun_core::from_field_ptr!(Self, context, ctx) }
     }
 
-    /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.
+    /// Heap-allocate and hand back the leaked allocation as an unbounded `&mut`.
     ///
-    /// Every call site of `new()` immediately did `unsafe { &mut *p }` to set
-    /// up the context and then handed ownership to the JS wrapper via
-    /// [`Self::to_readable_stream`]. Centralising that deref here (one
-    /// audited `unsafe`, N safe callers) — the allocation is fresh, non-null,
-    /// uniquely owned, and outlives the returned borrow because the JS GC
-    /// finalizer (not Rust `Drop`) reclaims it via [`Self::decrement_count`].
+    /// The GC finalizer frees it via [`Self::decrement_count`]: do not use the borrow once the
+    /// wrapper from [`Self::to_readable_stream`] can be collected.
     #[inline]
     pub fn new_mut<'a>(init: Self) -> &'a mut Self {
-        // SAFETY: `heap::into_raw(Box::new(..))` is non-null, aligned, and the
-        // sole pointer to a fresh allocation; forming `&mut` is unique.
-        // Ownership transfers to the JS wrapper, so the unbounded
-        // lifetime is correct (no Rust owner will drop underneath the borrow).
-        unsafe { &mut *Self::new(init) }
+        bun_core::heap::release(Box::new(init))
     }
 
     pub fn update_ref(&self, enable: bool) {
@@ -1171,7 +1153,7 @@ impl<C: SourceContext> NewSource<C> {
     /// a dangling-reference UAF (Stacked Borrows: protected tag on freed memory).
     ///
     /// SAFETY: `this` must point at a live `NewSource<C>` produced by
-    /// [`Self::new`] (i.e. `Box::into_raw`). Caller must not dereference `this`
+    /// [`Self::new_mut`] (i.e. `Box::leak`). Caller must not dereference `this`
     /// — nor any interior pointer such as `&context` — after this returns.
     pub unsafe fn decrement_count(this: *mut Self) {
         // SAFETY: caller contract — `this` is live for the duration of this block.
@@ -1195,7 +1177,7 @@ impl<C: SourceContext> NewSource<C> {
             unsafe {
                 (*this).context.deinit_fn();
             }
-            // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
+            // SAFETY: `this` originated from `Box::leak` in `Self::new_mut`. No
             // `&mut` borrow of `*this` is live at this point — reclaim and drop,
             // which runs `Drop` on `context` and all other fields, then frees.
             drop(unsafe { bun_core::heap::take(this) });
@@ -1210,13 +1192,13 @@ impl<C: SourceContext> NewSource<C> {
         let out_value = if let Some(v) = self.this_jsvalue.try_get() {
             v
         } else {
-            // The wrapper adopts the ref [`Self::new`] left on this allocation.
+            // The wrapper adopts the ref [`Self::new_mut`] left on this allocation.
             C::js_create(core::ptr::from_mut(self).cast::<c_void>(), cx.global())
         };
         out_value.ensure_still_alive();
         if self.this_jsvalue.get().is_empty() {
             self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
-            if let Some(context) = cx.vm().as_graph_context(cx.context()) {
+            if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
                 unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };

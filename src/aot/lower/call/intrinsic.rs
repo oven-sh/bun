@@ -5,7 +5,10 @@ use bun_sema::atom::known;
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, NodeData};
 use smallvec::{SmallVec, smallvec};
 
-use super::intrinsic_call::{find_linked_function, lower_if_abrupt_close_iterator, lower_throw};
+use super::intrinsic_call::{
+    find_linked_function, lower_if_abrupt_close_iterator, lower_iterator_generic_close,
+    lower_iterator_generic_next, lower_throw,
+};
 use super::{Arguments, CallOptions, Callee};
 use crate::builtins::Intrinsic;
 use crate::builtins::id::BuiltinId;
@@ -244,6 +247,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Intrinsic::Conversion(conversion) => self.lower_conversion(site, conversion),
             Intrinsic::Throw(kind) => lower_throw(self, site, kind),
             Intrinsic::IfAbruptCloseIterator => lower_if_abrupt_close_iterator(self, site),
+            Intrinsic::IteratorGenericClose => lower_iterator_generic_close(self, site),
+            Intrinsic::IteratorGenericNext => lower_iterator_generic_next(self, site),
             Intrinsic::Erased => Ok(self.builder.undefined()),
             Intrinsic::Directive(_) | Intrinsic::NativeCall(_) => {
                 Err((site.call, Misuse::Position))

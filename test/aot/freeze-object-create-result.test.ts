@@ -122,8 +122,4 @@ describe.concurrent("control", () => {
       mutations: ["Counter: field-deleted"],
     });
   });
-
-  // A frozen object keeps its layout, and no report names the place that freezes it.
-  test.todo("a frozen instance lists its class");
-  test.todo("a frozen record lists its type");
 });

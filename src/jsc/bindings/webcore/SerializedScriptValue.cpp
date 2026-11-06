@@ -1352,7 +1352,7 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
-                if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
+                if ((m_forStorage == SerializationForStorage::Yes || m_forTransfer == SerializationForCrossProcessTransfer::Yes) && !key->extractable()) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -3540,6 +3540,7 @@ private:
 
     JSValue readKeyObject()
     {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         VM& vm = m_globalObject->vm();
         auto* globalObject = defaultGlobalObject(m_globalObject);
 
@@ -5336,7 +5337,7 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return result.first;
+    return result.first ? result.first : jsNull();
 }
 
 } // namespace WebCore

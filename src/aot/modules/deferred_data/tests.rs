@@ -130,7 +130,14 @@ fn with_bundle(
         let session = Session::new();
         let atoms = Interner::new_in(&session);
         let mut log = Log::init();
-        let data = bundle_pages(input.sources, provider, session.arena(), &atoms, &mut log);
+        let data = bundle_pages(
+            input.sources,
+            provider,
+            &|_| true,
+            session.arena(),
+            &atoms,
+            &mut log,
+        );
         check(input, &atoms, data);
     });
 }

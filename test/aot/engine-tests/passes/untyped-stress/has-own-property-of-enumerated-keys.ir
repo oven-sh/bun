@@ -436,109 +436,11 @@ function f15 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: v35: string = Strcat v34, v32 [isLikelyKey]
 # CHECK-NEXT: v36: 1 = Integer integer=1
 # CHECK-NEXT: ElemSet v0, v35, v36 accessSite=32 receivers=[L3]
-# CHECK-NEXT: v38: boolean = IsEnumeratorCurrent v1, v0, v28
-# CHECK-NEXT: Branch v38 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14():
 # CHECK-NEXT: StringBuilderAppend v24, v32
 # CHECK-NEXT: Jump -> next b9(v24, v30)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="outerKeysOwnedByInner"
-# CHECK: module=m0 position=1675 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L3}, {type=L13}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L3, v1: L13):
-# CHECK-NEXT: v2: enumerator = ForInOpen v0
-# CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v3)
-# CHECK-NEXT: b1(v5: int[0, 8589934591]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: undefined = ForInStep v2, v0 position=v5
-# CHECK-NEXT: v8: int[0, 8589934590] = ResultAt v7 index=2
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: int[1, 8589934591] = Add v8, v9
-# CHECK-NEXT: v11: boolean = ResultAt v7
-# CHECK-NEXT: v12: string = ResultAt v7 index=1
-# CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v13: string = StringBuilderFinish v4
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v14: enumerator = ForInOpen v1
-# CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: boolean = HasKeyOrder v1 layout=L13 fields=[0, 1]
-# CHECK-NEXT: Branch v16 -> taken b4(), notTaken b13()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: boolean = IsEnumeratorCurrent v14, v1, v17
-# CHECK-NEXT: Branch v18 -> taken b5(), notTaken b12()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v19: "b" = String string="b"
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: boolean = IsEnumeratorCurrent v2, v1, v8
-# CHECK-NEXT: Branch v21 -> taken b6(), notTaken b9()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: StringBuilderAppend v4, v12, v19
-# CHECK-NEXT: v23: 1 = Integer integer=1
-# CHECK-NEXT: v24: boolean = IsEnumeratorCurrent v14, v1, v23
-# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v25: "c" = String string="c"
-# CHECK-NEXT: v26: 2 = Integer integer=2
-# CHECK-NEXT: StringBuilderAppend v4, v12, v25
-# CHECK-NEXT: Jump -> next b16(v26)
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v20)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v4, v12, v19
-# CHECK-NEXT: v29: 1 = Integer integer=1
-# CHECK-NEXT: v30: boolean = IsEnumeratorCurrent v14, v1, v29
-# CHECK-NEXT: Branch v30 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v31: "c" = String string="c"
-# CHECK-NEXT: v32: 2 = Integer integer=2
-# CHECK-NEXT: StringBuilderAppend v4, v12, v31
-# CHECK-NEXT: Jump -> next b18(v32)
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: Jump -> next b18(v20)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b18(v15)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Jump -> next b14(v15)
-# CHECK-NEXT: b14(v34: int[0, 8589934591] ~ 0):
-# CHECK-NEXT: v35: boolean = IsEnumeratorCurrent v2, v1, v8
-# CHECK-NEXT: Branch v35 -> taken b15(), notTaken b18(v34)
-# CHECK-NEXT: b15():
-# CHECK-NEXT: Jump -> next b16(v34)
-# CHECK-NEXT: b16(v36: int[0, 8589934591]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v38: undefined = ForInStep v14, v1 position=v36
-# CHECK-NEXT: v39: int[0, 8589934590] = ResultAt v38 index=2
-# CHECK-NEXT: v40: 1 = Integer integer=1
-# CHECK-NEXT: v41: int[1, 8589934591] = Add v39, v40
-# CHECK-NEXT: v42: boolean = ResultAt v38
-# CHECK-NEXT: v43: string = ResultAt v38 index=1
-# CHECK-NEXT: Branch v42 -> taken b19(), notTaken b17()
-# CHECK-NEXT: b17():
-# CHECK-NEXT: StringBuilderAppend v4, v12, v43
-# CHECK-NEXT: Jump -> next b16(v41)
-# CHECK-NEXT: b18(v45: int[0, 8589934591] ~ 0) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v47: undefined = ForInStep v14, v1 position=v45
-# CHECK-NEXT: v48: int[0, 8589934590] = ResultAt v47 index=2
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[1, 8589934591] = Add v48, v49
-# CHECK-NEXT: v51: boolean = ResultAt v47
-# CHECK-NEXT: v52: string = ResultAt v47 index=1
-# CHECK-NEXT: Branch v51 -> taken b19(), notTaken b20()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: Jump -> next b1(v10)
-# CHECK-NEXT: b20() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v4, v12, v52
-# CHECK-NEXT: Jump -> next b14(v50)
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1675 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L3}, {type=L13}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f15 module=
 # CHECK: m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
 # CHECK-NEXT: b0():

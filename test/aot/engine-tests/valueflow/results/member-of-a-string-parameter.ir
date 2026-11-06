@@ -1,6 +1,6 @@
-# function f(x) { return x.charCodeAt(0) }, called only with the strings of an array literal, and the sum is printed: the parameter is a string or the undefined of a hole, the callee is the one built-in, the sum is a number, and nothing opens the program
+# function f(x) { return x.charCodeAt(0) }, called only with the strings of an array literal, and the sum is printed: the parameter is a string, the callee is the one built-in, the sum is a number, and nothing opens the program
 # RUN: valueflow-apply
-# CHECK: function f1 name="f" {{*}}parameters=[{type=undefined|string}] results=[{type=number}]
+# CHECK: function f1 name="f" {{*}}parameters=[{type="a"|"bc"|"def"}] results=[{type=number}]
 # CHECK: = Call {{*}} callees=[builtin(StringPrototypeCharCodeAt)]
 # RUN(RESULTS): valueflow-results
 # RESULTS: builtin-use StringPrototypeCharCodeAt [Read, Called]

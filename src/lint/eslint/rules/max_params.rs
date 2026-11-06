@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Enforce a maximum number of parameters in function definitions.
 pub struct MaxParams(Config);
 
-const EXCEED: Message = Message::new(
+const EXCEED: &Message = &Message::new(
     "exceed",
     "{{name}} has too many parameters ({{count}}). Maximum allowed is {{max}}.",
 );

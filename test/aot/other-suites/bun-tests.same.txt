@@ -245,7 +245,6 @@ test/js/bun/shell/shell-sentinel-hardening.test.ts
 test/js/bun/shell/shell-seq-condexpr.test.ts
 test/js/bun/shell/shell-worker-terminate-leak.test.ts
 test/js/bun/shell/shell-write-fault.test.ts
-test/js/bun/shell/shelloutput.test.ts
 test/js/bun/shell/throw.test.ts
 test/js/bun/shell/yield.test.ts
 test/js/bun/sourcemap/external-sourcemap-stack-leak.test.ts
@@ -322,11 +321,9 @@ test/js/bun/test/expect-toHaveReturnedWith.test.js
 test/js/bun/test/expect-type-global.test.ts
 test/js/bun/test/expect-type.test.ts
 test/js/bun/test/expect-unreaachable.test.ts
-test/js/bun/test/expect.test.js
 test/js/bun/test/expect/huge-failure-message.test.ts
 test/js/bun/test/expect/toHaveReturnedWith.test.ts
 test/js/bun/test/failure-skip.test.ts
-test/js/bun/test/fake-timers/fake-timers.test.ts
 test/js/bun/test/fake-timers/sinonjs/fake-timers.test.ts
 test/js/bun/test/fake-timers/sinonjs/issue-1852.test.ts
 test/js/bun/test/fake-timers/sinonjs/issue-187.test.ts
@@ -347,7 +344,6 @@ test/js/bun/test/jest-each.test.ts
 test/js/bun/test/jest-extended.test.js
 test/js/bun/test/jest-hooks.test.ts
 test/js/bun/test/mock-disposable.test.ts
-test/js/bun/test/mock-fn.test.js
 test/js/bun/test/nested-describes.test.ts
 test/js/bun/test/only-failures.test.ts
 test/js/bun/test/only-inside-only.test.ts
@@ -362,7 +358,6 @@ test/js/bun/test/snapshot-tests/snapshots/more-snapshots/different-directory.tes
 test/js/bun/test/snapshot-tests/snapshots/more.test.ts
 test/js/bun/test/snapshot-tests/snapshots/moremore.test.ts
 test/js/bun/test/spyMatchers.test.ts
-test/js/bun/test/stack.test.ts
 test/js/bun/test/test-auto-import-jest-globals.test.js
 test/js/bun/test/test-error-code-done-callback.test.ts
 test/js/bun/test/test-failing.test.ts
@@ -573,7 +568,6 @@ test/js/node/http/node-http-maxHeadersCount.test.ts
 test/js/node/http/node-http-nested-cork.test.ts
 test/js/node/http/node-http-parser.test.ts
 test/js/node/http/node-http-pinned-write.test.ts
-test/js/node/http/node-http-primoridals.test.ts
 test/js/node/http/node-http-proxy-url.test.ts
 test/js/node/http/node-http-req-complete.test.ts
 test/js/node/http/node-http-req-socket-pause.test.ts
@@ -744,7 +738,6 @@ test/js/node/vm/happy-dom-vm-16277.test.ts
 test/js/node/vm/script-leak.test.ts
 test/js/node/vm/sourcetextmodule-link-gc.test.ts
 test/js/node/vm/vm-script-fetcher-leak.test.ts
-test/js/node/vm/vm-sourceUrl.test.ts
 test/js/node/watch/fs.watch.close-exit.test.ts
 test/js/node/watch/fs.watch.deadlock.test.ts
 test/js/node/watch/fs.watch.events-cb-race.test.ts

@@ -1,8 +1,9 @@
 use std::fmt::Write;
 
 use super::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure, ProgramList,
-    RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module,
+    ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry, SourceStamp,
+    TypeSite, Variable, WebAssemblyModule,
 };
 use super::ids::{FunctionId, Id};
 use super::program::{NameTables, Program};
@@ -71,6 +72,16 @@ impl<'a> Printer<'a> {
             ProgramList::ModuleFailures => {
                 self.print_lines(list, &program.module_failures, ModuleFailure::print_fields);
             }
+            ProgramList::AmbiguousExports => {
+                self.print_lines(
+                    list,
+                    &program.ambiguous_exports,
+                    AmbiguousExport::print_fields,
+                );
+            }
+            ProgramList::SourceStamps => {
+                self.print_lines(list, &program.source_stamps, SourceStamp::print_fields);
+            }
             ProgramList::EvalScopes => {
                 self.print_lines(list, &program.eval_scopes, EvalScope::print_fields);
             }
@@ -96,6 +107,16 @@ impl<'a> Printer<'a> {
                     &program.web_assembly_modules,
                     WebAssemblyModule::print_fields,
                 );
+            }
+            ProgramList::ReplaceableBuiltins => {
+                self.print_lines(
+                    list,
+                    &program.replaceable_builtins,
+                    ReplaceableBuiltin::print_fields,
+                );
+            }
+            ProgramList::OpenedNames => {
+                self.print_lines(list, &program.opened_names, OpenedName::print_fields);
             }
             _ => debug_assert!(list.keyword().is_none()),
         }

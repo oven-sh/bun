@@ -1,6 +1,6 @@
 // Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads one gets that object.
 import * as b from "bun-builtins-table";
-import { builtinModulesCell, cryptoObjectCell } from "./native-cells.ts";
+import { builtinModulesCell, cryptoObjectCell, targetsOfEventsCell } from "./native-cells.ts";
 import { handedOver } from "./native-code.ts";
 
 const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
@@ -17,7 +17,6 @@ const constructorsBelowFunctionPrototype = [
   "PerformanceObserver",
   "PerformanceObserverEntryList",
   "PerformanceServerTiming",
-  "PerformanceTiming",
   "ReadableStreamDefaultController",
   "ReadableStreamDefaultReader",
   "TextDecoderStream",
@@ -127,6 +126,23 @@ const readsStream = (getter: b.TableType) =>
     reads: ["ExternalState"],
     implementation: b.generic,
   }) satisfies b.GetterField;
+// An event that nobody dispatched has none.
+const targetOfEvent = {
+  ...readsStream(b.null),
+  uses: { this: [b.returnedFrom(targetsOfEventsCell)] },
+} satisfies b.GetterField;
+// JSEvent.cpp: the setter makes a boolean of what it is given.
+const flagOfEvent = {
+  ...readsStream(b.bool),
+  setter: {
+    value: b.any,
+    capability: "heap",
+    throws: true,
+    uses: { this: b.inspected, value: b.inspected },
+    writes: ["ExternalState"],
+    implementation: b.generic,
+  },
+} satisfies b.GetterField;
 const partOfByteStream = (name: string, proto: Readonly<Record<string, b.Field>>) =>
   b.class(name, { instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`), proto });
 const takesBytesOf = (operand: string, returns: b.TableType) =>
@@ -281,6 +297,12 @@ export default b.declarations(
       cancelable: readsStream(b.bool),
       defaultPrevented: readsStream(b.bool),
       composed: readsStream(b.bool),
+      timeStamp: readsStream(b.f64),
+      target: targetOfEvent,
+      currentTarget: targetOfEvent,
+      srcElement: targetOfEvent,
+      cancelBubble: flagOfEvent,
+      returnValue: flagOfEvent,
       ...Object.fromEntries(
         ["preventDefault", "stopPropagation", "stopImmediatePropagation"].map(name => [
           name,
@@ -333,9 +355,14 @@ export default b.declarations(
   }),
 
   // What the module abort-controller exports is this constructor (objectModules in collect-modules.ts), on which it puts three more members when it is loaded: src/jsc/modules/AbortControllerModuleModule.h.
-  ["AbortController", "AbortSignal"].flatMap(name =>
-    b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" }),
-  ),
+  Object.entries({
+    AbortController: "AbortController",
+    AbortSignal: "AbortSignal",
+    default: "AbortController",
+  }).flatMap(([name, held]) => [
+    ...b.static(`AbortController.${name}`, b.property(b.union(b.builtin(held), b.undefined))),
+    ...b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" }),
+  ]),
   // JSAbortController.cpp. A controller has one signal, which native code makes with it.
   b.class("AbortController", {
     instanceCppClass: b.cppClass("JSAbortController"),
@@ -463,7 +490,7 @@ export default b.declarations(
         capability: "heap",
         uses: {
           this: [
-            b.createdIn(listOfStrings.fresh, b.nativeCell(builtinModulesCell)),
+            b.createdIn(listOfStrings.fresh.dense, b.nativeCell(builtinModulesCell)),
             b.returnedFrom(builtinModulesCell),
           ],
         },

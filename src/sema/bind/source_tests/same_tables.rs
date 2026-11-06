@@ -204,7 +204,7 @@ fn describe(
 ) -> Vec<(&'static str, String)> {
     #[rustfmt::skip]
     let BoundIn {
-        ran_out_of_stack, is_unbound, is_bound_in_part, symbols, scopes, tables: _, entries, large_tables: _,
+        block: _, ran_out_of_stack, is_unbound, is_bound_in_part, symbols, scopes, tables: _, entries, large_tables: _,
         nested_names, ids,
         file_symbol, export_stars, ambient_modules, pattern_ambient_modules, global_augmentations,
         redeclarations, umd_globals, specifiers, module_augmentations, ambient_specifiers,

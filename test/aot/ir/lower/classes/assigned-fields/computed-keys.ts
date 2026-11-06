@@ -1,11 +1,11 @@
 // RUN: lower
-// CHECK: function {{*}}kind=Initializer
+// CHECK: function {{*}}name="SignedNumber" {{*}}kind=BaseConstructor
 // CHECK-NOT: Define
 // CHECK: PropSet {{*}}key="-1"
 // CHECK-NOT: Define
 // CHECK: PropSet {{*}}key="a"
 // CHECK-NOT: Define
-// CHECK: function {{*}}kind=Initializer
+// CHECK: function {{*}}name="FirstConstant" {{*}}kind=BaseConstructor
 // CHECK-NOT: Define
 // CHECK: ElemSet
 // CHECK-NOT: Define

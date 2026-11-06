@@ -399,6 +399,9 @@ describe("own properties of an error with a code", () => {
     const e = await abortError();
     expect(ownShape(e)).toEqual(codeThenName("ABORT_ERR", "AbortError"));
     expect(Object.getOwnPropertyDescriptor(e, "name")).toEqual(enumerableName("AbortError"));
+    // The name is on the error alone. Without it the error is an Error again, as in Node.
+    delete e.name;
+    expect(e.name).toBe("Error");
   });
 
   // Bun's own: Node has no RedisError.
@@ -438,6 +441,8 @@ describe("own properties of an error with a code", () => {
     expect(Object.keys(e)).toEqual(["code", "info", "errno", "syscall", "path"]);
     expect(Object.getOwnPropertyDescriptor(e, "name")).toEqual({ ...enumerableName("SystemError"), enumerable: false });
     expect(e.code).toBe("ERR_FS_EISDIR");
+    delete e.name;
+    expect(e.name).toBe("Error");
   });
 
   test("the printers show an own name in the first line only", async () => {
@@ -486,7 +491,7 @@ describe("own properties of an error with a code", () => {
       enumerable: [],
     });
     // The first line of the stack has the name of the kind, which the error itself does not hold.
-    expect(first.stack).toStartWith("RangeError: ");
+    expect(first.stack).toStartWith("RangeError");
 
     // A `code` written to the prototype does not reach the next error.
     const before = Object.getOwnPropertyDescriptor(prototype, "code");

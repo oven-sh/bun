@@ -153,16 +153,16 @@ JSC::JSObject* ErrorCodeCache::createPrototype(JSC::VM& vm, JSC::JSGlobalObject*
     if (data.ownName != ErrorOwnName::SystemError)
         toString->putDirect(vm, WebCore::builtinNames(vm).codePrivateName(), code, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
 
-    // A kind other than Error needs its `name` here too: ErrorInstance::sanitizedNameString() looks at the error and at this object only, and then answers "Error".
-    prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(data.name)), JSC::PropertyAttribute::DontEnum | 0);
+    // The name of the kind, also where that is not "Error": ErrorInstance::sanitizedNameString() looks at the error and at this object only, and then answers "Error".
+    prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(JSC::errorTypeName(data.type))), JSC::PropertyAttribute::DontEnum | 0);
     prototype->putDirect(vm, vm.propertyNames->toString, toString, JSC::PropertyAttribute::DontEnum | 0);
 
     return prototype;
 }
 
-// The field of ErrorCodeCache that holds a name other than None.
 static unsigned ownNameField(ErrorOwnName name)
 {
+    ASSERT(name != ErrorOwnName::None);
     return 2 * NODE_ERROR_COUNT + static_cast<unsigned>(name) - 1;
 }
 

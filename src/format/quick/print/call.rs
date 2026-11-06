@@ -1503,16 +1503,6 @@ impl Quick {
         let mut c: i32 = 0;
         let mut st: i32 = 0;
         if !expanded_only {
-            if last_breaks {
-                // `.c(() => { .. }, [d, e])`: there is no group around these arguments. In the first state, which is printed flat, Prettier
-                // does not measure the array behind the function, however wide it is. The long way does.
-                let last = self.print_call.ch.at(base + (count - 1) * 2);
-                if self.is_call_expression(last)
-                    && self.is_react_hook_call_with_deps_array(self.n.at(last + 5))
-                {
-                    return Err(self.rare(rare::UNLIKE_PRETTIER));
-                }
-            }
             if last_breaks || empty_line_before_indent {
                 self.break_parent();
             }

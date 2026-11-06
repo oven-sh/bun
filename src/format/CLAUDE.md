@@ -93,6 +93,7 @@ With `proseWrap: "preserve"` nothing in a block mapping or sequence of one-line 
 - **An item whose value is something else goes the long way by itself** (`delegate`): a scalar over several lines, a flow collection that does not fit, properties. `key: value` with the lines below it that are indented further is parsed as a document of its own, and `Printer::print_only_item` prints it at the column of the key. Not with a comment on a line of its own or a block scalar in it.
 - **`plain_lines` is the loop for the most common lines.** It does what the loop of `run` does and nothing else. It reads no bytes in a loop: `bun_highway::YamlMarks` has one bit per byte for control characters, spaces, `:`/`#` and quotes, found by one kernel call per text, and a line is judged from 57 bits of each.
 - Only three things are measured, and only for ASCII: a flow collection on one line, `key: |`, and the key of `key: # comment`.
+- The long way fails where an indentation is made that is too long for a string, whether or not a line starts there. Only a flow collection on one line has such a place.
 - `FormatOptions::no_short_cuts` turns it off. `test/cli/format/short-cuts.test.ts` compares the two ways. Fixtures and real files find little here. What found the mistakes: damaged files, stretches of files and made-up documents with comments in every column, formatted both ways in one process, some million cases per minute.
 
 ## JSON: what is written is compared with the source

@@ -89,6 +89,9 @@ fn is(byte: u8, class: u8) -> bool {
 /// No position.
 const NONE: usize = usize::MAX;
 
+/// How many flow collections can be in each other.
+const MAX_FLOW_DEPTH: usize = 9;
+
 /// Number of bytes that are looked at together: as many as `Stops::window` has bits for, less one, because some things
 /// are known by two bytes.
 const WINDOW: usize = 56;
@@ -898,7 +901,7 @@ impl Scan<'_> {
         let is_mapping = self.at(start) == b'{';
         let close = if is_mapping { b'}' } else { b']' };
         // What's nested deeper goes the long way, which asks the stack.
-        if depth > 8 {
+        if depth >= MAX_FLOW_DEPTH {
             return None;
         }
         self.out.push(self.at(start));
@@ -1911,6 +1914,11 @@ impl Scan<'_> {
                 }
             };
             if kind == Value::Flow {
+                // The long way makes the indentation of each line that could start in it, and fails if that's too long.
+                let deepest = self.tab_width.saturating_mul(MAX_FLOW_DEPTH + 1);
+                if crate::is_too_long((item_out + 2).saturating_add(deepest)) {
+                    return false;
+                }
                 // It's written, to see how long it is.
                 let before = Undo {
                     len: self.out.len(),

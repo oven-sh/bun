@@ -122,6 +122,9 @@ describe("YAML", () => {
     "a: 1\n\u00a0\nb: 2\n \u3000\nc: 3\n",
     "a: \u00a0\nb: ✅ c\n- \u3042\n",
     ...headersBehindQuotes,
+    // Nothing starts a line in them, so only the long way finds out that the indentation would be too long.
+    "a: [b, c]\n",
+    "- {a: b}\n- [c]\n",
     // The ends of a text.
     "a: 1",
     "a: 1\n\n\n",
@@ -180,6 +183,7 @@ describe("YAML", () => {
     ["--tab-width=4", "--single-quote"],
     ["--tab-width=0"],
     ["--tab-width=300", "--print-width=1"],
+    ["--tab-width=4294967295"],
     ["--print-width=20", "--no-bracket-spacing", "--trailing-comma=none"],
     ["--print-width=100000", "--use-tabs"],
     ["--end-of-line=crlf"],

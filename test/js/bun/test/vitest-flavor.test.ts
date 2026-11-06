@@ -479,6 +479,401 @@ describe.concurrent("test context", () => {
     });
   });
 
+  const tooFew = "AssertionError: expected 1 assertion, but test ended with 0 assertions";
+  const tooMany = "AssertionError: expected 1 assertion, but test ended with 2 assertions";
+  const none = "AssertionError: received 0 assertions, but expected at least one assertion to be called";
+  const tooLate = (call: string) =>
+    `error: ${call} was called after the assertion count of its test was checked. Call it in the test, or in a beforeEach or afterEach hook.`;
+
+  // As in Jest, the assertion counts of a "bun:test" test are checked when its last hook is done.
+  test(`onTestFinished, onTestFailed and the rest of aroundEach read the assertion count of a "bun:test" test`, async () => {
+    const [mixed, around, concurrent] = await Promise.all([
+      runTests({
+        "a.test.js": `
+          import { test, expect, describe, afterEach } from "bun:test";
+          import { onTestFinished, onTestFailed } from "vitest";
+          const show = (where, { task }) => console.log(task.name + ":", where, task.result.state);
+          const watch = () => {
+            onTestFinished(ctx => show("onTestFinished", ctx));
+            onTestFailed(ctx => show("onTestFailed", ctx));
+          };
+          test("too few", () => { watch(); expect.assertions(1); });
+          test("too many", () => { watch(); expect.assertions(1); expect(1).toBe(1); expect(2).toBe(2); });
+          test("none", () => { watch(); expect.hasAssertions(); });
+          test("met", () => { watch(); expect.assertions(1); expect(1).toBe(1); });
+          test.fails("test.fails", () => { watch(); expect.assertions(1); });
+          test.failing("test.failing that throws", () => { watch(); expect.assertions(1); throw new Error("expected"); });
+          let attempt = 0;
+          test("retried", () => { watch(); expect.assertions(1); if (++attempt === 2) expect(1).toBe(1); }, { retry: 1 });
+          describe("afterEach throws", () => {
+            afterEach(() => { throw new Error("afterEach"); });
+            test.failing("test.failing that does not throw", () => { watch(); });
+          });
+          // It fails because it passed, which is known after the callbacks. Vitest does the same for test.fails.
+          test.failing("test.failing that passes", () => { watch(); });
+        `,
+      }),
+      runTests({
+        "a.test.js": `
+          import { test, expect, aroundEach, afterEach, onTestFinished } from "bun:test";
+          let ctx;
+          const show = where => console.log(ctx.task.name + ":", where, ctx.task.result.state);
+          aroundEach(async (runTest, context) => {
+            ctx = context;
+            ctx.onTestFinished(() => show("onTestFinished of the context"));
+            ctx.onTestFailed(() => show("onTestFailed"));
+            await runTest();
+            show("after runTest()");
+          });
+          // The hooks of the test and onTestFinished of "bun:test" run before the check.
+          afterEach(() => show("afterEach"));
+          test("too few", () => { onTestFinished(() => show('onTestFinished of "bun:test"')); expect.assertions(1); });
+          test("none", () => { expect.hasAssertions(); });
+          test("met", () => { expect.assertions(1); expect(1).toBe(1); });
+        `,
+      }),
+      runTests({
+        "a.test.js": `
+          import { test, aroundEach } from "bun:test";
+          aroundEach(async (runTest, { expect, onTestFailed, task }) => {
+            expect.hasAssertions();
+            onTestFailed(() => console.log(task.name + ": onTestFailed"));
+            if (task.name === "asserts") expect(1).toBe(1);
+            await runTest();
+            console.log(task.name + ": after runTest()", task.result.state);
+          });
+          test.concurrent("asserts", async () => { await 1; });
+          test.concurrent("does not assert", async () => { await 1; });
+        `,
+      }),
+    ]);
+    expect({ log: mixed.log, results: mixed.results, errors: mixed.errors, exitCode: mixed.exitCode }).toEqual({
+      log: [
+        "too few: onTestFinished fail",
+        "too few: onTestFailed fail",
+        "too many: onTestFinished fail",
+        "too many: onTestFailed fail",
+        "none: onTestFinished fail",
+        "none: onTestFailed fail",
+        "met: onTestFinished pass",
+        "test.fails: onTestFinished fail",
+        "test.fails: onTestFailed fail",
+        "test.failing that throws: onTestFinished fail",
+        "test.failing that throws: onTestFailed fail",
+        "retried: onTestFinished fail",
+        "retried: onTestFailed fail",
+        "retried: onTestFinished pass",
+        "test.failing that does not throw: onTestFinished fail",
+        "test.failing that does not throw: onTestFailed fail",
+        "test.failing that passes: onTestFinished pass",
+      ],
+      results: [
+        "(fail) too few",
+        "(fail) too many",
+        "(fail) none",
+        "(pass) met",
+        "(pass) test.fails",
+        "(fail) test.failing that throws",
+        "(pass) retried (attempt 2)",
+        "(fail) afterEach throws > test.failing that does not throw",
+        "(fail) test.failing that passes",
+      ],
+      errors: [tooFew, tooMany, none, tooFew, "error: afterEach"],
+      exitCode: 1,
+    });
+    expect({ log: around.log, results: around.results, errors: around.errors, exitCode: around.exitCode }).toEqual({
+      log: [
+        "too few: afterEach pass",
+        'too few: onTestFinished of "bun:test" pass',
+        "too few: onTestFinished of the context fail",
+        "too few: onTestFailed fail",
+        "too few: after runTest() fail",
+        "none: afterEach pass",
+        "none: onTestFinished of the context fail",
+        "none: onTestFailed fail",
+        "none: after runTest() fail",
+        "met: afterEach pass",
+        "met: onTestFinished of the context pass",
+        "met: after runTest() pass",
+      ],
+      results: ["(fail) too few", "(fail) none", "(pass) met"],
+      errors: [tooFew, none],
+      exitCode: 1,
+    });
+    expect({ log: concurrent.log.sort(), results: concurrent.results.sort(), exitCode: concurrent.exitCode }).toEqual({
+      log: ["asserts: after runTest() pass", "does not assert: after runTest() fail", "does not assert: onTestFailed"],
+      results: ["(fail) does not assert", "(pass) asserts"],
+      exitCode: 1,
+    });
+  });
+
+  test("where an assertion count is set and where it is met, for each way a test is called", async () => {
+    // A row sets a count of 1 in one place. A column makes the one assertion in one place. Both lists are in the order they run.
+    const setters = ["test", "afterEach", 'onTestFinished of "bun:test"', "onTestFinished of the context"];
+    const asserters = [
+      "nobody",
+      "test",
+      "afterEach",
+      'onTestFinished of "bun:test"',
+      "function that beforeEach returns",
+      "onTestFinished of the context",
+      "onTestFailed",
+      "rest of aroundEach",
+    ];
+    // As in Jest: checked when the last hook is done. What runs after that reads the result, so it can't set a count.
+    const jest = {
+      "test": "fail pass pass pass fail fail fail fail",
+      "afterEach": "fail pass pass pass fail fail fail fail",
+      'onTestFinished of "bun:test"': "fail pass pass pass fail fail fail fail",
+      "onTestFinished of the context": "fail fail fail fail fail fail fail fail",
+    };
+    // As in Vitest: checked when the callback of the test ends. A count that is set later is not checked.
+    const vitest = {
+      "test": "fail pass fail fail fail fail fail fail",
+      "afterEach": "pass pass pass pass pass pass pass pass",
+      'onTestFinished of "bun:test"': "pass pass pass pass pass pass pass pass",
+      "onTestFinished of the context": "pass pass pass pass pass pass pass pass",
+    };
+    const flavors: Record<string, { test: string; grid: Record<string, string> }> = {
+      "bun:test": { test: "bun.test", grid: jest },
+      "vitest": { test: "vitest.test", grid: vitest },
+      "test.extend()": { test: "bun.test.extend({})", grid: vitest },
+      "test.for()": { test: "bun.test.for([0])", grid: vitest },
+    };
+    const table = (flavor: string, watched: boolean) => `
+      import * as bun from "bun:test";
+      import * as vitest from "vitest";
+      const { describe, afterEach, expect } = ${flavor === "vitest" ? "vitest" : "bun"};
+      const test = ${flavors[flavor].test};
+      for (const sets of ${JSON.stringify(setters)}) {
+        for (const asserts of ${JSON.stringify(asserters)}) {
+          const name = ${JSON.stringify(flavor + (watched ? ", watched" : ""))} + " | " + sets + " | " + asserts;
+          const uses = site => site === sets || site === asserts;
+          const at = site => { if (site === sets) expect.assertions(1); if (site === asserts) expect(1).toBe(1); };
+          describe(name, () => {
+            if (uses("afterEach")) afterEach(() => at("afterEach"));
+            if (uses("function that beforeEach returns")) vitest.beforeEach(() => () => at("function that beforeEach returns"));
+            if (uses("rest of aroundEach")) bun.aroundEach(async runTest => { await runTest(); at("rest of aroundEach"); });
+            test("t", () => {
+              ${watched ? "vitest.onTestFailed(() => console.log(name));" : ""}
+              at("test");
+              if (uses('onTestFinished of "bun:test"')) bun.onTestFinished(() => at('onTestFinished of "bun:test"'));
+              if (uses("onTestFinished of the context")) vitest.onTestFinished(() => at("onTestFinished of the context"));
+              if (uses("onTestFailed")) vitest.onTestFailed(() => at("onTestFailed"));
+            });
+          });
+        }
+      }
+    `;
+    const files: Record<string, string> = {};
+    for (const [index, flavor] of Object.keys(flavors).entries()) {
+      files[`${index}-plain.test.js`] = table(flavor, false);
+      files[`${index}-watched.test.js`] = table(flavor, true);
+    }
+    const { log, results, errors, exitCode } = await runTests(files);
+
+    const verdicts = new Map<string, string>();
+    for (const line of results) {
+      const [, verdict, name] = /^\((\w+)\) (.*) > t(?: 0)?$/.exec(line)!;
+      // The failures are listed again at the end of the run.
+      if (!verdicts.has(name)) verdicts.set(name, verdict);
+    }
+    const gridOf = (flavor: string) =>
+      Object.fromEntries(
+        setters.map(sets => [
+          sets,
+          asserters.map(asserts => verdicts.get(`${flavor} | ${sets} | ${asserts}`)).join(" "),
+        ]),
+      );
+    for (const [flavor, { grid }] of Object.entries(flavors)) {
+      expect({ flavor, grid: gridOf(flavor) }).toEqual({ flavor, grid });
+      expect({ flavor, grid: gridOf(flavor + ", watched") }).toEqual({ flavor, grid });
+    }
+    const failed = [...verdicts].filter(([, verdict]) => verdict === "fail").map(([name]) => name);
+    // Every failure was known when onTestFailed had to run, and the report has the numbers that were compared.
+    expect(log.sort()).toEqual(failed.filter(name => name.includes(", watched")).sort());
+    const setTooLate = failed.filter(
+      name => name.startsWith("bun:test") && name.includes("| onTestFinished of the context |"),
+    );
+    expect(errors.sort()).toEqual([
+      ...Array(failed.length - setTooLate.length).fill(tooFew),
+      ...Array(setTooLate.length).fill(tooLate("expect.assertions()")),
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test(`what runs after the check of a "bun:test" test does not change the count, and cannot set one`, async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, expect, describe, aroundEach, onTestFinished as afterHooks } from "bun:test";
+        import { onTestFinished, onTestFailed } from "vitest";
+        const watch = () => onTestFailed(({ task }) => console.log("failed:", task.name));
+        describe("an assertion", () => {
+          test("one too many", () => { watch(); expect.assertions(1); expect(1).toBe(1); onTestFinished(() => { expect(2).toBe(2); }); });
+          test("one where none is expected", () => { watch(); expect.assertions(0); onTestFinished(() => { expect(1).toBe(1); }); });
+          test("in onTestFailed", () => { expect.assertions(1); onTestFailed(() => { console.log("in onTestFailed"); expect(1).toBe(1); }); });
+          test('in onTestFinished of "bun:test", registered too late', () => {
+            watch();
+            expect.assertions(1);
+            onTestFinished(() => { afterHooks(() => { expect(1).toBe(1); }); });
+          });
+          test("setState({ assertionCalls })", () => { watch(); expect.assertions(1); onTestFinished(() => { expect.setState({ assertionCalls: 1 }); }); });
+        });
+        describe("a count", () => {
+          test("expect.assertions()", () => { watch(); onTestFinished(() => { expect.assertions(1); }); });
+          test("expect.hasAssertions()", () => { watch(); expect(1).toBe(1); onTestFinished(() => { expect.hasAssertions(); }); });
+          test("setState({ expectedAssertionsNumber })", () => {
+            watch();
+            expect.assertions(1);
+            onTestFinished(() => { expect.setState({ expectedAssertionsNumber: null, assertionCalls: 1 }); });
+          });
+          test("setState({ isExpectingAssertions })", () => { watch(); onTestFinished(() => { expect.setState({ isExpectingAssertions: true }); }); });
+          describe("of the context", () => {
+            aroundEach(async (runTest, ctx) => { await runTest(); ctx.expect.hasAssertions(); });
+            test("after runTest()", () => { watch(); });
+          });
+          // test.fails hides the error, and takes it as the failure that it expects.
+          test.fails("in test.fails", () => { watch(); onTestFinished(() => { expect.assertions(1); }); });
+        });
+      `,
+    });
+    const setState =
+      "error: expect.setState() cannot set expectedAssertionsNumber or isExpectingAssertions after the assertion count of its test was checked. Set them in the test, or in a beforeEach or afterEach hook.";
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "in onTestFailed",
+        'failed: in onTestFinished of "bun:test", registered too late',
+        "failed: setState({ assertionCalls })",
+        "failed: expect.assertions()",
+        "failed: expect.hasAssertions()",
+        "failed: setState({ expectedAssertionsNumber })",
+        "failed: setState({ isExpectingAssertions })",
+        "failed: in test.fails",
+      ],
+      results: [
+        "(pass) an assertion > one too many",
+        "(pass) an assertion > one where none is expected",
+        "(fail) an assertion > in onTestFailed",
+        '(fail) an assertion > in onTestFinished of "bun:test", registered too late',
+        "(fail) an assertion > setState({ assertionCalls })",
+        "(fail) a count > expect.assertions()",
+        "(fail) a count > expect.hasAssertions()",
+        "(fail) a count > setState({ expectedAssertionsNumber })",
+        "(fail) a count > setState({ isExpectingAssertions })",
+        "(fail) a count > of the context > after runTest()",
+        "(pass) a count > in test.fails",
+      ],
+      // A failed check is reported with the numbers that it compared.
+      errors: [
+        tooFew,
+        tooFew,
+        tooFew,
+        tooLate("expect.assertions()"),
+        tooLate("expect.hasAssertions()"),
+        setState,
+        tooFew,
+        setState,
+        tooLate("expect.hasAssertions()"),
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // As in Vitest. `test.extend()` and `test.for()` of "bun:test" call their tests like "vitest" does.
+  test.each([
+    [`"vitest"`, `import { test, expect, describe, afterEach } from "vitest";`],
+    [
+      `test.extend() of "bun:test"`,
+      `import { test as base, expect, describe, afterEach } from "bun:test"; const test = base.extend({});`,
+    ],
+    [
+      `"vitest", with the hooks of "bun:test"`,
+      `import { test, describe } from "vitest"; import { expect, afterEach } from "bun:test";`,
+    ],
+  ])(
+    "the assertion counts of a test with a context are checked once, when its callback ends: %s",
+    async (_, imports) => {
+      const { log, results, errors, exitCode } = await runTests({
+        "a.test.js": `
+          ${imports}
+          describe("afterEach asserts", () => {
+            afterEach(() => { expect(1).toBe(1); });
+            test("too few", ({ onTestFailed }) => { onTestFailed(() => console.log("failed")); expect.assertions(1); });
+          });
+          describe("afterEach sets a count", () => {
+            afterEach(() => { expect.assertions(3); });
+            test("too late", () => {});
+          });
+          describe("afterEach removes the count", () => {
+            afterEach(() => { expect.setState({ expectedAssertionsNumber: null, assertionCalls: 1 }); });
+            test("too late", () => { expect.assertions(1); });
+          });
+          describe("afterEach reads the count", () => {
+            afterEach(() => { console.log("expected:", expect.getState().expectedAssertionsNumber); });
+            test("met", () => { expect.assertions(1); expect(1).toBe(1); });
+          });
+        `,
+      });
+      expect({ log, results, errors, exitCode }).toEqual({
+        log: ["failed", "expected: 1"],
+        results: [
+          "(fail) afterEach asserts > too few",
+          "(pass) afterEach sets a count > too late",
+          "(fail) afterEach removes the count > too late",
+          "(pass) afterEach reads the count > met",
+        ],
+        errors: [tooFew, tooFew],
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("the module of a hook does not change when the assertion count of its test is checked", async () => {
+    const { results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const { describe, expect } = bun;
+        describe('test of "bun:test"', () => {
+          describe('afterEach of "vitest" asserts', () => {
+            vitest.afterEach(() => { expect(1).toBe(1); });
+            bun.test("counted", () => { expect.assertions(1); });
+          });
+          describe('afterEach of "vitest" sets a count', () => {
+            vitest.afterEach(() => { expect.hasAssertions(); });
+            bun.test("checked", () => {});
+          });
+          describe("afterEach asserts, inside aroundEach", () => {
+            bun.aroundEach(async runTest => { await runTest(); });
+            bun.afterEach(() => { expect(1).toBe(1); });
+            bun.test("counted", () => { expect.assertions(1); });
+          });
+        });
+        describe('test of "vitest"', () => {
+          describe('afterEach of "bun:test" asserts', () => {
+            bun.afterEach(() => { expect(1).toBe(1); });
+            vitest.test("not counted", () => { expect.assertions(1); });
+          });
+          describe('afterEach of "bun:test" sets a count', () => {
+            bun.afterEach(() => { expect.hasAssertions(); });
+            vitest.test("not checked", () => {});
+          });
+        });
+      `,
+    });
+    expect({ results, errors, exitCode }).toEqual({
+      results: [
+        '(pass) test of "bun:test" > afterEach of "vitest" asserts > counted',
+        '(fail) test of "bun:test" > afterEach of "vitest" sets a count > checked',
+        '(pass) test of "bun:test" > afterEach asserts, inside aroundEach > counted',
+        '(fail) test of "vitest" > afterEach of "bun:test" asserts > not counted',
+        '(pass) test of "vitest" > afterEach of "bun:test" sets a count > not checked',
+      ],
+      errors: [none, tooFew],
+      exitCode: 1,
+    });
+  });
+
   test("onTestFinished and onTestFailed outside of a test", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

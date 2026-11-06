@@ -149,6 +149,9 @@ impl Expect {
             return Ok(());
         }
         let applied = with_sequence(test, |sequence| {
+            if (expected_assertions_number.is_some() || is_expecting_assertions.is_some()) && sequence.count_is_final() {
+                return false;
+            }
             if let Some(count) = assertion_calls {
                 sequence.expect_call_count = count;
             }
@@ -162,11 +165,13 @@ impl Expect {
                 (Some(false), ExpectAssertions::AtLeastOne) => sequence.expect_assertions = ExpectAssertions::NotSet,
                 _ => {}
             }
+            true
         });
-        if applied.is_none() {
-            return Err(global.throw(format_args!("expect.setState() cannot set the assertion counters in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+        match applied {
+            Some(true) => Ok(()),
+            Some(false) => Err(global.throw(format_args!("expect.setState() cannot set expectedAssertionsNumber or isExpectingAssertions after the assertion count of its test was checked. Set them in the test, or in a beforeEach or afterEach hook."))),
+            None => Err(global.throw(format_args!("expect.setState() cannot set the assertion counters in the describe phase, in concurrent tests, between tests, or after test execution has completed"))),
         }
-        Ok(())
     }
 }
 

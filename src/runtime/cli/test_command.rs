@@ -2876,8 +2876,7 @@ impl JunitReporter {
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                let described = TestFailure::from_result(status, assertions);
-                self.write_failure(indent, b"failure", described.as_ref().or(failure))?;
+                self.write_failure(indent, b"failure", failure)?;
                 for earlier in &t.earlier_failures {
                     self.write_failure(indent, b"rerunFailure", Some(earlier))?;
                 }
@@ -3129,27 +3128,21 @@ impl CommandLineReporter {
             match status {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
                     // not sent to writer so it doesn't get printed twice
-                    let expected_count =
-                        if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
-                            n
-                        } else {
-                            12345
-                        };
-                    Output::err(
-                        crate::Error::AssertionError,
-                        "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
-                        (
-                            expected_count,
-                            if expected_count == 1 { "" } else { "s" },
-                            sequence.expect_call_count,
-                            if sequence.expect_call_count == 1 {
-                                ""
-                            } else {
-                                "s"
-                            },
-                        ),
-                    );
-                    Output::flush();
+                    if let (bun_test::ExpectAssertions::Exact(expected_count), call_count) =
+                        sequence.checked_count()
+                    {
+                        Output::err(
+                            crate::Error::AssertionError,
+                            "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
+                            (
+                                expected_count,
+                                if expected_count == 1 { "" } else { "s" },
+                                call_count,
+                                if call_count == 1 { "" } else { "s" },
+                            ),
+                        );
+                        Output::flush();
+                    }
                 }
                 bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
                     Output::err(
@@ -3484,7 +3477,9 @@ impl CommandLineReporter {
         // Under `--parallel` the flag is forwarded to workers, whose records
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
-            let failure = sequence.failure.take();
+            let thrown = sequence.failure.take();
+            // Described here and not by the writer, which under `--parallel` is in another process and has no sequence.
+            let failure = TestFailure::from_result(result, sequence.checked_count().1).or(thrown);
             let earlier = core::mem::take(&mut sequence.earlier_failures);
             Self::test_case_report(
                 result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,

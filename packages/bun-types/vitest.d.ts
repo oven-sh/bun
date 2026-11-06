@@ -548,7 +548,11 @@ declare module "vitest" {
      * test even when other tests run concurrently.
      */
     readonly expect: ExpectStatic;
-    /** Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first. */
+    /**
+     * Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first.
+     *
+     * `expect.assertions()` and `expect.hasAssertions()` are checked before `fn` runs, so an assertion in `fn` isn't counted.
+     */
     onTestFinished(fn: OnTestFinishedHandler, timeout?: number): void;
     /** Like `onTestFinished()`, but only runs if the test failed. */
     onTestFailed(fn: OnTestFailedHandler, timeout?: number): void;
@@ -781,7 +785,11 @@ declare module "vitest" {
   /** Groups tests into a block. */
   export const describe: SuiteAPI;
 
-  /** Runs `fn` after the current test, its `afterEach` hooks and its fixture teardown. */
+  /**
+   * Runs `fn` after the current test, its `afterEach` hooks and its fixture teardown.
+   *
+   * `expect.assertions()` and `expect.hasAssertions()` are checked before `fn` runs, so an assertion in `fn` isn't counted.
+   */
   export function onTestFinished(fn: OnTestFinishedHandler, timeout?: number): void;
   /** Like `onTestFinished()`, but only runs if the test failed. */
   export function onTestFailed(fn: OnTestFailedHandler, timeout?: number): void;

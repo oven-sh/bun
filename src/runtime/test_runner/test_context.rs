@@ -1,5 +1,6 @@
 //! Vitest's test context. A test shares one with its hooks, and keeps it across retries and repeats.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
@@ -17,7 +18,7 @@ use super::bun_test::{
     Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
     ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
 };
-use super::execution::{ExecutionSequence, Result as ExecutionResult};
+use super::execution::{ExecutionSequence, ExpectAssertions, Result as ExecutionResult};
 use super::expect::Expect;
 use super::expect::expect_deferred::ExpectDeferred;
 use super::jest::FileColumns as _;
@@ -47,6 +48,8 @@ pub(crate) struct TestContext {
     /// `BunTest::extra_execution_entries` owns the entries.
     deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,
     fixtures: JsCell<Vec<usize>>,
+    /// The attempt whose assertion count is checked, with the expectation and the number of `expect()` calls the check compared.
+    checked_count: Cell<Option<(u32, ExpectAssertions, u32)>>,
 }
 
 pub(crate) use crate::generated_bindgen::test_context::js_TestContext as js;
@@ -89,6 +92,7 @@ impl TestContext {
             sequence_index,
             deferred: JsCell::new(Vec::new()),
             fixtures: JsCell::new(Vec::new()),
+            checked_count: Cell::new(None),
         }
         .to_js(global)
     }
@@ -166,6 +170,22 @@ impl TestContext {
         let when = if unsafe { sequence.as_ref() }.is_before_run_test() { Deferred::AroundFixture } else { Deferred::Fixture };
         self.defer(buntest.get(), when, tear_down, timeout);
         true
+    }
+
+    /// Returns false if `attempt` already had its assertion count checked.
+    pub(crate) fn start_count_check(&self, attempt: u32, expected: ExpectAssertions, received: u32) -> bool {
+        if self.checked_count(attempt).is_some() {
+            return false;
+        }
+        self.checked_count.set(Some((attempt, expected, received)));
+        true
+    }
+
+    pub(crate) fn checked_count(&self, attempt: u32) -> Option<(ExpectAssertions, u32)> {
+        match self.checked_count.get() {
+            Some((checked, expected, received)) if checked == attempt => Some((expected, received)),
+            _ => None,
+        }
     }
 
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {

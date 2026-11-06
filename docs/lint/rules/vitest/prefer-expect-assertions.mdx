@@ -85,7 +85,7 @@ test("rejects a wrong password", async () => {
 });
 ```
 
-A `beforeEach` or `afterEach` hook that calls `expect.hasAssertions()` covers the tests after it in the same `describe`, or in the rest of the file if it's at the top level:
+A `beforeEach` or `afterEach` hook that calls `expect.hasAssertions()` covers the tests after it in the same `describe`, or in the rest of the file if it's at the top level. Use `beforeEach`: Vitest and `bun test` check a `"vitest"` test when its callback ends, so a call in `afterEach` has no effect when the test runs.
 
 {/* good */}
 ```ts

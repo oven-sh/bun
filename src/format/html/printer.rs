@@ -347,6 +347,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         // printed as they are written. A host tells a line break in a text from the others.
         if dedent == 0
             && self.out.indent_level() == Some(0)
+            && !self.options.has_parent_parser
             && !self.options.format.no_short_cuts
             && !strings::contains(value, b" \n")
             && !strings::contains(value, b"\t\n")

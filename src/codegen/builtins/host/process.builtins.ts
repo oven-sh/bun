@@ -362,7 +362,6 @@ const emitsWarningOnNextTick = [
       warning: [
         b.retained,
         b.storedIn(b.nativeCell(handedWarningsCell)),
-        b.definesName(["code", "detail"], b.string),
         formattedInErrorMessage,
       ],
       ...warningOptionUses,

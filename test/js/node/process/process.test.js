@@ -3245,13 +3245,30 @@ it("removeAllListeners('warning') silences the default print", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
-// node: `new Error(warning)`, then `warning.name = String(type || 'Warning')`.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L194-L196
-it("emitWarning keeps an empty message, and an empty type is 'Warning'", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
+// node builds the warning only for a string: `new Error(warning)`, then `name`, `code` and `detail` as own enumerable
+// properties. An Error that the caller passes is emitted as it is.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L164-L169
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L194-L198
+// Every expected value is what node v26.3.0 prints for the same script.
+describe("emitWarning builds the warning as node's createWarningObject does", () => {
+  async function run(script, ...flags) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: { ...bunEnv, NODE_NO_WARNINGS: undefined, NODE_REDIRECT_WARNINGS: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // What the default listener prints after "(node:<pid>) ", and the detail lines. The hint about --trace-warnings is left out.
+    const printed = stderr
+      .split(/\r?\n/)
+      .filter(line => line && !line.startsWith("(Use "))
+      .map(line => line.replace(/^\(node:\d+\) /, ""));
+    return { seen: stdout && JSON.parse(stdout), printed, exitCode };
+  }
+
+  it.concurrent("keeps an empty message, and an empty type is 'Warning'", async () => {
+    const { seen, printed, exitCode } = await run(
       `const seen = [];
        process.on("warning", w => seen.push([w.name, w.message, Object.hasOwn(w, "message")]));
        process.on("exit", () => console.log(JSON.stringify(seen)));
@@ -3261,27 +3278,131 @@ it("emitWarning keeps an empty message, and an empty type is 'Warning'", async (
        process.emitWarning("m", "", "CODE");
        process.emitWarning("", { type: "" });
        process.emitWarning("", "Custom");`,
-    ],
-    env: { ...bunEnv, NODE_NO_WARNINGS: undefined, NODE_REDIRECT_WARNINGS: undefined },
-    stdout: "pipe",
-    stderr: "pipe",
+    );
+    expect(seen).toEqual([
+      ["Warning", "", true],
+      ["Warning", "", true],
+      ["Warning", "m", true],
+      ["Warning", "m", true],
+      ["Warning", "", true],
+      ["Custom", "", true],
+    ]);
+    // The name alone when the message is empty.
+    expect(printed).toEqual(["Warning", "Warning", "Warning: m", "[CODE] Warning: m", "Warning", "Custom"]);
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual([
-    ["Warning", "", true],
-    ["Warning", "", true],
-    ["Warning", "m", true],
-    ["Warning", "m", true],
-    ["Warning", "", true],
-    ["Custom", "", true],
-  ]);
-  // What the default listener prints after "(node:<pid>) ": the name alone when the message is empty.
-  const printed = stderr
-    .split(/\r?\n/)
-    .filter(line => line.startsWith("(node:"))
-    .map(line => line.replace(/^\(node:\d+\) /, ""));
-  expect(printed).toEqual(["Warning", "Warning", "Warning: m", "[CODE] Warning: m", "Warning", "Custom"]);
-  expect(exitCode).toBe(0);
+
+  it.concurrent("name, code and detail are own enumerable properties, in that order", async () => {
+    const all = "enumerable writable configurable";
+    const { seen, exitCode } = await run(
+      `const seen = [];
+       const attributes = (w, key) => {
+         const d = Object.getOwnPropertyDescriptor(w, key);
+         return d ? ["enumerable", "writable", "configurable"].filter(a => d[a]).join(" ") : "absent";
+       };
+       process.on("warning", w =>
+         seen.push([Object.keys(w), JSON.stringify(w), ["name", "code", "detail"].map(key => attributes(w, key))]),
+       );
+       process.on("exit", () => console.log(JSON.stringify(seen)));
+       process.emitWarning("m", { type: "T", code: "C", detail: "D" });
+       process.emitWarning("m", "T", "C");
+       process.emitWarning("m");
+       process.emitWarning("m", { code: "", detail: "" });
+       process.emitWarning("m", { detail: 1 });`,
+    );
+    expect(seen).toEqual([
+      [["name", "code", "detail"], '{"name":"T","code":"C","detail":"D"}', [all, all, all]],
+      [["name", "code"], '{"name":"T","code":"C"}', [all, all, "absent"]],
+      [["name"], '{"name":"Warning"}', [all, "absent", "absent"]],
+      [["name", "code", "detail"], '{"name":"Warning","code":"","detail":""}', [all, all, all]],
+      // A detail that is not a string is left out.
+      [["name"], '{"name":"Warning"}', [all, "absent", "absent"]],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("does not write to an Error that the caller passes", async () => {
+    const { seen, exitCode } = await run(
+      `const seen = [];
+       const code = w => {
+         const d = Object.getOwnPropertyDescriptor(w, "code");
+         if (!d) return "absent";
+         return (d.get ? "getter" : JSON.stringify(d.value)) + (d.enumerable ? " enumerable" : "") + (d.configurable ? " configurable" : "");
+       };
+       process.on("warning", w =>
+         seen.push([w.message, Object.keys(w), code(w), Object.hasOwn(w, "detail"), Object.isFrozen(w)]),
+       );
+       process.on("exit", () => console.log(JSON.stringify(seen)));
+       const own = new TypeError("own");
+       own.code = "OWN";
+       const accessor = new Error("accessor");
+       Object.defineProperty(accessor, "code", { get: () => "GET" });
+       const twice = new Error("twice");
+       process.emitWarning(new Error("plain"), { type: "T", code: "C", detail: "D" });
+       process.emitWarning(own, "T", "C");
+       process.emitWarning(Object.freeze(new Error("frozen")), "T", "C");
+       process.emitWarning(accessor, "T", "C");
+       process.emitWarning(twice, "T", "FIRST");
+       process.emitWarning(twice, "T", "SECOND");`,
+    );
+    expect(seen).toEqual([
+      ["plain", [], "absent", false, false],
+      ["own", ["code"], '"OWN" enumerable configurable', false, false],
+      ["frozen", [], "absent", false, true],
+      ["accessor", [], "getter", false, false],
+      ["twice", [], "absent", false, false],
+      ["twice", [], "absent", false, false],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The options of a passed Error are not part of it: they are not printed, and --disable-warning does not match them.
+  it.concurrent.each([
+    ["no flag", []],
+    ["--disable-warning=C", ["--disable-warning=C"]],
+  ])("prints a passed Error without the options (%s)", async (_, flags) => {
+    const { printed, exitCode } = await run(
+      `process.emitWarning(new Error("passed"), { type: "T", code: "C", detail: "D" });
+       const own = new TypeError("own");
+       own.code = "OWN";
+       process.emitWarning(own, "T", "C");`,
+      ...flags,
+    );
+    expect(printed).toEqual(["Error: passed", "[OWN] TypeError: own"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("every producer of a string warning gets that shape", async () => {
+    const worker = `const { parentPort } = require("node:worker_threads");
+       process.on("warning", w => parentPort.postMessage([w.name, Object.keys(w)]));
+       process.emitWarning("in a worker", "T", "C");`;
+    const { seen, exitCode } = await run(
+      `const { Worker } = require("node:worker_threads");
+       const seen = {};
+       const shape = w => [w.name, Object.keys(w)];
+       process.on("warning", w => {
+         if (w.name === "TimeoutNaNWarning") seen.native = shape(w);
+         if (w.code === "DEP_JS") seen.js = shape(w);
+       });
+       process.on("uncaughtException", w => (seen.thrown = shape(w)));
+       process.on("exit", () => console.log(JSON.stringify(seen)));
+       clearTimeout(setTimeout(() => {}, NaN));
+       require("node:util").deprecate(() => {}, "from util.deprecate", "DEP_JS")();
+       new Worker(${JSON.stringify(worker)}, { eval: true }).on("message", m => {
+         seen.worker = m;
+         process.throwDeprecation = true;
+         process.emitWarning("thrown", "DeprecationWarning", "DEP_THROWN");
+       });`,
+      "--no-warnings",
+    );
+    expect(seen).toEqual({
+      native: ["TimeoutNaNWarning", ["name"]],
+      js: ["DeprecationWarning", ["name", "code"]],
+      worker: ["T", ["name", "code"]],
+      thrown: ["DeprecationWarning", ["name", "code"]],
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Node registers onWarning at bootstrap (pre_execution.js setupWarningHandler),

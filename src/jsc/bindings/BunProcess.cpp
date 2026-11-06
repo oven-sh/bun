@@ -2512,8 +2512,6 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
         Bun::V::validateString(scope, globalObject, type, "type"_s);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    //   warning.name = String(type || 'Warning');
-    if (!type.toBoolean(globalObject)) type = jsString(vm, String("Warning"_s));
 
     if (code.isCallable()) {
         ctor = code;
@@ -2530,15 +2528,17 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
         RETURN_IF_EXCEPTION(scope, {});
         // Not createError(): it asserts that the message is not empty, and `new Error("")` is valid.
         errorInstance = ErrorInstance::create(vm, globalObject->errorStructure(), s, JSValue());
-        errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+        // Own enumerable properties, and only of the Error made here:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L196-L198
+        if (!type.toBoolean(globalObject)) type = jsString(vm, String("Warning"_s));
+        errorInstance->putDirect(vm, vm.propertyNames->name, type);
+        if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code);
+        if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
         return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning));
     }
-
-    if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
-    if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
 
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""scenes.py: odd spellings of constant locales and options, and odd uses of a constant formatter. Prints a .ts program.
-Part 1: each (locale text, options text) is written verbatim as constants, and again with both passed through an opaque function; the two formatters must agree on every value and in resolvedOptions().
-Part 2: scenes, each run on a constant formatter and on its twin; the two transcripts must be equal."""
+"""scenes.py: Unusual spellings of constant locales and options, and unusual uses of a constant formatter. Prints a .ts
+program. Each (locale, options) pair is written as constants and again passed through an opaque function.
+"""
 import json, re
 D, N = "DateTimeFormat", "NumberFormat"
 Z = 'timeZone: "UTC"'

@@ -67,9 +67,16 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: syntheticExports 1 8
 # CHECK-NEXT: requiredNames 1 8
 # CHECK-NEXT: exportStatements 0 0
+# CHECK-NEXT: ambiguousExports 0 0
+# CHECK-NEXT: sourceStamps 0 0
 # CHECK-NEXT: moduleFailures 2 16
 # CHECK-NEXT: modulesByPath 5 10
+# CHECK-NEXT: directoriesOfModulesByPath 1 4
 # CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: importsOfHeldFiles 0 0
+# The variable of the library's file m3 is left out.
+# CHECK-NEXT: namedVariables 8 8
+# CHECK-NEXT: namedCaptures 0 0
 # CHECK-NEXT: compiledRuntimeModules 1 8
 
 # ROWS: module m0 kind=SourceText path="/a.ts" displayPath="a.ts" {{*}}requests=0 exports=0 syntheticExports=0 requiredNames=0 linkRequests=0 evaluationRequests=0
@@ -109,4 +116,7 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # ROWS-NEXT: failure importer=m0 specifier=""
 # ROWS-NEXT: failure importer=m0 specifier="missing"
 # ROWS-NEXT: modulesByPath modules=[m0 m1 m2 m3 m6]
+# ROWS-NEXT: namedVariable group=0 name="a"
+# ROWS-NEXT: namedVariable group=1 name="b"
+# ROWS-NEXT: namedVariable group=1 name="c"
 # ROWS-NEXT: runtimeModule id=BunSqlite module=m6

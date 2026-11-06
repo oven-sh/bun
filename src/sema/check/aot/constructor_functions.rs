@@ -3,7 +3,7 @@ use crate::bind::BindingInitializer;
 use crate::check::Checker;
 use crate::hir::{ExprId, ExprKind, Flags, FnId, FnKind, Func, StmtKind, has_body};
 use crate::program::{FileId, Sym};
-use crate::types::{Origin, SigId, TypeData, TypeId};
+use crate::types::{Origin, PropFlags, SigId, TypeData, TypeId};
 use smallvec::SmallVec;
 
 fn is_constructible_function(function: &Func) -> bool {
@@ -100,6 +100,44 @@ impl Checker<'_, '_> {
                 .all(|&part| self.is_declared_in_compiled_files(part)),
             _ => false,
         }
+    }
+
+    fn type_behind_mapped_types(&mut self, mapped: TypeId) -> TypeId {
+        if self.is_stack_low() || self.mapped_origin(mapped).is_none() {
+            return mapped;
+        }
+        match self.mapped_modifiers_type(mapped) {
+            Some(source) if source != mapped => self.type_behind_mapped_types(source),
+            _ => mapped,
+        }
+    }
+
+    pub(in crate::check) fn has_other_optional_members_than_mapped_type(
+        &mut self,
+        object_type: TypeId,
+    ) -> bool {
+        if self.is_stack_low() {
+            return false;
+        }
+        if let TypeData::Intersection(parts) = self.data(object_type) {
+            return parts
+                .iter()
+                .any(|&part| self.has_other_optional_members_than_mapped_type(part));
+        }
+        if self.combined_mapped_optionality(object_type) == 0 {
+            return false;
+        }
+        let source = self.type_behind_mapped_types(object_type);
+        let Some(members) = self.members(object_type) else {
+            return false;
+        };
+        members.shape().props.iter().any(|member| {
+            let is_optional = member.flags.contains(PropFlags::OPTIONAL);
+            self.get_property_of_type(source, member.name)
+                .is_some_and(|(mapped, _)| {
+                    mapped.flags.contains(PropFlags::OPTIONAL) != is_optional
+                })
+        })
     }
 
     pub(in crate::check) fn type_constructed_by_function(

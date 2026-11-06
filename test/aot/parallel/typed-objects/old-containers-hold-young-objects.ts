@@ -22,8 +22,11 @@ function churn(rounds: number) {
   }
 }
 const results: string[] = [];
-function check(name: string, wrongAt: (i: number) => boolean) { let wrong = 0, first = -1; for (let i = 0; i < N; i++) { let bad = true; try { bad = wrongAt(i); } catch { bad = true; } if (bad) { wrong++; if (first < 0) first = i; } } results.push(name + ": " + wrong + (wrong ? " first " + first : "")); }
-const isLeaf = (l: any, i: number) => l !== null && l !== undefined && l.n === i && l.s === "s" + i;
+// What the check that runs has seen go wrong first. A line that ends in 0 says nothing of it.
+let seen = "";
+function say(value: any): string { try { return typeof value + " " + (value !== null && typeof value === "object" ? "{ n: " + typeof value.n + " " + String(value.n) + ", s: " + typeof value.s + " " + String(value.s) + " }" : String(value)); } catch (error: any) { return "that cannot be read, " + String(error?.name) + ": " + String(error?.message); } }
+function check(name: string, wrongAt: (i: number) => boolean) { let wrong = 0, first = -1, why = ""; for (let i = 0; i < N; i++) { let bad = true; seen = ""; try { bad = wrongAt(i); } catch (error: any) { bad = true; seen = "threw " + String(error?.name) + ": " + String(error?.message) + (seen ? ", behind " + seen : ""); } if (bad) { wrong++; if (first < 0) { first = i; why = seen; } } } results.push(name + ": " + wrong + (wrong ? " first " + first + (why ? ": " + why : "") : "")); }
+const isLeaf = (l: any, i: number) => { const is = l !== null && l !== undefined && l.n === i && l.s === "s" + i; if (!is && !seen) seen = "for leaf " + i + " there is " + say(l); return is; };
 
 const typedNodes: Node1[] = [], viaAny: Node1[] = [], byKey: Node1[] = [], created: Node1[] = [], extras: Node1[] = [];
 const plains: any[] = [], plainsByKey: any[] = [], holders: Holder[] = [];

@@ -84,7 +84,7 @@ console.log(JSON.stringify(module.exports), require_class() === Box, require_lat
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__commonJS"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 captures=[{type=undefined|null|[[f_10]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|[[L_11]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_12]] flags=[IsExpected]}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 captures=[{type=undefined|null|[[f_10]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected] variableName="__getOwnPropNames"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|[[L_11]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_12]] flags=[IsExpected]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_10]]|builtin(ObjectGetOwnPropertyNames), v1: undefined|null|object, v2: undefined|null|[[L_11]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -114,7 +114,7 @@ console.log(JSON.stringify(module.exports), require_class() === Box, require_lat
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__require"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_14]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_10]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_14]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_10]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected] variableName="__getOwnPropNames"}, {type=undefined|null|object flags=[IsExpected] variableName="cb"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: env [[L_14]], v1: undefined|null|[[f_10]]|builtin(ObjectGetOwnPropertyNames), v2: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

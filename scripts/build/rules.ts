@@ -19,7 +19,6 @@
  * lives where" question fuzzy. Explicit registration is clearer.
  */
 
-import { registerAotRules } from "./aot.ts";
 import { registerCodegenRules } from "./codegen.ts";
 import { registerCompileRules, registerDirStamps } from "./compile.ts";
 import type { Config } from "./config.ts";
@@ -48,9 +47,6 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
 
   // codegen, esbuild, bun_install + codegen/stamps dir stamps
   registerCodegenRules(n, cfg);
-
-  // aot_check
-  registerAotRules(n, cfg);
 
   // rust_plan, rust_rustc, rust_build_script
   registerRustRules(n, cfg);

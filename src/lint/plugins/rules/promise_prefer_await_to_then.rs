@@ -9,7 +9,7 @@ pub struct PreferAwaitToThen {
     strict: bool,
 }
 
-const PREFER_AWAIT_TO_THEN: Message = Message::new("", "Prefer await to then()/catch()/finally()");
+const PREFER_AWAIT_TO_THEN: &Message = &Message::new("", "Prefer await to then()/catch()/finally()");
 
 impl Rule for PreferAwaitToThen {
     const META: Meta = Meta::oxlint(Plugin::Promise, "prefer-await-to-then", Kind::Suggestion);

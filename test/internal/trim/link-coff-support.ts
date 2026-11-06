@@ -4,7 +4,7 @@ import { isWindows, tempDir } from "harness";
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { detectWindowsSysroot } from "../../../scripts/build/config.ts";
-import { coffRecordSectionName, namedBytesOfPe } from "../../../scripts/build/trim/coff-graph.ts";
+import { coffRecordSectionName, namedBytesOfPe, readUnwindRecords } from "../../../scripts/build/trim/coff-graph.ts";
 import { CoffObject } from "../../../scripts/build/trim/coff-objects.ts";
 import type { FeatureName } from "../../../scripts/build/trim/features.ts";
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
@@ -71,9 +71,9 @@ export const moreObjects = ["feature_code", "entry", "more", "embedder", "main"]
 export const thinLtoFlags = ["-flto=thin", "-O2"];
 const fixedLinkFlags = ["/subsystem:console", "/opt:ref", "/opt:icf", "/Brepro"];
 const runtimeLibraryFlags = ["/defaultlib:libcmt", "/defaultlib:oldnames"];
+export const printfLibrary = "/defaultlib:legacy_stdio_definitions";
 const freestandingLinkFlags = ["/nodefaultlib", "/entry:main"];
 const freestandingCompileFlags = ["-ffreestanding", ...featureFlags];
-export const printfLibrary = "/defaultlib:legacy_stdio_definitions";
 
 function compile(folder: string, name: string, { machine = "x64", compileFlags = {}, isFreestanding = false }: LinkOptions) {
   const isCxx = existsSync(join(folder, `${name}.cpp`));
@@ -106,13 +106,6 @@ async function prepareInputs(folder: string, options: LinkOptions, pathOf: (name
   writeFileSync(join(folder, "in.rsp"), [...linkedObjects, ...inputs, ...Object.keys(archives).map(pathOf)].join("\n") + "\n");
 }
 
-export async function wrapped(folder: string, options: LinkOptions = {}) {
-  await prepareInputs(folder, options, name => name);
-  const { minimums, builtins } = options;
-  const linkInputs = writeLinkInputs(folder, { minimums, builtins });
-  return await run(linkArguments(linkInputs, linkCommand(options, name => name), { demangler: tools["llvm-cxxfilt"]! }), folder);
-}
-
 export async function plainLink(folder: string, options: LinkOptions = {}) {
   const pathOf = (name: string) => join(folder, name);
   await prepareInputs(folder, options, pathOf);
@@ -121,19 +114,15 @@ export async function plainLink(folder: string, options: LinkOptions = {}) {
   return command;
 }
 
+export async function wrapped(folder: string, options: LinkOptions = {}) {
+  await prepareInputs(folder, options, name => name);
+  const { minimums, builtins } = options;
+  const linkInputs = writeLinkInputs(folder, { minimums, builtins });
+  return await run(linkArguments(linkInputs, linkCommand(options, name => name), { demangler: tools["llvm-cxxfilt"]! }), folder);
+}
+
 const missingTools = Object.keys(tools).filter(name => tools[name] === null);
 const missingToolsReason = missingTools.length > 0 ? `${missingTools.join(", ")} not on PATH` : undefined;
-
-async function findFreestandingFailure(machine: Machine): Promise<string | undefined> {
-  if (missingToolsReason !== undefined) return missingToolsReason;
-  using dir = tempDir("trim-coff-probe", { "probe.c": "int main(void) { return 0; }\n", "in.rsp": "probe.obj\n" });
-  const folder = String(dir);
-  const options: LinkOptions = { machine, isFreestanding: true };
-  const compileResult = await compile(folder, "probe", options);
-  if (compileResult.exitCode !== 0) return `clang does not compile for ${triple(machine)}: ${compileResult.stderr.split("\n")[0]}`;
-  const linkResult = await run(linkCommand(options, name => name), folder);
-  return linkResult.exitCode === 0 ? undefined : `an empty program does not link for ${triple(machine)}: ${linkResult.stderr.split("\n")[0]}`;
-}
 
 async function findCompileFailure(machine: Machine): Promise<string | undefined> {
   if (missingToolsReason !== undefined) return missingToolsReason;
@@ -152,6 +141,17 @@ export const linkSkipReason = await findCompileFailure("x64");
 export const canLink = linkSkipReason === undefined;
 export const arm64SkipReason = canLink ? await findCompileFailure("arm64") : linkSkipReason;
 
+async function findFreestandingFailure(machine: Machine): Promise<string | undefined> {
+  if (missingToolsReason !== undefined) return missingToolsReason;
+  using dir = tempDir("trim-coff-probe", { "probe.c": "int main(void) { return 0; }\n", "in.rsp": "probe.obj\n" });
+  const folder = String(dir);
+  const options: LinkOptions = { machine, isFreestanding: true };
+  const compileResult = await compile(folder, "probe", options);
+  if (compileResult.exitCode !== 0) return `clang does not compile for ${triple(machine)}: ${compileResult.stderr.split("\n")[0]}`;
+  const linkResult = await run(linkCommand(options, name => name), folder);
+  return linkResult.exitCode === 0 ? undefined : `an empty program does not link for ${triple(machine)}: ${linkResult.stderr.split("\n")[0]}`;
+}
+
 export const freestandingSkipReasons: Record<Machine, string | undefined> = {
   x64: await findFreestandingFailure("x64"),
   arm64: await findFreestandingFailure("arm64"),
@@ -169,9 +169,9 @@ const cutSectionName = ".trimmed";
 const x64Trap = 0xcc;
 const arm64Trap = [0x00, 0x00, 0x20, 0xd4];
 export const stateBytes = 536;
+export const bigObjectMagic = [0x00, 0x00, 0xff, 0xff];
 const coffRelocationBytes = 10;
 export const pointerRelocationType = { x64: 1, arm64: 14 };
-export const bigObjectMagic = [0x00, 0x00, 0xff, 0xff];
 
 interface PeSection {
   name: string;
@@ -343,16 +343,33 @@ export async function linked(folder: string, options: LinkOptions & { removed?: 
     if (Number.isNaN(address)) throw new Error(`program.map lists no symbol ${name}`);
     return featuresAt(address);
   };
+  // A function that stays can be unwound: its record goes only when the function goes.
+  const unwindRecords = readUnwindRecords(executable);
+  for (const { function: start, record } of unwindRecords) {
+    const removedWith = featuresAt(record);
+    if (removedWith !== undefined) expect(removedWith).toEqual(expect.arrayContaining(featuresAt(start) ?? ["a function that is kept"]));
+  }
+  const unwindRecordOf = (name: string) => unwindRecords.find(({ function: start }) => start === addressOf(name))?.record ?? NaN;
   const summary = trimExecutable(executable, trimmedExecutable, removed);
   const retainedAddresses = ["retained", "main"].map(addressOf).filter(address => !Number.isNaN(address));
   const soundness = expectSoundPe({ folder, table, removed, retainedAddresses });
   const runs = canRun(machine) && !options.isFreestanding;
   const programResult = runs ? await run([executable], folder) : undefined;
   const trimmedResult = runs ? await run([trimmedExecutable], folder) : undefined;
-  return { executable, trimmedExecutable, table, symbols, addressOf, featuresAt, featuresOf, retainedAddresses, summary, soundness, programResult, trimmedResult };
+  return { executable, trimmedExecutable, table, symbols, addressOf, featuresAt, featuresOf, unwindRecordOf, retainedAddresses, summary, soundness, programResult, trimmedResult, stdout: linkResult.stdout };
 }
 
 export type LinkedProgram = Awaited<ReturnType<typeof linked>>;
+
+/** Where the linker put the sections named `section` of the objects whose name has `object` in it, in the order of their addresses. */
+export function chunkAddresses(folder: string, object: string, section: string) {
+  return readFileSync(join(folder, "program.lldmap"), "latin1")
+    .split("\n")
+    .flatMap(line => {
+      const chunk = /^([0-9a-f]{8}) ([0-9a-f]{8}) +\d+ +(.*):\((.*)\)\s*$/.exec(line);
+      return chunk !== null && chunk[2] !== "00000000" && basename(chunk[3]!).includes(object) && chunk[4] === section ? [parseInt(chunk[1]!, 16)] : [];
+    });
+}
 
 export const guardedPathArguments = ["a", "b", "c", "d", "e"];
 

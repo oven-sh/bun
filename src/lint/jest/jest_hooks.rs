@@ -23,8 +23,8 @@ pub(crate) fn mentions_hook(file: &File) -> bool {
 pub(crate) mod no_duplicate_hooks {
     use super::*;
 
-    const NO_DUPLICATE_HOOKS: Message =
-        Message::new("", "Duplicate \"{{hook_name}}\" in describe block.");
+    const NO_DUPLICATE_HOOKS: &Message =
+        &Message::new("", "Duplicate \"{{hook_name}}\" in describe block.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         type HookNames<'a> = SmallVec<[&'a [u8]; 4]>;
@@ -62,7 +62,7 @@ pub(crate) mod no_duplicate_hooks {
 pub(crate) mod no_hooks {
     use super::*;
 
-    const UNEXPECTED_HOOK: Message = Message::new("", "Do not use setup or teardown hooks.");
+    const UNEXPECTED_HOOK: &Message = &Message::new("", "Do not use setup or teardown hooks.");
 
     pub(crate) struct NoHooksConfig {
         allow: Vec<String>,
@@ -99,7 +99,7 @@ pub(crate) mod no_hooks {
 pub(crate) mod prefer_hooks_in_order {
     use super::*;
 
-    const REORDER_HOOKS: Message = Message::new("", "Test hooks are not in a consistent order.");
+    const REORDER_HOOKS: &Message = &Message::new("", "Test hooks are not in a consistent order.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         // The names a hook call can start with.
@@ -169,7 +169,8 @@ pub(crate) mod prefer_hooks_in_order {
 pub(crate) mod prefer_hooks_on_top {
     use super::*;
 
-    const NO_HOOK_ON_TOP: Message = Message::new("", "Suggest having hooks before any test cases.");
+    const NO_HOOK_ON_TOP: &Message =
+        &Message::new("", "Suggest having hooks before any test cases.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let mut scopes = Scopes::default();
@@ -195,8 +196,8 @@ pub(crate) mod prefer_hooks_on_top {
 pub(crate) mod require_hook {
     use super::*;
 
-    const USE_HOOK: Message =
-        Message::new("", "Require setup and teardown code to be within a hook.");
+    const USE_HOOK: &Message =
+        &Message::new("", "Require setup and teardown code to be within a hook.");
 
     pub(crate) struct RequireHookConfig {
         allowed_function_calls: Vec<String>,

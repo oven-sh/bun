@@ -194,7 +194,7 @@ console.log("the last statement");
 // CHECK-NEXT: Throw v20
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasThis, HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}, {type=[[f_5]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_18]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasThis, HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}, {type=[[f_5]] flags=[IsFromCompiler] variableName="Validator"}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_18]]] {
 // CHECK-NEXT: b0(v0: env [[L_4]], v1: [[f_5]], v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

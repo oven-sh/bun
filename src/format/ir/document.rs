@@ -66,6 +66,9 @@ struct State {
 }
 
 #[derive(Default)]
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Tracker {
     state: State,
     frames: Vec<Frame>,

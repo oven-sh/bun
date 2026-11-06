@@ -1,22 +1,9 @@
-// Closures made in the turns of a loop or of an array method, each over that turn's own variables, and read later through array methods that follow one another.
-// A chain of array methods may be compiled as one loop with its callbacks as a part of it: each turn still has variables of its own, and a closure still sees the ones it was made over.
-//
-//   made    `for` with one or two variables, changed in the body or skipped, a closure made in its head; for-of, for-in, entries, `while` and `do` with a constant in the block, `catch`, `var` (one variable for all turns);
-//           map, flatMap, Array.from, filter and map, reduce, forEach; the list that a built-in hands back spread into push or walked at once
-//           things of a second and a third place put into the same list
-//   what    a closure over the variable; one that makes such a closure, once or twice over; a pair that reads and changes; a record or an instance whose method or field reads; a function, a bound function, a generator function; a function of a function, a closure that binds a function, a closure that makes a record
-//           what a maker hands out is called at once, or out of an object, a list or an instance that is made for it there, or out of one arm of a condition
-//   read    map, flatMap, Array.from, filter, slice, reverse, concat, a spread, closures made anew in the middle of the chain; then reduce, join, some, every, find, findLast, indexOf, includes, at, length: one to five behind one another
-//           or a loop: for-of, by index up and down, `while`, for-in, entries, forEach
-//   over    a whole number, a fraction, a text, a record, a list, a bigint, a closure: each made anew in its turn
-//   by      there, or in a reader: a declared function, an arrow kept in a constant, a bound function, a method of an object, of a class or of an instance, a function that keeps what it is given and asks it at a later call; reached by a call, `.call`, `.apply`, Reflect.apply or as the callback of a built-in
-//   alone   one thing at a time, read at once and kept nowhere: made once in front of a loop and read in every turn, also behind a condition; made behind a loop or in the arm that leaves it; in a loop whose way back runs through
-//           a handler; in each activation of a function that calls itself last of all; in a small function called in a loop, one and two calls deep; between two stops of a loop; in the states of a machine; in a `finally`
-//   where   returned, kept in a constant, an argument, spread, behind a condition, in a loop, in an arrow without a body, in a function that several scenes share;
-//           in a function, an arrow, a method, a getter, a static block, a generator behind a `yield`, an async function behind an `await`, or in the code of the module
+// Closures created in the iterations of a loop or array method, each over that iteration's variables, are read later
+// through chained array methods. The chain may be compiled into one loop, but each iteration still has its own
+// variables.
 import type { Random } from "./random";
 
-/** `fresh`: for a thing that makes another thing at each call: the arguments with which that other thing is called. */
+/** `fresh`: for a thing that creates another thing at each call, the arguments for calling that other thing. */
 type Kind = { type: string; make: (value: string, variable?: string) => string; call: (thing: string) => string; inner?: Kind; fresh?: string };
 
 const closure: Kind = { type: "() => number", make: value => `() => ${value}`, call: thing => `${thing}()` };
@@ -42,7 +29,10 @@ const kinds: Kind[] = [
   { type: "() => { read: () => number }", make: value => `() => ({ read: () => ${value} })`, call: thing => `${thing}().read()` },
 ];
 
-/** Asks a thing. What a maker hands out is called at once, or out of something that is made for it there: an object, a list, an instance, one arm of a condition. */
+/**
+ * Queries a thing. What a factory returns is called at once, or from something created for it there: an object, an
+ * array, an instance, one arm of a conditional.
+ */
 function ask(random: Random, kind: Kind, thing: string): string {
   if (kind.fresh === undefined || random.chance(0.4)) return kind.call(thing);
   return random.pick([
@@ -69,10 +59,13 @@ const held: [make: (value: string) => string, read: (name: string) => string][] 
   [value => `new Map([[1, ${value}]])`, name => `${name}.get(1)!`],
 ];
 
-/** The readers that a program uses, as `form:kind`. In some programs every scene makes one kind of thing and most of them read it in one reader: closures of many places come to one call. */
+/**
+ * The readers a program uses, as `form:kind`. In some programs every scene creates one kind of thing and most read it
+ * in one reader, so closures from many sites reach one call.
+ */
 type Readers = Set<string> & { kind?: Kind; form?: number; road?: number };
 
-/** Calls what `thing` holds: there, or in a reader that is reached by one of several roads. */
+/** Calls what `thing` holds: in place, or in a reader reached in one of several ways. */
 function reach(random: Random, kind: Kind, thing: string, readers: Readers): string {
   if (random.chance(readers.kind ? 0.2 : 0.5)) return ask(random, kind, thing);
   const at = kinds.indexOf(kind);
@@ -110,7 +103,8 @@ function declarationsOf(random: Random, readers: Readers): string[] {
     ...of("declared").map(at => `function read${at}(each: ${kinds[at].type}) {\n  return ${ask(random, kinds[at], "each")};\n}`),
     ...of("arrow").map(at => `const called${at} = (each: ${kinds[at].type}) => ${ask(random, kinds[at], "each")};`),
     ...of("bound").map(at => `const bound${at} = function (this: unknown, each: ${kinds[at].type}) {\n  return ${ask(random, kinds[at], "each")};\n}.bind(null);`),
-    // Readers that keep what they are given and ask it at a later call, when the turn or the function that made it is over.
+    // Readers that keep their argument and query it at a later call, when the iteration or function that created it is
+    // over.
     ...of("keeps").map(at => `let kept${at}: (${kinds[at].type}) | undefined;\nfunction keeps${at}(each: ${kinds[at].type}) {\n  const before = kept${at} ?? each;\n  kept${at} = each;\n  return ${kinds[at].call("before")};\n}`),
     ...of("ring").map(at => `const ring${at}: (${kinds[at].type})[] = [];\nfunction ringed${at}(each: ${kinds[at].type}) {\n  ring${at}.push(each);\n  if (ring${at}.length > 2) ring${at}.shift();\n  const oldest = ring${at}[0];\n  return ${kinds[at].call("oldest")};\n}`),
     ...of("later").map(at => `let later${at} = () => -1;\nfunction delayed${at}(each: ${kinds[at].type}) {\n  const was = later${at};\n  later${at} = () => ${kinds[at].call("each")};\n  return was();\n}`),
@@ -127,7 +121,7 @@ function births(random: Random, kind: Kind): string {
   const empty = `const made: (${kind.type})[] = [];\n  `;
   const over = random.chance(0.5) ? random.pick(held) : undefined;
   const block = random.pick(held);
-  /** What one turn makes, as an expression: over the turn's variable itself, or over something made of it in that turn. */
+  /** What one iteration creates, as an expression over the iteration's variable or over something derived from it. */
   const thing = (value: string, variable?: string) => (over ? `(() => {\n      const own = ${over[0](value)};\n      return ${kind.make(over[1]("own"))};\n    })()` : kind.make(value, variable));
   return random.pick<() => string>([
     () => `${empty}for (let i = 0; i < ${n}; i++) made.push(${thing("i", "i")});`,
@@ -158,7 +152,7 @@ function births(random: Random, kind: Kind): string {
     () => `${empty}${list}.forEach(each => {\n    made.push(${thing("each")});\n  });`,
     () => `${empty}${list}.forEach((each, at) => made.push(${thing("(each + at)")}));`,
     () => `const made = ${list}.map(each => (${thing("each")}));`,
-    // Born in the callback of a built-in and handed on at once.
+    // Created in the callback of a built-in and passed on at once.
     () => `${empty}made.push(...${list}.map(each => (${thing("each")})));`,
     () => `${empty}made.push(...${list}.map(each => (${thing("each")})));`,
     () => `${empty}made.push(...listOf(${n}).map(each => (${kind.make("each")})));`,
@@ -226,7 +220,7 @@ function loop(random: Random, kind: Kind, readers: Readers): string {
     `for (let at = 0; at < made.length; at++) seen.push(${call("made[at]")});`,
     `for (let at = made.length - 1; at >= 0; at--) seen.push(${call("made[at]")});`,
     `for (let at = 0; at < made.length; at++) {\n    const each = made[at];\n    seen.push(${call("each")});\n  }`,
-    // Some kinds are asked twice: `next` may go up only once a turn.
+    // Some kinds are queried twice: `next` may only advance once per iteration.
     inPlace.split("made[next++]").length === 2 ? `let next = 0;\n  while (next < made.length) seen.push(${inPlace});` : `let next = 0;\n  while (next < made.length) {\n    const each = made[next++];\n    seen.push(${call("each")});\n  }`,
     `for (const at in made) seen.push(${call("made[at]")});`,
     `for (const [at, each] of made.entries()) seen.push(${call("each")} + at);`,
@@ -241,37 +235,40 @@ function loop(random: Random, kind: Kind, readers: Readers): string {
   ]);
 }
 
-/** One thing at a time, read at once and kept nowhere: made once beside a loop, or in a turn of a loop that does not look like one. */
+/**
+ * One thing at a time, read at once and stored nowhere: created once beside a loop, or in an iteration of a loop that
+ * does not look like one.
+ */
 function oneAtATime(random: Random, kind: Kind, readers: Readers, finish: (value: string) => string, between: string): string {
   const n = random.pick([1, 2, 3, 5, 9]);
   const call = (thing: string) => reach(random, kind, thing, readers);
   const over = random.chance(0.4) ? random.pick(held) : undefined;
-  /** The statements that make `name` over `value`, or over something made of it there. */
+  /** The statements that create `name` over `value`, or over something derived from it. */
   const make = (name: string, value: string, how = "const") => (over ? `const own${name} = ${over[0](value)};\n    ${how} ${name} = ${kind.make(over[1]("own" + name))};` : `${how} ${name} = ${kind.make(value)};`);
   const stop = between.includes("await") ? "await null;" : between.includes("yield") ? "yield 1;" : "";
   const seen = "const seen: number[] = [];\n  ";
   const leaves = finish("0").startsWith("return");
   return random.pick<() => string>([
-    // Made once in front of a loop and read in every turn.
+    // Created once before a loop and read in every iteration.
     () => `${make("thing", "given.length")}\n  ${seen}for (let i = 0; i < ${n}; i++) seen.push(${call("thing")});\n  ${finish("seen")}`,
     () => `${make("thing", "given.length")}\n  ${make("other", "given[0]")}\n  ${seen}for (let i = 0; i < ${n}; i++) {\n    const one = i % 2 ? thing : other;\n    seen.push(${call("one")});\n  }\n  ${finish("seen")}`,
     () => `${make("thing", "given.length")}\n  ${make("other", "given[0]")}\n  ${seen}for (const each of given) seen.push(${call("(each > 5 ? thing : other)")});\n  ${finish("seen")}`,
     () => `${make("thing", "given.length")}\n  ${seen}for (let i = 0; i < ${n}; i++) {\n    ${make("mine", "i")}\n    const one = i % 2 ? thing : mine;\n    seen.push(${call("one")});\n  }\n  ${finish("seen")}`,
-    // Made behind a loop, or in the arm that leaves it.
+    // Created after a loop, or in the branch that exits it.
     () => `let total = 0;\n  for (const each of given) total += each;\n  ${make("thing", "total")}\n  ${finish(call("thing"))}`,
     () => `let found = -1;\n  for (let i = 0; i < ${n + 2}; i++) {\n    if (i === ${n}) {\n    ${make("thing", "i")}\n    ${leaves ? finish(call("thing")) : `found = ${call("thing")};\n    break;`}\n    }\n    found -= i;\n  }\n  ${finish("found")}`,
     () => `let found = -1;\n  outer: for (let i = 0; i < 3; i++)\n    for (const each of given) {\n      if (each + i > 7) {\n    ${make("thing", "(each * 10 + i)")}\n    found = ${call("thing")};\n    break outer;\n      }\n    }\n  ${finish("found")}`,
-    // The way back to the head of the loop runs through a handler.
+    // The back edge goes through an exception handler.
     () => `let tries = 0;\n  let got = -1;\n  for (;;) {\n    try {\n    const here = tries++;\n    ${make("thing", "here")}\n    if (here < ${n}) throw here;\n    got = ${call("thing")};\n    break;\n    } catch {\n      continue;\n    }\n  }\n  ${finish("got")}`,
     () => `let tries = 0;\n  ${seen}for (;;) {\n    const here = tries++;\n    ${make("thing", "here")}\n    try {\n      if (here < ${n}) throw here;\n      break;\n    } catch {\n      seen.push(${call("thing")});\n    }\n  }\n  ${finish("seen")}`,
-    // A function that calls itself last of all makes one in each activation.
+    // A self-tail-calling function creates one in each activation.
     () => `const walk = (left: number, last: ${kind.type}): number => {\n    if (left === 0) return ${call("last")};\n    ${make("next", "left")}\n    return walk(left - 1, next);\n  };\n  ${make("first", "given.length")}\n  ${finish(`walk(${n}, first)`)}`,
     () => `function walk(left: number, last: ${kind.type}, sum: number): number {\n    if (left === 0) return sum;\n    return walk(left - 1, ${kind.make("left")}, sum * 3 + ${call("last")});\n  }\n  ${finish(`walk(${n}, ${kind.make("given.length")}, 0)`)}`,
-    // Made in a small function that becomes a part of the caller's loop, one and two calls deep.
+    // Created in a small function that is inlined into the caller's loop, one and two calls deep.
     () => `const small = (value: number) => {\n    ${make("thing", "value")}\n    return thing;\n  };\n  ${seen}for (let i = 0; i < ${n}; i++) seen.push(${call("small(i)")});\n  ${finish("seen")}`,
     () => `const small = (value: number) => (${kind.make("value")});\n  const outer = (value: number) => small(value + 1);\n  ${seen}for (let i = 0; i < ${n}; i++) {\n    const one = outer(i);\n    seen.push(${call("one")});\n  }\n  ${finish("seen")}`,
     () => `const small = (value: number) => {\n    ${make("thing", "value")}\n    return ${call("thing")};\n  };\n  const outer = (value: number) => small(value) + small(value + 1);\n  ${seen}for (const each of given) seen.push(outer(each));\n  ${finish("seen")}`,
-    // Between two stops of a loop, and in the states of a machine.
+    // Between two suspensions in a loop, and in the states of a state machine.
     () => `${seen}for (let i = 0; i < ${n}; i++) {\n    ${stop}\n    ${make("thing", "i")}\n    ${stop}\n    seen.push(${call("thing")});\n  }\n  ${finish("seen")}`,
     () => `const steps = function* () {\n    for (let i = 0; i < ${n}; i++) {\n    yield -1;\n    ${make("thing", "i")}\n    yield ${call("thing")};\n    }\n  };\n  ${finish("[...steps()]")}`,
     () => `${seen}let state = 0;\n  let turn = 0;\n  ${make("thing", "-1", "let")}\n  while (true) {\n    switch (state) {\n      case 0: {\n        const here = turn;\n        thing = ${kind.make("here")};\n        state = 1;\n        continue;\n      }\n      case 1:\n        seen.push(${call("thing")});\n        state = ++turn < ${n} ? 0 : 2;\n        continue;\n    }\n    break;\n  }\n  ${finish("seen")}`,
@@ -284,7 +281,7 @@ function oneAtATime(random: Random, kind: Kind, readers: Readers, finish: (value
 function scene(random: Random, readers: Readers, finish: (value: string) => string, between = ""): string {
   const kind = readers.kind ?? random.pick(kinds);
   if (random.chance(0.3)) return oneAtATime(random, kind, readers, finish, between);
-  // Things of a second and a third place in one list: whoever reads the list meets more than one function.
+  // Things from a second and a third site in one array: a reader of the array sees more than one function.
   const born =
     births(random, kind) +
     random.weighted([

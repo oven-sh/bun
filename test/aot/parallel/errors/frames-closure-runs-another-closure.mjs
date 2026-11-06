@@ -1,4 +1,4 @@
-// Each line: the name in the first frame of a closure that was entered before a closure of the same function got a displayName. The stored output lists the closure that runs under the new name until it returns.
+// Each line: the name in the first frame of a closure that was entered before a closure of the same function got a displayName.
 const firstFrame = stack =>
   stack
     .split("\n")[1]
@@ -48,7 +48,3 @@ const handedBack = new Function("f", "return f;" + never);
     firstFrame(handedBack(list[1])(() => {})),
   );
 }
-/* Output:
-the other one is renamed while this one runs | at displayed | at displayed | at made
-this one is renamed while it runs | at displayed | at displayed | at made
-*/

@@ -1,4 +1,5 @@
 use bun_threading::Guarded;
+use core::mem::MaybeUninit;
 
 pub type InParallel<'a> = &'a (dyn Fn(usize, &(dyn Fn(usize) + Sync)) + Sync);
 
@@ -31,6 +32,25 @@ pub fn map_each<T: Send, R: Send>(
     slots.into_iter().map(take).collect()
 }
 
+/// Moves what the boxes hold to the end of `list`, on all threads. For records that are large enough for the copy to count.
+pub fn extend_from_boxes<T: Send>(
+    list: &mut Vec<T>,
+    boxes: Vec<Box<T>>,
+    in_parallel: InParallel<'_>,
+) {
+    let count = boxes.len();
+    list.reserve(count);
+    let slots = list.spare_capacity_mut()[..count].iter_mut();
+    let mut moves: Vec<(&mut MaybeUninit<T>, Option<Box<T>>)> =
+        slots.zip(boxes.into_iter().map(Some)).collect();
+    for_each_mut(&mut moves, in_parallel, &|(slot, item)| {
+        slot.write(*item.take().expect("each is moved once"));
+    });
+    drop(moves);
+    // SAFETY: `for_each_mut` has visited each of the `count` slots, which wrote it.
+    unsafe { list.set_len(list.len() + count) };
+}
+
 /// Frees what the items own on all threads.
 pub fn drop_each<T: Send>(items: Vec<T>, in_parallel: InParallel<'_>) {
     let items = items.into_iter().map(|item| Guarded::new(Some(item)));
@@ -58,6 +78,14 @@ mod tests {
             assert_eq!(dropped.load(Ordering::Relaxed), 3);
         });
         assert_eq!(dropped.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn extend_from_boxes_keeps_the_order() {
+        let mut list = vec![1, 2];
+        let boxes = vec![Box::new(3), Box::new(4), Box::new(5)];
+        extend_from_boxes(&mut list, boxes, &run_serially);
+        assert_eq!(list, [1, 2, 3, 4, 5]);
     }
 
     #[test]

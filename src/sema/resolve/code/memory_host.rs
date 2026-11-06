@@ -19,6 +19,7 @@ pub(crate) struct MemoryHost {
     required: Vec<(Vec<u8>, Vec<u8>)>,
     node_paths: Vec<Vec<u8>>,
     found: Vec<(Vec<u8>, Vec<u8>)>,
+    holds_modules_with_queries: bool,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
 
@@ -47,6 +48,12 @@ impl MemoryHost {
     /// The host finds `specifier` by itself, and the module runs under `path`.
     pub(crate) fn finds(mut self, specifier: &str, path: &str) -> MemoryHost {
         self.found.push((specifier.into(), path.into()));
+        self
+    }
+
+    /// The module of `/p/a.ts` with `?x` has the path `/p/a.ts?x`, and the host makes none of a `.json` file.
+    pub(crate) fn holding_modules_with_queries(mut self) -> MemoryHost {
+        self.holds_modules_with_queries = true;
         self
     }
 
@@ -227,6 +234,19 @@ impl CodeHost for MemoryHost {
             Some(claim) => claim.resolution.clone(),
             None => HostResolution::Unclaimed,
         }
+    }
+
+    fn holds_modules_with_queries(&self) -> bool {
+        self.holds_modules_with_queries
+    }
+
+    fn add_module_with_query(
+        &self,
+        path: &[u8],
+        query: &[u8],
+        _kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
+        (!path.ends_with(b".json")).then(|| [path, query].concat())
     }
 
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {

@@ -40,7 +40,8 @@ fn links_names_alone(site: ImportSiteKind) -> bool {
         | ImportSiteKind::RequireResolve(_)
         | ImportSiteKind::ImportMetaRequire(_)
         | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => false,
+        | ImportSiteKind::GetBuiltinModule(_)
+        | ImportSiteKind::MockModule(_) => false,
     }
 }
 
@@ -77,12 +78,13 @@ impl ExportReads {
         let mut modules = FxHashMap::default();
         for parts in files {
             if parts.interop.kind == ModuleKind::Data && !parts.exports.is_empty() {
-                let is_required_as_namespace =
-                    parts.interop.require_result == RequireResult::Namespace;
+                let is_required_as_namespace = parts.interop.require_result
+                    != RequireResult::DefaultExport
+                    || parts.interop.answers_loader_with_namespace;
                 let data_module = DataModule {
                     is_required_as_namespace,
-                    is_namespace_reached: parts.is_library,
-                    is_linked_by_names_alone: !parts.is_library,
+                    is_namespace_reached: parts.is_library || parts.is_left_to_loader,
+                    is_linked_by_names_alone: !parts.is_library && !parts.is_left_to_loader,
                 };
                 modules.insert(parts.file, data_module);
             }

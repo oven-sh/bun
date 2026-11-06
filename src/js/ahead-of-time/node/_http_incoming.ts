@@ -44,6 +44,7 @@ const kCapture: typeof shared.kCapture = shared.kCapture;
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
+const kAbortController: typeof http.kAbortController = http.kAbortController;
 const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
@@ -74,7 +75,9 @@ const {
   removeAllListeners: eventEmitterRemoveAllListeners,
 } = shared.originals.eventEmitter!;
 const ReadablePrototype: object = Readable.prototype;
-const StreamPrototype = Object.getPrototypeOf(Readable.prototype) as { removeAllListeners: unknown };
+// A call that the other text does not make while it loads goes to the function under its private name: a test may have replaced
+// the one under the public name, and sees every call of it.
+const StreamPrototype = Object.$getPrototypeOf(Readable.prototype) as { removeAllListeners: unknown };
 
 const kAutoDestroy = 1 << 2;
 const kEmitClose = 1 << 3;
@@ -135,7 +138,6 @@ const kRawHeaders = Symbol("kRawHeaders");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
-const kAbortController = Symbol.for("kAbortController");
 
 declare global {
   namespace $Node {
@@ -281,7 +283,7 @@ function IncomingMessage(
   this._readableState.readingMore = true;
 }
 $toClass(IncomingMessage, "IncomingMessage", Readable);
-ObjectDefineProperty(IncomingMessage, "length", { __proto__: null, value: 1, configurable: true });
+Object.$defineProperty(IncomingMessage, "length", { __proto__: null, value: 1, configurable: true });
 const IncomingMessagePrototype: object = IncomingMessage.prototype;
 
 // Defaults observed before the parser (or the native server) fills these in.

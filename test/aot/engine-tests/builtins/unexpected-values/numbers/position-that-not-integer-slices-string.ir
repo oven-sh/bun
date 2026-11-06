@@ -249,28 +249,28 @@ function f84 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "3" = String string="3"
 # CHECK-NEXT: v1: f1 = NewClosure function=f1 allocationSite=0
-# CHECK-NEXT: v2: Array<string|f1, Contiguous> = NewArray v0, v1 contents=string|f1 allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v3: Array<string|f1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<string|f1, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: Array<"3"|f1, Contiguous> = NewArray v0, v1 contents="3"|f1 allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v3: Array<"3"|f1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<"3"|f1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: "'2'" = String string="'2'"
 # CHECK-NEXT: v5: f2 = NewClosure function=f2 allocationSite=2
-# CHECK-NEXT: v6: Array<string|f2, Contiguous> = NewArray v4, v5 contents=string|f2 allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v7: Array<string|f2, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string|f2, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: Array<"'2'"|f2, Contiguous> = NewArray v4, v5 contents="'2'"|f2 allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v7: Array<"'2'"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<"'2'"|f2, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: "''" = String string="''"
 # CHECK-NEXT: v9: f3 = NewClosure function=f3 allocationSite=4
-# CHECK-NEXT: v10: Array<string|f3, Contiguous> = NewArray v8, v9 contents=string|f3 allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v11: Array<string|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<"''"|f3, Contiguous> = NewArray v8, v9 contents="''"|f3 allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<"''"|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<"''"|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: "' 2 '" = String string="' 2 '"
 # CHECK-NEXT: v13: f4 = NewClosure function=f4 allocationSite=6
-# CHECK-NEXT: v14: Array<string|f4, Contiguous> = NewArray v12, v13 contents=string|f4 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v15: Array<string|f4, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<string|f4, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: Array<"' 2 '"|f4, Contiguous> = NewArray v12, v13 contents="' 2 '"|f4 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v15: Array<"' 2 '"|f4, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<"' 2 '"|f4, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v16: "'0x2'" = String string="'0x2'"
 # CHECK-NEXT: v17: f5 = NewClosure function=f5 allocationSite=8
-# CHECK-NEXT: v18: Array<string|f5, Contiguous> = NewArray v16, v17 contents=string|f5 allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v19: Array<string|f5, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<string|f5, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v18: Array<"'0x2'"|f5, Contiguous> = NewArray v16, v17 contents="'0x2'"|f5 allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v19: Array<"'0x2'"|f5, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<"'0x2'"|f5, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v20: "'abc'" = String string="'abc'"
 # CHECK-NEXT: v21: f6 = NewClosure function=f6 allocationSite=10
-# CHECK-NEXT: v22: Array<string|f6, Contiguous> = NewArray v20, v21 contents=string|f6 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v23: Array<string|f6, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<string|f6, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v22: Array<"'abc'"|f6, Contiguous> = NewArray v20, v21 contents="'abc'"|f6 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v23: Array<"'abc'"|f6, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<"'abc'"|f6, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v24: "null" = String string="null"
 # CHECK-NEXT: v25: f7 = NewClosure function=f7 allocationSite=12
 # CHECK-NEXT: v26: Array<"null"|f7, Contiguous> = NewArray v24, v25 contents="null"|f7 allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
@@ -293,105 +293,105 @@ function f84 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v43: Array<"NaN"|f11, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<"NaN"|f11, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v44: "-0" = String string="-0"
 # CHECK-NEXT: v45: f12 = NewClosure function=f12 allocationSite=22
-# CHECK-NEXT: v46: Array<string|f12, Contiguous> = NewArray v44, v45 contents=string|f12 allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v47: Array<string|f12, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v46 provenType=Array<string|f12, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v46: Array<"-0"|f12, Contiguous> = NewArray v44, v45 contents="-0"|f12 allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v47: Array<"-0"|f12, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v46 provenType=Array<"-0"|f12, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v48: "0.5" = String string="0.5"
 # CHECK-NEXT: v49: f13 = NewClosure function=f13 allocationSite=24
-# CHECK-NEXT: v50: Array<string|f13, Contiguous> = NewArray v48, v49 contents=string|f13 allocationSite=25 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v51: Array<string|f13, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<string|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v50: Array<"0.5"|f13, Contiguous> = NewArray v48, v49 contents="0.5"|f13 allocationSite=25 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v51: Array<"0.5"|f13, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<"0.5"|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v52: "2.9" = String string="2.9"
 # CHECK-NEXT: v53: f14 = NewClosure function=f14 allocationSite=26
-# CHECK-NEXT: v54: Array<string|f14, Contiguous> = NewArray v52, v53 contents=string|f14 allocationSite=27 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v55: Array<string|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v54 provenType=Array<string|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v54: Array<"2.9"|f14, Contiguous> = NewArray v52, v53 contents="2.9"|f14 allocationSite=27 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v55: Array<"2.9"|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v54 provenType=Array<"2.9"|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v56: "-1" = String string="-1"
 # CHECK-NEXT: v57: f15 = NewClosure function=f15 allocationSite=28
-# CHECK-NEXT: v58: Array<string|f15, Contiguous> = NewArray v56, v57 contents=string|f15 allocationSite=29 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v59: Array<string|f15, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v58 provenType=Array<string|f15, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v58: Array<"-1"|f15, Contiguous> = NewArray v56, v57 contents="-1"|f15 allocationSite=29 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v59: Array<"-1"|f15, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v58 provenType=Array<"-1"|f15, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v60: "-1.5" = String string="-1.5"
 # CHECK-NEXT: v61: f16 = NewClosure function=f16 allocationSite=30
-# CHECK-NEXT: v62: Array<string|f16, Contiguous> = NewArray v60, v61 contents=string|f16 allocationSite=31 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v63: Array<string|f16, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v62 provenType=Array<string|f16, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v62: Array<"-1.5"|f16, Contiguous> = NewArray v60, v61 contents="-1.5"|f16 allocationSite=31 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v63: Array<"-1.5"|f16, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v62 provenType=Array<"-1.5"|f16, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v64: "-Infinity" = String string="-Infinity"
 # CHECK-NEXT: v65: f17 = NewClosure function=f17 allocationSite=32
-# CHECK-NEXT: v66: Array<string|f17, Contiguous> = NewArray v64, v65 contents=string|f17 allocationSite=33 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v67: Array<string|f17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v66 provenType=Array<string|f17, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v66: Array<"-Infinity"|f17, Contiguous> = NewArray v64, v65 contents="-Infinity"|f17 allocationSite=33 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v67: Array<"-Infinity"|f17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v66 provenType=Array<"-Infinity"|f17, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v68: "2n" = String string="2n"
 # CHECK-NEXT: v69: f18 = NewClosure function=f18 allocationSite=34
-# CHECK-NEXT: v70: Array<string|f18, Contiguous> = NewArray v68, v69 contents=string|f18 allocationSite=35 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v71: Array<string|f18, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v70 provenType=Array<string|f18, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v70: Array<"2n"|f18, Contiguous> = NewArray v68, v69 contents="2n"|f18 allocationSite=35 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v71: Array<"2n"|f18, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v70 provenType=Array<"2n"|f18, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v72: "[]" = String string="[]"
 # CHECK-NEXT: v73: f19 = NewClosure function=f19 allocationSite=36
-# CHECK-NEXT: v74: Array<string|f19, Contiguous> = NewArray v72, v73 contents=string|f19 allocationSite=37 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v75: Array<string|f19, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<string|f19, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v74: Array<"[]"|f19, Contiguous> = NewArray v72, v73 contents="[]"|f19 allocationSite=37 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v75: Array<"[]"|f19, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<"[]"|f19, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v76: "[2]" = String string="[2]"
 # CHECK-NEXT: v77: f20 = NewClosure function=f20 allocationSite=38
-# CHECK-NEXT: v78: Array<string|f20, Contiguous> = NewArray v76, v77 contents=string|f20 allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v79: Array<string|f20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v78 provenType=Array<string|f20, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v78: Array<"[2]"|f20, Contiguous> = NewArray v76, v77 contents="[2]"|f20 allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v79: Array<"[2]"|f20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v78 provenType=Array<"[2]"|f20, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v80: "[1, 2]" = String string="[1, 2]"
 # CHECK-NEXT: v81: f21 = NewClosure function=f21 allocationSite=40
-# CHECK-NEXT: v82: Array<string|f21, Contiguous> = NewArray v80, v81 contents=string|f21 allocationSite=41 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v83: Array<string|f21, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v82 provenType=Array<string|f21, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v82: Array<"[1, 2]"|f21, Contiguous> = NewArray v80, v81 contents="[1, 2]"|f21 allocationSite=41 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v83: Array<"[1, 2]"|f21, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v82 provenType=Array<"[1, 2]"|f21, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v84: "({})" = String string="({})"
 # CHECK-NEXT: v85: f22 = NewClosure function=f22 allocationSite=42
-# CHECK-NEXT: v86: Array<string|f22, Contiguous> = NewArray v84, v85 contents=string|f22 allocationSite=43 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v87: Array<string|f22, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v86 provenType=Array<string|f22, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v86: Array<"({})"|f22, Contiguous> = NewArray v84, v85 contents="({})"|f22 allocationSite=43 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v87: Array<"({})"|f22, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v86 provenType=Array<"({})"|f22, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v88: "Object.create(null)" = String string="Object.create(null)"
 # CHECK-NEXT: v89: f23 = NewClosure function=f23 allocationSite=44
-# CHECK-NEXT: v90: Array<string|f23, Contiguous> = NewArray v88, v89 contents=string|f23 allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v91: Array<string|f23, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v90 provenType=Array<string|f23, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v90: Array<"Object.create(null)"|f23, Contiguous> = NewArray v88, v89 contents="Object.create(null)"|f23 allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v91: Array<"Object.create(null)"|f23, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v90 provenType=Array<"Object.create(null)"|f23, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v92: "new Number(2)" = String string="new Number(2)"
 # CHECK-NEXT: v93: f24 = NewClosure function=f24 allocationSite=46
-# CHECK-NEXT: v94: Array<string|f24, Contiguous> = NewArray v92, v93 contents=string|f24 allocationSite=47 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v95: Array<string|f24, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v94 provenType=Array<string|f24, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v94: Array<"new Number(2)"|f24, Contiguous> = NewArray v92, v93 contents="new Number(2)"|f24 allocationSite=47 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v95: Array<"new Number(2)"|f24, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v94 provenType=Array<"new Number(2)"|f24, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v96: "new String('2')" = String string="new String('2')"
 # CHECK-NEXT: v97: f25 = NewClosure function=f25 allocationSite=48
-# CHECK-NEXT: v98: Array<string|f25, Contiguous> = NewArray v96, v97 contents=string|f25 allocationSite=49 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v99: Array<string|f25, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v98 provenType=Array<string|f25, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v98: Array<"new String('2')"|f25, Contiguous> = NewArray v96, v97 contents="new String('2')"|f25 allocationSite=49 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v99: Array<"new String('2')"|f25, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v98 provenType=Array<"new String('2')"|f25, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v100: "Symbol('s')" = String string="Symbol('s')"
 # CHECK-NEXT: v101: f26 = NewClosure function=f26 allocationSite=50
-# CHECK-NEXT: v102: Array<string|f26, Contiguous> = NewArray v100, v101 contents=string|f26 allocationSite=51 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v103: Array<string|f26, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v102 provenType=Array<string|f26, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v102: Array<"Symbol('s')"|f26, Contiguous> = NewArray v100, v101 contents="Symbol('s')"|f26 allocationSite=51 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v103: Array<"Symbol('s')"|f26, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v102 provenType=Array<"Symbol('s')"|f26, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v104: "({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })" = String string="({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"
 # CHECK-NEXT: v105: f27 = NewClosure function=f27 allocationSite=52
-# CHECK-NEXT: v106: Array<string|f27, Contiguous> = NewArray v104, v105 contents=string|f27 allocationSite=53 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v107: Array<string|f27, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v106 provenType=Array<string|f27, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v106: Array<"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|f27, Contiguous> = NewArray v104, v105 contents="({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|f27 allocationSite=53 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v107: Array<"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|f27, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v106 provenType=Array<"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|f27, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v108: "({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })" = String string="({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"
 # CHECK-NEXT: v109: f28 = NewClosure function=f28 allocationSite=54
-# CHECK-NEXT: v110: Array<string|f28, Contiguous> = NewArray v108, v109 contents=string|f28 allocationSite=55 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v111: Array<string|f28, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v110 provenType=Array<string|f28, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v110: Array<"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|f28, Contiguous> = NewArray v108, v109 contents="({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|f28 allocationSite=55 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v111: Array<"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|f28, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v110 provenType=Array<"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|f28, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v112: "({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })" = String string="({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"
 # CHECK-NEXT: v113: f29 = NewClosure function=f29 allocationSite=56
-# CHECK-NEXT: v114: Array<string|f29, Contiguous> = NewArray v112, v113 contents=string|f29 allocationSite=57 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v115: Array<string|f29, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v114 provenType=Array<string|f29, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v114: Array<"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|f29, Contiguous> = NewArray v112, v113 contents="({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|f29 allocationSite=57 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v115: Array<"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|f29, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v114 provenType=Array<"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|f29, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v116: "({ valueOf() { log.push('valueOf'); return 2n; } })" = String string="({ valueOf() { log.push('valueOf'); return 2n; } })"
 # CHECK-NEXT: v117: f30 = NewClosure function=f30 allocationSite=58
-# CHECK-NEXT: v118: Array<string|f30, Contiguous> = NewArray v116, v117 contents=string|f30 allocationSite=59 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v119: Array<string|f30, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v118 provenType=Array<string|f30, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v118: Array<"({ valueOf() { log.push('valueOf'); return 2n; } })"|f30, Contiguous> = NewArray v116, v117 contents="({ valueOf() { log.push('valueOf'); return 2n; } })"|f30 allocationSite=59 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v119: Array<"({ valueOf() { log.push('valueOf'); return 2n; } })"|f30, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v118 provenType=Array<"({ valueOf() { log.push('valueOf'); return 2n; } })"|f30, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v120: "({ valueOf() { log.push('valueOf'); return '2'; } })" = String string="({ valueOf() { log.push('valueOf'); return '2'; } })"
 # CHECK-NEXT: v121: f31 = NewClosure function=f31 allocationSite=60
-# CHECK-NEXT: v122: Array<string|f31, Contiguous> = NewArray v120, v121 contents=string|f31 allocationSite=61 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v123: Array<string|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v122 provenType=Array<string|f31, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v122: Array<"({ valueOf() { log.push('valueOf'); return '2'; } })"|f31, Contiguous> = NewArray v120, v121 contents="({ valueOf() { log.push('valueOf'); return '2'; } })"|f31 allocationSite=61 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v123: Array<"({ valueOf() { log.push('valueOf'); return '2'; } })"|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v122 provenType=Array<"({ valueOf() { log.push('valueOf'); return '2'; } })"|f31, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v124: "({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })" = String string="({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"
 # CHECK-NEXT: v125: f32 = NewClosure function=f32 allocationSite=62
-# CHECK-NEXT: v126: Array<string|f32, Contiguous> = NewArray v124, v125 contents=string|f32 allocationSite=63 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v127: Array<string|f32, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v126 provenType=Array<string|f32, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v128: Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3, v7, v11, v15, v19, v23, v27, v31, v35, v39, v43, v47, v51, v55, v59, v63, v67, v71, v75, v79, v83, v87, v91, v95, v99, v103, v107, v111, v115, v119, v123, v127 contents=Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=64 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v129: Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v128 provenType=Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v126: Array<"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|f32, Contiguous> = NewArray v124, v125 contents="({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|f32 allocationSite=63 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v127: Array<"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|f32, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v126 provenType=Array<"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|f32, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v128: Array<Array<"' 2 '"|"''"|"'0x2'"|"'2'"|"'abc'"|"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|"({ valueOf() { log.push('valueOf'); return '2'; } })"|"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); return 2n; } })"|"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|"({})"|"-0"|"-1"|"-1.5"|"-Infinity"|"0.5"|"2.9"|"2n"|"3"|"NaN"|"Object.create(null)"|"Symbol('s')"|"[1, 2]"|"[2]"|"[]"|"false"|"new Number(2)"|"new String('2')"|"null"|"true"|"undefined"|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3, v7, v11, v15, v19, v23, v27, v31, v35, v39, v43, v47, v51, v55, v59, v63, v67, v71, v75, v79, v83, v87, v91, v95, v99, v103, v107, v111, v115, v119, v123, v127 contents=Array<"' 2 '"|"''"|"'0x2'"|"'2'"|"'abc'"|"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|"({ valueOf() { log.push('valueOf'); return '2'; } })"|"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); return 2n; } })"|"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|"({})"|"-0"|"-1"|"-1.5"|"-Infinity"|"0.5"|"2.9"|"2n"|"3"|"NaN"|"Object.create(null)"|"Symbol('s')"|"[1, 2]"|"[2]"|"[]"|"false"|"new Number(2)"|"new String('2')"|"null"|"true"|"undefined"|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=64 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v129: Array<Array<"' 2 '"|"''"|"'0x2'"|"'2'"|"'abc'"|"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|"({ valueOf() { log.push('valueOf'); return '2'; } })"|"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); return 2n; } })"|"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|"({})"|"-0"|"-1"|"-1.5"|"-Infinity"|"0.5"|"2.9"|"2n"|"3"|"NaN"|"Object.create(null)"|"Symbol('s')"|"[1, 2]"|"[2]"|"[]"|"false"|"new Number(2)"|"new String('2')"|"null"|"true"|"undefined"|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v128 provenType=Array<Array<"' 2 '"|"''"|"'0x2'"|"'2'"|"'abc'"|"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|"({ valueOf() { log.push('valueOf'); return '2'; } })"|"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); return 2n; } })"|"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|"({})"|"-0"|"-1"|"-1.5"|"-Infinity"|"0.5"|"2.9"|"2n"|"3"|"NaN"|"Object.create(null)"|"Symbol('s')"|"[1, 2]"|"[2]"|"[]"|"false"|"new Number(2)"|"new String('2')"|"null"|"true"|"undefined"|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v130: "Infinity" = String string="Infinity"
 # CHECK-NEXT: v131: f33 = NewClosure function=f33 allocationSite=65
 # CHECK-NEXT: v132: Array<"Infinity"|f33, Contiguous> = NewArray v130, v131 contents="Infinity"|f33 allocationSite=66 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v133: Array<"Infinity"|f33, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v132 provenType=Array<"Infinity"|f33, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v134: "4294967297" = String string="4294967297"
 # CHECK-NEXT: v135: f34 = NewClosure function=f34 allocationSite=67
-# CHECK-NEXT: v136: Array<string|f34, Contiguous> = NewArray v134, v135 contents=string|f34 allocationSite=68 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v137: Array<string|f34, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v136 provenType=Array<string|f34, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v136: Array<"4294967297"|f34, Contiguous> = NewArray v134, v135 contents="4294967297"|f34 allocationSite=68 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v137: Array<"4294967297"|f34, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v136 provenType=Array<"4294967297"|f34, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v138: "-4294967295" = String string="-4294967295"
 # CHECK-NEXT: v139: f35 = NewClosure function=f35 allocationSite=69
-# CHECK-NEXT: v140: Array<string|f35, Contiguous> = NewArray v138, v139 contents=string|f35 allocationSite=70 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v141: Array<string|f35, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v140 provenType=Array<string|f35, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v142: Array<Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v133, v137, v141 contents=Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=71 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v143: Array<Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v142 provenType=Array<Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v144: Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>> = CallBuiltin v129, v143 overload=ArrayPrototypeConcat/2 accessSite=1
+# CHECK-NEXT: v140: Array<"-4294967295"|f35, Contiguous> = NewArray v138, v139 contents="-4294967295"|f35 allocationSite=70 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v141: Array<"-4294967295"|f35, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v140 provenType=Array<"-4294967295"|f35, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v142: Array<Array<"-4294967295"|"4294967297"|"Infinity"|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v133, v137, v141 contents=Array<"-4294967295"|"4294967297"|"Infinity"|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=71 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v143: Array<Array<"-4294967295"|"4294967297"|"Infinity"|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v142 provenType=Array<Array<"-4294967295"|"4294967297"|"Infinity"|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v144: Array<Array<"' 2 '"|"''"|"'0x2'"|"'2'"|"'abc'"|"({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"|"({ valueOf() { log.push('valueOf'); return '2'; } })"|"({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); return 2n; } })"|"({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"|"({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"|"({})"|"-0"|"-1"|"-1.5"|"-4294967295"|"-Infinity"|"0.5"|"2.9"|"2n"|"3"|"4294967297"|"Infinity"|"NaN"|"Object.create(null)"|"Symbol('s')"|"[1, 2]"|"[2]"|"[]"|"false"|"new Number(2)"|"new String('2')"|"null"|"true"|"undefined"|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>> = CallBuiltin v129, v143 overload=ArrayPrototypeConcat/2 accessSite=1
 # CHECK-NEXT: v145: undefined = Undefined
 # CHECK-NEXT: Return v145
 # CHECK-NEXT: }

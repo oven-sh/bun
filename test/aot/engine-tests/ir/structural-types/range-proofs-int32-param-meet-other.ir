@@ -930,7 +930,7 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
 function f61 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f62 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -941,7 +941,7 @@ function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-function f64 name="filter" module=m2 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f64 name="filter" module=m2 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.filter requires that |this| not be null or undefined"
@@ -961,7 +961,7 @@ function f64 name="filter" module=m2 position=4475 kind=Method role=Library flag
     v18 = Convert v7 declared={type=number} illTypedCause=Assertion
     Return v11
 }
-function f65 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f65 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -1053,7 +1053,7 @@ function f70 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChe
     Jump -> next b1(v10, v12)
 }
 function f71 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w160}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f72 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w161 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w162}, {type=undefined|number site=w163}, {type=number site=w164}, {type=undefined|null|Array site=w165 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f72 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w161 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w162}, {type=undefined|number site=w163}, {type=number site=w164}, {type=undefined|null|Array site=w165 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1()
   b1():
@@ -1347,16 +1347,16 @@ function f72 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b85(v240):
     Return v240
 }
-runtimefunction id=33 function=f64
-runtimefunction id=65 function=f65
-runtimefunction id=69 function=f63
-runtimefunction id=131091 function=f72 visibility=Private
+runtimefunction id=ArrayPrototypeFilter function=f64
+runtimefunction id=ArrayPrototypeMap function=f65
+runtimefunction id=ArrayIteratorPrototypeNext function=f63
+runtimefunction id=ArrayTraversalTraverseArray function=f72 visibility=Private
 # -- generated: f0 show
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 636, patchpoints: 111, rare instructions: 430, polls: 4
+# CHECK-NEXT: instructions: 608, patchpoints: 110, rare instructions: 293, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 109, patchpoints: 9, rare instructions: 75, polls: 1
+# CHECK-NEXT: instructions: 109, patchpoints: 9, rare instructions: 73, polls: 1
 # CHECK-NEXT: end of function f1

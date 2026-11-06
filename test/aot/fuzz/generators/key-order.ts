@@ -1,10 +1,6 @@
-// The order of the keys of objects of declared types that also get properties their type does not declare. Records and classes with optional
-// fields, and a random walk: an optional field is created, a property beyond the type is added (through `any`), one of either kind is deleted and
-// comes again, an index, a symbol. After the walk: Object.keys, for-in, JSON.stringify, Object.entries, Reflect.ownKeys, the keys of a spread copy
-// and of Object.assign's. Many walks share their beginnings and part late, and there are more shapes than a small table holds. Each walk is a
-// function of its own and runs three times, the third behind a collection.
-//
-// A program is a seed. The same seed always writes the same program.
+// The key order of objects of declared types that also get undeclared properties. Records and classes with optional
+// fields, and a random walk that creates optional fields, adds undeclared properties through `any`, deletes and re-adds
+// both, and lists the keys.
 import { randomFrom } from "./constant-expressions";
 
 const helpers = `const unknown = <T,>(x: T): T => x;

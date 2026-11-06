@@ -48,6 +48,14 @@ impl Value {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(_))))
     }
 
+    pub(super) fn is_boolean_or_finite_number(self) -> bool {
+        match self {
+            Value::Known(Primitive::Constant(Constant::Number(number))) => number.is_finite(),
+            Value::Known(Primitive::Constant(Constant::Boolean(_))) => true,
+            _ => false,
+        }
+    }
+
     pub(super) fn is_nan(self) -> bool {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(number))) if number.is_nan())
     }
@@ -227,6 +235,65 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
         let index = self.scratch_strings.push(text.into_boxed_slice());
         Value::Known(Primitive::ScratchString(ScratchString(index)))
+    }
+
+    /// Whether `bun run` puts the result in place of `left op right` where both are literals: `Data::eql` and `visit_binary` in `js_parser`.
+    pub(super) fn is_computed_by_bun_run(
+        &self,
+        op: BinOp,
+        left: Primitive,
+        right: Primitive,
+    ) -> bool {
+        use Operand::{BigInt, Boolean, Null, Number, String, Undefined};
+        let operands = (self.operand(left), self.operand(right));
+        match op {
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => match operands {
+                (Undefined | Null, _) | (_, Undefined | Null) => true,
+                (Boolean(_) | Number(_), Boolean(_) | Number(_))
+                | (String(_), String(_))
+                | (BigInt(_), BigInt(_)) => true,
+                // Of the texts that are numbers it knows those of 0 and 1, and only with the text on the left.
+                (String(text), Number(number)) => {
+                    matches!(op, BinOp::EqEqEq | BinOp::NotEqEq)
+                        || (number == 0.0 && matches!(text, b"" | b"0"))
+                        || (number == 1.0 && text == b"1")
+                }
+                _ => false,
+            },
+            BinOp::Add => matches!(
+                operands,
+                (Number(_), Number(_)) | (String(_), _) | (_, String(_))
+            ),
+            BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::Pow
+            | BinOp::Shl
+            | BinOp::Shr
+            | BinOp::UShr
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor => matches!(operands, (Number(_), Number(_))),
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => match operands {
+                (Number(left), Number(right)) => {
+                    let is_exact = |number: f64| number.abs() < MAX_EXACT_INTEGER as f64;
+                    !left.is_nan()
+                        && !right.is_nan()
+                        && (left.is_infinite()
+                            || right.is_infinite()
+                            || (is_exact(left) && is_exact(right)))
+                }
+                (String(_), String(_)) => true,
+                _ => false,
+            },
+            BinOp::In
+            | BinOp::Instanceof
+            | BinOp::And
+            | BinOp::Or
+            | BinOp::Nullish
+            | BinOp::Comma => true,
+        }
     }
 
     fn operand(&self, primitive: Primitive) -> Operand<'_> {

@@ -4,7 +4,8 @@ const terminal = ["ExternalState"];
 
 const formatted = b.printedByFormatter("colors", "depth");
 
-const printing = (withoutCode: b.TableType) =>
+// console.table makes a row of each value, of a function too, and a column of each of its keys.
+const printing = (withoutCode: b.TableType, values: readonly b.UseSpec[] = [formatted, b.functionsOnlyNamed]) =>
   [
     {
       args: { values: withoutCode.rest },
@@ -19,7 +20,7 @@ const printing = (withoutCode: b.TableType) =>
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { values: [formatted] },
+      uses: { values },
       reads: terminal,
       writes: terminal,
       implementation: b.hostCall,
@@ -28,7 +29,12 @@ const printing = (withoutCode: b.TableType) =>
 
 const listing = printing(b.primitiveValue);
 // "%j" calls the toJSON that a bigint inherits.
-const logging = printing(b.union(b.null, b.bool, b.f64, b.string, b.symbol));
+// print_proxy() in src/jsc/ConsoleObject.rs. console.dir reads its options, and console.table lists its rows, off whatever they are handed.
+const logging = printing(b.union(b.null, b.bool, b.f64, b.string, b.symbol), [
+  formatted,
+  b.functionsOnlyNamed,
+  b.proxiesPrintedAsTargets,
+]);
 
 const labeled = (label: b.TableType) =>
   ({
@@ -66,7 +72,7 @@ export default b.declarations(
     trace: logging,
     dir: listing,
     dirxml: logging,
-    table: listing,
+    table: printing(b.primitiveValue, [formatted]),
     assert: logging,
     group: logging,
     groupCollapsed: logging,

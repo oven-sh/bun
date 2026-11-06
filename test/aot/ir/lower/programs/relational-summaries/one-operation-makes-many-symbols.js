@@ -156,7 +156,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|[[L_1]] flags=[IsExpected] variableName="pair"}, {type=undefined|null|Array flags=[IsExpected] variableName="list"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

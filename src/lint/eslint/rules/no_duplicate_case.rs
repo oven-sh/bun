@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 /// Disallow duplicate case labels.
 pub struct NoDuplicateCase;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate case label.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate case label.");
 
 /// True if `e` is a single token, so two of them are equal only if their text is.
 fn is_single_token(e: Expr) -> bool {

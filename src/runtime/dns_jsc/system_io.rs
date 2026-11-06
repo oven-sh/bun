@@ -161,8 +161,7 @@ impl Io for SystemIo {
             Async::posix_event_loop::poll_tag::DNS_RESOLVER,
             self.resolver.cast::<()>(),
         );
-        // SAFETY: `event_loop_handle` is set once the VM is initialized and lives as long as it.
-        let loop_ = unsafe { &mut *self.vm.event_loop_handle.unwrap() };
+        let loop_ = self.vm.uws_loop_ref();
         let poll = *self
             .polls
             .entry(fd)

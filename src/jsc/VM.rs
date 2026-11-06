@@ -28,7 +28,6 @@ unsafe extern "C" {
     safe fn JSC__VM__reportExtraMemoryAllocated(vm: &VM, owner: JSValue, size: usize);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
-    safe fn JSC__VM__runGCByItself(vm: &VM) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
@@ -99,11 +98,6 @@ impl VM {
 
     pub fn run_gc(&self, sync: bool) -> usize {
         JSC__VM__runGC(self, sync)
-    }
-
-    /// `run_gc(true)` for a collection that Bun makes by itself: unlike that of `Bun.gc(true)`, no `gc` entry of `node:perf_hooks` calls it forced.
-    pub fn run_gc_by_itself(&self) -> usize {
-        JSC__VM__runGCByItself(self)
     }
 
     pub(crate) fn heap_size(&self) -> usize {

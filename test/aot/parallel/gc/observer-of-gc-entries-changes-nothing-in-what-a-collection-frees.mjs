@@ -1,4 +1,4 @@
-// With an observer of the 'gc' entries of node:perf_hooks, Bun.gc(true) runs in another native frame. It frees the same objects there: what a round of the loop leaves without a name is collected with the observer as without it.
+// An observer of the 'gc' entries of node:perf_hooks changes nothing in what Bun.gc(true) frees: what a round of the loop leaves without a name is collected with the observer as without it.
 import { PerformanceObserver } from "node:perf_hooks";
 const count = 32;
 function make(i) {

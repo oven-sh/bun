@@ -49,6 +49,8 @@ void GCPerformanceEntries::didGarbageCollect(CollectionScope scope)
         Locker locker { m_lock };
         m_records.append({ *start, MonotonicTime::now() - *start, scope == CollectionScope::Full, false });
         armsTimer = !std::exchange(m_timerIsArmed, true);
+        if (armsTimer)
+            m_hasWokenLoopForTimer = false;
     }
     // With a delay the timer is in the heap of timers, which bounds the next wait of the loop. With none it is not (WTFTimer::update).
     if (armsTimer)
@@ -67,8 +69,13 @@ void GCPerformanceEntries::eventLoopWillWait()
         return;
     auto* clientData = WebCore::clientData(m_vm);
     if (Bun__VM__isEventLoopKeptAlive(clientData->bunVM)) {
-        // The wait was chosen before these records came (a collection can end in the safepoint right before it), or before something held the loop.
-        if (auto* vmHandle = clientData->vmHandle)
+        // This wait can be chosen before the timer was armed: a collection can end in the safepoint right before it. The waits after it are not, so the loop is woken once for each time the timer is armed.
+        bool hasWokenLoop;
+        {
+            Locker locker { m_lock };
+            hasWokenLoop = std::exchange(m_hasWokenLoopForTimer, true);
+        }
+        if (auto* vmHandle = clientData->vmHandle; vmHandle && !hasWokenLoop)
             Bun__VmHandle__wake(vmHandle);
         return;
     }
@@ -76,35 +83,21 @@ void GCPerformanceEntries::eventLoopWillWait()
     cancelTimer();
     Locker locker { m_lock };
     m_records.clear();
-    m_synchronousRecordEnd = 0;
     m_timerIsArmed = false;
-}
-
-RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
-{
-    {
-        Locker locker { m_lock };
-        m_synchronousRecordEnd = 0;
-    }
-    if (!m_synchronousCollectionDidEnd) {
-        // A request runs it in the end phase of its own collection, right after didGarbageCollect().
-        m_synchronousCollectionDidEnd = createSharedTask<void()>([this] {
-            Locker locker { m_lock };
-            m_synchronousRecordEnd = m_records.size();
-        });
-    }
-    return m_synchronousCollectionDidEnd;
 }
 
 void GCPerformanceEntries::didForceCollection()
 {
+    // A synchronous collection ends inside its call. So while the heap is observed, its record is the last one.
+    if (!m_observesHeap)
+        return;
     Locker locker { m_lock };
-    if (auto end = std::exchange(m_synchronousRecordEnd, 0)) {
-        auto& record = m_records[end - 1];
-        record.forced = true;
-        // As in Node, the entry lasts nearly as long as the call: the sweep after the collection is part of it.
-        record.duration = MonotonicTime::now() - record.start;
-    }
+    if (m_records.isEmpty())
+        return;
+    auto& record = m_records.last();
+    record.forced = true;
+    // As in Node, the entry lasts nearly as long as the call: the sweep after the collection is part of it.
+    record.duration = MonotonicTime::now() - record.start;
 }
 
 void GCPerformanceEntries::setObservesHeap(bool observesHeap)
@@ -134,7 +127,6 @@ void GCPerformanceEntries::discardRecords()
     cancelTimer();
     Locker locker { m_lock };
     m_records.clear();
-    m_synchronousRecordEnd = 0;
     m_timerIsArmed = false;
 }
 
@@ -149,10 +141,19 @@ void GCPerformanceEntries::stop()
 void GCPerformanceEntries::doWork(VM& vm)
 {
     cancelTimer();
+    [[maybe_unused]] bool ranWithDelay;
     {
         Locker locker { m_lock };
-        m_timerIsArmed = false;
+        ranWithDelay = std::exchange(m_timerIsArmed, false);
+        m_hasWokenLoopForTimer = false;
     }
+#if OS(WINDOWS)
+    // A timer with a delay runs inside uv_run(). There a loop that only pumps its handles counts as alive (us_loop_pump), so the loop is asked from the tick, which runs the timer with no delay.
+    if (ranWithDelay) {
+        setTimeUntilFire(0_s);
+        return;
+    }
+#endif
     auto* bunVM = WebCore::clientData(vm)->bunVM;
     // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: the hand-off waits for a turn that something else asks for.
     if (Bun__VM__hasPendingTasks(bunVM))
@@ -202,7 +203,6 @@ void GCPerformanceEntries::callListeners()
     {
         Locker locker { m_lock };
         records.swap(m_records);
-        m_synchronousRecordEnd = 0;
     }
     if (records.isEmpty())
         return;
@@ -265,6 +265,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener, (JSGlobalObjec
     }
     entries->setListener(globalObject, listener.isUndefined() ? nullptr : asObject(listener));
     return JSValue::encode(jsUndefined());
+}
+
+// Bun.gc(true) and gc() call this after the collection that they force.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__GCPerformanceEntries__didForceCollection(Zig::GlobalObject* globalObject)
+{
+    if (auto* entries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get()) [[unlikely]]
+        entries->didForceCollection();
 }
 
 // A 'gc' performance entry that waits for its turn can still settle a promise, and it does not keep the event loop alive.

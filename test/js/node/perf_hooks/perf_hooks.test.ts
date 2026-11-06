@@ -793,24 +793,47 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
-  // With BUN_JSC_collectContinuously, other collections start and end inside the call that forces one.
-  test.concurrent("a forced collection has the flag when other collections end inside the same call", async () => {
+  // The record of the first collection waits for its turn when its observer goes. Nothing observes the collection that the
+  // program forces next, so that call has no record of its own to mark.
+  test.concurrent("a forced collection that nothing observes does not mark the record of an earlier one", async () => {
+    const { result, exitCode } = await run(`
+      const { edenGC } = require("bun:jsc");
+      const gone = new PerformanceObserver(() => {});
+      gone.observe({ type: "gc" });
+      edenGC();
+      gone.disconnect();
+      Bun.gc(true);
+      const got = [];
+      new PerformanceObserver((list, observer) => {
+        got.push(...list.getEntries());
+        if (!got.some(isForced)) return;
+        observer.disconnect();
+        finish({ forced: got.filter(isForced).length, othersCame: got.some(entry => !isForced(entry)) });
+      }).observe({ type: "gc" });
+      Bun.gc(true);
+    `);
+    expect(result).toEqual({ forced: 1, othersCame: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // With BUN_JSC_useGC=0 the call collects nothing, so there is no record to mark.
+  test.concurrent("a forced collection that does not run marks nothing", async () => {
     const { result, exitCode } = await run(
       `
-      new PerformanceObserver((list, observer) => {
-        const forced = list.getEntries().filter(isForced);
-        if (forced.length === 0) return;
+      let entries = 0;
+      const observer = new PerformanceObserver(list => {
+        entries += list.getEntries().length;
+      });
+      observer.observe({ type: "gc" });
+      Bun.gc(true);
+      setTimeout(() => {
         observer.disconnect();
-        finish({
-          forced: forced.length,
-          forcedMinor: forced.filter(entry => entry.detail.kind === constants.NODE_PERFORMANCE_GC_MINOR).length,
-        });
-      }).observe({ type: "gc" });
-      for (let i = 0; i < 40; i++) Bun.gc(true);
+        finish({ entries });
+      }, 1);
     `,
-      { env: { BUN_JSC_collectContinuously: "1" } },
+      { env: { BUN_JSC_useGC: "0" } },
     );
-    expect(result).toEqual({ forced: 40, forcedMinor: 0 });
+    expect(result).toEqual({ entries: 0 });
     expect(exitCode).toBe(0);
   });
 

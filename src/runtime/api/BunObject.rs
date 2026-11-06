@@ -201,7 +201,11 @@ pub(crate) fn shell_escape<'a>(
 
 /// `Bun.gc(force)`: heap size after the collection.
 pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
-    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+    let size = cx.global().bun_vm().as_mut().garbage_collect_from_js(force);
+    if force {
+        VirtualMachine::did_force_collection();
+    }
+    size
 }
 
 pub(crate) fn braces(
@@ -762,7 +766,11 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
 
 // HOST_EXPORT(Bun__gc, c)
 pub(crate) fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
-    vm.garbage_collect_from_js(sync)
+    let size = vm.garbage_collect_from_js(sync);
+    if sync {
+        VirtualMachine::did_force_collection();
+    }
+    size
 }
 
 pub(crate) fn shrink(cx: &mut JsScope<'_>) {

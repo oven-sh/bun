@@ -1987,21 +1987,17 @@ impl VirtualMachine {
         size
     }
 
-    #[inline]
-    pub fn auto_garbage_collect(&self) {
-        match self.aggressive_garbage_collection {
-            GCLevel::None => {}
-            GCLevel::Mild => {
-                let _ = self.garbage_collect(false);
-            }
-            GCLevel::Aggressive => self.garbage_collect_by_itself(),
-        }
+    /// For `Bun.gc(true)` and `gc()`, after `garbage_collect_from_js(true)`: a `gc` entry of `node:perf_hooks` has the flag of a forced collection for the one that just ended. It takes the VM of this thread, so that its caller keeps nothing more across the collection than before.
+    #[inline(never)]
+    pub fn did_force_collection() {
+        crate::cpp::Bun__GCPerformanceEntries__didForceCollection(Self::get().global());
     }
 
-    #[cold]
-    fn garbage_collect_by_itself(&self) {
-        bun_core::Global::mimalloc_cleanup(false);
-        let _ = self.global().vm().run_gc_by_itself();
+    #[inline]
+    pub fn auto_garbage_collect(&self) {
+        if self.aggressive_garbage_collection != GCLevel::None {
+            let _ = self.garbage_collect(self.aggressive_garbage_collection == GCLevel::Aggressive);
+        }
     }
 
     /// RAII form of `auto_garbage_collect`: returns a guard that calls

@@ -7,7 +7,6 @@
 #include <JavaScriptCore/Weak.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
-#include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
 namespace Bun {
@@ -27,9 +26,6 @@ public:
     void discardRecords();
     void stop();
 
-    bool observesHeap() const { return m_observesHeap; }
-    // For the request of a synchronous collection: what tells which record is its own.
-    RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
     // After a synchronous collection that the program asked for, and the sweep that follows it.
     void didForceCollection();
     // Right before this thread waits in the event loop, with or without access to the heap.
@@ -67,13 +63,12 @@ private:
     WTF::Vector<JSC::Weak<JSC::JSObject>, 1> m_listeners;
     bool m_observesHeap { false };
     std::optional<WTF::MonotonicTime> m_collectionStart;
-    RefPtr<WTF::SharedTask<void()>> m_synchronousCollectionDidEnd;
     WTF::Lock m_lock;
     Records m_records WTF_GUARDED_BY_LOCK(m_lock);
-    // One past the record of the last synchronous collection, or 0.
-    unsigned m_synchronousRecordEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     // The timer is due 1 ms after the first record that waits. A later collection does not move it.
     bool m_timerIsArmed WTF_GUARDED_BY_LOCK(m_lock) { false };
+    // eventLoopWillWait() has woken the loop since the timer was last armed.
+    bool m_hasWokenLoopForTimer WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener);

@@ -1032,11 +1032,11 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
             "preload.ts": `import "./reader";`,
             "reader.ts": `import { value } from "./mod"; export const read = () => value;`,
             "hoist.test.ts": `
-            import { read } from "./reader";
-            ${declaration}
-            ${api}.mock("./mod", () => ({ value: fake }));
-            test("print", () => console.log(JSON.stringify([read()])));
-          `,
+              import { read } from "./reader";
+              ${declaration}
+              ${api}.mock("./mod", () => ({ value: fake }));
+              test("print", () => console.log(JSON.stringify([read()])));
+            `,
           },
           ["--preload", "./preload.ts", "hoist.test.ts"],
         ),

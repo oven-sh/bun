@@ -1,0 +1,664 @@
+status: 0
+script: 81b6a8b9664c4309
+---
+--- plain reads
+v 0.0 a
+v 0.1 b
+v 0.2 c
+v 1.0 a
+v 1.1 b
+v 1.2 c
+v 2.0 a
+v 2.1 b
+v 2.2 c
+k 0.0 C.k
+k 0.1 C.k
+k 0.2 C.k
+k 1.0 C.k
+k 1.1 C.k
+k 1.2 C.k
+k 2.0 C.k
+k 2.1 C.k
+k 2.2 C.k
+m() 0.0 ('C.m', 'C', 1)
+m() 0.1 ('C.m', 'C', 1)
+m() 0.2 ('C.m', 'C', 1)
+m() 0.3 ('D.m', 'D', 1)
+m() 1.0 ('C.m', 'C', 1)
+m() 1.1 ('C.m', 'C', 1)
+m() 1.2 ('C.m', 'C', 1)
+m() 1.3 ('D.m', 'D', 1)
+m() 2.0 ('C.m', 'C', 1)
+m() 2.1 ('C.m', 'C', 1)
+m() 2.2 ('C.m', 'C', 1)
+m() 2.3 ('D.m', 'D', 1)
+bound True True ('C.m', 'C', 0)
+bound True True ('C.m', 'C', 1)
+bound True True ('C.m', 'C', 2)
+--- the dict comes before what is no data descriptor
+k 0.0 a.k
+k 0.1 C.k
+k 1.0 a.k
+k 1.1 C.k
+k 2.0 a.k
+k 2.1 C.k
+m() 0.0 ('in the dict', 1)
+m() 0.1 ('C.m', 'C', 1)
+m() 1.0 ('in the dict', 1)
+m() 1.1 ('C.m', 'C', 1)
+m() 2.0 ('in the dict', 1)
+m() 2.1 ('C.m', 'C', 1)
+m ('in the dict', 5)
+k 0.0 C.k
+k 0.1 C.k
+k 1.0 C.k
+k 1.1 C.k
+k 2.0 C.k
+k 2.1 C.k
+m() 0.0 ('C.m', 'C', 1)
+m() 0.1 ('C.m', 'C', 1)
+m() 1.0 ('C.m', 'C', 1)
+m() 1.1 ('C.m', 'C', 1)
+m() 2.0 ('C.m', 'C', 1)
+m() 2.1 ('C.m', 'C', 1)
+--- entries come and go
+v a
+v gone ('AttributeError', "'C' object has no attribute 'v'")
+v back 0
+v cleared ('AttributeError', "'C' object has no attribute 'v'")
+v updated ('updated', 0)
+v popped ('AttributeError', "'C' object has no attribute 'v'")
+v set
+v gone ('AttributeError', "'C' object has no attribute 'v'")
+v back 1
+v cleared ('AttributeError', "'C' object has no attribute 'v'")
+v updated ('updated', 1)
+v popped ('AttributeError', "'C' object has no attribute 'v'")
+v set
+v gone ('AttributeError', "'C' object has no attribute 'v'")
+v back 2
+v cleared ('AttributeError', "'C' object has no attribute 'v'")
+v updated ('updated', 2)
+v popped ('AttributeError', "'C' object has no attribute 'v'")
+--- another dict
+v other v
+True
+v ('changed', 0)
+v ('AttributeError', "'C' object has no attribute 'v'")
+k C.k
+m() ('C.m', 'C', 1)
+v new
+k new k
+v ('changed', 0)
+True
+v ('changed', 1)
+v ('AttributeError', "'C' object has no attribute 'v'")
+k C.k
+m() ('C.m', 'C', 1)
+v new
+k new k
+shared 0.0 shared
+shared 0.1 shared
+shared 1.0 shared
+shared 1.1 shared
+shared 2.0 shared
+shared 2.1 shared
+derived dict 0.0 loud v
+derived dict 1.0 loud v
+derived dict 2.0 loud v
+derived dict 0.0 C.k
+derived dict 1.0 C.k
+derived dict 2.0 C.k
+ordered 0.0 ordered v
+ordered 1.0 ordered v
+ordered 2.0 ordered v
+defaultdict 0.0 defaultdict v
+defaultdict 1.0 defaultdict v
+defaultdict 2.0 defaultdict v
+defaultdict 0.0 ('AttributeError', "'C' object has no attribute 'absent'")
+defaultdict 1.0 ('AttributeError', "'C' object has no attribute 'absent'")
+defaultdict 2.0 ('AttributeError', "'C' object has no attribute 'absent'")
+not a dict ('TypeError', "__dict__ must be set to a dictionary, not a 'list'")
+not a dict ('TypeError', "__dict__ must be set to a dictionary, not a 'NoneType'")
+deleted None
+v ('AttributeError', "'C' object has no attribute 'v'")
+after {}
+--- keys that are no strs
+v 0.0 e
+v 1.0 e
+v 2.0 e
+v 0.0 e
+v 1.0 e
+v 2.0 e
+hash of a key
+a key is asked w
+w 0.0 by a key
+a key is asked w
+w 1.0 by a key
+a key is asked w
+w 2.0 by a key
+v 0.0 e
+v 1.0 e
+v 2.0 e
+t 0.0 by a derived str
+t 1.0 by a derived str
+t 2.0 by a derived str
+v 0.0 again
+v 1.0 again
+v 2.0 again
+--- the class changes
+v 0.0 f
+v 0.1 g
+v 1.0 f
+v 1.1 g
+v 2.0 f
+v 2.1 g
+class value 0.0 f
+class value 0.1 g
+class value 1.0 f
+class value 1.1 g
+class value 2.0 f
+class value 2.1 g
+property 0.0 ('property', 'f')
+property 0.1 ('property', 'g')
+property 1.0 ('property', 'f')
+property 1.1 ('property', 'g')
+property 2.0 ('property', 'f')
+property 2.1 ('property', 'g')
+property 0.0 ('ZeroDivisionError', 'division by zero')
+property 1.0 ('ZeroDivisionError', 'division by zero')
+property 2.0 ('ZeroDivisionError', 'division by zero')
+gone 0.0 f
+gone 0.1 g
+gone 1.0 f
+gone 1.1 g
+gone 2.0 f
+gone 2.1 g
+only __get__ 0.0 f
+only __get__ 0.1 g
+only __get__ 1.0 f
+only __get__ 1.1 g
+only __get__ 2.0 f
+only __get__ 2.1 g
+only __get__ 0.0 ('OnlyGet', True)
+only __get__ 0.1 g
+only __get__ 1.0 ('OnlyGet', True)
+only __get__ 1.1 g
+only __get__ 2.0 ('OnlyGet', True)
+only __get__ 2.1 g
+__get__ and __set__ 0.0 ('OnlyGet', True)
+__get__ and __set__ 0.1 ('OnlyGet', True)
+__get__ and __set__ 1.0 ('OnlyGet', True)
+__get__ and __set__ 1.1 ('OnlyGet', True)
+__get__ and __set__ 2.0 ('OnlyGet', True)
+__get__ and __set__ 2.1 ('OnlyGet', True)
+only __set__ 0.0 f
+only __set__ 0.1 g
+only __set__ 1.0 f
+only __set__ 1.1 g
+only __set__ 2.0 f
+only __set__ 2.1 g
+only __set__ 0.0 ('set', 'through __set__')
+only __set__ 0.1 g
+only __set__ 1.0 ('set', 'through __set__')
+only __set__ 1.1 g
+only __set__ 2.0 ('set', 'through __set__')
+only __set__ 2.1 g
+only __set__, not in the dict OnlySet
+before its class changes 0.0 f
+before its class changes 1.0 f
+before its class changes 2.0 f
+its class has a __set__ now 0.0 ('OnlyGet', True)
+its class has a __set__ now 1.0 ('OnlyGet', True)
+its class has a __set__ now 2.0 ('OnlyGet', True)
+and has not 0.0 f
+and has not 1.0 f
+and has not 2.0 f
+--- methods
+m() 0.0 ('C.m', 'C', 1)
+m() 0.1 ('C.m', 'C', 1)
+m() 1.0 ('C.m', 'C', 1)
+m() 1.1 ('C.m', 'C', 1)
+m() 2.0 ('C.m', 'C', 1)
+m() 2.1 ('C.m', 'C', 1)
+m() 0.0 ('another', 1)
+m() 0.1 ('another', 1)
+m() 1.0 ('another', 1)
+m() 1.1 ('another', 1)
+m() 2.0 ('another', 1)
+m() 2.1 ('another', 1)
+m() 0.0 ('static', 1)
+m() 0.1 ('static', 1)
+m() 1.0 ('static', 1)
+m() 1.1 ('static', 1)
+m() 2.0 ('static', 1)
+m() 2.1 ('static', 1)
+m() 0.0 ('class', 'C', 1)
+m() 0.1 ('class', 'C', 1)
+m() 0.2 ('D.m', 'D', 1)
+m() 1.0 ('class', 'C', 1)
+m() 1.1 ('class', 'C', 1)
+m() 1.2 ('D.m', 'D', 1)
+m() 2.0 ('class', 'C', 1)
+m() 2.1 ('class', 'C', 1)
+m() 2.2 ('D.m', 'D', 1)
+m() 3
+m() 0.0 ('property', 1)
+m() 0.1 ('property', 1)
+m() 1.0 ('property', 1)
+m() 1.1 ('property', 1)
+m() 2.0 ('property', 1)
+m() 2.1 ('property', 1)
+m() 0.0 ('TypeError', "'int' object is not callable")
+m() 1.0 ('TypeError', "'int' object is not callable")
+m() 2.0 ('TypeError', "'int' object is not callable")
+m() 0.0 ('AttributeError', "'C' object has no attribute 'm'")
+m() 1.0 ('AttributeError', "'C' object has no attribute 'm'")
+m() 2.0 ('AttributeError', "'C' object has no attribute 'm'")
+--- __getattr__, __getattribute__
+absent 0.0 ('AttributeError', "'C' object has no attribute 'absent'")
+absent 1.0 ('AttributeError', "'C' object has no attribute 'absent'")
+absent 2.0 ('AttributeError', "'C' object has no attribute 'absent'")
+absent 0.0 ('__getattr__', 'absent')
+absent 1.0 ('__getattr__', 'absent')
+absent 2.0 ('__getattr__', 'absent')
+v 0.0 f
+v 0.1 g
+v 1.0 f
+v 1.1 g
+v 2.0 f
+v 2.1 g
+m() 0.0 ('back', 1)
+m() 1.0 ('back', 1)
+m() 2.0 ('back', 1)
+p 0.0 ('__getattr__', 'nothing_here_at_all')
+p 1.0 ('__getattr__', 'nothing_here_at_all')
+p 2.0 ('__getattr__', 'nothing_here_at_all')
+absent 0.0 ('AttributeError', "'C' object has no attribute 'absent'")
+absent 1.0 ('AttributeError', "'C' object has no attribute 'absent'")
+absent 2.0 ('AttributeError', "'C' object has no attribute 'absent'")
+v 0.0 ('__getattribute__', 'v')
+v 0.1 ('__getattribute__', 'v')
+v 1.0 ('__getattribute__', 'v')
+v 1.1 ('__getattribute__', 'v')
+v 2.0 ('__getattribute__', 'v')
+v 2.1 ('__getattribute__', 'v')
+m ('__getattribute__', 'm')
+v 0.0 f
+v 0.1 g
+v 1.0 f
+v 1.1 g
+v 2.0 f
+v 2.1 g
+--- another class for the object
+C 0.0 h
+C 1.0 h
+C 2.0 h
+C 0.0 C.k
+C 1.0 C.k
+C 2.0 C.k
+C 0.0 ('back', 1)
+C 1.0 ('back', 1)
+C 2.0 ('back', 1)
+Other 0.0 Other.v
+Other 1.0 Other.v
+Other 2.0 Other.v
+Other 0.0 Other.k
+Other 1.0 Other.k
+Other 2.0 Other.k
+Other 0.0 ('Other.m', 1)
+Other 1.0 ('Other.m', 1)
+Other 2.0 ('Other.m', 1)
+C 0.0 h
+C 1.0 h
+C 2.0 h
+C 0.0 C.k
+C 1.0 C.k
+C 2.0 C.k
+C 0.0 ('back', 1)
+C 1.0 ('back', 1)
+C 2.0 ('back', 1)
+Other 0.0 Other.v
+Other 1.0 Other.v
+Other 2.0 Other.v
+Other 0.0 Other.k
+Other 1.0 Other.k
+Other 2.0 Other.k
+Other 0.0 ('Other.m', 1)
+Other 1.0 ('Other.m', 1)
+Other 2.0 ('Other.m', 1)
+--- how an object comes to its dict
+vars vars
+vars vars
+vars C.k
+vars ('back', 1)
+vars vars
+vars C.k
+vars ('back', 1)
+vars vars
+vars C.k
+vars ('back', 1)
+vars ['v', 'w']
+vars ['v', 'last'] True
+hasattr hasattr
+hasattr hasattr
+hasattr C.k
+hasattr ('back', 1)
+hasattr hasattr
+hasattr C.k
+hasattr ('back', 1)
+hasattr hasattr
+hasattr C.k
+hasattr ('back', 1)
+hasattr ['v', 'w']
+hasattr ['v', 'last'] True
+getattr getattr
+getattr getattr
+getattr C.k
+getattr ('back', 1)
+getattr getattr
+getattr C.k
+getattr ('back', 1)
+getattr getattr
+getattr C.k
+getattr ('back', 1)
+getattr ['v', 'w']
+getattr ['v', 'last'] True
+copy copy
+copy copy
+copy C.k
+copy ('back', 1)
+copy copy
+copy C.k
+copy ('back', 1)
+copy copy
+copy C.k
+copy ('back', 1)
+copy ['v', 'w']
+copy ['v', 'last'] True
+deepcopy deepcopy
+deepcopy deepcopy
+deepcopy C.k
+deepcopy ('back', 1)
+deepcopy deepcopy
+deepcopy C.k
+deepcopy ('back', 1)
+deepcopy deepcopy
+deepcopy C.k
+deepcopy ('back', 1)
+deepcopy ['v', 'w']
+deepcopy ['v', 'last'] True
+reduce reduce
+reduce reduce
+reduce C.k
+reduce ('back', 1)
+reduce reduce
+reduce C.k
+reduce ('back', 1)
+reduce reduce
+reduce C.k
+reduce ('back', 1)
+reduce ['v', 'w']
+reduce ['v', 'last'] True
+getstate getstate
+getstate getstate
+getstate C.k
+getstate ('back', 1)
+getstate getstate
+getstate C.k
+getstate ('back', 1)
+getstate getstate
+getstate C.k
+getstate ('back', 1)
+getstate ['v', 'w']
+getstate ['v', 'last'] True
+dir dir
+dir dir
+dir C.k
+dir ('back', 1)
+dir dir
+dir C.k
+dir ('back', 1)
+dir dir
+dir C.k
+dir ('back', 1)
+dir ['v', 'w']
+dir ['v', 'last'] True
+update update
+update update
+update C.k
+update ('back', 1)
+update update
+update C.k
+update ('back', 1)
+update update
+update C.k
+update ('back', 1)
+update ['v', 'w', 'z']
+update ['v', 'z', 'last'] True
+assign assign
+assign assign
+assign C.k
+assign ('back', 1)
+assign assign
+assign C.k
+assign ('back', 1)
+assign assign
+assign C.k
+assign ('back', 1)
+assign ['v', 'w']
+assign ['v', 'last'] True
+copy 0.0 copy
+copy 0.1 twin
+copy 1.0 copy
+copy 1.1 twin
+copy 2.0 copy
+copy 2.1 twin
+False False
+deepcopy 0.0 deepcopy
+deepcopy 0.1 twin
+deepcopy 1.0 deepcopy
+deepcopy 1.1 twin
+deepcopy 2.0 deepcopy
+deepcopy 2.1 twin
+False False
+--- objects of classes derived from built-in ones
+no v yet 0.0 ('AttributeError', "'MyDict' object has no attribute 'v'")
+no v yet 0.1 ('AttributeError', "'MyStr' object has no attribute 'v'")
+no v yet 0.2 ('AttributeError', "'MyList' object has no attribute 'v'")
+no v yet 0.3 ('AttributeError', "'MyInt' object has no attribute 'v'")
+no v yet 0.4 ('AttributeError', "'MyError' object has no attribute 'v'")
+no v yet 1.0 ('AttributeError', "'MyDict' object has no attribute 'v'")
+no v yet 1.1 ('AttributeError', "'MyStr' object has no attribute 'v'")
+no v yet 1.2 ('AttributeError', "'MyList' object has no attribute 'v'")
+no v yet 1.3 ('AttributeError', "'MyInt' object has no attribute 'v'")
+no v yet 1.4 ('AttributeError', "'MyError' object has no attribute 'v'")
+no v yet 2.0 ('AttributeError', "'MyDict' object has no attribute 'v'")
+no v yet 2.1 ('AttributeError', "'MyStr' object has no attribute 'v'")
+no v yet 2.2 ('AttributeError', "'MyList' object has no attribute 'v'")
+no v yet 2.3 ('AttributeError', "'MyInt' object has no attribute 'v'")
+no v yet 2.4 ('AttributeError', "'MyError' object has no attribute 'v'")
+v 0.0 ('v of', 'MyDict')
+v 0.1 ('v of', 'MyStr')
+v 0.2 ('v of', 'MyList')
+v 0.3 ('v of', 'MyInt')
+v 0.4 ('v of', 'MyError')
+v 1.0 ('v of', 'MyDict')
+v 1.1 ('v of', 'MyStr')
+v 1.2 ('v of', 'MyList')
+v 1.3 ('v of', 'MyInt')
+v 1.4 ('v of', 'MyError')
+v 2.0 ('v of', 'MyDict')
+v 2.1 ('v of', 'MyStr')
+v 2.2 ('v of', 'MyList')
+v 2.3 ('v of', 'MyInt')
+v 2.4 ('v of', 'MyError')
+k 0.0 MyDict.k
+k 0.1 MyStr.k
+k 0.2 MyList.k
+k 0.3 MyInt.k
+k 0.4 MyError.k
+k 1.0 MyDict.k
+k 1.1 MyStr.k
+k 1.2 MyList.k
+k 1.3 MyInt.k
+k 1.4 MyError.k
+k 2.0 MyDict.k
+k 2.1 MyStr.k
+k 2.2 MyList.k
+k 2.3 MyInt.k
+k 2.4 MyError.k
+m() 0.0 ('MyDict.m', 1)
+m() 0.1 ('MyStr.m', 1)
+m() 0.2 ('MyList.m', 1)
+m() 0.3 ('MyInt.m', 1)
+m() 0.4 ('MyError.m', 1)
+m() 1.0 ('MyDict.m', 1)
+m() 1.1 ('MyStr.m', 1)
+m() 1.2 ('MyList.m', 1)
+m() 1.3 ('MyInt.m', 1)
+m() 1.4 ('MyError.m', 1)
+m() 2.0 ('MyDict.m', 1)
+m() 2.1 ('MyStr.m', 1)
+m() 2.2 ('MyList.m', 1)
+m() 2.3 ('MyInt.m', 1)
+m() 2.4 ('MyError.m', 1)
+k 0.0 own k
+k 0.1 own k
+k 0.2 own k
+k 0.3 own k
+k 0.4 own k
+k 1.0 own k
+k 1.1 own k
+k 1.2 own k
+k 1.3 own k
+k 1.4 own k
+k 2.0 own k
+k 2.1 own k
+k 2.2 own k
+k 2.3 own k
+k 2.4 own k
+m() 0.0 ('own m', 1)
+m() 0.1 ('own m', 1)
+m() 0.2 ('own m', 1)
+m() 0.3 ('own m', 1)
+m() 0.4 ('own m', 1)
+m() 1.0 ('own m', 1)
+m() 1.1 ('own m', 1)
+m() 1.2 ('own m', 1)
+m() 1.3 ('own m', 1)
+m() 1.4 ('own m', 1)
+m() 2.0 ('own m', 1)
+m() 2.1 ('own m', 1)
+m() 2.2 ('own m', 1)
+m() 2.3 ('own m', 1)
+m() 2.4 ('own m', 1)
+k 0.0 MyDict.k
+k 0.1 MyStr.k
+k 0.2 MyList.k
+k 0.3 MyInt.k
+k 0.4 MyError.k
+k 1.0 MyDict.k
+k 1.1 MyStr.k
+k 1.2 MyList.k
+k 1.3 MyInt.k
+k 1.4 MyError.k
+k 2.0 MyDict.k
+k 2.1 MyStr.k
+k 2.2 MyList.k
+k 2.3 MyInt.k
+k 2.4 MyError.k
+m() 0.0 ('MyDict.m', 1)
+m() 0.1 ('MyStr.m', 1)
+m() 0.2 ('MyList.m', 1)
+m() 0.3 ('MyInt.m', 1)
+m() 0.4 ('MyError.m', 1)
+m() 1.0 ('MyDict.m', 1)
+m() 1.1 ('MyStr.m', 1)
+m() 1.2 ('MyList.m', 1)
+m() 1.3 ('MyInt.m', 1)
+m() 1.4 ('MyError.m', 1)
+m() 2.0 ('MyDict.m', 1)
+m() 2.1 ('MyStr.m', 1)
+m() 2.2 ('MyList.m', 1)
+m() 2.3 ('MyInt.m', 1)
+m() 2.4 ('MyError.m', 1)
+v 0.0 through the dict
+v 0.1 through the dict
+v 0.2 through the dict
+v 0.3 through the dict
+v 0.4 through the dict
+v 1.0 through the dict
+v 1.1 through the dict
+v 1.2 through the dict
+v 1.3 through the dict
+v 1.4 through the dict
+v 2.0 through the dict
+v 2.1 through the dict
+v 2.2 through the dict
+v 2.3 through the dict
+v 2.4 through the dict
+get 0.0 an item, no attribute
+get 1.0 an item, no attribute
+get 2.0 an item, no attribute
+get 0.0 ('own get', 'v')
+get 1.0 ('own get', 'v')
+get 2.0 ('own get', 'v')
+get 0.0 an item, no attribute
+get 1.0 an item, no attribute
+get 2.0 an item, no attribute
+--- one instruction, with and without a dict, in turn
+v 0.0 plain
+v 0.1 asked
+v 0.2 plain D
+v 0.3 asked D
+v 0.4 MyDict v
+v 0.5 Other.v
+v 1.0 plain
+v 1.1 asked
+v 1.2 plain D
+v 1.3 asked D
+v 1.4 MyDict v
+v 1.5 Other.v
+v 2.0 plain
+v 2.1 asked
+v 2.2 plain D
+v 2.3 asked D
+v 2.4 MyDict v
+v 2.5 Other.v
+k 0.0 C.k
+k 0.1 C.k
+k 0.2 C.k
+k 0.3 C.k
+k 0.4 MyDict.k
+k 0.5 Other.k
+k 1.0 C.k
+k 1.1 C.k
+k 1.2 C.k
+k 1.3 C.k
+k 1.4 MyDict.k
+k 1.5 Other.k
+k 2.0 C.k
+k 2.1 C.k
+k 2.2 C.k
+k 2.3 C.k
+k 2.4 MyDict.k
+k 2.5 Other.k
+m() 0.0 ('back', 1)
+m() 0.1 ('back', 1)
+m() 0.2 ('D.m', 'D', 1)
+m() 0.3 ('D.m', 'D', 1)
+m() 0.4 ('MyDict.m', 1)
+m() 0.5 ('Other.m', 1)
+m() 1.0 ('back', 1)
+m() 1.1 ('back', 1)
+m() 1.2 ('D.m', 'D', 1)
+m() 1.3 ('D.m', 'D', 1)
+m() 1.4 ('MyDict.m', 1)
+m() 1.5 ('Other.m', 1)
+m() 2.0 ('back', 1)
+m() 2.1 ('back', 1)
+m() 2.2 ('D.m', 'D', 1)
+m() 2.3 ('D.m', 'D', 1)
+m() 2.4 ('MyDict.m', 1)
+m() 2.5 ('Other.m', 1)

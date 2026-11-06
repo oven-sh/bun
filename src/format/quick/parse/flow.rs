@@ -507,6 +507,10 @@ impl Quick {
         while self.lexer.tok != tk::ParenR {
             if self.lexer.tok == tk::Ellipsis {
                 self.next()?;
+                // (`...this: A`: the long way drops the dots)
+                if self.lexer.tok == tk::This {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
                 let rest = self.flow_parse_function_type_param(false)?;
                 self.n.put(rest, self.n.at(rest) | F_REST);
                 self.list_push(rest);
@@ -622,6 +626,15 @@ impl Quick {
         return Ok(result);
     }
 
+    /// `[K in`. The current token is the `[`.
+    fn flow_is_at_mapped_type(&mut self) -> R<bool> {
+        let saved = self.save();
+        self.next()?;
+        let result = self.is_word() && self.peek()? == tk::In;
+        self.restore(saved);
+        return Ok(result);
+    }
+
     pub(crate) fn flow_object_type_semicolon(&mut self) -> R<()> {
         if self.lexer.tok == tk::Semi || self.lexer.tok == tk::Comma {
             if self.lexer.tok_nl != 0 {
@@ -672,14 +685,18 @@ impl Quick {
             }
             let member_start = self.lexer.tok_start;
             let mut head: i32 = 0;
+            // One of the two at most. `proto` is the name of a method before `(` and `<`, `static` a modifier of a call property.
             if allow_proto && self.word() == w::Proto {
                 let after = self.peek()?;
-                if after != tk::Colon && after != tk::Question {
+                if after != tk::Colon
+                    && after != tk::Question
+                    && after != tk::ParenL
+                    && after != tk::Lt
+                {
                     self.next()?;
                     head |= F_PROTO;
                 }
-            }
-            if allow_static && self.is_kw(kw::Static) {
+            } else if allow_static && self.is_kw(kw::Static) {
                 let after = self.peek()?;
                 if after != tk::Colon && after != tk::Question {
                     self.next()?;
@@ -687,6 +704,17 @@ impl Quick {
                 }
             }
             let variance = self.flow_parse_variance()?;
+            // What only the long way prints: `proto` in front of anything but a property, a variance in front of `[[a]]`, a modifier
+            // in front of `[K in T]`.
+            if (head | variance) != 0 && self.lexer.tok == tk::BracketL {
+                let after = self.peek()?;
+                if (head & F_PROTO) != 0
+                    || (variance != 0 && after == tk::BracketL)
+                    || (head != 0 && self.flow_is_at_mapped_type()?)
+                {
+                    return Err(self.text_refuse());
+                }
+            }
             // `+` and `-` stand in front of a property or an indexer
             if variance != 0
                 && (self.lexer.tok == tk::ParenL
@@ -852,6 +880,20 @@ impl Quick {
                     let key_start = self.lexer.tok_start;
                     self.next()?;
                     self.expect(tk::At)?;
+                    if self.lexer.tok_start != key_start + 2 {
+                        return Err(self.unexpected());
+                    }
+                    // (the long way drops `get` and `set` in front of it, and moves a comment from there behind the member)
+                    if method != M_METHOD
+                        || (self.lexer.c_count > self.lexer.c_base
+                            && self
+                                .lexer
+                                .c
+                                .at((self.lexer.c_count - 1) * C_STRIDE + C_START)
+                                >= member_start)
+                    {
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
+                    }
                     key = self.parse_ident_name()?;
                     self.n.put(key + 1, key_start);
                 } else {
@@ -876,6 +918,12 @@ impl Quick {
                     }
                     if method == M_METHOD {
                         head |= F_METHOD;
+                    }
+                    // (`"new"(): A`: the long way keeps the quotes)
+                    if (self.n.at(key) & 0xff) == k::StringLiteral
+                        && self.text_is(self.n.at(key + 1) + 1, self.n.at(key + 2) - 1, b"new")
+                    {
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
                     }
                     value = self.flow_parse_methodish_type(member_start, k::FunctionType)?;
                 } else {

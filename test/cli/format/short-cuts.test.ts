@@ -6626,6 +6626,10 @@ describe("JavaScript and Flow that the long way rejects", () => {
     // two expressions behind `%checks`
     "declare function f(x: mixed): boolean %checks(a, b);\n",
     "function f(x: mixed): boolean %checks(a, b) {}\n",
+    // two modifiers, `@@` in pieces
+    "declare class A { proto static a: T }\n",
+    "type A = { @ @iterator(): T };\n",
+    "type A = { @ @iterator: T };\n",
   ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared
@@ -6645,6 +6649,21 @@ describe("programs that are read as written", () => {
         "declare export function f(x: mixed): boolean %checks\n(!!x);\n",
         "declare function f(x: mixed): boolean %checks\n\n(x);\n",
         "declare function f(x: mixed): boolean %checks // c\n(x);\n",
+        // `proto`, `static`, `+` and `get` in front of a member that has no place for them
+        "declare class A { proto(): T }\n",
+        "declare class A { proto<X>(): T }\n",
+        "declare class A { proto [k: string]: T }\n",
+        "declare class A { proto [[a]]: T }\n",
+        "type A = { +[[a]]: T };\n",
+        "declare class A { static -[[a]]: T }\n",
+        "declare class A { static [K in T]: U }\n",
+        "declare class A { proto [K in T]: U }\n",
+        "declare class A { get @@iterator(): T }\n",
+        "type A = { set @@iterator(a: T): void };\n",
+        "declare class A { static /* c */ @@iterator: T }\n",
+        "interface A { 'new'(): b }\n",
+        "type A = (...this: T) => U;\n",
+        "declare function f(...this: T): U;\n",
       ],
       [[], ["--print-width=10"]],
     ));
@@ -6654,6 +6673,9 @@ describe("programs that are read as written", () => {
       [
         // the `(` behind `%checks` stands on another line
         "declare function f(x: mixed): boolean %checks\n(!!x);\n",
+        // `proto`, `static`, `+` and `get` in front of a member that has no place for them
+        "declare class A { proto(): T }\n",
+        "type A = { +[[a]]: T };\n",
       ].map(text => `// @flow\n${text}`),
       [[]],
     ));

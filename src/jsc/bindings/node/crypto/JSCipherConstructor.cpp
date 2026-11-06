@@ -120,9 +120,9 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
 
     auto keyData = keyObject.symmetricKey().span();
 
-    JSArrayBufferView* ivView = nullptr;
+    BufferArgument ivArgument;
     if (!ivValue.isNull()) {
-        ivView = getArrayBufferOrView(globalObject, scope, ivValue, "iv"_s, jsUndefined());
+        ivArgument = getArrayBufferOrView(globalObject, scope, ivValue, "iv"_s, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -148,13 +148,13 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         return ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s, 0, INT_MAX, jsNumber(keyData.size()));
     }
 
-    int32_t ivLen = 0;
-    if (ivView) {
-        if (ivView->byteLength() > INT_MAX) [[unlikely]] {
-            return ERR::OUT_OF_RANGE(scope, globalObject, "iv is too big"_s, 0, INT_MAX, jsNumber(ivView->byteLength()));
-        }
-        ivLen = ivView->byteLength();
+    // Read once, after the last getter of `options`.
+    const bool hasIv = !!ivArgument;
+    const std::span<const uint8_t> iv = ivArgument.span();
+    if (iv.size() > INT_MAX) [[unlikely]] {
+        return ERR::OUT_OF_RANGE(scope, globalObject, "iv is too big"_s, 0, INT_MAX, jsNumber(iv.size()));
     }
+    int32_t ivLen = iv.size();
 
     ClearErrorOnReturn clearErrorOnReturn;
 
@@ -165,18 +165,18 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
 
     const int32_t expectedIvLen = cipher.getIvLength();
 
-    if (!ivView && expectedIvLen != 0) {
+    if (!hasIv && expectedIvLen != 0) {
         return ERR::CRYPTO_INVALID_IV(scope, globalObject);
     }
 
-    if (!cipher.isSupportedAuthenticatedMode() && ivView && ivView->byteLength() != expectedIvLen) {
+    if (!cipher.isSupportedAuthenticatedMode() && hasIv && ivLen != expectedIvLen) {
         return ERR::CRYPTO_INVALID_IV(scope, globalObject);
     }
 
     if (cipher.isChaCha20Poly1305()) {
-        ASSERT(ivView);
+        ASSERT(hasIv);
 
-        if (ivView->byteLength() > 12) {
+        if (ivLen > 12) {
             return ERR::CRYPTO_INVALID_IV(scope, globalObject);
         }
     }
@@ -184,9 +184,9 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     // OpenSSL 3 caps GCM IVs at 1024 bits (GCM_IV_MAX_SIZE). BoringSSL has no
     // such cap, so enforce it here to match Node.js and avoid unbounded GHASH work.
     if (cipher.isGcmMode()) {
-        ASSERT(ivView);
+        ASSERT(hasIv);
 
-        if (ivView->byteLength() > 128) {
+        if (ivLen > 128) {
             return ERR::CRYPTO_INVALID_IV(scope, globalObject);
         }
     }
@@ -219,7 +219,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         return ERR::CRYPTO_INVALID_KEYLEN(scope, globalObject);
     }
 
-    if (!ctx.init(Cipher(), encrypt, keyData.data(), ivView ? reinterpret_cast<uint8_t*>(ivView->vector()) : nullptr)) {
+    if (!ctx.init(Cipher(), encrypt, keyData.data(), iv.data())) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize cipher"_s);
         return {};
     }

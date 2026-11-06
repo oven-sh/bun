@@ -568,7 +568,7 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     return true;
 }
 
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
+BufferArgument getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
 {
     if (value.isString()) {
         JSString* dataString = value.toString(globalObject);
@@ -587,12 +587,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
             return {};
         }
 
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        return view;
+        return { view };
     }
 
     return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
@@ -652,7 +647,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
     return Return(nullptr, {});
 }
 
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
+BufferArgument getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
 {
     if (value.isString()) {
         JSString* dataString = value.toString(globalObject);
@@ -683,60 +678,33 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
             return {};
         }
 
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        return view;
+        return { view };
     }
 
     if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
-        RefPtr<JSC::ArrayBuffer> impl = arrayBuffer->impl();
-        if (impl->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        auto* structure = globalObject->typedArrayStructure(JSC::TypeUint8, impl->isResizableOrGrowableShared());
-        size_t byteLength = impl->byteLength();
-        RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+        return { arrayBuffer };
     }
 
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     if (!view) {
-        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, value);
+        ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, value);
         return {};
     }
 
-    if (view->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return {};
-    }
-
-    return view;
+    return { view };
 }
 
-std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
+BufferArgument getBuffer(JSC::JSValue maybeBuffer)
 {
     if (auto* view = dynamicDowncast<JSArrayBufferView>(maybeBuffer)) {
-        if (view->isDetached()) {
-            return std::nullopt;
-        }
-
-        return view->span();
+        return { view };
     }
 
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(maybeBuffer)) {
-        auto* buffer = arrayBuffer->impl();
-        if (buffer->isDetached()) {
-            return std::nullopt;
-        }
-
-        return buffer->span();
+        return { arrayBuffer };
     }
 
-    return std::nullopt;
+    return {};
 }
 
 std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
@@ -954,14 +922,15 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     }
 
     if (!passphraseValue.isUndefined()) {
-        JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
+        auto passphrase = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
+        auto passphraseBytes = passphrase.span();
         // BoringSSL's length parameter is an `int`.
-        if (passphraseView->byteLength() > INT_MAX) {
+        if (passphraseBytes.size() > INT_MAX) {
             ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
             return;
         }
-        config.passphrase = DataPointer::FromSpan(passphraseView->span());
+        config.passphrase = DataPointer::FromSpan(passphraseBytes);
     }
 
     if (config.output_key_object) {

@@ -85,13 +85,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     JSC::JSValue outputEncodingValue = callFrame->argument(2);
 
     // Get the arguments - use the input encoding if provided
-    auto* keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, inputEncodingValue);
+    auto keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, inputEncodingValue);
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (!keyBuffer) {
-        throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Key argument must be an ArrayBuffer or ArrayBufferView"_s);
-        return {};
-    }
 
     // Validate that we have a valid key pair
     ncrypto::MarkPopErrorOnReturn markPopErrorOnReturn;
@@ -106,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     }
 
     // Set the point from the buffer
-    auto keySpan = keyBuffer->span();
+    auto keySpan = keyBuffer.span();
     ncrypto::Buffer<const unsigned char> buffer {
         .data = static_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size()
@@ -227,13 +222,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
     JSC::JSValue encodingValue = callFrame->argument(1);
 
     // Convert the input to a buffer with encoding if provided
-    auto* bufferValue = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, encodingValue);
+    auto bufferValue = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (!bufferValue) {
-        throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to convert key to buffer"_s);
-        return {};
-    }
 
     ncrypto::MarkPopErrorOnReturn markPopErrorOnReturn;
 
@@ -245,7 +235,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
     }
 
     // Set the point from the buffer
-    auto keySpan = bufferValue->span();
+    auto keySpan = bufferValue.span();
     ncrypto::Buffer<const unsigned char> buffer {
         .data = static_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size()
@@ -286,18 +276,13 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     JSC::JSValue encodingValue = callFrame->argument(1);
 
     // Convert the input to a buffer with encoding if provided
-    auto* bufferValue = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, encodingValue);
+    auto bufferValue = Bun::getArrayBufferOrView(globalObject, scope, keyValue, "key"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (!bufferValue) {
-        throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to convert key to buffer"_s);
-        return {};
-    }
 
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // Create a BN from the buffer
-    auto keySpan = bufferValue->span();
+    auto keySpan = bufferValue.span();
     ncrypto::BignumPointer privateKey(static_cast<const unsigned char*>(keySpan.data()), keySpan.size());
     if (!privateKey) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert buffer to BIGNUM for private key"_s);

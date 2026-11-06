@@ -298,13 +298,14 @@ static ncrypto::BignumPointer bignumOption(JSGlobalObject* globalObject, ThrowSc
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    auto bytes = getBuffer(value);
-    if (!bytes) {
+    auto buffer = getBuffer(value);
+    if (!buffer) {
         ERR::INVALID_ARG_TYPE(scope, globalObject, name, "bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView"_s, value);
         return {};
     }
 
-    ncrypto::BignumPointer number(bytes->data(), bytes->size());
+    auto bytes = buffer.span();
+    ncrypto::BignumPointer number(bytes.data(), bytes.size());
     if (!number) {
         ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);
     }

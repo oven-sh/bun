@@ -95,7 +95,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     JSValue keyValue = callFrame->argument(0);
     JSValue inEncValue = callFrame->argument(2);
-    auto* keyView = getArrayBufferOrView(lexicalGlobalObject, scope, keyValue, "key"_s, inEncValue);
+    auto keyArgument = getArrayBufferOrView(lexicalGlobalObject, scope, keyValue, "key"_s, inEncValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue formatValue = callFrame->argument(4);
@@ -105,7 +105,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     auto curveName = curveValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto buffer = keyView->span();
+    auto buffer = keyArgument.span();
     if (buffer.empty())
         return JSValue::encode(jsEmptyString(vm));
 

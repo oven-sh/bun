@@ -137,7 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return JSValue::encode(jsUndefined());
     }
 
-    auto buffer = input.value();
+    auto buffer = input.span();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -162,7 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.value();
+    auto buffer = input.span();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -192,7 +192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.value();
+    auto buffer = input.span();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }

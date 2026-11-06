@@ -67,11 +67,11 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return ERR::INVALID_ARG_TYPE_INSTANCE(scope, lexicalGlobalObject, "data"_s, "string"_s, "Buffer, TypedArray, or DataView"_s, dataValue);
     }
 
-    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encoding);
+    auto dataArgument = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encoding);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Read once: the length of a length-tracking view is not fixed.
-    const std::span<const uint8_t> data = dataView->span();
+    const std::span<const uint8_t> data = dataArgument.span();
 
     ClearErrorOnReturn clearErrorOnReturn;
 
@@ -110,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     auto out = outBuf->mutableSpan().subspan(outLen);
     size_t written = 0;
     bool res = EVP_CipherUpdate_ex(cipher->m_ctx, out.data(), &written, out.size(), data.data(), data.size()) == 1;
-    ensureStillAliveHere(dataView);
+    ensureStillAliveHere(dataArgument.cell);
     outLen += written;
 
     if (!res && cipher->m_kind == CipherKind::Decipher && cipher->m_ctx.isCcmMode()) {
@@ -260,19 +260,19 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
 
     JSValue authTagValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
-    JSArrayBufferView* authTag = getArrayBufferOrView(globalObject, scope, authTagValue, "buffer"_s, encodingValue);
+    auto authTagArgument = getArrayBufferOrView(globalObject, scope, authTagValue, "buffer"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(authTag);
+    auto authTag = authTagArgument.span();
 
     if (!cipher->m_ctx || !cipher->isAuthenticatedMode() || cipher->m_kind != CipherKind::Decipher || cipher->m_authTagState != AuthTagState::AuthTagUnknown) {
         return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAuthTag"_s);
     }
 
-    if (authTag->byteLength() > INT_MAX) {
-        return ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s, 0, INT_MAX, jsNumber(authTag->byteLength()));
+    if (authTag.size() > INT_MAX) {
+        return ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s, 0, INT_MAX, jsNumber(authTag.size()));
     }
 
-    uint32_t tagLen = authTag->byteLength();
+    uint32_t tagLen = authTag.size();
 
     // m_authTagLen is always set at construction, so the supplied tag must match exactly;
     // Node 26 no longer accepts implicit short GCM tags (former DEP0182).
@@ -287,7 +287,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
     cipher->m_authTagState = AuthTagState::AuthTagKnown;
 
     memset(cipher->m_authTag, 0, sizeof(cipher->m_authTag));
-    memcpy(cipher->m_authTag, authTag->vector(), *cipher->m_authTagLen);
+    memcpy(cipher->m_authTag, authTag.data(), *cipher->m_authTagLen);
 
     return JSValue::encode(jsUndefined());
 }
@@ -329,12 +329,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         }
     }
 
-    JSArrayBufferView* aadbuf = getArrayBufferOrView(globalObject, scope, aadbufValue, "aadbuf"_s, encodingValue);
+    auto aadbufArgument = getArrayBufferOrView(globalObject, scope, aadbufValue, "aadbuf"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(aadbuf);
+    auto aadbuf = aadbufArgument.span();
 
-    if (aadbuf->byteLength() > std::numeric_limits<int>::max()) {
-        return ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s, 0, INT_MAX, jsNumber(aadbuf->byteLength()));
+    if (aadbuf.size() > std::numeric_limits<int>::max()) {
+        return ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s, 0, INT_MAX, jsNumber(aadbuf.size()));
     }
 
     // Passing a NULL output buffer to EVP_CipherUpdate is only valid for AEAD
@@ -371,8 +371,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
     }
 
     ncrypto::Buffer<const unsigned char> buf {
-        .data = reinterpret_cast<uint8_t*>(aadbuf->vector()),
-        .len = aadbuf->byteLength(),
+        .data = aadbuf.data(),
+        .len = aadbuf.size(),
     };
 
     if (!cipher->m_ctx.update(buf, nullptr, &outlen)) {

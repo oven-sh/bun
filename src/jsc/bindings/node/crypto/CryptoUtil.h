@@ -2,6 +2,8 @@
 
 #include "root.h"
 #include "ncrypto.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include "CryptoAlgorithmRegistry.h"
@@ -60,10 +62,34 @@ DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSVa
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, const ncrypto::EVPKeyPointer& pkey, WTF::Vector<uint8_t>& derBuffer);
 std::optional<WebCore::BufferEncodingType> getInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue);
 GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue);
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding = false);
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
+// An ArrayBuffer or view argument (for a string, the Buffer it was decoded into), as Node's
+// getArrayBufferOrView() returns it. span() reads the bytes when it is called: user JS that ran
+// since the conversion may have detached, resized or filled the buffer. A detached one is empty.
+// It has no destructor so that it returns in a register. A caller that uses the bytes after
+// something that can collect keeps `cell` alive until then.
+struct BufferArgument {
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    JSC::JSCell* cell { nullptr };
+
+    explicit operator bool() const { return cell; }
+
+    std::span<const uint8_t> span() const
+    {
+        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(cell))
+            return view->span();
+        if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(cell))
+            return buffer->impl()->span();
+        return {};
+    }
+};
+static_assert(sizeof(BufferArgument) == sizeof(void*) && std::is_trivially_copyable_v<BufferArgument> && std::is_aggregate_v<BufferArgument>);
+
+BufferArgument getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding = false);
+BufferArgument getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
-std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
+BufferArgument getBuffer(JSC::JSValue maybeBuffer);
 // Like Node, throws ERR_OUT_OF_RANGE "<argName> is too big" if `bytes` is longer than INT32_MAX.
 std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName);
 

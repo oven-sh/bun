@@ -59,11 +59,10 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     JSC::JSValue outputEncodingArg = callFrame->argument(2);
 
     // Process the public key input
-    auto* keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, inputEncodingArg);
+    auto keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, inputEncodingArg);
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(keyBuffer);
 
-    auto span = keyBuffer->span();
+    auto span = keyBuffer.span();
 
     // Check for unusually large buffer sizes
     if (span.size() > INT32_MAX) {
@@ -230,11 +229,10 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPublicKeyTemplate(JSC::JSGlobalOb
     JSC::JSValue keyArg = callFrame->argument(0);
 
     // Process the public key input
-    auto* keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, callFrame->argument(1));
+    auto keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(keyBuffer);
 
-    auto span = keyBuffer->span();
+    auto span = keyBuffer.span();
 
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer key(span.data(), span.size());
@@ -267,11 +265,10 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPrivateKeyTemplate(JSC::JSGlobalO
 
     JSC::JSValue keyArg = callFrame->argument(0);
 
-    auto* keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, callFrame->argument(1));
+    auto keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(keyBuffer);
 
-    auto span = keyBuffer->span();
+    auto span = keyBuffer.span();
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer key(span.data(), span.size());
     if (!key) {

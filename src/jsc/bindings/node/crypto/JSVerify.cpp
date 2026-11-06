@@ -331,7 +331,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSValue signatureValue = callFrame->argument(1);
     JSValue sigEncodingValue = callFrame->argument(2);
 
-    JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
+    auto signatureArgument = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options);
@@ -371,9 +371,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
     }
 
+    auto signature = signatureArgument.span();
     ncrypto::Buffer<const unsigned char> sigBuf {
-        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
-        .len = signatureBuffer->byteLength(),
+        .data = signature.data(),
+        .len = signature.size(),
     };
 
     WTF::Vector<uint8_t> derBuffer;

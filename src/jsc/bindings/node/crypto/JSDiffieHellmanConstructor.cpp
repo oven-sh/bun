@@ -120,18 +120,19 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         }
     } else {
 
-        auto* keyView = keyEncoding.has_value()
+        auto primeArgument = keyEncoding.has_value()
             ? getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncoding.value())
             : getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncodingValue, true);
 
         RETURN_IF_EXCEPTION(scope, {});
+        auto prime = primeArgument.span();
 
-        if (keyView->byteLength() > INT32_MAX) {
+        if (prime.size() > INT32_MAX) {
             throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "prime is too big"_s);
             return {};
         }
 
-        ncrypto::BignumPointer bn_p(reinterpret_cast<uint8_t*>(keyView->vector()), keyView->byteLength());
+        ncrypto::BignumPointer bn_p(prime.data(), prime.size());
         if (!bn_p) {
             throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid prime"_s);
             return {};
@@ -152,15 +153,16 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
                 return {};
             }
         } else {
-            auto* generatorView = getArrayBufferOrView(globalObject, scope, generatorValue, "generator"_s, genEncodingValue);
+            auto generatorArgument = getArrayBufferOrView(globalObject, scope, generatorValue, "generator"_s, genEncodingValue);
             RETURN_IF_EXCEPTION(scope, {});
+            auto generator = generatorArgument.span();
 
-            if (generatorView->byteLength() > INT32_MAX) {
+            if (generator.size() > INT32_MAX) {
                 throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "generator is too big"_s);
                 return {};
             }
 
-            bn_g = ncrypto::BignumPointer(reinterpret_cast<uint8_t*>(generatorView->vector()), generatorView->byteLength());
+            bn_g = ncrypto::BignumPointer(generator.data(), generator.size());
             if (!bn_g) {
                 throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid generator"_s);
                 return {};

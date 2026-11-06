@@ -5812,7 +5812,8 @@ ServerResponse.prototype.write = function (
         onWritable !== null &&
         typeof handle === "object" &&
         handle !== null &&
-        ((typeof chunk === "string" && chunk.length !== 0) || (typeof chunk === "object" && chunk !== null)) &&
+        // Neither is converted by code of the program: a String object would be, amid the native call.
+        ((typeof chunk === "string" && chunk.length !== 0) || $isTypedArrayView(chunk)) &&
         !this.finished &&
         !this.destroyed &&
         this._hasBody === true &&

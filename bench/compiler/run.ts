@@ -3,6 +3,7 @@
 //   bun bench/compiler/run.ts                                  every scenario at 10,000, 100,000, 1,000,000 and 5,000,000 lines, three runs each: the table
 //   bun bench/compiler/run.ts --sizes=10000 --runs=1           smaller
 //   bun bench/compiler/run.ts --scenarios=typed,go-cold        some of them, by their names in the table. A name that is not among them ends the run
+//   bun bench/compiler/run.ts --commands                       prints the command of every scenario that would run, and runs none
 //   bun bench/compiler/run.ts --bun=<path>                     another Bun than the one that runs this script
 //   bun bench/compiler/run.ts --check                          builds every program at the smallest size, runs it, and fails unless every one was built, ended with 0 and printed the same number
 //   bun bench/compiler/run.ts --json=<file>                    every number of every run, too
@@ -160,6 +161,22 @@ if (unknown.length) {
     `--scenarios: there is no ${quoted}. The scenarios:\n${scenarios.map(({ name }) => `  ${name}`).join("\n")}`,
   );
   process.exit(1);
+}
+
+const shown = (command: string[]) => command.map(word => (word === bun ? "bun" : word)).join(" ");
+function printCommandsOf(chosen: Scenario[]) {
+  const widest = Math.max(...chosen.map(scenario => scenario.name.length), "scenario".length);
+  for (const scenario of chosen) {
+    const before = (scenario.prepare?.(".") ?? []).map(shown).join(" && ");
+    console.log(
+      `${scenario.name.padEnd(widest)}  ${shown(scenario.command("."))}${before ? `   (before it, not timed: ${before})` : ""}`,
+    );
+  }
+  return widest;
+}
+if (has("commands")) {
+  printCommandsOf(scenarios.filter(scenario => !wanted || wanted.split(",").includes(scenario.name)));
+  process.exit(0);
 }
 
 function countLines(
@@ -362,9 +379,7 @@ if (has("check")) {
 
 const version = (command: string[]) =>
   spawnSync({ cmd: command, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
-const shown = (command: string[]) => command.map(word => (word === bun ? "bun" : word)).join(" ");
 const ran = scenarios.filter(scenario => results.some(row => row.scenario === scenario.name));
-const widest = Math.max(...ran.map(scenario => scenario.name.length), "scenario".length);
 console.log(
   `One application, written by bench/compiler/generate.ts in every form below. The mean of ${runs} run${runs === 1 ? "" : "s"}.`,
 );
@@ -375,12 +390,7 @@ console.log(`bun    ${version([bun, "--revision"])}`);
 if (which("go")) console.log(`go     ${version(["go", "version"]).replace("go version ", "")}`);
 if (which("cargo")) console.log(`rustc  ${version(["rustc", "--version"]).replace("rustc ", "")}`);
 console.log("");
-for (const scenario of ran) {
-  const before = (scenario.prepare?.(".") ?? []).map(shown).join(" && ");
-  console.log(
-    `${scenario.name.padEnd(widest)}  ${shown(scenario.command("."))}${before ? `   (before it, not timed: ${before})` : ""}`,
-  );
-}
+const widest = printCommandsOf(ran);
 const columns: [string, number, (row: any) => string][] = [
   ["wall s", 9, row => row.wallSeconds.toFixed(2)],
   ["lines/s", 10, row => whole(row.lines / row.wallSeconds)],

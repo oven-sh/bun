@@ -20,16 +20,24 @@ test("a name that the benchmark does not have ends the run, and the names are li
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
-test("a scenario is chosen by its whole name, and nothing else runs", async () => {
-  const { stdout, stderr, exitCode } = await benchmark("--scenarios=typed on one thread", "--sizes=300", "--runs=1");
+// It asks for the commands and builds nothing: the build on one thread passed 120 seconds on a busy runner of macOS, where it takes six on Linux.
+test("a scenario is chosen by its whole name, and no other", async () => {
+  expect(await benchmark("--scenarios=typed on one thread", "--commands")).toMatchObject({
+    stdout:
+      "typed on one thread  bun build --compile --aot --explain=statistics --aot-threads=1 main.ts --outfile app\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("what is chosen is built and measured, and nothing else", async () => {
+  const { stdout, stderr, exitCode } = await benchmark("--scenarios=typed", "--sizes=300", "--runs=1");
   // A run that fails shows all that it printed. On Windows the benchmark looked for `app`, where a build writes `app.exe`, and this test said only that a line was missing.
   const told = stderr.split(/\r?\n/).filter(line => line.startsWith("300 "));
   expect({ told, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
-    told: [expect.stringMatching(/^300 typed on one thread: /)],
+    told: [expect.stringMatching(/^300 typed: /)],
     exitCode: 0,
     stderr: "",
   });
-  expect(stdout).toContain(
-    "\ntyped on one thread  bun build --compile --aot --explain=statistics --aot-threads=1 main.ts --outfile app\n",
-  );
+  expect(stdout).toContain("\ntyped     bun build --compile --aot --explain=statistics main.ts --outfile app\n");
 }, 120_000);

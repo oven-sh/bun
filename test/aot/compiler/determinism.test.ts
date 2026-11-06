@@ -16,12 +16,12 @@
 // By hand, in a folder that `bun bench/compiler/generate.ts <folder> <features> <dress>` has written (each test prints that command on stderr):
 //   bun build --compile --aot --aot-threads=16 main.ts --outfile program
 //   bun build --compile --aot --aot-threads=16 --aot-out=program.aot main.ts --outfile writes-program
-//   testaot facts $PWD/program.aot references=narrow exclude=CodeOutsideImage,LibraryText threads=16
+//   testaot facts $PWD/program.aot enforced references=narrow exclude=CodeOutsideImage,LibraryText threads=16
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { dirname, join } from "path";
-import { testaot, toolEnv } from "../engine/testaot";
+import { commandEnv, describeSilentCrash, testaot } from "../engine/testaot";
 import { without } from "../harness/capabilities";
 import { spawned, unsupported, withoutDebugInformation } from "../harness/commands";
 import { compileCommand, withProgramOutput, withThreads, wordsOfAPlainBuild } from "../harness/flags";
@@ -36,10 +36,18 @@ const limitOfACommand = 300_000;
 type Outcome = { content: string } | { failure: string };
 type Ended = Awaited<ReturnType<typeof spawned>>;
 
-const failureOf = ({ exitCode, signal, stderr }: Ended) =>
+// The last lines of a failed command's output show how far it got.
+const lastLines = (text: string) => {
+  const lines = text.split("\n");
+  return lines.length <= 40 ? text : `.. ${lines.length - 40} lines ..\n${lines.slice(-40).join("\n")}`;
+};
+const failureOf = ({ exitCode, signal, stderr, stdout }: Ended) =>
   exitCode === 0 && !signal
     ? undefined
-    : `exit code ${exitCode}${signal ? ` ${signal}` : ""}: ${stderr.slice(0, 1000)}`;
+    : [
+        `exit code ${exitCode}${signal ? ` ${signal}` : ""}: ${stderr || "no stderr output"}`,
+        ...(stdout ? [`printed: ${lastLines(stdout)}`] : []),
+      ].join("\n");
 
 // Two missing or empty files would compare equal, so a missing or empty file is a failure.
 async function outcomeOfFile(path: string): Promise<Outcome> {
@@ -49,7 +57,9 @@ async function outcomeOfFile(path: string): Promise<Outcome> {
 }
 
 function outcomeOfOutput(run: Ended): Outcome {
-  const failure = failureOf(run) ?? (run.stdout ? undefined : "nothing is printed");
+  // A tool that rejects its arguments prints that to stdout and exits with 0, so three such outputs would compare equal.
+  const refusal = run.stdout.startsWith("bad argument") ? run.stdout.trim() : undefined;
+  const failure = failureOf(run) ?? refusal ?? (run.stdout ? undefined : "nothing is printed");
   return failure === undefined ? { content: run.stdout } : { failure };
 }
 
@@ -118,18 +128,14 @@ async function buildAt(threads: number, app: Application) {
 // testaot spells an engine flag without --aot-: threads=16.
 const wordOf = (flag: string) => flag.replace(/^--aot-/, "");
 
-const printedBy = (command: string, program: string) =>
+const printedBy = (command: string, program: string, ...words: string[]) =>
   Promise.all(
-    threadCounts.map(async threads =>
-      outcomeOfOutput(
-        await spawned(
-          [testaot!, command, program, ...wordsOfAPlainBuild, wordOf(withThreads(threads))],
-          dirname(program),
-          toolEnv,
-          limitOfACommand,
-        ),
-      ),
-    ),
+    threadCounts.map(async threads => {
+      const cmd = [testaot!, command, program, ...words, ...wordsOfAPlainBuild, wordOf(withThreads(threads))];
+      const run = await spawned(cmd, dirname(program), commandEnv, limitOfACommand);
+      if (run.signal && !run.stderr.trim()) run.stderr = await describeSilentCrash(cmd, dirname(program), commandEnv);
+      return outcomeOfOutput(run);
+    }),
   );
 
 test("reports each failure and each difference under its stage", () => {
@@ -164,7 +170,7 @@ describe(`the same bytes at ${threadCounts.join(", ")} threads`, () => {
         const program = builds.find(build => "content" in build.frontEnd)?.program;
         const [facts, plan]: [Outcome[], Outcome[]] =
           program && !whyNoTexts
-            ? await Promise.all([printedBy("facts", program), printedBy("plan", program)])
+            ? await Promise.all([printedBy("facts", program, "enforced"), printedBy("plan", program)])
             : [[], []];
         for (const { executable } of builds) if ("content" in executable) executablesSeen.add(executable.content);
         expect(

@@ -9,7 +9,7 @@
 //   testaot native <part of a name>                   tests written in C++
 import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { declare } from "../harness/capabilities";
 import { slot, slots } from "../harness/commands";
@@ -37,6 +37,55 @@ export const toolEnv = bunEnv.ASAN_OPTIONS
   ? { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:detect_leaks=0` }
   : bunEnv;
 
+// abort() prints nothing, and on Linux WTF's CRASH() is std::abort(). With handle_abort=1 a sanitizer prints the caller's stack.
+export const commandEnv = toolEnv.ASAN_OPTIONS
+  ? { ...toolEnv, ASAN_OPTIONS: `${toolEnv.ASAN_OPTIONS}:handle_abort=1` }
+  : toolEnv;
+
+// The tool's own output is discarded. Signals used to suspend threads are passed through. A noreturn crash function has no return address, so break on entry.
+const debuggerCommands = [
+  "set pagination off",
+  "set breakpoint pending on",
+  "set inferior-tty /dev/null",
+  "handle all nostop noprint pass",
+  "handle SIGABRT SIGILL SIGBUS SIGFPE SIGSEGV stop print",
+  "break WTF::CrashOnOverflow::crash",
+  "break WTFCrashWithInfo",
+  "run",
+  "bt 40",
+];
+
+/**
+ * Reruns a command that a signal killed without any stderr output under gdb, if gdb is installed, and returns the backtrace.
+ * An intermittent crash will usually not repeat; then it says so and where core dumps go.
+ */
+export async function describeSilentCrash(
+  cmd: string[],
+  cwd: string | undefined,
+  env: Record<string, string | undefined>,
+) {
+  const coreDumps = existsSync("/proc/sys/kernel/core_pattern")
+    ? `core_pattern is ${readFileSync("/proc/sys/kernel/core_pattern", "utf8").trim()}`
+    : "where core dumps go is unknown";
+  const gdb = isWindows ? null : Bun.which("gdb");
+  if (!gdb) return `no stderr output; gdb is not installed; ${coreDumps}`;
+  await using rerun = Bun.spawn({
+    cmd: [gdb, "-q", "-batch", ...debuggerCommands.flatMap(command => ["-ex", command]), "--args", ...cmd],
+    cwd,
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 600_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr] = await Promise.all([rerun.stdout.text(), rerun.stderr.text(), rerun.exited]);
+  const backtrace = `${stdout}\n${stderr}`
+    .split("\n")
+    .filter(line => /^(#\d+ |Thread \d+ .*(received signal|hit Breakpoint)|Program |\[Inferior )/.test(line));
+  return `no stderr output; ${coreDumps}; rerun under gdb:\n${backtrace.join("\n")}`;
+}
+
 export const whyNoTestaot = unsupported ?? (testaot ? undefined : "there is no testaot");
 export const whyNoEngineTests = whyNoTestaot ?? (engineTests ? undefined : "there is no folder aot-tests");
 /** `run-in-shell` and the native tests start the `jsc` that lies beside `testaot`. */
@@ -54,11 +103,19 @@ export async function runTool(cmd: string[], cwd?: string, env: Record<string, s
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const [stdout, written, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   const everyLine = stdout.split(/\r?\n/);
+  // A command that rejects its arguments prints that as its first line, does nothing else, and exits with 0.
+  if (exitCode === 0 && /^(error: )?(bad|missing) argument\b/.test(everyLine[0]))
+    throw new Error(`${cmd.join(" ")}: ${everyLine[0]}`);
+  const stderr =
+    child.signalCode && !written.trim() ? await describeSilentCrash(cmd, cwd, { ...toolEnv, ...env }) : written;
   return { lines: everyLine.filter(line => line !== ""), everyLine, stderr, exitCode };
 }
-export const run = (...args: string[]) => runTool([testaot!, ...args]);
+// These run tests. Some of their child processes crash on purpose, and the tests check the signal.
+const commandsThatStartTests = new Set(["native", "all", "run"]);
+export const run = (...args: string[]) =>
+  runTool([testaot!, ...args], undefined, commandsThatStartTests.has(args[0]) ? {} : commandEnv);
 
 /**
  * A FAIL line names the pattern that matched nothing, and some name the line of the output that it was held against.

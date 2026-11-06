@@ -2669,17 +2669,24 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
           const thrower = cause => () => { throw new Error("outer", { cause }); };
           test("t", () => {
             let unresolved;
-            try { require("./missing.js"); } catch (error) { unresolved = Object.defineProperty(error, "message", { value: "inner" }); }
-            expect(thrower(unresolved)).toThrowErrorMatchingSnapshot();
+            try { require("./missing.js"); } catch (error) { unresolved = error; }
+            try {
+              expect(thrower(unresolved)).toThrowErrorMatchingSnapshot();
+            } catch (error) {
+              console.log(error.message.split("\\n").find(line => line.startsWith("Cause: ")));
+            }
 
             let asked = 0;
             const throws = new Proxy({}, { getPrototypeOf() { asked++; throw new RangeError("from the trap"); } });
             console.log(firstLine(() => expect(thrower(throws)).toThrowErrorMatchingInlineSnapshot(\`"other"\`)), asked);
           });
         `,
-      "__snapshots__/a.test.js.snap": headers.jest + '\nexports[`t 1`] = `\n"outer\nCause: inner"\n`;\n',
+      "__snapshots__/a.test.js.snap": headers.jest,
     });
-    expect(log).toEqual(["expect(received).toThrowErrorMatchingInlineSnapshot(expected) 1"]);
+    expect(log).toEqual([
+      "Cause: Cannot find module './missing.js'",
+      "expect(received).toThrowErrorMatchingInlineSnapshot(expected) 1",
+    ]);
     expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 });

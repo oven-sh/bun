@@ -1,0 +1,77 @@
+------------------
+{ printWidth: 80 }
+------------------
+build_inline_component(
+  node,
+  /** @type {Expression} */ (context.visit(node.expression)),
+
+  context,
+);
+
+f(
+  /** @type {A} */ (a),
+
+  b,
+);
+
+f(
+  a,
+  /** @type {B} */ (/** @type {C} */ (b)),
+
+  c,
+);
+
+f(
+  a,
+  /** @type {B} */ (b),
+
+  c,
+);
+
+new A(
+  /** @type {B} */ (b),
+
+  c,
+);
+
+f(a, /** @type {B} */ (b), c);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+build_inline_component(
+  node,
+  /** @type {Expression} */ (context.visit(node.expression)),
+
+  context,
+);
+
+f(
+  /** @type {A} */ (a),
+
+  b,
+);
+
+f(
+  a,
+  /** @type {B} */ (/** @type {C} */ (b)),
+
+  c,
+);
+
+f(
+  a,
+  /** @type {B} */ (b),
+
+  c,
+);
+
+new A(
+  /** @type {B} */ (b),
+
+  c,
+);
+
+f(a, /** @type {B} */ (b), c);
+
+===================== End =====================

@@ -138,6 +138,14 @@ casts/element-that-breaks-in-a-cast.js
 138 154 L ExpressionStatement 155 274 -
 278 294 L ParenthesizedExpression 295 412 -
 419 435 L ParenthesizedExpression 436 452 -
+casts/empty-line-behind-an-argument.js
+34 59 L ParenthesizedExpression 60 92 -
+115 131 L ParenthesizedExpression 132 135 -
+157 173 L ParenthesizedExpression 174 196 -
+175 191 L ParenthesizedExpression 192 195 -
+218 234 L ParenthesizedExpression 235 246 -
+267 283 L ParenthesizedExpression 284 287 -
+309 325 L ParenthesizedExpression 326 329 -
 casts/head-of-a-chain-of-calls.js
 0 28 L ExpressionStatement 29 145 -
 162 190 L CallExpression 191 298 -

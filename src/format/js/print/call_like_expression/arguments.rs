@@ -14,8 +14,8 @@ use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::{
-    comments_of_expression, comments_of_outermost_node, has_comments, has_comments_that_count,
-    is_cast_target, is_cast_target_that_hides_its_kind,
+    cast_parentheses, comments_of_expression, comments_of_outermost_node, has_comments,
+    has_comments_that_count, is_cast_target, is_cast_target_that_hides_its_kind,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -87,7 +87,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             has |= kind(argument.tag());
             has_empty_line = has_empty_line
                 || previous_end.is_some_and(|end| is_empty_line_between(end, argument, f));
-            previous_end = (index != last_index).then(|| argument.span().end);
+            previous_end = (index != last_index).then(|| end_of_argument(argument, f));
         }
         let has_function = has & kind(ExprTag::Fn) != 0;
 
@@ -230,6 +230,24 @@ fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// Prettier's `locEnd` of an argument. The parentheses of a type cast are the node there, so what follows the argument follows them.
+#[inline]
+fn end_of_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> u32 {
+    match f.comments().has_type_cast_comments() {
+        true => end_of_type_cast(argument, f),
+        false => argument.span().end,
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn end_of_type_cast<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> u32 {
+    match cast_parentheses(argument, f).first() {
+        Some(outermost) if !counts_line_breaks_between_arguments(f) => outermost.end,
+        _ => argument.span().end,
+    }
+}
+
 /// True if the arguments break because there's an empty line between the one at `index` and the next.
 fn is_followed_by_empty_line<'a>(
     args: List<'a, Expr<'a>>,
@@ -237,8 +255,10 @@ fn is_followed_by_empty_line<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     match (args.get(index), args.get(index + 1)) {
-        (Some(argument), Some(next)) => is_empty_line_between(argument.span().end, next, f),
-        (Some(argument), None) => is_next_line_empty(f.source_text(), argument.span().end),
+        (Some(argument), Some(next)) => {
+            is_empty_line_between(end_of_argument(argument, f), next, f)
+        }
+        (Some(argument), None) => is_next_line_empty(f.source_text(), end_of_argument(argument, f)),
         (None, _) => false,
     }
 }

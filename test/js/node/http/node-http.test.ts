@@ -6888,6 +6888,38 @@ describe("request body still flows after res.end() was called in the handler", (
   );
 });
 
+// There every emitter has an `emit` of its own, which hides ServerResponse.prototype.emit.
+test("a response closes after 'finish' under EventEmitter.captureRejections", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      require("node:events").captureRejections = true;
+      const http = require("node:http");
+      const events = [];
+      const server = http.createServer((req, res) => {
+        for (const event of ["prefinish", "finish"]) res.on(event, () => events.push(event));
+        res.on("close", () => {
+          console.log([...events, "close"].join(" "));
+          server.close();
+        });
+        res.end("ok", () => events.push("callback"));
+      });
+      server.listen(0, "127.0.0.1", () => {
+        fetch("http://127.0.0.1:" + server.address().port, { headers: { connection: "close" } }).then(res => res.text());
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "prefinish callback finish close\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe("res.strictContentLength", () => {
   // Runs `handler(res)` inside a request handler and resolves with its return
   // value. The raw socket client keeps the response from being consumed, so the

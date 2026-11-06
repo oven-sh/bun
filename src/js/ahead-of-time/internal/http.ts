@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3eaf4e8f8c6937b0b82f55e090f0820e87b312a9c946005f0fc783f92542f773.
+// Written against that file with the SHA-256 d0db488b007e89d3a4d2860862da8f1fab686ae43d22ed1d97780059237bfbb2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -435,16 +435,21 @@ function queueEndCallback(msg: $Node.OutgoingMessage, callback: $Node.HttpWriteC
   $arrayPush((msg[kEndCallbacks] ??= []), callback);
 }
 
-function onFinish(outmsg: $Node.OutgoingMessage, err?: Error | null) {
+// Node.js's onFinish() up to its 'finish'. Returns whether the message has finished.
+function settleFlush(outmsg: $Node.OutgoingMessage, err?: Error | null) {
   if (err || outmsg[kErrored] || outmsg[kSocket]?.errored || outmsg[kSocket]?._hadError) {
     const flushError = (outmsg[kFlushError] = err ?? getEndCallbackError(outmsg));
     flushEndCallbacks(outmsg, flushError);
-    return;
+    return false;
   }
 
   outmsg[kWritableFinished] = true;
   flushEndCallbacks(outmsg, null);
-  outmsg.emit("finish");
+  return true;
+}
+
+function onFinish(outmsg: $Node.OutgoingMessage, err?: Error | null) {
+  if (settleFlush(outmsg, err)) outmsg.emit("finish");
 }
 
 function hasServerResponseFinished(
@@ -882,6 +887,7 @@ export {
   requestRoad,
   responseRoad,
   rethrowUncaught,
+  settleFlush,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

@@ -59,6 +59,8 @@ const {
   getEndCallbackError,
   queueEndCallback,
   onFinish,
+  settleFlush,
+  kWritableFinished,
   rethrowUncaught,
   NodeHTTPBodyReadState,
   drainMicrotasks,
@@ -1907,7 +1909,7 @@ function getNodeHTTPServerSocket() {
       // shifts state.incoming).
       const pending = this.#pendingAbortMessage;
       this.#pendingAbortMessage = undefined;
-      const message = this._httpMessage ?? (pending?.destroyed && !pending.writableFinished ? pending : undefined);
+      const message = this._httpMessage ?? (pending?.destroyed && !pending[kWritableFinished] ? pending : undefined);
       const writeFailure = errored ?? $ERR_STREAM_DESTROYED("write");
       if (message) {
         failPendingWriteCallbacks(message, writeFailure);
@@ -3712,8 +3714,12 @@ function queueResponseFinished(res) {
 }
 
 function finishResponse(res, err?) {
-  onFinish(res, err);
-  if (res.writableFinished) return;
+  if (settleFlush(res, err)) {
+    // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
+    process.nextTick(emitCloseNT, res);
+    res.emit("finish");
+    return;
+  }
   // No 'finish': the 'close' of its socket ends the response, and #onClose does not find one that the dispatcher detached.
   res[kDetachedFrom]?.prependOnceListener("close", abortDetachedResponse.bind(undefined, res));
 }
@@ -3734,7 +3740,7 @@ function finishDrainedResponse(res, err) {
   if (!res[kPendingFinish]) return;
   res[kPendingFinish] = false;
   res._callPendingCallbacks();
-  onFinish(res, err);
+  finishResponse(res, err);
 }
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
@@ -4136,9 +4142,6 @@ ServerResponse.prototype.emit = function (event) {
       return false;
     }
     callCloseCallback(this);
-  } else if (event === "finish" && this[kHandle]) {
-    // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
-    process.nextTick(emitCloseNT, this);
   }
   return Stream.prototype.emit.$apply(this, arguments);
 };

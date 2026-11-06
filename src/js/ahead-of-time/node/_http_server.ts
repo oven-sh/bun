@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e07775cfcc038457671daae810437a6f346771bb830eefa01fcdbee0b9b23c08.
+// Written against that file with the SHA-256 522d8d77cc0c770938a8f3f9d46378c603297f221b9e2519e11ae21455046006.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -62,6 +62,7 @@ const {
   getEndCallbackError,
   queueEndCallback,
   onFinish,
+  settleFlush,
   rethrowUncaught,
   drainMicrotasks,
   setServerCustomOptions,
@@ -2557,7 +2558,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       // shifts state.incoming).
       const pending = this.#pendingAbortMessage;
       this.#pendingAbortMessage = undefined;
-      const message = this._httpMessage ?? (pending?.destroyed && !pending.writableFinished ? pending : undefined);
+      const message = this._httpMessage ?? (pending?.destroyed && !pending[kWritableFinished] ? pending : undefined);
       const writeFailure = errored ?? $ERR_STREAM_DESTROYED("write");
       if (message) {
         failPendingWriteCallbacks(message, writeFailure);
@@ -4589,12 +4590,6 @@ const forgetBytesBuffered = function flushWriteAccountingNT(exchange: Exchange):
   exchange.bytesBuffered = res[kBytesBuffered] = 0;
 };
 
-// Stands in for onFinish() of internal/http where that has nothing to ask and nobody to call.
-const finishUnasked = function onFinish(res: $Node.ServerResponse): void {
-  res[kWritableFinished] = true;
-  res.emit("finish");
-};
-
 const finishExchange = function finishResponse(exchange: Exchange): void {
   const flags = exchange.flags;
   if ((flags & (EXCHANGE_SKIPS_A_TICK | EXCHANGE_ENDED_CLEAN)) !== EXCHANGE_ENDED_CLEAN) {
@@ -4787,15 +4782,15 @@ const finishExchangeAmongOthers = function finishResponse(
   socket: $Node.HttpServerSocket,
   isSilent: boolean,
 ): void {
+  res[kWritableFinished] = true;
   queueTick1(emitCloseNT, res);
   exchange.flags |= EXCHANGE_FINISHES_HERE | EXCHANGE_OTHERS_WAIT;
   if (isSilent) {
-    res[kWritableFinished] = true;
     finishConnection(exchange, res, req, socket, false);
     return;
   }
   try {
-    finishUnasked(res);
+    res.emit("finish");
   } finally {
     exchange.flags &= ~EXCHANGE_FINISHES_HERE;
   }
@@ -4806,9 +4801,10 @@ const finishHeardExchange = function finishResponse(
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
 ): void {
+  res[kWritableFinished] = true;
   exchange.flags |= EXCHANGE_FINISHES_HERE;
   try {
-    finishUnasked(res);
+    res.emit("finish");
   } catch (error) {
     queueRestOfExchange(exchange, res, req, true);
     throw error;
@@ -5333,8 +5329,12 @@ function queueResponseFinished(res: $Node.ServerResponse) {
 }
 
 function finishResponse(res: $Node.ServerResponse, err?: Error | null) {
-  onFinish(res, err);
-  if (res.writableFinished) return;
+  if (settleFlush(res, err)) {
+    // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
+    queueTick1(emitCloseNT, res);
+    res.emit("finish");
+    return;
+  }
   // No 'finish': the 'close' of its socket ends the response, and #onClose does not find one that the dispatcher detached.
   res[kDetachedFrom]?.prependOnceListener("close", abortDetachedResponse.bind(undefined, res));
 }
@@ -5357,7 +5357,7 @@ function finishDrainedResponse(res: $Node.ServerResponse, err?: Error | null) {
   storeRarely(res, kPendingFinish, false);
   followResponse(res.$exchange);
   res._callPendingCallbacks();
-  onFinish(res, err);
+  finishResponse(res, err);
 }
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
@@ -5848,12 +5848,6 @@ const responseEmit = (ServerResponse.prototype.emit = function (this: $Node.Serv
       return false;
     }
     settleDispatchAtClose(this);
-  } else if (event === "finish" && this[kHandle]) {
-    // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does. Who finishes the exchange in one tick sees to it.
-    const exchange = this.$exchange;
-    if (exchange === undefined || exchange.response !== this || (exchange.flags & EXCHANGE_FINISHES_HERE) === 0) {
-      queueTick1(emitCloseNT, this);
-    }
   }
   return plainStream.emit.$apply(this, arguments);
 });

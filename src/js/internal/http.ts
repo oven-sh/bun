@@ -373,16 +373,21 @@ function queueEndCallback(msg, callback) {
   $arrayPush((msg[kEndCallbacks] ??= []), callback);
 }
 
-function onFinish(outmsg, err?) {
+// Node.js's onFinish() up to its 'finish'. Returns whether the message has finished.
+function settleFlush(outmsg, err?) {
   if (err || outmsg[kErrored] || outmsg[kSocket]?.errored || outmsg[kSocket]?._hadError) {
     outmsg[kFlushError] = err ?? getEndCallbackError(outmsg);
     flushEndCallbacks(outmsg, outmsg[kFlushError]);
-    return;
+    return false;
   }
 
   outmsg[kWritableFinished] = true;
   flushEndCallbacks(outmsg, null);
-  outmsg.emit("finish");
+  return true;
+}
+
+function onFinish(outmsg, err?) {
+  if (settleFlush(outmsg, err)) outmsg.emit("finish");
 }
 
 function hasServerResponseFinished(self, chunk, callback, fromEnd) {
@@ -640,6 +645,7 @@ export {
   queueEndCallback,
   redactInvalidProxyUrl,
   rethrowUncaught,
+  settleFlush,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

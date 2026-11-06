@@ -84,7 +84,7 @@ test("each step behind the end() of a response that is then frozen reports the s
     `uncaught in onNodeHTTPRequest: ${readonly}`,
     `uncaught in flushWriteAccountingNT < processTicksAndRejections: ${readonly}`,
     `uncaught in markResponseEndedNT < processTicksAndRejections: ${notExtensible}`,
-    `uncaught in onFinish < finishResponse < processTicksAndRejections: ${readonly}`,
+    `uncaught in settleFlush < finishResponse < processTicksAndRejections: ${readonly}`,
     "uncaught in unknown < assignSocketInternal < onNodeHTTPRequest: ServerResponse has an already assigned socket",
     `uncaught in emitCloseNT < emit < emitCloseNT < processTicksAndRejections: ${readonly}`,
   ]);

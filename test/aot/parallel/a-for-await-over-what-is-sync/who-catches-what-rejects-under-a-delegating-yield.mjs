@@ -1,4 +1,3 @@
-// Todo: "b" | "f": a `for await` over an object whose method under Symbol.asyncIterator is a generator is stepped as a loop over the generator itself, where the language calls next() and awaits in the loop's own context.
 // A value of a sync generator rejects under a delegating yield, and the generator's `finally` enters a context. Who catches: a loop over the async generator itself goes on in that context;
 // a loop over an object whose method makes the generator, and a consumer that steps by hand, go on in their own.
 import { AsyncLocalStorage } from "node:async_hooks";

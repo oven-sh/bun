@@ -1836,21 +1836,8 @@ interface FormData {
   set(name: string, blobValue: Blob, filename?: string): void;
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
   keys(): IterableIterator<string>;
-  values(): IterableIterator<Bun.FormDataEntryValue>;
-  entries(): IterableIterator<[string, Bun.FormDataEntryValue]>;
-  [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>;
-  /**
-   * The number of entries.
-   *
-   * This is a Bun extension.
-   */
-  readonly length: number;
-  /**
-   * The entries as an object. A name that was appended more than once holds an array of its values.
-   *
-   * This is a Bun extension.
-   */
-  toJSON(): Record<string, Bun.FormDataEntryValue | Bun.FormDataEntryValue[]>;
+  values(): IterableIterator<string>;
+  entries(): IterableIterator<[string, string]>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 

@@ -2,6 +2,7 @@ import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { linkSync } from "node:fs";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
 import { unsupported } from "./harness/compiler";
 import { run as runCommand } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
@@ -173,7 +174,7 @@ const withoutCoreDump = (cmd: string[]) =>
 // No more commands at once than the machine has cores: many fill the address space that they are given.
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
   const { stdout, stderr, exitCode } = await inTurn(() =>
-    runCommand(cmd, cwd, { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env }),
+    runCommand(cmd, cwd, { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), ...env }),
   );
   // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };

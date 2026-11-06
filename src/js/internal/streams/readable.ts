@@ -1205,11 +1205,7 @@ Readable.prototype.on = function (this: $Node.Readable, ev: $Node.EventName, fn:
 };
 Readable.prototype.addListener = Readable.prototype.on;
 
-const removingMethod = (Readable.prototype.removeListener = function (
-  this: $Node.Readable,
-  ev: $Node.EventName,
-  fn: $Node.Listener,
-) {
+Readable.prototype.removeListener = function (this: $Node.Readable, ev: $Node.EventName, fn: $Node.Listener) {
   if (
     IS_COMPILED_AHEAD_OF_TIME &&
     (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8)) &&
@@ -1235,7 +1231,7 @@ const removingMethod = (Readable.prototype.removeListener = function (
   }
 
   return res;
-});
+};
 Readable.prototype.off = Readable.prototype.removeListener;
 
 const removingAllMethod = (Readable.prototype.removeAllListeners = function (
@@ -1355,8 +1351,8 @@ internals.readableMethods = {
   push: pushingMethod,
   resume: resumingMethod,
   removeAllListeners: removingAllMethod,
-  removeListener: IS_COMPILED_AHEAD_OF_TIME ? removingMethod : undefined,
 };
+if (IS_COMPILED_AHEAD_OF_TIME) internals.readableMethods.removeListener = Readable.prototype.removeListener;
 internals.finishResume = finishResume;
 internals.finishReadOfNothing = finishReadOfNothing;
 internals.readMoreLater = maybeReadMore;

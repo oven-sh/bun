@@ -100,8 +100,7 @@ impl UnusableOption {
                 matches!(&label[..], b"--preload" | b"--require" | b"--import")
             }
             OptionOrigin::EnvironmentVariable(name) => *name == "BUN_INSPECT_PRELOAD",
-            OptionOrigin::BunfigKey(_) => false,
-            OptionOrigin::KeyOfNamedFile(key, _) => *key == "preload",
+            OptionOrigin::BunfigKey(_) | OptionOrigin::KeyOfNamedFile(..) => false,
         };
         names_file
             && matches!(
@@ -570,14 +569,17 @@ pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData, named_file:
         ctx.debug.global_cache = GlobalCache::disable;
     }
     let obstacle_to_code = obstacle_in_this_executable(RuntimeRequirement::RuntimeCode);
-    // A file that somebody names for this process is asked of it, as `--preload` is.
+    // Somebody has named this file for this process, and hears that a part of it is lost.
     if let Some(file) = named_file.filter(|_| !ctx.preloads.is_empty())
         && obstacle_to_code == Some(Obstacle::RunsOnlyCompiledCode)
     {
-        exit_for(&UnusableOption {
+        let mut message = Vec::new();
+        UnusableOption {
             origin: OptionOrigin::KeyOfNamedFile("preload", Box::from(file)),
             obstacle: Obstacle::RunsOnlyCompiledCode,
-        });
+        }
+        .write_warning(&mut message);
+        bun_core::warn!("{}", BStr::new(&message));
     }
     ignore_code_of_bunfig(ctx, obstacle_to_code);
     exit_if_unusable(find_unusable_bunfig_setting(
@@ -586,23 +588,12 @@ pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData, named_file:
     ));
 }
 
-// The file is the one that happens to lie in the working directory, and it may be there for `bun`: it doesn't stop the program.
+// The file is the one that happens to lie in the working directory, and it may be there for `bun`.
 fn ignore_code_of_bunfig(ctx: &mut ContextData, obstacle_to_code: Option<Obstacle>) {
-    if obstacle_to_code != Some(Obstacle::RunsOnlyCompiledCode) {
-        return;
+    if obstacle_to_code == Some(Obstacle::RunsOnlyCompiledCode) {
+        ctx.preloads.clear();
+        ctx.args.serve_plugins = None;
     }
-    // The build has run the plugins over the pages. A preload is lost.
-    if !ctx.preloads.is_empty() {
-        let mut message = Vec::new();
-        UnusableOption {
-            origin: OptionOrigin::BunfigKey("preload"),
-            obstacle: Obstacle::RunsOnlyCompiledCode,
-        }
-        .write_warning(&mut message);
-        bun_core::warn!("{}", BStr::new(&message));
-    }
-    ctx.preloads.clear();
-    ctx.args.serve_plugins = None;
 }
 
 #[cold]

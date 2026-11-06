@@ -97,6 +97,8 @@ export default b.declarations(
     "setTimeout",
   ]),
   marked("HoldsPathOfMainModule", ["Bun.main"]),
+  // src/js/bun/ffi.ts takes the three for itself and deletes them at its top level.
+  marked("IsDeletedWhenModuleOfLibraryLoads", ["Bun.FFI.callback", "Bun.FFI.cfunction", "Bun.FFI.closeCallback"]),
   // JSEnvironmentVariableMap.cpp puts another object under both when the thread starts a worker with `env: SHARE_ENV`.
   marked("IsReplacedByHostThatSaysSo", ["Bun.env", "process.env"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),

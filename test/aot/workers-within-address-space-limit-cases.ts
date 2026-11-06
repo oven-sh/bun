@@ -1,5 +1,6 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { locksEnvironment } from "./hardened";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
@@ -651,7 +652,7 @@ const builtAsOne = [
 
 type Run = { limitInKB?: number; env?: Record<string, string> };
 
-const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
+const env = { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }) };
 const folders = new Map<string, Promise<string>>();
 const made: Disposable[] = [];
 afterAll(() => made.forEach(folder => folder[Symbol.dispose]()));

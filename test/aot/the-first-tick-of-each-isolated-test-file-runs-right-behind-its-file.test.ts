@@ -62,7 +62,7 @@ async function printed(folder: string, flags: string[], transpilesOnOneThread: b
 testWithoutCompiler(
   "without --aot, each test file in a realm of its own",
   async () => {
-    using dir = tempDir("only-the-first-tick-of-a-process", sources);
+    using dir = tempDir("the-first-tick-of-each-isolated-test-file", sources);
     expect(await printed(String(dir), [], true)).toEqual(asStockBunPrints);
   },
   240_000,
@@ -74,7 +74,7 @@ test.each([
 ] as const)(
   "compiled: %s, texts read on the thread of the program: %p",
   async (words, transpilesOnOneThread) => {
-    using dir = tempDir("only-the-first-tick-of-a-process", sources);
+    using dir = tempDir("the-first-tick-of-each-isolated-test-file", sources);
     expect(await printed(String(dir), ["--aot"], transpilesOnOneThread, words)).toEqual(asStockBunPrints);
   },
   240_000,

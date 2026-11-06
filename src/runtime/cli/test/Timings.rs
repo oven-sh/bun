@@ -141,7 +141,7 @@ impl Timings {
         self.workers
     }
 
-    /// Only a compiled run says: what the table has stays through a plain one.
+    /// Only a compiled run says, and only a compiled run writes it.
     pub(crate) fn record_workers(&mut self, workers: u32) {
         self.workers = workers;
     }
@@ -168,7 +168,9 @@ impl Timings {
         let key = Self::key_for(abs_path);
         let _ = self.map.put(&key, ms);
         let _ = self.measured.put(&key, ms);
-        if let Some(&megabytes) = self.growth.get(&key) {
+        if crate::cli::run_compiled::runs_compiled_code()
+            && let Some(&megabytes) = self.growth.get(&key)
+        {
             let _ = self.measured_growth.put(&key, megabytes);
         }
     }
@@ -294,7 +296,10 @@ impl Timings {
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
     pub(crate) fn write(&mut self, only_measured: bool) {
-        let workers = self.workers;
+        let workers = match crate::cli::run_compiled::runs_compiled_code() {
+            true => self.workers,
+            false => 0,
+        };
         let (map, growth) = if only_measured {
             (&mut self.measured, &mut self.measured_growth)
         } else {

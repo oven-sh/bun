@@ -758,7 +758,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();
     }
-    thisObject->compiledModulesAmongChildren.clear();
+    thisObject->forgetCompiledModulesAmongChildren();
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
 }
@@ -1177,8 +1177,53 @@ void JSCommonJSModule::destroy(JSC::JSCell* cell)
     static_cast<JSCommonJSModule*>(cell)->JSCommonJSModule::~JSCommonJSModule();
 }
 
+struct RecordBesideModuleObject {
+    uint32_t compiledModuleThatAsks { JSCommonJSModule::noCompiledModule };
+    WTF::HashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> compiledModulesAmongChildren;
+};
+
+static WTF::Lock recordsBesideModuleObjectsLock;
+
+static WTF::HashMap<const JSCommonJSModule*, RecordBesideModuleObject>& recordsBesideModuleObjects() WTF_REQUIRES_LOCK(recordsBesideModuleObjectsLock)
+{
+    static NeverDestroyed<WTF::HashMap<const JSCommonJSModule*, RecordBesideModuleObject>> records;
+    return records;
+}
+
+uint32_t JSCommonJSModule::compiledModuleThatAsksByRecord() const
+{
+    WTF::Locker locker { recordsBesideModuleObjectsLock };
+    return recordsBesideModuleObjects().find(this)->value.compiledModuleThatAsks;
+}
+
+void JSCommonJSModule::setCompiledModuleThatAsks(uint32_t module)
+{
+    WTF::Locker locker { recordsBesideModuleObjectsLock };
+    hasRecordBesideCell = true;
+    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModuleThatAsks = module;
+}
+
+bool JSCommonJSModule::listsCompiledModuleAsChild(uint32_t module)
+{
+    WTF::Locker locker { recordsBesideModuleObjectsLock };
+    hasRecordBesideCell = true;
+    return recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModulesAmongChildren.add(module).isNewEntry;
+}
+
+void JSCommonJSModule::forgetCompiledModulesAmongChildren()
+{
+    if (!hasRecordBesideCell) [[likely]]
+        return;
+    WTF::Locker locker { recordsBesideModuleObjectsLock };
+    recordsBesideModuleObjects().find(this)->value.compiledModulesAmongChildren.clear();
+}
+
 JSCommonJSModule::~JSCommonJSModule()
 {
+    if (!hasRecordBesideCell) [[likely]]
+        return;
+    WTF::Locker locker { recordsBesideModuleObjectsLock };
+    recordsBesideModuleObjects().remove(this);
 }
 
 void populateESMExports(

@@ -731,14 +731,10 @@ fn suggest(written: &[u8], candidates: &[&'static str]) -> Option<&'static str> 
     best.map(|(candidate, _)| candidate)
 }
 
-fn starts_with_aot(name: &[u8]) -> bool {
-    strings::starts_with_case_insensitive_ascii(name, b"aot")
-}
-
 pub(crate) fn misplaced_key<'a>(key: &'a [u8], is_inside_compile: bool) -> Option<OptionError<'a>> {
     let is_aot_key = COMPILE_AOT_KEYS.iter().any(|known| known.as_bytes() == key);
     if is_inside_compile {
-        (starts_with_aot(key) && !is_aot_key).then(|| OptionError::UnknownCompileKey {
+        (key.starts_with(b"aot") && !is_aot_key).then(|| OptionError::UnknownCompileKey {
             key,
             suggestion: suggest(key, COMPILE_AOT_KEYS),
         })
@@ -1126,7 +1122,7 @@ pub(crate) fn note_options_without_effect(ctx: &Context<'_>) {
 static WRITES_NO_AOT: AtomicBool = AtomicBool::new(false);
 
 fn unknown_flag_message(group: &FlagGroup, flag: &clap::UnknownLongFlag<'_>) -> Option<Vec<u8>> {
-    if !starts_with_aot(flag.name) {
+    if !flag.name.starts_with(b"aot") {
         return None;
     }
     let mut message = Vec::new();

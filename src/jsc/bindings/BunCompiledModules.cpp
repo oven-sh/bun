@@ -658,9 +658,10 @@ static std::optional<AOT::ModuleID> compiledModuleThatAsksThrough(JSCommonJSModu
 {
     if (auto own = compiledModuleOf(requirer))
         return own;
-    if (requirer->compiledModuleThatAsks == JSCommonJSModule::noCompiledModule)
+    uint32_t asker = requirer->compiledModuleThatAsks();
+    if (asker == JSCommonJSModule::noCompiledModule)
         return std::nullopt;
-    return AOT::ModuleID(requirer->compiledModuleThatAsks);
+    return AOT::ModuleID(asker);
 }
 
 static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, std::optional<AOT::ModuleID> referrer = std::nullopt)
@@ -1244,7 +1245,7 @@ static void layAskerOnRequirer(JSCommonJSModule* requirer, AOT::ModuleID asker)
 {
     requirer->isMadeByCodeOfImage = true;
     if (!requirer->areChildrenListedByEngine())
-        requirer->compiledModuleThatAsks = asker.index();
+        requirer->setCompiledModuleThatAsks(asker.index());
 }
 
 static void createRequirer(JSGlobalObject* realm, JSObject* importMeta, AOT::ModuleID asker, AOT::ModuleObjects& out)

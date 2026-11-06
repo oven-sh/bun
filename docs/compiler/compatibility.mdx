@@ -537,7 +537,7 @@ Neither quotes one kind of text whole: a function or an arrow with statements in
 
 A member of an enum is quoted as you wrote it, `table[Kind.Closed].title`. `bun run` quotes the value that its transpiler put there, `table[1 /* Closed */].title`.
 
-Where a function of Bun or of a `node:` module refuses an argument for its type, the text behind `Received` for an object without a constructor is Node's: `Received [Object: null prototype]`. `bun run` prints what the object holds.
+Where a function of Bun or of a `node:` module refuses an argument or its `this` for its type, the message describes an object without a constructor as Node does: `[Object: null prototype]`, or `[Object]` if it has a prototype. `bun run` prints what the object holds.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 

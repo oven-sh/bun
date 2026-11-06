@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/bun/ffi.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c39560f5a254c7cf80c4be1328f77df473b40123dbe3d5f6fa0f47089f6e8d71.
+// Written against that file with the SHA-256 61729387d07bbc1d660ef35053b022fb0ad6e6f309a018b8a549df55104f8888.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 const FFIType = {
   "0": 0,
@@ -79,14 +79,9 @@ const printSource: (symbols: object, isCallback?: boolean) => string | string[] 
   "printSource",
 );
 const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
-// A compiled executable that holds no code of this module runs it from its text, and `Bun.FFI` is read-only there: it keeps the three.
-try {
-  delete ffi.callback;
-  delete ffi.closeCallback;
-  delete ffi.cfunction;
-} catch (error) {
-  if (!(error instanceof TypeError)) throw error;
-}
+delete ffi.callback;
+delete ffi.closeCallback;
+delete ffi.cfunction;
 
 class JSCallback {
   declare readonly ptr: number | null;

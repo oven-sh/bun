@@ -1,6 +1,6 @@
 // An executable built with --aot runs only what was compiled into it, so it leaves the `preload` of the bunfig.toml in its working directory alone.
-// That file may be there for `bun`, so it doesn't stop the program: the executable says that it ignores the preload, once, on stderr, and goes on.
-// A file that --config names is asked of this very process: a preload in it is refused, as --preload is.
+// That file may be there for `bun`, and whoever starts the executable has not named it: the executable says nothing of it.
+// A file that --config names is named for this very process: the executable says, once, on stderr, that it ignores the preload in it, and goes on.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -21,7 +21,7 @@ const files = {
 
 const reason =
   "because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n";
-const ignored = `warn: "preload" in bunfig.toml is ignored by this executable ${reason}`;
+const ignored = `warn: "preload" in own.toml is ignored by this executable ${reason}`;
 const withoutPreload = "ENTRY undefined\n";
 const withPreload = "PRELOAD\nENTRY number\n";
 
@@ -41,29 +41,20 @@ async function build(folder: string, name: string, flags: string[]) {
   return outfile;
 }
 
-test("--aot says that it ignores the preload of the bunfig.toml, and runs", async () => {
+test("--aot ignores the preload of the bunfig.toml that lies where it is started, and says nothing", async () => {
   using folder = tempDir("bunfig-preload-ignored", files);
   const executable = await build(String(folder), "compiled", ["--aot"]);
   const runIn = (name: string) => spawned([executable], join(String(folder), name));
-  expect(await runIn("preload")).toEqual({ stdout: withoutPreload, stderr: ignored, exitCode: 0 });
-  expect(await runIn("missing")).toEqual({ stdout: withoutPreload, stderr: ignored, exitCode: 0 });
-  expect(await runIn("both")).toEqual({ stdout: withoutPreload, stderr: ignored, exitCode: 0 });
-  // The build has run the plugins over the pages: nothing is lost.
-  expect(await runIn("plugins")).toEqual({ stdout: withoutPreload, stderr: "", exitCode: 0 });
-  expect(await runIn("other")).toEqual({ stdout: withoutPreload, stderr: "", exitCode: 0 });
-  expect(await runIn("build")).toEqual({ stdout: withoutPreload, stderr: "", exitCode: 0 });
+  for (const name of ["preload", "missing", "both", "plugins", "other", "build"])
+    expect(await runIn(name)).toEqual({ stdout: withoutPreload, stderr: "", exitCode: 0 });
 });
 
-test("--aot refuses the preload of a file that --config names", async () => {
+test("--aot says that it ignores the preload of a file that --config names, and runs", async () => {
   using folder = tempDir("bunfig-preload-named", files);
   const executable = await build(String(folder), "compiled", ["--aot"]);
   const startedWith = (options: string) =>
     spawned([executable], join(String(folder), "named"), { ...bunEnv, BUN_OPTIONS: options });
-  expect(await startedWith("--config=own.toml")).toEqual({
-    stdout: "",
-    stderr: `error: "preload" in own.toml can't be used with this executable ${reason}`,
-    exitCode: 1,
-  });
+  expect(await startedWith("--config=own.toml")).toEqual({ stdout: withoutPreload, stderr: ignored, exitCode: 0 });
   expect(await startedWith("--config=quiet.toml")).toEqual({ stdout: withoutPreload, stderr: "", exitCode: 0 });
 });
 

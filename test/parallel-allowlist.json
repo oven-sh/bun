@@ -1044,7 +1044,7 @@
     "aot/odd-files-cost-a-test-run-what-they-cost-plain.test.ts",
     "aot/one-file-imported-under-two-types-beside-a-plugin-of-another-test-file.test.ts",
     "aot/one-file-under-two-spellings-that-may-be-taken-out-of-require-cache.test.ts",
-    "aot/only-the-first-tick-of-a-process-runs-right-behind-its-file.test.ts",
+    "aot/the-first-tick-of-each-isolated-test-file-runs-right-behind-its-file.test.ts",
     "aot/part-warnings.test.ts",
     "aot/parts-unseen-types.test.ts",
     "aot/paths-of-the-tsconfigs-above-a-file.test.ts",
@@ -1515,6 +1515,12 @@
     "aot/an-accessor-under-get-color-depth-hears-one-store.test.ts",
     "aot/duplex-reads-define-properties-once-while-it-loads.test.ts",
     "aot/isip-tests-with-one-object-for-each-pattern.test.ts",
-    "aot/plain-bun-lets-go-of-the-remove-listener-of-streams.test.ts"
+    "aot/plain-bun-lets-go-of-the-remove-listener-of-streams.test.ts",
+    "aot/a-class-laid-in-the-place-of-map-is-made-safe-by-what-it-owns.test.ts",
+    "aot/a-plain-executable-is-handed-every-word-of-its-command-line.test.ts",
+    "aot/every-module-of-the-library-loads-from-its-text-where-code-from-disk-asks-for-it.test.ts",
+    "aot/plain-bun-builds-with-a-key-that-begins-with-aot-in-capitals.test.ts",
+    "aot/plain-bun-passes-over-a-flag-that-begins-with-aot-in-capitals.test.ts",
+    "aot/what-bun-ffi-deletes-is-gone-for-compiled-code-too-where-code-from-disk-loads-it.test.ts"
   ]
 }

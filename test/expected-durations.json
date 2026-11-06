@@ -52,6 +52,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-class-laid-in-the-place-of-map-is-made-safe-by-what-it-owns.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-commonjs-file-that-a-module-imports-is-handed-to-nobody-who-asks-by-a-name-made-at-run-time.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -305,6 +309,10 @@
     "asan": 240000
   },
   "aot/a-path-that-is-missing-at-the-build-is-loaded-below-the-file-that-wrote-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-plain-executable-is-handed-every-word-of-its-command-line.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -876,6 +884,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/every-module-of-the-library-loads-from-its-text-where-code-from-disk-asks-for-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/every-operator-on-every-pair-of-kinds-of-operands.test.ts": {
     "default": 6300,
     "asan": 25200
@@ -1272,10 +1284,6 @@
     "default": 2600,
     "asan": 10400
   },
-  "aot/only-the-first-tick-of-a-process-runs-right-behind-its-file.test.ts": {
-    "default": 2400,
-    "asan": 9600
-  },
   "aot/package-worker-compiled.test.ts": {
     "default": 1000,
     "asan": 4000
@@ -1324,7 +1332,15 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/plain-bun-builds-with-a-key-that-begins-with-aot-in-capitals.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/plain-bun-lets-go-of-the-remove-listener-of-streams.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/plain-bun-passes-over-a-flag-that-begins-with-aot-in-capitals.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1752,6 +1768,10 @@
     "default": 3900,
     "asan": 15600
   },
+  "aot/the-first-tick-of-each-isolated-test-file-runs-right-behind-its-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-frames-of-a-stack-trace-are-not-held-to-plain-bun.test.ts": {
     "default": 8600,
     "asan": 34400
@@ -1903,6 +1923,10 @@
   "aot/what-await-answers-for-an-import-of-the-library-is-in-sight.test.ts": {
     "default": 2200,
     "asan": 8800
+  },
+  "aot/what-bun-ffi-deletes-is-gone-for-compiled-code-too-where-code-from-disk-loads-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/what-is-declared-of-a-test-run.test.ts": {
     "default": 60000,

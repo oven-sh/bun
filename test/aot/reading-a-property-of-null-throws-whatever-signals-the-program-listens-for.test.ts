@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
 import { without } from "./harness/capabilities";
 import { afterAll } from "./harness/default-timeout";
 import { compiler, readers, sender } from "./harness/reads-of-null";
@@ -93,7 +94,7 @@ async function run(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({
     cmd: withoutCoreDump(cmd),
     cwd,
-    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+    env: { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), BUN_ENABLE_CRASH_REPORTING: "0" },
     stdout: "pipe",
     stderr: "pipe",
   });

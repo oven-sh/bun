@@ -42,7 +42,7 @@ declare module "bun" {
     ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
-  type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", MessagePort>;
+  type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
   /**
    * An encoding label from the WHATWG Encoding Standard, as accepted by the
    * `TextDecoder` constructor.

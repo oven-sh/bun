@@ -80,14 +80,9 @@ const printSource: (symbols: object, isCallback?: boolean) => string | string[] 
   "printSource",
 );
 const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
-// A compiled executable that holds no code of this module runs it from its text, and `Bun.FFI` is read-only there: it keeps the three.
-try {
-  delete ffi.callback;
-  delete ffi.closeCallback;
-  delete ffi.cfunction;
-} catch (error) {
-  if (!(error instanceof TypeError)) throw error;
-}
+delete ffi.callback;
+delete ffi.closeCallback;
+delete ffi.cfunction;
 
 class JSCallback {
   declare readonly ptr: number | null;

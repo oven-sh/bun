@@ -1045,16 +1045,6 @@ pub(crate) mod command {
             }
         }
 
-        #[cfg(not(bun_locked_environment))]
-        if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
-            && first
-                .as_bytes()
-                .starts_with(run_compiled::PROGRAM_FILE_FLAG)
-            && let Some(graph) = run_compiled::load_program_file()?
-        {
-            return boot_standalone(graph, log);
-        }
-
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
@@ -1066,6 +1056,16 @@ pub(crate) mod command {
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
                 bun_standalone_graph::Graph::exit_without_program();
             }
+        }
+
+        #[cfg(not(bun_locked_environment))]
+        if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
+            && first
+                .as_bytes()
+                .starts_with(run_compiled::PROGRAM_FILE_FLAG)
+            && let Some(graph) = run_compiled::load_program_file()?
+        {
+            return boot_standalone(graph, log);
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the

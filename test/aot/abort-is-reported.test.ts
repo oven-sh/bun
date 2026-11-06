@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { locksEnvironment } from "./hardened";
 import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 
@@ -19,7 +20,7 @@ test.skipIf(isASAN).todoIf(isWindows)(
     const { stdout, stderr, exitCode } = await run([...withoutCoreDump, bunExe(), "run", "main.ts"], String(dir), {
       ...bunEnv,
       BUN_JSC_crashIfInterpreterIsUsed: "1",
-      BUN_CRASH_REPORT_URL: "",
+      ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
       BUN_ENABLE_CRASH_REPORTING: "0",
     });
     expect(stdout).toBe("");

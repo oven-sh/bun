@@ -19,12 +19,6 @@ const declarations = "--dts requires --outdir, and cannot be used with --compile
 const refused: [string[], string][] = [
   [[...build, "--watch", "./entry.js", "--outfile", app], "--aot does not support --watch"],
   [["compile", "--watch", "./entry.js", "--outfile", app], "bun compile does not support --watch"],
-  [["build", "--compile", "--AOT", "./entry.js", "--outfile", app], "unknown flag --AOT. Did you mean --aot?"],
-  [["build", "--compile", "--Aot", "./entry.js", "--outfile", app], "unknown flag --Aot. Did you mean --aot?"],
-  [["compile", "--AOT", "./entry.js", "--outfile", app], "unknown flag --AOT. Did you mean --aot?"],
-  [["test", "--AOT"], "unknown flag --AOT. Did you mean --aot?"],
-  [["run", "--AOT", "./entry.js"], "unknown flag --AOT. Did you mean --aot?"],
-  [["--AOT", "./entry.js"], "unknown flag --AOT. Did you mean --aot?"],
   [[...build, "--no-aot", "./entry.js", "--outfile", app], both],
   [["build", "--compile", "--no-aot", "--aot", "./entry.js", "--outfile", app], both],
   [["test", "--aot", "--no-aot"], both],
@@ -66,27 +60,6 @@ test.each(noted)(
     });
     expect(run.stdout).toMatch(/^ +build id  [0-9a-f]{32}$/m);
     expect((await spawned([join(root, app)], root, bunEnv)).stdout).toBe("hello second\n");
-  },
-  120_000,
-);
-
-test.each(["AOT", "Aot"])(
-  "compile: { %s: true } is refused",
-  async key => {
-    using dir = tempDir("aot-flags-answered", {
-      ...files,
-      "build.js": `
-      try {
-        await Bun.build({ entrypoints: ["./entry.js"], compile: { ${key}: true, outfile: "./${app}" } });
-        console.log("built");
-      } catch (error) {
-        console.log(error.message);
-      }
-    `,
-    });
-    const root = realpathSync(String(dir));
-    const run = await spawned([bunExe(), "build.js"], root, bunEnv);
-    expect(run.stdout).toStartWith(`compile.${key} is not a valid option. Did you mean compile.aot?`);
   },
   120_000,
 );

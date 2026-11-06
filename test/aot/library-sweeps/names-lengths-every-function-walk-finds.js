@@ -14,11 +14,15 @@ const describe = (fn, key) => {
 };
 // What these hold goes by the machine and by how the program was started.
 // A compiled program has no ShadowRealm.
+// In an executable `native.dlopen` of bun:ffi is an accessor where plain Bun has a data member: a known failure, held by
+// parallel/what-bun-ffi-hands-out/native-dlopen-is-a-data-member.mjs. The function itself is found under Bun.FFI.
 const passedOver = new Set([
   "globalThis.process.env",
   "globalThis.Bun.env",
   "globalThis.process.mainModule",
   "globalThis.ShadowRealm",
+  "bun:ffi.native.dlopen",
+  "bun:ffi.native.dlopen<get>",
 ]);
 // The bundler of plain Bun's library gives these functions names of its own ("Cipheriv2", "$"). A compiled program says what is written, as Node does:
 // parallel/builtin-modules/functions-that-the-bundler-of-the-library-renames.js.

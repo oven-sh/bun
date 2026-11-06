@@ -39,22 +39,23 @@ async function tableAfter(...flags: string[]) {
   return { files: Object.keys(table.files).sort(), memory: table.memory };
 }
 
-test("--shard --update-timings without --aot keeps the memory entries of the files it ran", async () => {
-  expect(await tableAfter("--shard=1/2")).toEqual({
-    files: ["a.test.js", "b.test.js"],
-    memory: { "a.test.js": 3000, "b.test.js": 40 },
-  });
-  expect(await tableAfter("--shard=2/2")).toEqual({
-    files: ["c.test.js", "d.test.js"],
-    memory: { "d.test.js": 1400 },
-  });
+test("a plain run under --shard writes the times of the files it ran and nothing else, as it did before --aot", async () => {
+  for (const flags of [["--shard=1/2"], ["--shard=1/2", "--parallel=2"]]) {
+    const table = await written(ofCompiledRun, ...flags);
+    expect({ flags, keys: Object.keys(table), files: Object.keys(table.files).sort() }).toEqual({
+      flags,
+      keys: ["version", "files"],
+      files: ["a.test.js", "b.test.js"],
+    });
+  }
 });
 
-test("so does --shard --parallel", async () => {
-  expect(await tableAfter("--shard=1/2", "--parallel=2")).toEqual({
-    files: ["a.test.js", "b.test.js"],
-    memory: { "a.test.js": 3000, "b.test.js": 40 },
-  });
+test("a compiled run under --shard keeps the memory entries of the files it ran", async () => {
+  for (const shard of ["--shard=1/2", "--shard=2/2"]) {
+    const { files, memory } = await tableAfter("--aot", shard);
+    const kept = Object.entries(ofCompiledRun.memory).filter(([name]) => files.includes(name));
+    expect({ shard, memory: memory ?? {} }).toEqual({ shard, memory: Object.fromEntries(kept) });
+  }
 });
 
 test("without --shard the whole memory table is kept", async () => {
@@ -64,11 +65,15 @@ test("without --shard the whole memory table is kept", async () => {
   });
 });
 
-test("a plain run and a compiled run without --parallel keep the number of workers", async () => {
-  for (const flags of [[], ["--parallel=3"], ["--shard=1/2"], ["--shard=1/2", "--parallel=3"], ["--aot"]]) {
+test("a plain run writes no number of workers", async () => {
+  for (const flags of [[], ["--parallel=3"], ["--shard=1/2"], ["--shard=1/2", "--parallel=3"]]) {
     const { workers } = await written(ofCompiledRun, ...flags);
-    expect({ flags, workers }).toEqual({ flags, workers: 8 });
+    expect({ flags, workers }).toEqual({ flags, workers: undefined });
   }
+});
+
+test("a compiled run without --parallel keeps the number of workers", async () => {
+  expect((await written(ofCompiledRun, "--aot")).workers).toBe(8);
 });
 
 test("a compiled run under --parallel writes its own", async () => {

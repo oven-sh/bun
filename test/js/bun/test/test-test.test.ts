@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync, flattenNestedTestOutput } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -687,7 +687,11 @@ describe.concurrent("hooks of a describe block that does not run", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(flattenNestedTestOutput),
+      proc.exited,
+    ]);
     const junit = await Bun.file(join(String(dir), "junit.xml")).text();
     return {
       hooks: stdout.split("\n").filter(line => /(All|Each)$/.test(line)),

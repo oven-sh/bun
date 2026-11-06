@@ -11,7 +11,8 @@ pub(crate) enum Kind {
     /// u32 file_idx
     FileStart,
     /// u32 file_idx, str formatted_line (ANSI included; printed verbatim);
-    /// then, only when the worker runs with `--reporter`, the structured
+    /// then, only when the worker runs with `--reporter` or the line is
+    /// nested under describe headers the coordinator prints, the structured
     /// result (`runner::encode_test_case`): u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
 
@@ -21,7 +21,11 @@ async function run(cmd: string[], files: Record<string, string>, written: string
     // A matcher that blocks on a never-settling promise can't be stopped by the child's own test timeout.
     timeout: 60_000,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   const results = stderr
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))

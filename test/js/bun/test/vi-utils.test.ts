@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, jest, mock, setSystemTime, test, vi } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 async function run(args: string[], files: Record<string, string>, env: Record<string, string | undefined> = {}) {
@@ -12,7 +12,11 @@ async function run(args: string[], files: Record<string, string>, env: Record<st
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   return { stdout, stderr, exitCode };
 }
 

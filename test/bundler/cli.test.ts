@@ -1056,6 +1056,166 @@ describe("CLI argument error messages", () => {
   });
 });
 
+describe.concurrent("bun build --no-bundle keeps css url() references as written", () => {
+  // None of the referenced files exist: --no-bundle transpiles each entry
+  // point and must not resolve, copy, or inline what a url() points at.
+  async function transpileCss(css: string, ...flags: string[]) {
+    using dir = tempDir("build-no-bundle-css", { "in.css": css });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...flags, "in.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // name, stylesheet, output, output with --minify
+  test.each([
+    [
+      "a double-quoted url",
+      '.x { background: url("./img.png") }',
+      '.x {\n  background: url("./img.png");\n}\n',
+      ".x{background:url(./img.png)}",
+    ],
+    [
+      "a single-quoted url",
+      ".x { background: url('./img.png') }",
+      '.x {\n  background: url("./img.png");\n}\n',
+      ".x{background:url(./img.png)}",
+    ],
+    [
+      "an unquoted url",
+      ".x { background-image: url(./img.png) }",
+      '.x {\n  background-image: url("./img.png");\n}\n',
+      ".x{background-image:url(./img.png)}",
+    ],
+    [
+      "a url that needs its quotes",
+      '.x { background: url("./im g.png") }',
+      '.x {\n  background: url("./im g.png");\n}\n',
+      '.x{background:url("./im g.png")}',
+    ],
+    [
+      "a data: url",
+      ".x { background: url(data:image/png;base64,AAAA) }",
+      '.x {\n  background: url("data:image/png;base64,AAAA");\n}\n',
+      ".x{background:url(data:image/png;base64,AAAA)}",
+    ],
+    [
+      "a url with a host",
+      ".x { background: url(//zz-made-up.invalid/i.png) }",
+      '.x {\n  background: url("//zz-made-up.invalid/i.png");\n}\n',
+      ".x{background:url(//zz-made-up.invalid/i.png)}",
+    ],
+    [
+      "a url with a fragment",
+      '.x { mask: url("sprites.svg#icon") }',
+      '.x {\n  mask: url("sprites.svg#icon");\n}\n',
+      ".x{mask:url(sprites.svg#icon)}",
+    ],
+    ["a fragment alone", ".x { fill: url(#grad) }", '.x {\n  fill: url("#grad");\n}\n', ".x{fill:url(#grad)}"],
+    [
+      "two url() in one declaration",
+      ".x { background: url(./img.png), url(./two.png) }",
+      '.x {\n  background: url("./img.png"), url("./two.png");\n}\n',
+      ".x{background:url(./img.png),url(./two.png)}",
+    ],
+    [
+      "a custom property",
+      ":root { --bg: url(./img.png) }",
+      ':root {\n  --bg: url("./img.png");\n}\n',
+      ":root{--bg:url(./img.png)}",
+    ],
+    [
+      "@font-face src",
+      '@font-face { font-family: F; src: url("./f.woff2") }',
+      '@font-face {\n  font-family: F;\n  src: url("./f.woff2");\n}\n',
+      "@font-face{font-family:F;src:url(./f.woff2)}",
+    ],
+    [
+      "@keyframes",
+      "@keyframes k { from { background: url(./a.png) } to { background: url(./b.png) } }",
+      '@keyframes k {\n  from {\n    background: url("./a.png");\n  }\n\n  to {\n    background: url("./b.png");\n  }\n}\n',
+      "@keyframes k{0%{background:url(./a.png)}to{background:url(./b.png)}}",
+    ],
+    [
+      "@property initial-value",
+      '@property --u { syntax: "<url>"; inherits: false; initial-value: url(./a.png) }',
+      '@property --u {\n  syntax: "<url>";\n  inherits: false;\n  initial-value: url("./a.png");\n}\n',
+      '@property --u{syntax:"<url>";inherits:false;initial-value:url(./a.png)}',
+    ],
+    [
+      "next to an @import",
+      '@import "./base.css";\n.x { background: url("./img.png") }',
+      '@import "./base.css";\n\n.x {\n  background: url("./img.png");\n}\n',
+      '@import "./base.css";.x{background:url(./img.png)}',
+    ],
+  ])("%s", async (_name, css, pretty, minified) => {
+    expect(await Promise.all([transpileCss(css), transpileCss(css, "--minify")])).toEqual([
+      { stdout: pretty, stderr: "", exitCode: 0 },
+      { stdout: minified, stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // `--target=bun` has no browser to lower for. At the default target the bundler also
+  // prints a `-webkit-image-set()` fallback for this input, and this path does not.
+  test("image-set() with a url() and a string", async () => {
+    const css = '.x { background-image: image-set(url("./a.png") 1x, "./a@2x.png" 2x) }';
+    expect(
+      await Promise.all([transpileCss(css, "--target=bun"), transpileCss(css, "--target=bun", "--minify")]),
+    ).toEqual([
+      { stdout: '.x {\n  background-image: image-set("./a.png" 1x, "./a@2x.png" 2x);\n}\n', stderr: "", exitCode: 0 },
+      { stdout: '.x{background-image:image-set("./a.png" 1x,"./a@2x.png" 2x)}', stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  test("a malformed url() is still an error", async () => {
+    expect(await transpileCss(".x { background: url(a b) }")).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("Unexpected token"),
+      exitCode: 1,
+    });
+  });
+
+  test("--outdir writes each stylesheet and the script next to them", async () => {
+    using dir = tempDir("build-no-bundle-css-outdir", {
+      "in.css": ".x { background: url(./img.png) }",
+      "theme.pcss": ".y { background: url(./two.png) }",
+      "other.ts": "export const n: number = 1;",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        "in.css",
+        "theme.pcss",
+        "other.ts",
+        "--loader",
+        ".pcss:css",
+        "--outdir=out",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const out = path.join(String(dir), "out");
+    const written = fs.readdirSync(out).sort();
+    expect(Object.fromEntries(written.map(name => [name, fs.readFileSync(path.join(out, name), "utf8")]))).toEqual({
+      "in.css": '.x {\n  background: url("./img.png");\n}\n',
+      "other.js": "export const n = 1;\n",
+      "theme.css": '.y {\n  background: url("./two.png");\n}\n',
+    });
+  });
+});
+
 describe.concurrent("modules that fail to print", () => {
   // A TOML dotted header builds an object nested arbitrarily deep without
   // recursing in the parser, so the printer's recursion guard is the first
@@ -1153,159 +1313,5 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).toContain("The value of color in the class foo is undefined.");
     expect(stderr).not.toContain("<b>");
     expect(stderr).not.toContain("\x1b[");
-  });
-});
-
-describe.concurrent("bun build --no-bundle keeps css url() references as written", () => {
-  // None of the referenced files exist: --no-bundle transpiles each entry
-  // point and must not resolve, copy, or inline what a url() points at.
-  async function transpileCss(css: string, ...flags: string[]) {
-    using dir = tempDir("build-no-bundle-css", { "in.css": css });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", ...flags, "in.css"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  // name, stylesheet, output, output with --minify
-  test.each([
-    [
-      "a double-quoted url",
-      '.x { background: url("./img.png") }',
-      '.x {\n  background: url("./img.png");\n}\n',
-      ".x{background:url(./img.png)}",
-    ],
-    [
-      "a single-quoted url",
-      ".x { background: url('./img.png') }",
-      '.x {\n  background: url("./img.png");\n}\n',
-      ".x{background:url(./img.png)}",
-    ],
-    [
-      "an unquoted url",
-      ".x { background-image: url(./img.png) }",
-      '.x {\n  background-image: url("./img.png");\n}\n',
-      ".x{background-image:url(./img.png)}",
-    ],
-    [
-      "a url that needs its quotes",
-      '.x { background: url("./im g.png") }',
-      '.x {\n  background: url("./im g.png");\n}\n',
-      '.x{background:url("./im g.png")}',
-    ],
-    [
-      "a data: url",
-      ".x { background: url(data:image/png;base64,AAAA) }",
-      '.x {\n  background: url("data:image/png;base64,AAAA");\n}\n',
-      ".x{background:url(data:image/png;base64,AAAA)}",
-    ],
-    [
-      "a url with a host",
-      ".x { background: url(//zz-made-up.invalid/i.png) }",
-      '.x {\n  background: url("//zz-made-up.invalid/i.png");\n}\n',
-      ".x{background:url(//zz-made-up.invalid/i.png)}",
-    ],
-    [
-      "a url with a fragment",
-      '.x { mask: url("sprites.svg#icon") }',
-      '.x {\n  mask: url("sprites.svg#icon");\n}\n',
-      ".x{mask:url(sprites.svg#icon)}",
-    ],
-    ["a fragment alone", ".x { fill: url(#grad) }", '.x {\n  fill: url("#grad");\n}\n', ".x{fill:url(#grad)}"],
-    [
-      "two url() in one declaration",
-      ".x { background: url(./img.png), url(./two.png) }",
-      '.x {\n  background: url("./img.png"), url("./two.png");\n}\n',
-      ".x{background:url(./img.png),url(./two.png)}",
-    ],
-    [
-      "a custom property",
-      ":root { --bg: url(./img.png) }",
-      ':root {\n  --bg: url("./img.png");\n}\n',
-      ":root{--bg:url(./img.png)}",
-    ],
-    [
-      "image-set() with a url() and a string",
-      '.x { background-image: image-set(url("./a.png") 1x, "./a@2x.png" 2x) }',
-      '.x {\n  background-image: image-set("./a.png" 1x, "./a@2x.png" 2x);\n}\n',
-      '.x{background-image:image-set("./a.png" 1x,"./a@2x.png" 2x)}',
-    ],
-    [
-      "@font-face src",
-      '@font-face { font-family: F; src: url("./f.woff2") }',
-      '@font-face {\n  font-family: F;\n  src: url("./f.woff2");\n}\n',
-      "@font-face{font-family:F;src:url(./f.woff2)}",
-    ],
-    [
-      "@keyframes",
-      "@keyframes k { from { background: url(./a.png) } to { background: url(./b.png) } }",
-      '@keyframes k {\n  from {\n    background: url("./a.png");\n  }\n\n  to {\n    background: url("./b.png");\n  }\n}\n',
-      "@keyframes k{0%{background:url(./a.png)}to{background:url(./b.png)}}",
-    ],
-    [
-      "@property initial-value",
-      '@property --u { syntax: "<url>"; inherits: false; initial-value: url(./a.png) }',
-      '@property --u {\n  syntax: "<url>";\n  inherits: false;\n  initial-value: url("./a.png");\n}\n',
-      '@property --u{syntax:"<url>";inherits:false;initial-value:url(./a.png)}',
-    ],
-    [
-      "next to an @import",
-      '@import "./base.css";\n.x { background: url("./img.png") }',
-      '@import "./base.css";\n\n.x {\n  background: url("./img.png");\n}\n',
-      '@import "./base.css";.x{background:url(./img.png)}',
-    ],
-  ])("%s", async (_name, css, pretty, minified) => {
-    expect(await Promise.all([transpileCss(css), transpileCss(css, "--minify")])).toEqual([
-      { stdout: pretty, stderr: "", exitCode: 0 },
-      { stdout: minified, stderr: "", exitCode: 0 },
-    ]);
-  });
-
-  test("a malformed url() is still an error", async () => {
-    expect(await transpileCss(".x { background: url(a b) }")).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining("Unexpected token"),
-      exitCode: 1,
-    });
-  });
-
-  test("--outdir writes each stylesheet and the script next to them", async () => {
-    using dir = tempDir("build-no-bundle-css-outdir", {
-      "in.css": ".x { background: url(./img.png) }",
-      "theme.pcss": ".y { background: url(./two.png) }",
-      "other.ts": "export const n: number = 1;",
-    });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--no-bundle",
-        "in.css",
-        "theme.pcss",
-        "other.ts",
-        "--loader",
-        ".pcss:css",
-        "--outdir=out",
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-
-    const out = path.join(String(dir), "out");
-    const written = fs.readdirSync(out).sort();
-    expect(Object.fromEntries(written.map(name => [name, fs.readFileSync(path.join(out, name), "utf8")]))).toEqual({
-      "in.css": '.x {\n  background: url("./img.png");\n}\n',
-      "other.js": "export const n = 1;\n",
-      "theme.css": '.y {\n  background: url("./two.png");\n}\n',
-    });
   });
 });

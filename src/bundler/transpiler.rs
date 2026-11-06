@@ -3054,9 +3054,7 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
-        // Every `url()` becomes an import record at parse time and is printed
-        // back from it. Nothing resolves them here, so they round-trip as
-        // written, like `@import` already does.
+        // Nothing resolves these records, so each `url()` prints as written.
         let mut import_records = Vec::<bun_ast::ImportRecord>::new();
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,

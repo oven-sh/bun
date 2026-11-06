@@ -251,6 +251,44 @@ print(replaced(), f(3))
     expect(await run({ "main.py": main })).toEqual(printed("0\nTrue\n0 3\nTrue\n0 3\nTrue\n0 3\n"));
   });
 
+  test("what a tool has disabled is as the compiler left it while the loop still runs", async () => {
+    const main = `
+import sys
+
+M = sys.monitoring
+E = M.events
+
+def one(x): return x + 1
+
+def f(n):
+    total = 0
+    for i in range(n):
+        if i % 2:
+            total += one(i)
+        else:
+            total -= 1
+        while total > 100:
+            total -= 100
+        if i == n - 1:
+            print(replaced(f), replaced(one))
+    return total
+
+def replaced(function):
+    return [place[1] for place in M._places(function.__code__) if place[-1]]
+
+M.use_tool_id(1, 'test')
+wanted = E.LINE | E.BRANCH_LEFT | E.BRANCH_RIGHT | E.PY_RETURN
+for event in (E.LINE, E.BRANCH_LEFT, E.BRANCH_RIGHT, E.PY_RETURN):
+    M.register_callback(1, event, lambda *args: M.DISABLE)
+M.set_local_events(1, f.__code__, wanted)
+M.set_local_events(1, one.__code__, wanted)
+print(f(300))
+print(replaced(f), replaced(one))
+`;
+    // All that is waited for is the way out of the loop, which is told of where it leads.
+    expect(await run({ "main.py": main })).toEqual(printed("['op_py_ret'] []\n100\n[] []\n"));
+  });
+
   test("pdb stops at a breakpoint, shows a variable, steps and goes on", async () => {
     const program = `def double(n):
     result = n * 2

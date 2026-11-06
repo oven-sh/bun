@@ -1,0 +1,510 @@
+status: 0
+script: 961439543cc1a647
+source: 234a7f9449ab6903
+---
+== function.__name__ [function=function] => for_loop
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 L2>2 L2>2 L2>2 L2>2 R2>4
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R2>4
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>4
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>4
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>4
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 2 L2>2 3 2 L2>2 3 2 L2>2 3 2 L2>2 3 2 R2>4 4
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 2 R2>4 4
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:L2>2 2:L2>2 2:L2>2 2:L2>2 2:R2>4 1:R2>4
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:L2>2 2:L2>2 2:L2>2 2:L2>2 2:R2>4
+== function.__name__ [function=function] => for_break
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L2>2 L1>1 L2>2 L1>1 R2>3
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L2>2 R2>3
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>3
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>3
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>3
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 R2>3 3 4 5 6
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 L1>1 2 L2>2 1 R2>3 3 4 5 6
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J3>4
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J2>1 J2>1 J3>4
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J3>4
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L2>2 1:L2>2 2:L1>1 2:L2>2 2:L1>1 2:R2>3 1:R2>3
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:R2>3
+== function.__name__ [function=function] => for_else
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L2>2 L1>1 L2>2 L1>1 L2>2 L1>1 L2>2 L1>1 L2>2 R1>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L2>2 R1>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R1>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R1>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R1>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 R1>5 5 6
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 L1>1 2 L2>2 1 R1>5 5 6
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J2>1 J2>1 J2>1
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J2>1 J2>1 J2>1 J2>1 J2>1
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J2>1 J2>1 J2>1
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L2>2 1:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:R1>5 1:R1>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:R1>5
+== function.__name__ [function=function] => for_continue
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R3>5 L2>2 L3>4 L2>2 R3>5 L2>2 L3>4 L2>2 R3>5 R2>6
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R3>5 L3>4 R3>5 R3>5 R2>6
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>5 R3>5 R3>5 R2>6
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>5 R2>6
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>5 R3>5 R3>5 R2>6
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 R3>5 5 2 L2>2 3 L3>4 4 2 L2>2 3 R3>5 5 2 L2>2 3 L3>4 4 2 L2>2 3 R3>5 5 2 R2>6 6
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 R3>5 5 2 L3>4 4 R2>6 6
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J5>2 J4>2 J5>2 J4>2 J5>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J5>2 J4>2 J5>2 J4>2 J5>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J5>2 J4>2 J5>2 J4>2 J5>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R3>5 1:R3>5 2:L2>2 2:L3>4 1:L3>4 2:L2>2 2:R3>5 2:L2>2 2:L3>4 2:L2>2 2:R3>5 2:R2>6 1:R2>6
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R3>5 2:L2>2 2:L3>4 2:L2>2 2:L2>2 2:L3>4 2:L2>2 2:R2>6
+== function.__name__ [function=function] => while_loop
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>3 L2>3 L2>3 L2>3 L2>3 R2>4
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>3 R2>4
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>4
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>4
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>4
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>3 3 2 L2>3 3 2 L2>3 3 2 L2>3 3 2 L2>3 3 2 R2>4 4
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>3 3 R2>4 4
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>3 1:L2>3 2:L2>3 2:L2>3 2:L2>3 2:L2>3 2:R2>4 1:R2>4
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>3 2:L2>3 2:L2>3 2:L2>3 2:L2>3 2:R2>4
+== function.__name__ [function=function] => while_else
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>3 L2>3 L2>3 L2>3 L2>3 R2>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>3 R2>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>3 3 2 L2>3 3 2 L2>3 3 2 L2>3 3 2 L2>3 3 2 R2>5 5 6
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>3 3 R2>5 5 6
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>3 1:L2>3 2:L2>3 2:L2>3 2:L2>3 2:L2>3 2:R2>5 1:R2>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>3 2:L2>3 2:L2>3 2:L2>3 2:L2>3 2:R2>5
+== function.__name__ [function=function] => while_true
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L4>4 L4>4 L4>4 L4>4 R4>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L4>4 R4>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R4>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R4>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R4>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 3 4 L4>4 2 3 4 L4>4 2 3 4 L4>4 2 3 4 L4>4 2 3 4 R4>5 5
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 3 4 L4>4 R4>5 5
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L4>4 1:L4>4 2:L4>4 2:L4>4 2:L4>4 2:R4>5 1:R4>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L4>4 2:L4>4 2:L4>4 2:L4>4 2:R4>5
+== function.__name__ [function=function] => if_else
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R3>6 L2>2 L3>4 L2>2 L3>4 L2>2 R3>6 L2>2 L3>4 R2>7
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R3>6 L3>4 R3>6 R2>7
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>6 R3>6 R2>7
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>6 R2>7
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>6 R3>6 R2>7
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 R3>6 6 2 L2>2 3 L3>4 4 2 L2>2 3 L3>4 4 2 L2>2 3 R3>6 6 2 L2>2 3 L3>4 4 2 R2>7 7
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 R3>6 6 2 L3>4 4 R2>7 7
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J6>2 J4>2 J4>2 J6>2 J4>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J6>2 J4>2 J4>2 J6>2 J4>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J6>2 J4>2 J4>2 J6>2 J4>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R3>6 1:R3>6 2:L2>2 2:L3>4 1:L3>4 2:L2>2 2:L3>4 2:L2>2 2:R3>6 2:L2>2 2:L3>4 2:R2>7 1:R2>7
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R3>6 2:L2>2 2:L3>4 2:L2>2 2:L3>4 2:L2>2 2:L2>2 2:L3>4 2:R2>7
+== function.__name__ [function=function] => if_only
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R3>4 L2>2 R3>4 L2>2 R3>4 L2>2 R3>4 L2>2 R3>4 R2>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R3>4 R3>4 R3>4 R3>4 R3>4 R2>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>4 R3>4 R3>4 R3>4 R3>4 R2>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>4 R2>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>4 R3>4 R3>4 R3>4 R3>4 R2>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 R3>4 4 2 L2>2 3 R3>4 4 2 L2>2 3 R3>4 4 2 L2>2 3 R3>4 4 2 L2>2 3 R3>4 4 2 R2>5 5
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 R3>4 4 2 R2>5 5
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R3>4 1:R3>4 2:L2>2 2:R3>4 2:L2>2 2:R3>4 2:L2>2 2:R3>4 2:L2>2 2:R3>4 2:R2>5 1:R2>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R3>4 2:L2>2 2:L2>2 2:L2>2 2:L2>2 2:R2>5
+== function.__name__ [function=function] => if_never
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 L3>3 L2>2 L3>3 L2>2 L3>3 L2>2 L3>3 L2>2 L3>3 R2>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 L3>3 R2>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 L3>3 2 L2>2 3 L3>3 2 L2>2 3 L3>3 2 L2>2 3 L3>3 2 L2>2 3 L3>3 2 R2>5 5
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 L3>3 2 R2>5 5
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J3>2 J3>2 J3>2 J3>2 J3>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:L3>3 1:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:R2>5 1:R2>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:R2>5
+== function.__name__ [function=function] => if_last
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L2>2 L1>1 L2>2 L1>1 R2>3 L1>1 R2>3 L1>1 R2>3 R1>1
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L2>2 R2>3 R2>3 R2>3 R1>1
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>3 R2>3 R2>3 R1>1
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>3 R1>1
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>3 R2>3 R2>3 R1>1
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 R2>3 3 1 L1>1 2 R2>3 3 1 L1>1 2 R2>3 3 1 R1>1
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 L1>1 2 L2>2 1 R2>3 3 R1>1
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J3>1 J3>1 J3>1
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J2>1 J2>1 J3>1 J3>1 J3>1
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J3>1 J3>1 J3>1
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L2>2 1:L2>2 2:L1>1 2:L2>2 2:L1>1 2:R2>3 1:R2>3 2:L1>1 2:R2>3 2:L1>1 2:R2>3 2:R1>1 1:R1>1
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:R2>3 2:L1>1 2:L1>1 2:R1>1
+== function.__name__ [function=function] => elifs
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 L3>4 L2>2 R3>5 L5>6 L2>2 R3>5 R5>7 R7>10 L2>2 R3>5 R5>7 R7>10 L2>2 R3>5 R5>7 R7>10 R2>11
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 L3>4 R3>5 L5>6 R3>5 R5>7 R7>10 R3>5 R5>7 R7>10 R3>5 R5>7 R7>10 R2>11
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>5 R3>5 R5>7 R7>10 R3>5 R5>7 R7>10 R3>5 R5>7 R7>10 R2>11
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>5 R5>7 R7>10 R2>11
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>5 R3>5 R5>7 R7>10 R3>5 R5>7 R7>10 R3>5 R5>7 R7>10 R2>11
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 L3>4 4 2 L2>2 3 R3>5 5 L5>6 6 2 L2>2 3 R3>5 5 R5>7 7 R7>10 10 2 L2>2 3 R3>5 5 R5>7 7 R7>10 10 2 L2>2 3 R3>5 5 R5>7 7 R7>10 10 2 R2>11 11
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 L3>4 4 2 R3>5 5 L5>6 6 R5>7 7 R7>10 10 R2>11 11
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J4>2 J6>2 J10>2 J10>2 J10>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J4>2 J6>2 J10>2 J10>2 J10>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J4>2 J6>2 J10>2 J10>2 J10>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:L3>4 1:L3>4 2:L2>2 2:R3>5 1:R3>5 2:L5>6 1:L5>6 2:L2>2 2:R3>5 2:R5>7 1:R5>7 2:R7>10 1:R7>10 2:L2>2 2:R3>5 2:R5>7 2:R7>10 2:L2>2 2:R3>5 2:R5>7 2:R7>10 2:R2>11 1:R2>11
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:L3>4 2:L2>2 2:R3>5 2:L5>6 2:L2>2 2:R5>7 2:R7>10 2:L2>2 2:L2>2 2:R2>11
+== function.__name__ [function=function] => and_or
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R3>3 R3>4 L2>2 L3>3 R3>4 L2>2 L3>3 L3>3 R3>4 L2>2 L3>3 R3>4 L2>2 L3>3 L3>3 R3>4 R2>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R3>3 R3>4 L3>3 R3>4 L3>3 R3>4 R3>4 R3>4 R2>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>3 R3>4 R3>4 R3>4 R3>4 R3>4 R2>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>3 R3>4 R3>4 R2>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>3 R3>4 R3>4 R3>4 R3>4 R3>4 R2>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 R3>3 R3>4 4 2 L2>2 3 L3>3 R3>4 4 2 L2>2 3 L3>3 L3>3 R3>4 4 2 L2>2 3 L3>3 R3>4 4 2 L2>2 3 L3>3 L3>3 R3>4 4 2 R2>5 5
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 R3>3 R3>4 4 2 L3>3 R3>4 L3>3 R2>5 5
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R3>3 1:R3>3 2:R3>4 1:R3>4 2:L2>2 2:L3>3 1:L3>3 2:R3>4 1:R3>4 2:L2>2 2:L3>3 2:L3>3 1:L3>3 2:R3>4 2:L2>2 2:L3>3 2:R3>4 2:L2>2 2:L3>3 2:L3>3 2:R3>4 2:R2>5 1:R2>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R3>3 2:R3>4 2:L2>2 2:L3>3 2:R3>4 2:L2>2 2:L3>3 2:L3>3 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:L3>3 2:R2>5
+== function.__name__ [function=function] => values
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R3>3 L4>4 L2>2 L3>3 L4>4 L2>2 L3>3 R4>4 L2>2 L3>3 R4>4 L2>2 L3>3 R4>4 R2>5
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R3>3 L4>4 L3>3 R4>4 R4>4 R4>4 R2>5
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>3 R4>4 R4>4 R4>4 R2>5
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>3 R4>4 R2>5
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>3 R4>4 R4>4 R4>4 R2>5
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 R3>3 4 L4>4 2 L2>2 3 L3>3 4 L4>4 2 L2>2 3 L3>3 4 R4>4 2 L2>2 3 L3>3 4 R4>4 2 L2>2 3 L3>3 4 R4>4 2 R2>5 5
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 R3>3 4 L4>4 2 L3>3 R4>4 R2>5 5
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J4>2 J4>2 J4>2 J4>2 J4>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R3>3 1:R3>3 2:L4>4 1:L4>4 2:L2>2 2:L3>3 1:L3>3 2:L4>4 2:L2>2 2:L3>3 2:R4>4 1:R4>4 2:L2>2 2:L3>3 2:R4>4 2:L2>2 2:L3>3 2:R4>4 2:R2>5 1:R2>5
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R3>3 2:L4>4 2:L2>2 2:L3>3 2:L4>4 2:L2>2 2:L3>3 2:R4>4 2:L2>2 2:L3>3 2:L2>2 2:L3>3 2:R2>5
+== function.__name__ [function=function] => none_tests
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 L3>4 R5>6 L6>6 L2>2 L3>4 R5>6 R6>6 L2>2 R3>5 R5>6 R6>6 L2>2 R3>5 R5>6 R6>6 L2>2 R3>5 R5>6 R6>6 R2>7
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 L3>4 R5>6 L6>6 R5>6 R6>6 R3>5 R5>6 R6>6 R3>5 R5>6 R6>6 R3>5 R5>6 R6>6 R2>7
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R5>6 R5>6 R6>6 R3>5 R5>6 R6>6 R3>5 R5>6 R6>6 R3>5 R5>6 R6>6 R2>7
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R5>6 R6>6 R3>5 R2>7
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R5>6 R5>6 R6>6 R3>5 R5>6 R6>6 R3>5 R5>6 R6>6 R3>5 R5>6 R6>6 R2>7
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 L3>4 4 5 R5>6 6 L6>6 2 L2>2 3 L3>4 4 5 R5>6 6 R6>6 2 L2>2 3 R3>5 5 R5>6 6 R6>6 2 L2>2 3 R3>5 5 R5>6 6 R6>6 2 L2>2 3 R3>5 5 R5>6 6 R6>6 2 R2>7 7
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 L3>4 4 5 R5>6 6 L6>6 2 R6>6 R3>5 R2>7 7
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J6>2 J6>2 J6>2 J6>2 J6>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J6>2 J6>2 J6>2 J6>2 J6>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J6>2 J6>2 J6>2 J6>2 J6>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:L3>4 1:L3>4 2:R5>6 1:R5>6 2:L6>6 1:L6>6 2:L2>2 2:L3>4 2:R5>6 2:R6>6 1:R6>6 2:L2>2 2:R3>5 1:R3>5 2:R5>6 2:R6>6 2:L2>2 2:R3>5 2:R5>6 2:R6>6 2:L2>2 2:R3>5 2:R5>6 2:R6>6 2:R2>7 1:R2>7
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:L3>4 2:R5>6 2:L6>6 2:L2>2 2:L3>4 2:R6>6 2:L2>2 2:R3>5 2:L2>2 2:L2>2 2:R2>7
+== function.__name__ [function=function] => nested
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R3>3 L2>2 L3>3 L4>4 R3>3 L2>2 L3>3 L4>4 L3>3 R4>5 R3>3 L2>2 L3>3 L4>4 L3>3 R4>5 L3>3 R4>5 R3>3 L2>2 L3>3 L4>4 L3>3 R4>5 L3>3 R4>5 L3>3 R4>5 R3>3 R2>6
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R3>3 L3>3 L4>4 R3>3 R4>5 R3>3 R4>5 R4>5 R3>3 R4>5 R4>5 R4>5 R3>3 R2>6
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R3>3 R3>3 R4>5 R3>3 R4>5 R4>5 R3>3 R4>5 R4>5 R4>5 R3>3 R2>6
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R3>3 R4>5 R2>6
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R3>3 R3>3 R4>5 R3>3 R4>5 R4>5 R3>3 R4>5 R4>5 R4>5 R3>3 R2>6
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 R3>3 2 L2>2 3 L3>3 4 L4>4 3 R3>3 2 L2>2 3 L3>3 4 L4>4 3 L3>3 4 R4>5 5 3 R3>3 2 L2>2 3 L3>3 4 L4>4 3 L3>3 4 R4>5 5 3 L3>3 4 R4>5 5 3 R3>3 2 L2>2 3 L3>3 4 L4>4 3 L3>3 4 R4>5 5 3 L3>3 4 R4>5 5 3 L3>3 4 R4>5 5 3 R3>3 2 R2>6 6
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 R3>3 2 L3>3 4 L4>4 3 R4>5 5 R2>6 6
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J3>2 J4>3 J3>2 J4>3 J5>3 J3>2 J4>3 J5>3 J5>3 J3>2 J4>3 J5>3 J5>3 J5>3 J3>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J3>2 J4>3 J3>2 J4>3 J5>3 J3>2 J4>3 J5>3 J5>3 J3>2 J4>3 J5>3 J5>3 J5>3 J3>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J3>2 J4>3 J3>2 J4>3 J5>3 J3>2 J4>3 J5>3 J5>3 J3>2 J4>3 J5>3 J5>3 J5>3 J3>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R3>3 1:R3>3 2:L2>2 2:L3>3 1:L3>3 2:L4>4 1:L4>4 2:R3>3 2:L2>2 2:L3>3 2:L4>4 2:L3>3 2:R4>5 1:R4>5 2:R3>3 2:L2>2 2:L3>3 2:L4>4 2:L3>3 2:R4>5 2:L3>3 2:R4>5 2:R3>3 2:L2>2 2:L3>3 2:L4>4 2:L3>3 2:R4>5 2:L3>3 2:R4>5 2:L3>3 2:R4>5 2:R3>3 2:R2>6 1:R2>6
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R3>3 2:L2>2 2:L3>3 2:L4>4 2:L2>2 2:L3>3 2:L4>4 2:L3>3 2:R4>5 2:L2>2 2:L3>3 2:L4>4 2:L3>3 2:L3>3 2:L2>2 2:L3>3 2:L4>4 2:L3>3 2:L3>3 2:L3>3 2:R2>6
+== function.__name__ [function=function] => comprehension
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L1>1 L1>1 R1>1 L1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 L1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 R1>1
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 L1>1 R1>1 R1>1 L1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R1>1 R1>1 R1>1 R1>1 R1>1 R1>1
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1 R1>1
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 L1>1 L1>1 L1>1 R1>1 L1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 L1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 L1>1 L1>1 R1>1 L1>1 L1>1 R1>1 R1>1 R1>1 R1>1
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 L1>1 L1>1 R1>1 R1>1 L1>1 L1>1 L1>1 R1>1 R1>1 L1>1 R1>1 R1>1
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1 J1>1
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L1>1 1:L1>1 2:L1>1 2:R1>1 1:R1>1 2:L1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 1:R1>1 2:L1>1 1:L1>1 2:L1>1 1:L1>1 2:L1>1 1:L1>1 2:L1>1 2:L1>1 2:R1>1 1:R1>1 2:L1>1 2:L1>1 2:R1>1 1:R1>1 2:L1>1 1:L1>1 2:L1>1 2:R1>1 2:R1>1 1:R1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:R1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:R1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:R1>1 2:R1>1 2:R1>1 1:R1>1
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:L1>1 2:R1>1
+== function.__name__ [function=function] => generator
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L2>2 L1>1 R2>3 L1>1 R2>3 L1>1 R2>3 L1>1 R2>3 R1>1 L0>0 L0>0 L0>0 L0>0 L0>0 R0>0 L0>0 R0>0 L0>0 R0>0 R0>0
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L2>2 R2>3 R2>3 R2>3 R2>3 R1>1 L0>0 L0>0 R0>0 R0>0 R0>0 R0>0
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>3 R2>3 R2>3 R2>3 R1>1 R0>0 R0>0 R0>0 R0>0
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>3 R1>1 R0>0 R0>0
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>3 R2>3 R2>3 R2>3 R1>1 R0>0 R0>0 R0>0 R0>0
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 5 1 L1>1 2 L2>2 1 L1>1 2 R2>3 3 1 L1>1 2 R2>3 3 1 L1>1 2 R2>3 3 1 L1>1 2 R2>3 3 1 R1>1 L0>0 L0>0 L0>0 L0>0 L0>0 R0>0 L0>0 R0>0 L0>0 R0>0 R0>0
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 5 1 L1>1 2 L2>2 1 R2>3 3 R1>1 L0>0 L0>0 R0>0 R0>0
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J2>1 J3>1 J3>1 J3>1 J3>1 J0>0 J0>0 J0>0 J0>0 J0>0
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J2>1 J3>1 J3>1 J3>1 J3>1 J0>0 J0>0 J0>0 J0>0 J0>0
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J2>1 J3>1 J3>1 J3>1 J3>1 J0>0 J0>0 J0>0 J0>0 J0>0
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L2>2 1:L2>2 2:L1>1 2:R2>3 1:R2>3 2:L1>1 2:R2>3 2:L1>1 2:R2>3 2:L1>1 2:R2>3 2:R1>1 1:R1>1 2:L0>0 1:L0>0 2:L0>0 1:L0>0 2:L0>0 2:L0>0 2:L0>0 2:R0>0 1:R0>0 2:L0>0 2:R0>0 2:L0>0 2:R0>0 2:R0>0 1:R0>0
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L2>2 2:L1>1 2:R2>3 2:L1>1 2:L1>1 2:L1>1 2:R1>1 2:L0>0 2:L0>0 2:L0>0 2:L0>0 2:L0>0 2:R0>0 2:L0>0 2:L0>0 2:R0>0
+== function.__name__ [function=function] => handlers
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 R4>6 L12>13 L2>2 L4>5 L7>7 L12>13 L2>2 R4>6 L12>13 L2>2 R4>6 L12>13 L2>2 R4>6 L12>13 R2>15
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 R4>6 L12>13 L4>5 L7>7 R4>6 R4>6 R4>6 R2>15
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R4>6 R4>6 R4>6 R4>6 R2>15
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R4>6 R2>15
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R4>6 R4>6 R4>6 R4>6 R2>15
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 4 R4>6 6 12 L12>13 13 14 2 L2>2 3 4 L4>5 5 7 L7>7 8 12 L12>13 13 14 2 L2>2 3 4 R4>6 6 12 L12>13 13 14 2 L2>2 3 4 R4>6 6 12 L12>13 13 14 2 L2>2 3 4 R4>6 6 12 L12>13 13 14 2 R2>15 15
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 4 R4>6 6 12 L12>13 13 14 2 L4>5 5 7 L7>7 8 R2>15 15
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J14>2 J14>2 J14>2 J14>2 J14>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J14>2 J14>2 J14>2 J14>2 J14>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J14>2 J14>2 J14>2 J14>2 J14>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:R4>6 1:R4>6 2:L12>13 1:L12>13 2:L2>2 2:L4>5 1:L4>5 2:L7>7 1:L7>7 2:L12>13 2:L2>2 2:R4>6 2:L12>13 2:L2>2 2:R4>6 2:L12>13 2:L2>2 2:R4>6 2:L12>13 2:R2>15 1:R2>15
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:R4>6 2:L12>13 2:L2>2 2:L4>5 2:L7>7 2:L12>13 2:L2>2 2:L12>13 2:L2>2 2:L12>13 2:L2>2 2:L12>13 2:R2>15
+== function.__name__ [function=function] => withs
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L8>8 R10>12 L8>8 L10>11 R9>9 L8>8 R10>12 L8>8 R10>12 L8>8 R10>12 R8>13
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L8>8 R10>12 L10>11 R9>9 R10>12 R10>12 R10>12 R8>13
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R10>12 R9>9 R10>12 R10>12 R10>12 R8>13
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R10>12 R9>9 R8>13
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R10>12 R9>9 R10>12 R10>12 R10>12 R8>13
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 1 4 7 8 L8>8 9 1 10 R10>12 12 9 1 8 L8>8 9 1 10 L10>11 11 9 1 R9>9 8 L8>8 9 1 10 R10>12 12 9 1 8 L8>8 9 1 10 R10>12 12 9 1 8 L8>8 9 1 10 R10>12 12 9 1 8 R8>13 13
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 1 4 7 8 L8>8 9 1 10 R10>12 12 9 1 8 L10>11 11 9 R9>9 R8>13 13
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J9>8 J9>8 J9>8 J9>8 J9>8
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J9>8 J9>8 J9>8 J9>8 J9>8
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J9>8 J9>8 J9>8 J9>8 J9>8
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L8>8 1:L8>8 2:R10>12 1:R10>12 2:L8>8 2:L10>11 1:L10>11 2:R9>9 1:R9>9 2:L8>8 2:R10>12 2:L8>8 2:R10>12 2:L8>8 2:R10>12 2:R8>13 1:R8>13
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L8>8 2:R10>12 2:L8>8 2:L10>11 2:R9>9 2:L8>8 2:L8>8 2:L8>8 2:R8>13
+== function.__name__ [function=function] => matches
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L2>2 L4>5 L2>2 R4>6 L6>6 L2>2 R4>6 R6>6 L6>6 L2>2 R4>6 R6>6 R6>6 L8>8 R8>10 L2>2 R4>6 R6>6 R6>6 L8>8 R8>10 R2>12
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L2>2 L4>5 R4>6 L6>6 R4>6 R6>6 L6>6 R4>6 R6>6 R6>6 L8>8 R8>10 R4>6 R6>6 R6>6 R8>10 R2>12
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R4>6 R4>6 R6>6 R4>6 R6>6 R6>6 R8>10 R4>6 R6>6 R6>6 R8>10 R2>12
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R4>6 R6>6 R6>6 R8>10 R2>12
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R4>6 R4>6 R6>6 R4>6 R6>6 R6>6 R8>10 R4>6 R6>6 R6>6 R8>10 R2>12
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 2 L2>2 3 4 L4>5 5 2 L2>2 3 4 R4>6 6 L6>6 7 2 L2>2 3 4 R4>6 6 R6>6 L6>6 7 2 L2>2 3 4 R4>6 6 R6>6 R6>6 8 L8>8 R8>10 10 11 2 L2>2 3 4 R4>6 6 R6>6 R6>6 8 L8>8 R8>10 10 11 2 R2>12 12
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 2 L2>2 3 4 L4>5 5 2 R4>6 6 L6>6 7 R6>6 L6>6 R6>6 8 L8>8 R8>10 10 11 R2>12 12
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J5>2 J6>6 J7>2 J6>6 J7>2 J6>8 J11>2 J6>8 J11>2
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J5>2 J6>6 J7>2 J6>6 J7>2 J6>8 J11>2 J6>8 J11>2
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J5>2 J6>6 J7>2 J6>6 J7>2 J6>8 J11>2 J6>8 J11>2
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L2>2 1:L2>2 2:L4>5 1:L4>5 2:L2>2 2:R4>6 1:R4>6 2:L6>6 1:L6>6 2:L2>2 2:R4>6 2:R6>6 1:R6>6 2:L6>6 1:L6>6 2:L2>2 2:R4>6 2:R6>6 2:R6>6 1:R6>6 2:L8>8 1:L8>8 2:R8>10 1:R8>10 2:L2>2 2:R4>6 2:R6>6 2:R6>6 2:L8>8 2:R8>10 2:R2>12 1:R2>12
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L2>2 2:L4>5 2:L2>2 2:R4>6 2:L6>6 2:L2>2 2:R6>6 2:L6>6 2:L2>2 2:R6>6 2:L8>8 2:R8>10 2:L2>2 2:L8>8 2:R2>12
+== function.__name__ [function=function] => one_line
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L1>1 L1>1 R1>1 L1>1 R1>1 L1>1 R1>1 L1>1 R1>1 R1>2
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L1>1 R1>1 R1>1 R1>1 R1>1 R1>2
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R1>1 R1>1 R1>1 R1>1 R1>2
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R1>1 R1>2
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R1>1 R1>1 R1>1 R1>1 R1>2
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 L1>1 L1>1 L1>1 R1>1 L1>1 R1>1 L1>1 R1>1 L1>1 R1>1 R1>2 2
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 L1>1 L1>1 R1>1 R1>2 2
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J1>1 J1>1 J1>1 J1>1 J1>1
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J1>1 J1>1 J1>1 J1>1 J1>1
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J1>1 J1>1 J1>1 J1>1 J1>1
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L1>1 1:L1>1 2:L1>1 2:R1>1 1:R1>1 2:L1>1 2:R1>1 2:L1>1 2:R1>1 2:L1>1 2:R1>1 2:R1>2 1:R1>2
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L1>1 2:L1>1 2:R1>1 2:L1>1 2:L1>1 2:L1>1 2:R1>2
+== function.__name__ [function=function] => returns
+all     short(run(function, {1: (BOTH, ())})[0]) [function=function] => L1>1 L2>2 L1>1 L2>2 L1>1 L2>2 L1>1 R2>2
+label [function=function, label='no L   ', disabled=(256,)] => no L   
+short(first) [function=function, label='no L   ', disabled=(256,)] => L1>1 L2>2 R2>2
+| short(second) [function=function, label='no L   ', disabled=(256,)] => R2>2
+label [function=function, label='no R   ', disabled=(512,)] => no R   
+short(first) [function=function, label='no R   ', disabled=(512,)] => R2>2
+| short(second) [function=function, label='no R   ', disabled=(512,)] => 
+label [function=function, label='neither', disabled=(256, 512)] => neither
+short(first) [function=function, label='neither', disabled=(256, 512)] => 
+| short(second) [function=function, label='neither', disabled=(256, 512)] => 
+only L  short(run(function, {1: ((E.BRANCH_LEFT,), ())})[0]) [function=function] => 
+only R  short(run(function, {1: ((E.BRANCH_RIGHT,), ())})[0]) [function=function] => R2>2
+lines   short(run(function, {1: (BOTH + (E.LINE,), ())})[0]) [function=function] => 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 L2>2 1 L1>1 2 R2>2
+lines-  short(run(function, {1: (BOTH + (E.LINE,), BOTH + (E.LINE,))})[0]) [function=function] => 1 L1>1 2 L2>2 1 R2>2
+lines-L short(run(function, {1: (BOTH + (E.LINE,), (E.BRANCH_LEFT, E.LINE))})... [function=function] => 
+jumps   short(run(function, {1: (BOTH + (E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J2>1
+jumps-R short(run(function, {1: (BOTH + (E.JUMP,), (E.BRANCH_RIGHT,))})[0]) [function=function] => J2>1 J2>1 J2>1
+only J  short(run(function, {1: ((E.JUMP,), ())})[0]) [function=function] => J2>1 J2>1 J2>1
+two     short(run(function, {1: (BOTH, BOTH), 2: (BOTH, ())})[0], True) [function=function] => 2:L1>1 1:L1>1 2:L2>2 1:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:R2>2 1:R2>2
+two LR  short(run(function, {1: (BOTH, (E.BRANCH_LEFT,)), 2: (BOTH, (E.BRANCH... [function=function] => 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:L2>2 2:L1>1 2:R2>2
+== restart_events()
+step [step=0] => 0
+' '.join(log) [step=0] => 
+step [step=1] => 1
+' '.join(log) [step=1] => 
+step [step=2] => 2
+' '.join(log) [step=2] => L2>2 R3>6 L3>4 R2>7
+in the middle of a loop
+L2>2 R3>6 L2>2 L3>4 R2>7
+local events
+L2>2 L3>4 R3>6 R2>7
+switched on and off while the loop runs
+L2>3 L2>3 R2>4
+a callback that raises
+result [event=256] => 34
+result [event=512] => 30
+what the frame says meanwhile
+[(2, None, 0), (3, 0, 0), (2, 0, -1), (3, 1, -1), (2, 1, 0), (3, 2, 0), (2, 2, 1), (3, 3, 1), (2, 3, 0)]
+== the event of old
+2>2 3>6
+== with a trace function that sends the frame elsewhere
+203
+L2>2 L2>2 L3>4 L2>2 R3>5 R2>6

@@ -1228,6 +1228,93 @@ devTest("css module class names survive a syntax error", {
     await c.expectMessage("keys:extra,title");
   },
 });
+devTest("css module with a composes of an unknown name is a build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .title {
+        composes: missing;
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("title:" + styles.title.split(" ").length);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    const error =
+      'styles.module.css:2:12: error: The name "missing" never appears in "styles.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.';
+    await using c = await dev.client("/", { errors: [error] });
+    await c.expectReload(async () => {
+      await dev.write(
+        "styles.module.css",
+        `
+          .missing { font-weight: 700; }
+          .title {
+            composes: missing;
+            color: red;
+          }
+        `,
+      );
+    });
+    await c.expectMessage("title:2");
+    // The same error after a good build.
+    await dev.write(
+      "styles.module.css",
+      `
+        .title {
+          composes: missing;
+          color: red;
+        }
+      `,
+      { errors: [error] },
+    );
+    await dev.write(
+      "styles.module.css",
+      `
+        .title {
+          color: red;
+        }
+      `,
+    );
+    await c.expectMessage("title:1");
+  },
+});
+devTest("css module in a link tag with an initial syntax error gets recovered", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.module.css"],
+      body: `hello world`,
+    }),
+    "styles.module.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["styles.module.css:3:3: error: Unexpected end of input"],
+    });
+    await c.expectReload(async () => {
+      await dev.write(
+        "styles.module.css",
+        `
+          body {
+            color: red;
+          }
+        `,
+      );
+    });
+    await c.style("body").color.expect.toBe("red");
+    // The page links the bundled stylesheet, not the source file.
+    await dev.fetch("/").expect.not.toContain('"styles.module.css"');
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

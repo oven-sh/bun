@@ -14,26 +14,21 @@ use crate::{Index, IndexInt, LinkerContext};
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 /// Fills a CSS file's lazy-export object with its class-name map. A no-op for other lazy exports.
+/// A `composes` that cannot be followed is reported to `log`.
 pub(crate) fn populate_css_module_lazy_export(
-    this: &mut LinkerContext,
+    this: &LinkerContext,
     source_index: IndexInt,
+    log: &mut bun_ast::Log,
 ) -> Result<(), AllocError> {
-    // Take `parts` as a raw pointer *before* the
-    // long-lived immutable `items_css()` borrow below.
-    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
-    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-    // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
+    let parts: &[Part] = this.graph.ast.items_parts()[source_index as usize].as_slice();
+    let all_sources = this.parse_graph().input_files.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
-    // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
-    if unsafe { (&*parts).len() } < 2 {
+    if parts.len() < 2 {
         panic!("Internal error: expected a lazy export part");
     }
-
-    // SAFETY: index 1 is in bounds (checked above).
-    let part: &mut Part = unsafe { &mut (*parts)[1] };
+    let part: &Part = &parts[1];
 
     // `Part.stmts: StoreSlice<Stmt>` — safe `Deref` to `&[Stmt]`.
     if part.stmts.is_empty() {
@@ -106,9 +101,7 @@ pub(crate) fn populate_css_module_lazy_export(
                     ),
                     ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
                 };
-                // Split-borrow — see `LinkerContext::log_disjoint`.
-                let names =
-                    visitor.exported_names(css_ast, ref_, source_index, this.log_disjoint());
+                let names = visitor.exported_names(css_ast, ref_, source_index, log);
                 let value = if let [name] = names {
                     name_expr(name)
                 } else {
@@ -161,7 +154,8 @@ pub(crate) fn generate_code_for_lazy_export(
         this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
     }
 
-    populate_css_module_lazy_export(this, source_index)?;
+    // Split-borrow — see `LinkerContext::log_disjoint`.
+    populate_css_module_lazy_export(this, source_index, this.log_disjoint())?;
 
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
     // SAFETY: stable SoA column slice valid for the link pass; index 1 was

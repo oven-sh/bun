@@ -4841,12 +4841,14 @@ impl<'a> LinkerContext<'a> {
     /// See `linker_context/generateCodeForLazyExport.rs`.
     #[inline]
     pub(crate) fn populate_css_module_lazy_export(
-        &mut self,
+        &self,
         source_index: crate::IndexInt,
+        log: &mut Log,
     ) -> Result<(), AllocError> {
         crate::linker_context::generate_code_for_lazy_export::populate_css_module_lazy_export(
             self,
             source_index,
+            log,
         )
     }
 

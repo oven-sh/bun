@@ -5860,10 +5860,12 @@ pub mod bv2_impl {
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
-                                    if crate::is_client_css_module(
-                                        target,
-                                        sources[failed].path.pretty,
-                                    ) {
+                                    if loaders[index] != Loader::Html
+                                        && crate::is_client_css_module(
+                                            target,
+                                            sources[failed].path.pretty,
+                                        )
+                                    {
                                         record.path = sources[failed].path;
                                     } else {
                                         record.path.is_disabled = true;
@@ -5955,8 +5957,24 @@ pub mod bv2_impl {
 
             // This pipeline skips `generate_code_for_lazy_export`, so fill the class-name maps here.
             for source_index in &css_module_stubs {
+                let mut log = bun_ast::Log::init();
                 self.linker
-                    .populate_css_module_lazy_export(source_index.get())?;
+                    .populate_css_module_lazy_export(source_index.get(), &mut log)?;
+                if log.has_errors() {
+                    // Treat a `composes` that cannot be followed like an invalid import.
+                    dev_server
+                        .handle_parse_task_failure(
+                            crate::Error::InvalidCssImport,
+                            bake::Graph::Client,
+                            self.graph.input_files.items_source()[source_index.get() as usize]
+                                .path
+                                .text,
+                            &raw const log,
+                            self,
+                        )
+                        .map_err(|_| AllocError)?;
+                    let _ = start.css_entry_points.swap_remove(source_index);
+                }
             }
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
@@ -6049,6 +6067,31 @@ pub mod bv2_impl {
                     )
                     .map_err(|_| AllocError)?;
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
+            }
+            // A CSS module that failed above has no chunk. Its class-name module would clear the failure.
+            if css_module_stubs
+                .iter()
+                .any(|stub| !start.css_entry_points.contains(stub))
+            {
+                let failed = |source_index: u32| {
+                    let index = Index::init(source_index);
+                    css_module_stubs.contains(&index) && !start.css_entry_points.contains(&index)
+                };
+                let chunk::Content::Javascript(js) = &mut chunks[0].content else {
+                    unreachable!()
+                };
+                js.files_in_chunk_order = js
+                    .files_in_chunk_order
+                    .iter()
+                    .copied()
+                    .filter(|source_index| !failed(*source_index))
+                    .collect();
+                js.parts_in_chunk_in_order = js
+                    .parts_in_chunk_in_order
+                    .iter()
+                    .copied()
+                    .filter(|range| !failed(range.source_index.get()))
+                    .collect();
             }
             for (entry_point, order) in css_orders {
                 let order_len = order.len() as usize;

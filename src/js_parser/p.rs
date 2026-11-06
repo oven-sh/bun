@@ -1630,10 +1630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
                 if self.is_control_flow_dead {
-                    return Expr {
-                        data: null_expr_data(),
-                        loc: arg.loc,
-                    };
+                    return self.new_expr(E::Null {}, arg.loc);
                 }
 
                 str_.resolve_rope_if_needed(self.arena);

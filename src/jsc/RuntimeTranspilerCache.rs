@@ -85,7 +85,10 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-const EXPECTED_VERSION: u32 = 51;
+/// Version 52: A `for-in` or `for-of` loop that never runs keeps a head that declares two or more
+/// names as it is written, and a `require("x")` that never runs is `null`. Older entries can hold
+/// a SyntaxError for both.
+const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

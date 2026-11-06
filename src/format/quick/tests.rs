@@ -270,7 +270,8 @@ fn trials_that_cost_too_much_end_the_run() {
     assert!(scratch.waste(i32::MAX).is_ok());
 
     let list = |count: usize| [&b"x = ["[..], &b"a < b, ".repeat(count), b"];\n"].concat();
-    assert_eq!(print("a.ts", &list(2000)), Err(why::TOO_LARGE));
+    // (each of them is a level on the stack, of which a thread of the tests has little)
+    assert_eq!(print("a.ts", &list(400)), Err(why::TOO_LARGE));
 }
 
 #[test]

@@ -18,24 +18,20 @@ pub struct ResolveMessage {
     // Note: only the referrer path's `.text` is ever read;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
-    //
-    // Private: only this file makes the JS object, in `create_for_log` and `NotFound::into_thrown_js`.
     referrer: Box<[u8]>,
     pub(crate) logged: Cell<bool>,
     /// Its JS object has the own properties that `NotFound::into_thrown_js` defines.
     thrown: bool,
 }
 
-/// A resolution that failed, before JavaScript has an object for it. Some callers only ask whether a specifier
-/// resolves (`Module._findPath`, the fallback to an `onLoad` plugin), so the caller that throws makes the object.
+/// A failed resolution, as data: only a caller that throws it makes the JS object.
 pub enum ResolveFailure {
     NotFound(NotFound),
     /// The error that a bad answer of an `onResolve` plugin made.
     Thrown(JSValue),
 }
 
-/// The resolver's message for a specifier that did not resolve. Boxed, so that the `Result` of a resolution is no
-/// larger than it is with a `JSValue`.
+/// Boxed: the `Result` of a resolution stays as large as it is with a `JSValue`.
 pub struct NotFound(Box<ResolveMessage>);
 
 const _: () = assert!(
@@ -53,8 +49,6 @@ impl NotFound {
         }))
     }
 
-    /// The `ResolveMessage` to throw. `stack`, `message` and `code` are own properties of it, and `requireStack` is
-    /// one too where `require_stack` has one.
     pub fn into_thrown_js(self, global: &JSGlobalObject) -> JSValue {
         let has_require_stack = self.0.require_stack().is_some();
         let value = (*self.0).to_js(global);

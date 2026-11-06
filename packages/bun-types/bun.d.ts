@@ -10310,7 +10310,8 @@ declare module "bun" {
      * Navigate to a URL. Resolves when the main frame's load completes
      * (WKNavigationDelegate `didFinishNavigation`). A URL that only changes
      * the `#fragment` of the current page has no load: it resolves once the
-     * new URL is current.
+     * new URL is current, unless the browser loads the document again for it
+     * (Chrome does for a frameset page).
      *
      * @example
      * ```ts

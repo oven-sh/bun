@@ -14,12 +14,24 @@ bun outdated <filter>
   Set a specific cwd
 </ParamField>
 
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
+</ParamField>
+
 <ParamField path="-h, --help" type="boolean">
   Print this help menu
 </ParamField>
 
 <ParamField path="-F, --filter" type="string">
   Display outdated dependencies for each matching workspace
+</ParamField>
+
+<ParamField path="-r, --recursive" type="boolean">
+  Check outdated packages in all workspaces
 </ParamField>
 
 ### Output & Logging
@@ -94,12 +106,24 @@ bun outdated <filter>
   Same as <code>--ca</code>, but as a file path to the certificate
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <ParamField path="--registry" type="string">
   Use a specific registry by default, overriding <code>.npmrc</code>, <code>bunfig.toml</code> and environment variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
-  Maximum number of concurrent network requests (default 48)
+<ParamField path="--network-concurrency" type="number" default="64">
+  Maximum number of concurrent network requests (default 64)
 </ParamField>
 
 ### Caching
@@ -115,7 +139,7 @@ bun outdated <filter>
 ### Execution Behavior
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Has no effect. <code>bun outdated</code> is read-only
 </ParamField>
 
 <ParamField path="-f, --force" type="boolean">
@@ -127,12 +151,12 @@ bun outdated <filter>
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (Bun never runs dependency scripts)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">

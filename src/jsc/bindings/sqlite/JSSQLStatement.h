@@ -70,7 +70,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
 private:
@@ -83,6 +83,7 @@ private:
 };
 static_assert(sizeof(JSSQLStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLStatementConstructor in JSFunction IsoSubspace");
 Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject);
+Structure* createJSSQLDatabaseStructure(JSGlobalObject* globalObject);
 
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
 

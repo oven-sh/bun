@@ -13,7 +13,7 @@ Features:
 
 - Generates `.patch` files that Bun applies to dependencies in `node_modules` on install
 - You can commit `.patch` files to your repository and reuse them across installs, projects, and machines
-- `"patchedDependencies"` in `package.json` keeps track of patched packages
+- `"patchedDependencies"` in `package.json` keeps track of patched packages. Bun only reads it from the root `package.json`; `bun install` warns when a workspace package declares it.
 - Patches packages in `node_modules/` while preserving the integrity of Bun's [Global Cache](/pm/global-cache)
 - Test your changes locally before committing them with `bun patch --commit <pkg>`
 - To preserve disk space and keep `bun install` fast, Bun commits patched packages to the Global Cache and shares them across projects where possible
@@ -42,7 +42,7 @@ If you skip it, you might end up editing the package globally in the cache.
 
 #### Step 2. Test your changes locally
 
-`bun patch <pkg>` makes it safe to edit `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](/pm/global-cache). It works by re-creating an unlinked clone of the package in `node_modules/` and diffing it against the original package in the Global Cache.
+`bun patch <pkg>` makes it safe to edit `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](/pm/global-cache). It works by re-creating an unlinked clone of the package in `node_modules/`. `bun patch --commit <pkg>` then diffs that clone against the original package in the Global Cache.
 
 #### Step 3. Commit your changes
 
@@ -63,6 +63,28 @@ bun patch --commit react --patches-dir=mypatches
 # `patch-commit` is available for compatibility with pnpm
 bun patch-commit react
 ```
+
+If `bun install` could not apply the resulting patch, or the install is refused (for example by a [security scanner](/pm/security-scanner-api)), the commit fails and changes nothing: your edits, `package.json`, the lockfile, and any earlier patch file stay as they were.
+
+To run the same checks without writing anything, pass `--dry-run`. It prints the path of the patch file that the commit would write.
+
+#### Removing a patch
+
+Undo your changes and commit again:
+
+```bash terminal icon="terminal"
+bun patch react
+# restore the files you changed in node_modules/react
+bun patch --commit react
+```
+
+When the package has no changes left, Bun removes it from `"patchedDependencies"` in `package.json` and the lockfile, deletes its patch file unless another entry uses it, and reinstalls the original package.
+
+You can also delete the entry from `"patchedDependencies"` and the patch file yourself, then run `bun install`.
+
+#### A missing patch file
+
+`bun install` and `bun patch <pkg>` fail when a file in `"patchedDependencies"` does not exist, and leave `node_modules` alone. While the patched package is still in `node_modules`, `bun patch --commit <pkg>` writes the file again. To start over, delete the entry from `"patchedDependencies"` and run `bun install`.
 
 ---
 

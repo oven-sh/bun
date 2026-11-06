@@ -35,7 +35,7 @@ test("crypto.Sign should handle JWK EC keys with ieee-p1363 encoding", () => {
     format: "jwk",
     type: "pkcs8",
     dsaEncoding: "ieee-p1363",
-  });
+  } as crypto.SignJsonWebKeyInput);
 
   // IEEE P1363 format for P-256 should be exactly 64 bytes (32 bytes for r, 32 bytes for s)
   expect(signature.length).toBe(64);
@@ -100,7 +100,7 @@ test("crypto.Sign should handle JWK EC keys with different encodings", () => {
       key: jwkKey,
       format: "jwk",
       type: "pkcs8",
-    });
+    } as crypto.JsonWebKeyInput);
 
     const signer = crypto.createSign("sha256");
     signer.update(testData);
@@ -140,10 +140,15 @@ test("crypto.Verify with ieee-p1363 rejects signatures that are not in P1363 for
 
   // When the caller requests ieee-p1363, a signature that is not 2*n bytes of
   // raw r||s must fail verification rather than being reinterpreted as DER.
+  // Like Node, Verify throws for one and crypto.verify() returns false.
   {
+    const key = { key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" } as const;
     const verifier = crypto.createVerify("sha256");
     verifier.update(testData);
-    expect(verifier.verify({ key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" }, derSignature)).toBe(false);
+    expect(() => verifier.verify(key, derSignature)).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Malformed signature" }),
+    );
+    expect(crypto.verify("sha256", Buffer.from(testData), key, derSignature)).toBe(false);
   }
 
   // The legitimate case still works: a real 64-byte P1363 signature verifies.

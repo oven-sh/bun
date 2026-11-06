@@ -79,7 +79,7 @@ impl XML {
     /// into `E::ObjectJSON` / `E::ArrayJSON` rows whose tape (and every string
     /// that does not borrow the source) lives in `bump`.
     pub fn parse<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         log: &mut Log,
         bump: &'a Bump,
         options: Options,
@@ -90,9 +90,9 @@ impl XML {
 
     /// [`parse`](Self::parse) for a UTF-16 document (a 16-bit JS string):
     /// the strings in the result are UTF-16 as well. `source` is only what
-    /// diagnostics are attributed to.
+    /// diagnostics are attributed to and what the length limit is checked on.
     pub fn parse_utf16<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         units: &'a [u16],
         log: &mut Log,
         bump: &'a Bump,
@@ -103,12 +103,13 @@ impl XML {
     }
 
     fn parse_units<'a, U: Unit>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         contents: &'a [U],
         log: &mut Log,
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
+        source.check_parseable_len(log, "XML document")?;
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
         unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {
@@ -127,7 +128,6 @@ impl XML {
         match result {
             Ok(root) => Ok(root),
             Err(PErr::Syntax) => Err(crate::Error::SyntaxError),
-            Err(PErr::Oom) => Err(crate::Error::Alloc(bun_alloc::AllocError)),
             Err(PErr::StackOverflow) => Err(crate::Error::StackOverflow),
             Err(PErr::NeedsWiderEncoding) => Err(crate::Error::NeedsWiderEncoding),
         }
@@ -138,16 +138,9 @@ impl XML {
 enum PErr {
     /// Already logged.
     Syntax,
-    Oom,
     StackOverflow,
     /// See `InputEncoding::Latin1`.
     NeedsWiderEncoding,
-}
-
-impl From<bun_alloc::AllocError> for PErr {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        PErr::Oom
-    }
 }
 
 type PResult<T> = Result<T, PErr>;
@@ -176,9 +169,20 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     fn low(self) -> u8;
     fn value(self) -> u32;
     fn ascii(b: u8) -> Self;
+    /// A UTF-16 code unit as the unit type, which is `u16` wherever this is reached.
+    fn from_u16(u: u16) -> Self;
     /// The units' storage, for tape strings (whose encoding tag says how
     /// to read them back).
     fn bytes(units: &[Self]) -> &[u8];
+    /// Bytes (a transcoded document) as the unit type, which is `u8` wherever this is reached.
+    fn from_bytes(bytes: &[u8]) -> &[Self];
+    /// The highway structural-index kernel for this width.
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize;
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
     const KEY_NAME: &'static [Self];
@@ -204,8 +208,23 @@ impl Unit for u8 {
         b
     }
     #[inline(always)]
+    fn from_u16(_: u16) -> Self {
+        unreachable!("Unit::from_u16 on u8")
+    }
     fn bytes(units: &[Self]) -> &[u8] {
         units
+    }
+    #[inline(always)]
+    fn from_bytes(bytes: &[u8]) -> &[Self] {
+        bytes
+    }
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize {
+        bun_highway::xml_structural_index_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
     const KEY_NAME: &'static [Self] = b"name";
@@ -249,8 +268,23 @@ impl Unit for u16 {
         u16::from(b)
     }
     #[inline(always)]
+    fn from_u16(u: u16) -> Self {
+        u
+    }
     fn bytes(units: &[Self]) -> &[u8] {
-        bytemuck::cast_slice(units)
+        bun_core::slice_as_bytes(units)
+    }
+    #[inline(always)]
+    fn from_bytes(_: &[u8]) -> &[Self] {
+        unreachable!("Unit::from_bytes on u16")
+    }
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize {
+        bun_highway::xml_structural_index16_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");
     const KEY_NAME: &'static [Self] = utf16!(b"name");
@@ -259,13 +293,6 @@ impl Unit for u16 {
     const KEY_COMMENT: &'static [Self] = utf16!(b"comment");
     const KEY_TARGET: &'static [Self] = utf16!(b"target");
     const KEY_DATA: &'static [Self] = utf16!(b"data");
-}
-
-#[inline(always)]
-fn unit_from_u16<U: Unit>(u: u16) -> U {
-    debug_assert!(U::WIDE);
-    // SAFETY: only called when `U` is `u16` (`U::WIDE`).
-    unsafe { core::mem::transmute_copy(&u) }
 }
 
 /// `units` spell the ASCII `lit`.
@@ -291,10 +318,7 @@ fn starts_with_ascii<U: Unit>(units: &[U], lit: &[u8]) -> bool {
 /// The first occurrence of the ASCII `lit` in `units`.
 fn find_ascii<U: Unit>(units: &[U], lit: &[u8]) -> Option<usize> {
     if !U::WIDE {
-        // SAFETY: `!WIDE` units are bytes.
-        let bytes: &[u8] =
-            unsafe { core::slice::from_raw_parts(units.as_ptr().cast(), units.len()) };
-        return strings::index_of(bytes, lit);
+        return strings::index_of(U::bytes(units), lit);
     }
     let first = lit[0];
     let mut i = 0;
@@ -796,7 +820,7 @@ struct Scanner<'a, 'log, U: Unit> {
     tag_degraded: bool,
 
     bump: &'a Bump,
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &'log mut Log,
 }
 
@@ -1222,14 +1246,6 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         Ok(self.starts_with(b"<?xml") && is_ws(self.peek_at(self.pos + 5)))
     }
 
-    /// Bytes produced here (a transcoded document) as the unit type, which
-    /// is `u8` whenever this is reached.
-    fn units_of(bytes: &'a [u8]) -> &'a [U] {
-        assert!(!U::WIDE);
-        // SAFETY: `U` is `u8` (asserted).
-        unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
-    }
-
     /// The input must be valid UTF-8 (§4.3.3: malformed byte sequences are
     /// fatal). Run after the XML declaration — whose encoding may first
     /// cause the input to be transcoded — and before anything is decoded.
@@ -1265,13 +1281,16 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 }
             })
             .collect();
-        let mut utf8 = vec![0u8; simdutf::length::utf8::from::utf16::le(&units)];
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, &mut utf8);
+        let len = simdutf::length::utf8::from::utf16::le(&units);
+        let slot = self.bump.alloc_uninit_slice::<u8>(len);
+        // SAFETY: simdutf only writes into `utf8`; only the `result.count` bytes it wrote are read.
+        let utf8: &'a mut [u8] =
+            unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) };
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, utf8);
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
-        utf8.truncate(result.count);
-        self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
+        self.src = U::from_bytes(&utf8[..result.count]);
         self.pos = 0;
         self.transcoded = true;
         Ok(())
@@ -1336,7 +1355,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 ));
             }
             if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(&self.src[self.pos..])) {
-                self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
+                self.src = U::from_bytes(self.bump.alloc_slice_copy(&utf8));
                 self.pos = 0;
                 self.content_start = usize::MAX;
                 self.transcoded = true;
@@ -1485,7 +1504,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         if U::WIDE {
             let mut tmp = [0u16; 2];
             for u in char::from_u32(cp).expect("a Char").encode_utf16(&mut tmp) {
-                buf.push(unit_from_u16::<U>(*u));
+                buf.push(U::from_u16(*u));
             }
             return Ok(());
         }
@@ -3102,13 +3121,14 @@ const MAX_DEPTH: usize = 100_000;
 /// Checks the grammar and the structural well-formedness constraints over
 /// the scanner's tokens (and, in the document entity, its fast paths),
 /// applies DTD information to attributes, and drives a `Sink`.
+/// `repr(C)` with `sink` last: everything the sink-independent methods (the
+/// DTD parser) touch sits at the same offset for every `S`, so those
+/// instantiations are identical and the linker folds them.
+#[repr(C)]
 struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     scanner: Scanner<'a, 'log, U>,
-    /// Inside the document type declaration, for diagnostics.
-    in_dtd: bool,
     /// For the content-model parser, which does recurse.
     stack_check: StackCheck,
-    sink: S,
     attlists: HashMap<&'a [U], AttList<'a, U>>,
     /// The open elements: name and the input frame the start tag was in.
     open: Vec<(&'a [U], u32)>,
@@ -3117,11 +3137,14 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     attribute_first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
     attribute_names: HashMap<&'a [U], ()>,
     attribute_count: usize,
+    /// Inside the document type declaration, for diagnostics.
+    in_dtd: bool,
+    sink: S,
 }
 
 impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn new(
-        source: &'a Source,
+        source: &'a Source<'a>,
         contents: &'a [U],
         log: &'log mut Log,
         bump: &'a Bump,

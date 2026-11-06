@@ -1,0 +1,6 @@
+class A {
+  static /* prettier-ignore */ 0XAB = 1;
+  static /* prettier-ignore */ 0.50 = 1;
+}
+
+x = { async /* prettier-ignore */ 0XAB() {}, async /* prettier-ignore */ 0.50() {} };

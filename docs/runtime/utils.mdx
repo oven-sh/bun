@@ -124,13 +124,13 @@ const id = randomUUIDv7();
 // => "0192ce11-26d5-7dc3-9305-1426de888c5a"
 ```
 
-A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the lowest 48 bits, and the random value and counter are encoded using the remaining bits.
+A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the most significant 48 bits, and the random value and counter are encoded using the remaining bits.
 
 The `timestamp` parameter defaults to the current time in milliseconds. When the clock moves forward, Bun reseeds the counter to a new pseudo-random integer. Bun leaves the high bit of the 12-bit counter clear when reseeding, so at least 2048 values remain before rollover. If the clock has not advanced past the last emitted timestamp, Bun reuses the last emitted timestamp and increments the counter. If that counter rolls over, Bun bumps the emitted timestamp forward instead of wrapping the counter, so the returned UUIDs stay strictly increasing (RFC 9562 §6.2). The counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
 
 When you pass an explicit `timestamp`, Bun encodes that value verbatim and tracks a separate counter for it, so explicit-timestamp calls do not observe or alter the monotonic state used by the default path. Repeated calls with the same explicit timestamp increment that separate counter, and bump the emitted timestamp on rollover, so they stay sortable. A call with a different explicit timestamp reseeds that counter.
 
-The final 8 bytes of the UUID are a cryptographically secure random value. `Bun.randomUUIDv7()` uses the same random number generator as `crypto.randomUUID()`. That generator comes from BoringSSL. BoringSSL's randomness in turn comes from the platform-specific system random number generator, which the underlying hardware usually provides.
+The final 8 bytes of the UUID, apart from the two variant bits, are a cryptographically secure random value. `Bun.randomUUIDv7()` uses the same random number generator as `crypto.randomUUID()`. That generator comes from BoringSSL. BoringSSL's randomness in turn comes from the platform-specific system random number generator, which the underlying hardware usually provides.
 
 ```ts
 namespace Bun {
@@ -305,7 +305,7 @@ Escapes the following characters from an input string:
 - `<` becomes `&lt;`
 - `>` becomes `&gt;`
 
-This function is optimized for large input. On an M1X, it processes 480 MB/s -
+This function is optimized for large input. On an M1 Max, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ASCII
 text. Bun converts non-string types to a string before escaping.
 
@@ -500,7 +500,7 @@ export type ZlibCompressionOptions = {
    *
    * A value of `1` uses minimum memory but is slow and reduces compression ratio.
    *
-   * A value of `9` uses maximum memory for optimal speed. The default is `8`.
+   * A value of `9` uses maximum memory for optimal speed. The default is `8`. Any other value throws.
    */
   memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   /**
@@ -516,35 +516,15 @@ export type ZlibCompressionOptions = {
    * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
    */
   windowBits?:
-    | -9
-    | -10
-    | -11
-    | -12
-    | -13
-    | -14
-    | -15
-    | 9
-    | 10
-    | 11
-    | 12
-    | 13
-    | 14
-    | 15
-    | 25
-    | 26
-    | 27
-    | 28
-    | 29
-    | 30
-    | 31;
+    -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
   /**
-   * Tunes the compression algorithm.
+   * Tunes the compression algorithm. One of these `constants` of `node:zlib`; any other value throws.
    *
-   * - `Z_DEFAULT_STRATEGY`: For normal data **(Default)**
-   * - `Z_FILTERED`: For data produced by a filter or predictor
-   * - `Z_HUFFMAN_ONLY`: Force Huffman encoding only (no string match)
-   * - `Z_RLE`: Limit match distances to one (run-length encoding)
-   * - `Z_FIXED` prevents the use of dynamic Huffman codes
+   * - `Z_DEFAULT_STRATEGY` (`0`): For normal data **(Default)**
+   * - `Z_FILTERED` (`1`): For data produced by a filter or predictor
+   * - `Z_HUFFMAN_ONLY` (`2`): Force Huffman encoding only (no string match)
+   * - `Z_RLE` (`3`): Limit match distances to one (run-length encoding)
+   * - `Z_FIXED` (`4`): Prevents the use of dynamic Huffman codes
    *
    * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
    *
@@ -650,11 +630,11 @@ Serializes an object to a `string` exactly as `console.log` would print it.
 
 ```ts
 const obj = { foo: "bar" };
-const str = Bun.inspect(obj);
-// => '{\nfoo: "bar" \n}'
+Bun.inspect(obj);
+// => '{\n  foo: "bar",\n}'
 
 const arr = new Uint8Array([1, 2, 3]);
-const str = Bun.inspect(arr);
+Bun.inspect(arr);
 // => "Uint8Array(3) [ 1, 2, 3 ]"
 ```
 

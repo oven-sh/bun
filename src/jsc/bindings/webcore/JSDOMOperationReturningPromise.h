@@ -53,25 +53,6 @@ public:
         }));
     }
 
-    // This function is a special case for custom operations want to handle the creation of the promise themselves.
-    // It is triggered via the extended attribute [ReturnsOwnPromise].
-    template<typename IDLOperation<JSClass>::Operation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
-    static JSC::EncodedJSValue callReturningOwnPromise(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
-    {
-        auto* thisObject = IDLOperation<JSClass>::cast(lexicalGlobalObject, callFrame);
-        if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
-            if (!thisObject) [[unlikely]] {
-                return rejectPromiseWithThisTypeError(lexicalGlobalObject, JSClass::info()->className, operationName);
-            }
-        } else
-            ASSERT(thisObject);
-
-        ASSERT_GC_OBJECT_INHERITS(thisObject, JSClass::info());
-
-        // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject and thisObject.
-        return operation(&lexicalGlobalObject, &callFrame, thisObject);
-    }
-
     template<StaticOperation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
     static JSC::EncodedJSValue callStatic(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char*)
     {
@@ -79,15 +60,6 @@ public:
             // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject.
             return operation(&lexicalGlobalObject, &callFrame, WTF::move(promise));
         }));
-    }
-
-    // This function is a special case for custom operations want to handle the creation of the promise themselves.
-    // It is triggered via the extended attribute [ReturnsOwnPromise].
-    template<typename IDLOperation<JSClass>::StaticOperation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
-    static JSC::EncodedJSValue callStaticReturningOwnPromise(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char*)
-    {
-        // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject.
-        return operation(&lexicalGlobalObject, &callFrame);
     }
 };
 

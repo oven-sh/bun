@@ -40,6 +40,25 @@ test("an own enumerable 'constructor' property is part of the snapshot", () => {
   expect(Foo.prototype).toMatchInlineSnapshot(`Foo {}`);
 });
 
+test("ArrayBuffer values are serialized like typed arrays", () => {
+  expect(new Uint8Array([1, 2, 3]).buffer).toMatchInlineSnapshot(`
+    ArrayBuffer [
+      1,
+      2,
+      3,
+    ]
+  `);
+  expect({ a: 1, b: new Uint8Array([4, 5]).buffer }).toMatchInlineSnapshot(`
+    {
+      "a": 1,
+      "b": ArrayBuffer [
+        4,
+        5,
+      ],
+    }
+  `);
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

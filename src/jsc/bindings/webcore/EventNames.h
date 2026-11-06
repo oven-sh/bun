@@ -27,17 +27,19 @@
 
 namespace WebCore {
 
-#define DOM_EVENT_NAMES_FOR_EACH(macro)              \
-    macro(error)                                     \
-        macro(abort)                                 \
-            macro(close)                             \
-                macro(open)                          \
-                    macro(rename)                    \
-                        macro(message)               \
-                            macro(change)            \
-                                macro(messageerror)  \
-                                    macro(handshake) \
-                                        macro(resourcetimingbufferfull)
+#define DOM_EVENT_NAMES_FOR_EACH(macro)                 \
+    macro(error)                                        \
+        macro(abort)                                    \
+            macro(close)                                \
+                macro(open)                             \
+                    macro(rename)                       \
+                        macro(message)                  \
+                            macro(change)               \
+                                macro(messageerror)     \
+                                    macro(handshake)    \
+                                        macro(ping)     \
+                                            macro(pong) \
+                                                macro(resourcetimingbufferfull)
 
 struct EventNames {
     WTF_MAKE_NONCOPYABLE(EventNames);
@@ -65,9 +67,6 @@ public:
     // FIXME: Inelegant to call these both event names and event types.
     // We should choose one term and stick to it.
     bool isWheelEventType(const AtomString& eventType) const;
-#if ENABLE(GAMEPAD)
-    bool isGamepadEventType(const AtomString& eventType) const;
-#endif
 
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().

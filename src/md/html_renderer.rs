@@ -7,6 +7,13 @@ use crate::helpers;
 use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::types;
 use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
+use bun_collections::ByteSet;
+
+/// The bytes of a URL that are written as they are.
+static URL_SAFE: ByteSet = ByteSet::of(b"-._~:/?#@!$()*+,;=%")
+    .with_range(b'A', b'Z')
+    .with_range(b'a', b'z')
+    .with_range(b'0', b'9');
 
 pub(crate) struct HtmlRenderer<'src> {
     pub out: OutputBuffer,
@@ -466,36 +473,30 @@ impl<'src> HtmlRenderer<'src> {
     }
 
     fn write_url_escaped(&mut self, txt: &[u8]) {
-        for &byte in txt {
-            self.write_url_byte(byte);
+        let mut i: usize = 0;
+        while i < txt.len() {
+            i += self.write_url_safe_run(&txt[i..]);
+            if let Some(&byte) = txt.get(i) {
+                self.write_url_byte(byte);
+                i += 1;
+            }
         }
+    }
+
+    /// Writes the bytes at the start of `txt` that are written as they are.
+    /// Returns how many there are.
+    fn write_url_safe_run(&mut self, txt: &[u8]) -> usize {
+        let len = txt.iter().take_while(|&&byte| URL_SAFE.has(byte)).count();
+        if len > 0 {
+            self.write(&txt[..len]);
+        }
+        len
     }
 
     fn write_url_byte(&mut self, byte: u8) {
         match byte {
             b'&' | b'\'' => self.write(strings::html_escape_entity(byte).unwrap()),
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~'
-            | b':'
-            | b'/'
-            | b'?'
-            | b'#'
-            | b'@'
-            | b'!'
-            | b'$'
-            | b'('
-            | b')'
-            | b'*'
-            | b'+'
-            | b','
-            | b';'
-            | b'='
-            | b'%' => self.write_byte(byte),
+            _ if URL_SAFE.has(byte) => self.write_byte(byte),
             _ => {
                 let [hi, lo] = bun_core::fmt::hex_byte_upper(byte);
                 self.write(&[b'%', hi, lo]);
@@ -507,6 +508,10 @@ impl<'src> HtmlRenderer<'src> {
     fn write_url_with_escapes(&mut self, txt: &[u8]) {
         let mut i: usize = 0;
         while i < txt.len() {
+            i += self.write_url_safe_run(&txt[i..]);
+            if i == txt.len() {
+                break;
+            }
             if txt[i] == b'\\' && i + 1 < txt.len() && helpers::is_ascii_punctuation(txt[i + 1]) {
                 self.write_url_byte(txt[i + 1]);
                 i += 2;

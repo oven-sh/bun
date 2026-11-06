@@ -1,0 +1,11 @@
+import { mock } from "bun:test";
+import * as star from "../src/spies/barrel-star";
+import { add, callsAdd } from "pkg-esm";
+import { own, callsOwn } from "../src/spies/own";
+import * as cjs from "pkg-cjs";
+import { seenBySrc, seenOfCjs } from "../src/spies/uses";
+import { say } from "../src/spies/say";
+const all = () => [star.add(1, 2), add(1, 2), callsAdd(1, 2), own(), callsOwn(), cjs.add(1, 2), seenBySrc(), seenOfCjs()];
+say("57", "mock.module of a package that two layers have bound", async () => { const before = all(); mock.module("pkg-esm", () => ({ add: () => 100, twice: () => 200, inner: () => "mocked", callsAdd: () => "mocked callsAdd" })); const during = all(); const again = [(await import("pkg-esm")).add(1, 2), require("pkg-esm").add(1, 2), (await import("../src/spies/barrel-star")).add(1, 2)]; return [before, during, again]; });
+say("57", "mock.module of a file of the application", async () => { const before = all(); mock.module("../src/spies/own", () => ({ own: () => "mocked own", callsOwn: () => "mocked callsOwn", arrow: () => "mocked arrow" })); const during = all(); return [before, during, (await import("../src/spies/own")).own()]; });
+say("57", "mock.module of a CommonJS package", async () => { const before = all(); mock.module("pkg-cjs", () => ({ add: () => 700, callsAdd: () => 701, label: "mocked" })); const during = all(); return [before, during, require("pkg-cjs").label, (await import("pkg-cjs")).label]; });

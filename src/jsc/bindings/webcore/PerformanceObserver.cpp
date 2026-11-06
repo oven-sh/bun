@@ -26,19 +26,23 @@
 #include "config.h"
 #include "PerformanceObserver.h"
 
-// #include "Document.h"
-// #include "InspectorInstrumentation.h"
-// #include "LocalDOMWindow.h"
 #include "Performance.h"
 #include "PerformanceObserverEntryList.h"
-// #include "WorkerGlobalScope.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PerformanceObserver);
 
 PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecutionContext, Ref<PerformanceObserverCallback>&& callback)
     : m_callback(WTF::move(callback))
 {
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
+}
+
+ScriptExecutionContext* PerformanceObserver::scriptExecutionContext() const
+{
+    return m_callback->scriptExecutionContext();
 }
 
 void PerformanceObserver::disassociate()
@@ -131,9 +135,7 @@ void PerformanceObserver::deliver()
     Vector<RefPtr<PerformanceEntry>> entries = std::exchange(m_entriesToDeliver, {});
     auto list = PerformanceObserverEntryList::create(WTF::move(entries));
 
-    // InspectorInstrumentation::willFireObserverCallback(*context, "PerformanceObserver"_s);
     m_callback->handleEvent(*this, list, *this);
-    // InspectorInstrumentation::didFireObserverCallback(*context);
 }
 
 Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& context)
@@ -143,12 +145,6 @@ Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& 
         "measure"_s,
         "resource"_s
     };
-
-    // if (context.settingsValues().performanceNavigationTimingAPIEnabled)
-    //     entryTypes.append("navigation"_s);
-
-    // if (is<Document>(context) && downcast<Document>(context).supportsPaintTiming())
-    //     entryTypes.append("paint"_s);
 
     return entryTypes;
 }

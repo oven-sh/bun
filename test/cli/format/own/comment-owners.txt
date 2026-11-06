@@ -1330,6 +1330,10 @@ ignore/semicolon-behind-the-comment.js
 50 71 T ExpressionStatement 40 49 -
 91 109 T ExpressionStatement 83 90 -
 114 132 L ExportNamedDeclaration 133 155 -
+ignore/string-or-template-in-brackets-as-a-key.js
+9 30 L StringLiteral 31 35 -
+145 166 L StringLiteral 167 173 -
+296 317 L TemplateLiteral 318 323 -
 ignore/text-over-several-lines-breaks-nothing.ts
 9 30 L TSUnionType 31 51 -
 62 83 L TSUnionType 86 99 -

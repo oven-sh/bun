@@ -1,0 +1,10 @@
+a = {
+  [/* prettier-ignore */ "\
+"]: `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`,
+  [/* prettier-ignore */ 'a\
+b']: `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`,
+};
+class A {
+  [/* prettier-ignore */ `x
+y`] = `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`;
+}

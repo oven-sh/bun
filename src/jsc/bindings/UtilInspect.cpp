@@ -73,6 +73,34 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
+void getOwnNonIndexPropertyNames(JSGlobalObject* globalObject, JSObject* object, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The ordinary [[OwnPropertyKeys]] (Array included) and the typed array one are "the indices, then getOwnNonIndexPropertyNames()": no index is produced.
+    if (isTypedArrayType(object->type()) || !object->structure()->typeInfo().overridesGetOwnPropertyNames())
+        RELEASE_AND_RETURN(scope, object->getOwnNonIndexPropertyNames(globalObject, propertyNames, mode));
+
+    // Any other override (Proxy, String object, arguments, module namespace) lists every key. As V8's FilterProxyKeys, a Proxy is asked about no index.
+    bool asksEachKey = mode == DontEnumPropertiesMode::Exclude && object->type() == ProxyObjectType;
+    PropertyNameArrayBuilder allNames(vm, propertyNames.propertyNameMode(), propertyNames.privateSymbolMode());
+    object->methodTable()->getOwnPropertyNames(object, globalObject, allNames, asksEachKey ? DontEnumPropertiesMode::Include : mode);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (const auto& propertyName : allNames) {
+        if (!propertyName.isSymbol() && parseIndex(propertyName))
+            continue;
+        if (asksEachKey) {
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool owns = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!owns || (slot.attributes() & PropertyAttribute::DontEnum))
+                continue;
+        }
+        propertyNames.addUnchecked(propertyName.impl());
+    }
+}
+
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by
 // util.inspect and the REPL completer: own keys minus array indices, without materializing
 // a name (or descriptor) per element the way Object.getOwnPropertyNames() on an array would.
@@ -100,22 +128,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     DontEnumPropertiesMode dontEnumMode = (filter & ONLY_ENUMERABLE) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include;
 
     PropertyNameArrayBuilder propertyNames(vm, propertyNameMode, PrivateSymbolMode::Exclude);
-    // The ordinary [[OwnPropertyKeys]] (Array included) and the typed array one are both "the
-    // indices, then getOwnNonIndexPropertyNames()", so for those the indices are never produced.
-    // Anything else that overrides it (Proxy, String objects, arguments, module namespaces, ...)
-    // has to be asked for all of its keys, and the loop below drops the indices again.
-    if (isTypedArrayType(object->type()) || !object->structure()->typeInfo().overridesGetOwnPropertyNames())
-        object->getOwnNonIndexPropertyNames(globalObject, propertyNames, dontEnumMode);
-    else
-        object->methodTable()->getOwnPropertyNames(object, globalObject, propertyNames, dontEnumMode);
+    getOwnNonIndexPropertyNames(globalObject, object, propertyNames, dontEnumMode);
     RETURN_IF_EXCEPTION(scope, {});
 
     MarkedArgumentBuffer keys;
-    for (const auto& propertyName : propertyNames) {
-        if (!propertyName.isSymbol() && parseIndex(propertyName))
-            continue;
+    for (const auto& propertyName : propertyNames)
         keys.append(identifierToJSValue(vm, propertyName));
-    }
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};

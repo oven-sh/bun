@@ -68,14 +68,6 @@ void DhJob::createAndSchedule(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSVa
     Bun__DhJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
-static KeyObject keyFromOption(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, CryptoKeyType type, ASCIILiteral name)
-{
-    auto mode = type == CryptoKeyType::Private
-        ? KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate
-        : KeyObject::PrepareAsymmetricKeyMode::ConsumePublic;
-    RELEASE_AND_RETURN(scope, KeyObject::getAsymmetricKeyFromJS(globalObject, scope, value, mode, name));
-}
-
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/diffiehellman.js#L289-L343
 std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScope& scope, JSC::JSObject* options)
 {
@@ -127,9 +119,15 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
         }
     }
 
-    KeyObject publicKey = keyFromOption(globalObject, scope, publicKeyValue, CryptoKeyType::Public, "options.publicKey"_s);
+    // Both keys are validated before either is read.
+    auto preparedPublicKey = KeyObject::preparePublicOrPrivateKey(globalObject, scope, publicKeyValue, "options.publicKey"_s);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    KeyObject privateKey = keyFromOption(globalObject, scope, privateKeyValue, CryptoKeyType::Private, "options.privateKey"_s);
+    auto preparedPrivateKey = KeyObject::preparePrivateKey(globalObject, scope, privateKeyValue, "options.privateKey"_s);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    KeyObject publicKey = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedPublicKey));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    KeyObject privateKey = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedPrivateKey));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     return DhJobCtx(privateKey.data(), publicKey.data());

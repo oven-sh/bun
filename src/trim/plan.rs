@@ -40,8 +40,10 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
     }
 
     // Unseen code can ask for any locale, and `--trim-without` alone does not look at the program.
-    let follows_used_locales =
-        input.request.removes_unused && !can_run_unseen_code(input.used, &decision.requirements);
+    let runs_files_from_command_line = is_kept(&Feature::Tools);
+    let follows_used_locales = input.request.removes_unused
+        && !runs_files_from_command_line
+        && !can_run_unseen_code(input.used, &decision.requirements);
     let unknown_locales = UsedLocales::Unknown(None);
     let used_locales = if follows_used_locales {
         &input.used.locales
@@ -54,6 +56,7 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
         &table.icu_languages,
     )?;
     let runs_library_text = is_template
+        || runs_files_from_command_line
         || can_run_library_text(input.used, &decision.requirements)
         || can_start_worker_without_image(input.used, &decision);
     let mut plan = plan_table(&table, decision, &wanted, runs_library_text);
@@ -1103,6 +1106,24 @@ mod tests {
             let keeps_texts = !offsets.contains(&0x100) && !offsets.contains(&0x110);
             assert_eq!(keeps_texts, cause.admits_library_text(), "{cause:?}");
         }
+    }
+
+    #[test]
+    fn retained_run_keeps_unobserved_module_text_and_locales() {
+        let request = TrimRequest {
+            allow: vec![bun_removable_features::TrimFeature::Run],
+            ..removing_unused()
+        };
+        let settings = ExecutableSettings::default();
+        let used = using_ffi_in_english();
+        let input = TrimInput {
+            used: &used,
+            settings: &settings,
+            request: &request,
+        };
+        let planned = plan_encoded_input(&table_with_three_languages(), &input);
+        assert!(planned.icu_packages.is_empty());
+        assert!(planned_offsets(&used, &settings, &request).is_empty());
     }
 
     #[test]

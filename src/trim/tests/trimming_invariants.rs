@@ -587,6 +587,11 @@ fn close_over_followed_edges(table: &ToyTable, seed: FeatureSet) -> FeatureSet {
     let mut retained = seed;
     loop {
         let previous = retained;
+        if retained.contains(Feature::Tools) {
+            let mut runtime = FeatureSet::all();
+            runtime.subtract(&Feature::all_outside_compiled_programs());
+            retained.union_with(&runtime);
+        }
         for (from, to, _, is_followed) in &table.edges {
             if *is_followed && retained.contains(*from) {
                 retained.insert(*to);

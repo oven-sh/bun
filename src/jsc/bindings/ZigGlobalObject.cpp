@@ -375,7 +375,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
 #if OS(DARWIN)
-        if (runsCompiledCode)
+        // Trimming the JIT is intentional, not evidence of a sandbox blocking Mach handlers.
+        if (runsCompiledCode || JSC::isFeatureRemoved(JSC::RemovableFeature::JIT))
             JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 #endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);

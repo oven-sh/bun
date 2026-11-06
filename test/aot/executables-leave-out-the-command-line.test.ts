@@ -1,12 +1,13 @@
-// An executable compiled ahead of time never starts the JIT and never acts as `bun`, so `bun build --compile --aot` leaves both out, with or without --trim.
+// An executable compiled ahead of time leaves the command line and JIT out unless explicitly retained.
 // What the program itself can use stays. Each way into what was left out answers with a sentence.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { canTrim, model } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { sharedBuilds, sizeOf, type Build } from "./harness/shared-builds";
+import { copyWithoutDebugInformation as executablePath } from "./harness/without-debug-information";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
 
 const programs = {
@@ -42,7 +43,7 @@ const compilers = ["AotCompiler", "Check", "ImageCompiler", "JIT"];
 const noCommandLine =
   "can't be used with this executable because it doesn't include the Bun command line. Run bun instead";
 
-function removedFeaturesOf(executable: Build): string[] {
+function removedFeaturesOf(executable: Pick<Build, "file" | "name">): string[] {
   const removed = readRemovedFeatures(executable.file);
   if (removed === undefined) throw new Error(`${executable.name} has no list of removed features`);
   return model.features
@@ -102,6 +103,54 @@ function removedFeaturesOf(executable: Build): string[] {
       exitCode: 0,
     });
   }, 600_000);
+
+  test("retaining run executes external ESM and a CommonJS package without the JIT", async () => {
+    using dir = tempDirWithBunTypes("aot-as-bun", {
+      "entry.ts": `console.log("compiled entry");`,
+      "build.ts": `
+        const result = await Bun.build({
+          entrypoints: ["./entry.ts"],
+          compile: {
+            outfile: "./app", aot: true, trim: { allow: ["run"] },
+            ...${JSON.stringify(executablePath ? { executablePath } : {})},
+          },
+        });
+        if (!result.success) throw new AggregateError(result.logs);
+      `,
+      "external.mjs": `
+        import { basename } from "node:path";
+        const shared = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.store(shared, 0, 42);
+        const clone = new Int32Array(structuredClone(shared.buffer));
+        Atomics.store(clone, 0, 43);
+        console.log(basename(import.meta.filename), [1, 2, 3].map(x => x * 2).join(","), Atomics.load(shared, 0));
+      `,
+      "node_modules/tiny/package.json": `{"name":"tiny","version":"1.0.0","bin":"bin/cli.cjs"}`,
+      "node_modules/tiny/bin/cli.cjs": `#!/usr/bin/env node\nrequire("../lib/cli.cjs")(process);`,
+      "node_modules/tiny/lib/cli.cjs": `
+        const { basename } = require("node:path");
+        module.exports = process => console.log(basename(process.argv[1]), /cli/.test(process.argv[1]), JSON.parse('{"answer":42}').answer);
+      `,
+    });
+    const folder = String(dir);
+    expect(await run([bunExe(), "build.ts"], folder)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    const app = join(folder, "app");
+    const removed = removedFeaturesOf({ name: "app", file: app + (isWindows ? ".exe" : "") });
+    expect(removed).not.toContain("Tools");
+    expect(removed).toContain("JIT");
+    const asBun = { ...bunEnv, BUN_BE_BUN: "1" };
+    expect(await run([app, "external.mjs"], folder, asBun)).toEqual({
+      stdout: "external.mjs 2,4,6 43\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await run([app, "node_modules/tiny/bin/cli.cjs"], folder, asBun)).toEqual({
+      stdout: "cli.cjs true 42\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await run([app], folder)).toEqual({ stdout: "compiled entry\n", stderr: "", exitCode: 0 });
+  });
 
   test.each(["--help", "-h", "--check", "--aot", "-i"])(
     "%s in BUN_OPTIONS says to run bun",

@@ -189,9 +189,13 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
             retained.insert(feature, reason);
         }
     }
+    retained.insert_set(&features_entered_by_programs(), RetainReason::NotRequested);
+}
+
+fn features_entered_by_programs() -> FeatureSet {
     let mut features = FeatureSet::all();
     features.subtract(&Feature::all_outside_compiled_programs());
-    retained.insert_set(&features, RetainReason::NotRequested);
+    features
 }
 
 pub fn features_kept_only_when_named() -> FeatureSet {
@@ -249,6 +253,18 @@ fn language_features() -> FeatureSet {
 fn close(retained: &mut RetainedFeatures, edges: &FeatureEdges) {
     let mut worklist: VecDeque<Feature> = retained.set.iter().collect();
     while let Some(feature) = worklist.pop_front() {
+        // `bun run` can enter any runtime API from files the build has never seen.
+        if feature == Feature::Tools {
+            let reason = RetainReason::NeededBy {
+                feature,
+                strength: EdgeStrength::RecoverableGuard,
+            };
+            for needed in features_entered_by_programs().iter() {
+                if retained.insert(needed, reason) {
+                    worklist.push_back(needed);
+                }
+            }
+        }
         for edge in edges.leaving(feature) {
             if !edge.is_followed {
                 continue;
@@ -785,6 +801,42 @@ mod tests {
             Some(RetainReason::RequiredByOption(0))
         );
         assert!(decision.unused.contains(Feature::Lint));
+    }
+
+    #[test]
+    fn retained_run_keeps_the_runtime_without_the_jit_and_respects_explicit_removals() {
+        let request = TrimRequest {
+            allow: vec![TrimFeature::Run],
+            ..removing_unused()
+        };
+        let used = using(&[]);
+        let decision = decide_request(&used, &request);
+        for feature in [
+            Feature::RuntimeTranspiler,
+            Feature::Interpreter,
+            Feature::DataFileLoaders,
+            Feature::BuiltinSourceText,
+            Feature::StructuredClone,
+        ] {
+            assert!(!decision.unused.contains(feature), "{feature:?}");
+        }
+        assert!(decision.unused.contains(Feature::Jit));
+        assert!(decision.unused.contains(Feature::Install));
+        assert_eq!(
+            decision.reason_of(Feature::Interpreter),
+            Some(RetainReason::NeededBy {
+                feature: Feature::Tools,
+                strength: RecoverableGuard,
+            })
+        );
+
+        let without_sqlite = TrimRequest {
+            remove: vec![TrimFeature::Sqlite],
+            ..request
+        };
+        let explicit = decide_request(&used, &without_sqlite);
+        assert!(explicit.unused.contains(Feature::Sqlite));
+        assert!(!explicit.unused.contains(Feature::Interpreter));
     }
 
     #[test]

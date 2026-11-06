@@ -4,11 +4,11 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     EB_BIGINT, EB_BOOLEAN, EB_NONE, EB_NUMBER, EB_STRING, EB_SYMBOL, F_ASYNC, F_CHAIN, F_CONST,
-    F_EXACT, F_EXT, F_EXTENDS_BOUND, F_GENERATOR, F_INEXACT, F_METHOD, F_OPTIONAL, F_PROTO, F_REST,
-    F_SHORTHAND, F_STATIC, F_THIS, IK_SHIFT, IK_TYPE, IK_TYPEOF, M_GET, M_METHOD, M_SET, MK_MODULE,
-    MK_NAMESPACE, MOD_DECLARE, MT_MINUS, MT_NONE, MT_PLAIN, MT_PLUS, NT_NULLABLE, TO_KEYOF,
-    TO_RENDERS, TO_RENDERS_MAYBE, TO_RENDERS_STAR, TP_ASSERTS, TP_IMPLIES, V_CONST, V_LET, V_VAR,
-    VA_IN, VA_MINUS, VA_OUT, VA_PLUS, VA_READONLY, VA_WRITEONLY, k, type_keyword,
+    F_ESCAPE, F_EXACT, F_EXT, F_EXTENDS_BOUND, F_GENERATOR, F_INEXACT, F_METHOD, F_OPTIONAL,
+    F_PROTO, F_REST, F_SHORTHAND, F_STATIC, F_THIS, IK_SHIFT, IK_TYPE, IK_TYPEOF, M_GET, M_METHOD,
+    M_SET, MK_MODULE, MK_NAMESPACE, MOD_DECLARE, MT_MINUS, MT_NONE, MT_PLAIN, MT_PLUS, NT_NULLABLE,
+    TO_KEYOF, TO_RENDERS, TO_RENDERS_MAYBE, TO_RENDERS_STAR, TP_ASSERTS, TP_IMPLIES, V_CONST,
+    V_LET, V_VAR, VA_IN, VA_MINUS, VA_OUT, VA_PLUS, VA_READONLY, VA_WRITEONLY, k, type_keyword,
 };
 use crate::lexer::{C_START, C_STRIDE, kw, tk};
 use crate::parse::core::SCOPE_FUNCTION;
@@ -664,6 +664,39 @@ impl Quick {
         Ok(())
     }
 
+    /// What a class says about the names of its members goes for a declared class and a record: nothing static is called `prototype`, and `constructor` is a method.
+    /// `key` is a name or a string. The long way has the errors.
+    fn flow_check_name_of_member(&self, key: i32, is_static: bool, is_method: bool) -> R<()> {
+        let is_string = ((self.n.at(key) & 0xff) == k::StringLiteral) as i32;
+        let (start, end) = (
+            self.n.at(key + 1) + is_string,
+            self.n.at(key + 2) - is_string,
+        );
+        if (self.n.at(key) & F_ESCAPE) != 0
+            || (is_static && self.text_is(start, end, b"prototype"))
+            || (!is_method && self.text_is(start, end, b"constructor"))
+        {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// Has a getter no parameter, and a setter one that is neither `this` nor the rest? The long way has the errors.
+    fn flow_check_parameters_of_accessor(&self, method: i32, function: i32) -> R<()> {
+        let parameters = self.n.at(function + 6);
+        let count = self.n.at(parameters);
+        let is_right = if method == M_GET {
+            count == 0
+        } else {
+            count == 1 && (self.n.at(self.n.at(parameters + 1)) & (F_REST | F_THIS)) == 0
+        };
+        if is_right {
+            Ok(())
+        } else {
+            Err(self.text_refuse())
+        }
+    }
+
     /// `{ .. }` or `{| .. |}`. `kind`: K.TypeLiteral, or K.InterfaceBody for the body of an interface or a declared class.
     pub(crate) fn flow_parse_object_type(
         &mut self,
@@ -943,6 +976,9 @@ impl Quick {
                         return Err(self.rare(rare::UNLIKE_PRETTIER));
                     }
                     value = self.flow_parse_methodish_type(member_start, k::FunctionType)?;
+                    if method != M_METHOD {
+                        self.flow_check_parameters_of_accessor(method, value)?;
+                    }
                 } else {
                     // `get a: A`
                     if method != M_METHOD {
@@ -953,6 +989,13 @@ impl Quick {
                     }
                     self.expect(tk::Colon)?;
                     value = self.flow_parse_type()?;
+                }
+                if allow_static {
+                    self.flow_check_name_of_member(
+                        key,
+                        (head & F_STATIC) != 0,
+                        (head & F_METHOD) != 0,
+                    )?;
                 }
                 let v5 = self.node3(
                     k::ObjectTypeProperty | head | (method << SUB_SHIFT),
@@ -2443,7 +2486,9 @@ impl Quick {
                 return Err(self.unexpected());
             }
             let key = self.parse_property_name()?;
-            if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
+            let is_method = self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt;
+            self.flow_check_name_of_member(key, (head & F_STATIC) != 0, is_method)?;
+            if is_method {
                 let v0 = self.parse_method_rest(k::ClassMethod | head, member_start, key, 0)?;
                 self.list_push(v0);
                 continue;

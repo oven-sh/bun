@@ -2,8 +2,8 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    F_COMMENTS, F_DANGLING, F_IGNORED, F_LEADING, F_NEXT_LINE_EMPTY, F_NEXT_LINE_KNOWN, F_PREFIX,
-    F_TRAILING, k,
+    F_CHAIN, F_COMMENTS, F_DANGLING, F_IGNORED, F_LEADING, F_NEXT_LINE_EMPTY, F_NEXT_LINE_KNOWN,
+    F_PREFIX, F_TRAILING, k,
 };
 use crate::comments::{CF_LEADING, CF_TRAILING, CF_UNIGNORE};
 use crate::lexer::{C_END, C_FLAGS, C_START, C_STRIDE, CF_BLOCK, tk};
@@ -258,6 +258,12 @@ impl Quick {
 
     pub(crate) fn is_call_expression(&self, n: i32) -> bool {
         return (self.n.at(n) & 0xff) == k::CallExpression;
+    }
+
+    /// Is `n`, a call or a member access with which the chain that it may be part of ends (an argument, an operand, a value), a
+    /// ChainExpression in the tree that Prettier prints from?
+    pub(crate) fn is_chain_expression(&self, n: i32) -> bool {
+        (self.n.at(n) & F_CHAIN) != 0 && self.mode.wraps_chains
     }
 
     pub(crate) fn is_member_expression(&self, n: i32) -> bool {

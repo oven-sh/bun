@@ -12,6 +12,9 @@ pub(crate) struct Mode {
     pub(crate) is_flow: bool,
     /// Flow, read by Babel: types in comments count, and the parentheses behind a JSDoc type cast stay.
     pub(crate) is_babel_flow: bool,
+    /// The tree has a ChainExpression around an optional chain: the trees of TypeScript's and of Flow's parser. In Babel's, which also
+    /// reads the expressions of a host in TypeScript, the links of the chain are nodes of other types instead (OptionalCallExpression ..).
+    pub(crate) wraps_chains: bool,
     /// What set_js_mode() was called with last.
     pub(crate) js_mode_language: i32,
     /// The parser takes `a!` for a NonNullExpression: TypeScript, and the expressions of Angular.
@@ -28,6 +31,7 @@ impl Mode {
             is_type_script: false,
             is_flow: false,
             is_babel_flow: false,
+            wraps_chains: false,
             js_mode_language: 0,
             allows_non_null: false,
             single_statement_mode: 0,
@@ -47,9 +51,11 @@ impl Quick {
         self.mode.is_flow = language == lang::Flow || self.mode.is_babel_flow;
         self.mode.allows_non_null = self.mode.is_type_script;
         self.mode.has_vue_filters = self.host.has_vue_filters;
+        self.mode.wraps_chains = self.mode.is_type_script || language == lang::Flow;
         if self.host.wrap != crate::js::WRAP_NONE {
             // no parser for programs
             self.mode.unquotes_numbers = false;
+            self.mode.wraps_chains = false;
         }
         self.mode.single_statement_mode = if self.options.is_in_markdown {
             SINGLE_JSX_IN_MARKDOWN

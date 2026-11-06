@@ -5158,6 +5158,22 @@ describe("JavaScript and TypeScript in a host", () => {
         ],
         [["--print-width=40"], ["--tab-width=4", "--print-width=27"], ["--tab-width=4", "--print-width=30"]],
       ));
+    // Babel reads the expressions of a template, also where the script is in TypeScript, and its tree has no node around an optional chain.
+    describe("optional chains in a template of Vue", () =>
+      expectSame(
+        "a.vue",
+        ["", '<script setup lang="ts">\nlet a = 1;\n</script>\n\n'].flatMap(script => [
+          `${script}${template(
+            "<div>",
+            "  <select",
+            '    @change="form.ownerName = users.find((user) => user.id === $event)?.profile.displayName"',
+            "  ></select>",
+            "</div>",
+          )}`,
+          `${script}${template(`<div :a="setTimeout(() => { run() }, options?.getDelay(attempt, base))"></div>`)}`,
+        ]),
+        [[]],
+      ));
     // What a thread has learned from the texts that it has formatted decides what the next one costs, and nothing else.
     describe("what was formatted before", () => {
       // The files are named one by one: those that a search finds are formatted in the order in which they are found.
@@ -5964,6 +5980,19 @@ describe("what the quick way for scripts is asked about, and what is done around
         "--print-width=23",
         'const q = gql`\n  {\n    a(b: "\\\\u007f\\\\u007f\\\\t\\\\"", c: 1) @ddd\n  }\n`;\n',
       ],
+      // An optional chain is a node of another type in some trees: a call with two arguments behind a function that is hugged, ..
+      ...["a.ts", "a.js", "a.js.flow"].flatMap((name): [string, string, string][] => [
+        [name, "", "setTimeout(() => {\n  run();\n}, options?.getDelay(attempt, base));\n"],
+        [name, "", "new F(function () {\n  run();\n}, a.b?.(x, y));\n"],
+        // .. a wrapper of Angular's in a test.
+        [name, "", "beforeEach(waitForAsync?.(() => {\n  a;\n}));\n"],
+        [name, "", 'it("a", waitForAsync?.(() => {\n  a;\n}));\n'],
+      ]),
+      ["a.js", "", "// @flow\nsetTimeout(() => {\n  run();\n}, options?.getDelay(attempt, base));\n"],
+      // A function with a `!` behind it is none where functions are counted.
+      ["a.ts", "", "f((() => {})!, () => {});\n"],
+      ["a.ts", "", "compose((() => {})!, (() => {})!);\n"],
+      ["a.ts", "", "f(a(() => {})!, b);\n"],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

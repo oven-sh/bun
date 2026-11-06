@@ -167,18 +167,27 @@ impl Quick {
         last == 116 || last == 101 || last == 112
     }
 
-    pub(crate) fn is_angular_test_wrapper(&self, n: i32) -> bool {
+    pub(crate) fn is_angular_test_wrapper(&self, n: i32) -> R<bool> {
         if (self.n.at(n) & 0xff) != k::CallExpression {
-            return false;
+            return Ok(false);
         }
         let callee = self.n.at(n + 4);
         if (self.n.at(callee) & 0xff) != k::Identifier {
-            return false;
+            return Ok(false);
         }
-        return self.name_is(callee, b"async")
+        let is_wrapper = self.name_is(callee, b"async")
             || self.name_is(callee, b"inject")
             || self.name_is(callee, b"fakeAsync")
             || self.name_is(callee, b"waitForAsync");
+        // `waitForAsync?.(..)` is a call in Babel's tree, which the long way does not go by.
+        if is_wrapper && (self.n.at(n) & F_CHAIN) != 0 {
+            return if self.mode.wraps_chains {
+                Ok(false)
+            } else {
+                Err(self.rare(rare::UNLIKE_PRETTIER))
+            };
+        }
+        return Ok(is_wrapper);
     }
 
     pub(crate) fn is_unit_test_setup_identifier(&self, n: i32) -> bool {
@@ -207,11 +216,11 @@ impl Quick {
         let args = self.n.at(n + 5);
         let count = self.n.at(args);
         if count == 1 {
-            if self.is_angular_test_wrapper(n) && self.is_test_call(parent, 0)? {
+            if self.is_angular_test_wrapper(n)? && self.is_test_call(parent, 0)? {
                 return Ok(self.is_function_or_arrow(self.n.at(args + 1)));
             }
             if self.is_unit_test_setup_identifier(self.n.at(n + 4)) {
-                return Ok(self.is_angular_test_wrapper(self.n.at(args + 1)));
+                return self.is_angular_test_wrapper(self.n.at(args + 1));
             }
         } else if count == 2 || count == 3 {
             let first = self.n.at(args + 1);
@@ -231,7 +240,7 @@ impl Quick {
                 } {
                     return Ok(true);
                 }
-                return Ok(self.is_angular_test_wrapper(second));
+                return self.is_angular_test_wrapper(second);
             }
         }
         return Ok(false);
@@ -435,22 +444,24 @@ impl Quick {
         let mut i: i32 = 1;
         while i <= count {
             let mut arg = self.n.at(args + i);
-            while (self.n.at(arg) & 0xff) == k::NonNullExpression {
-                arg = self.n.at(arg + 4);
-            }
             if self.is_function_or_arrow(arg) {
                 functions += 1;
                 if functions > 1 {
                     return true;
                 }
-            } else if self.is_call_expression(arg) {
-                let inner = self.n.at(arg + 5);
-                let mut j: i32 = 1;
-                while j <= self.n.at(inner) {
-                    if self.is_function_or_arrow(self.n.at(inner + j)) {
-                        return true;
+            } else {
+                while (self.n.at(arg) & 0xff) == k::NonNullExpression {
+                    arg = self.n.at(arg + 4);
+                }
+                if self.is_call_expression(arg) {
+                    let inner = self.n.at(arg + 5);
+                    let mut j: i32 = 1;
+                    while j <= self.n.at(inner) {
+                        if self.is_function_or_arrow(self.n.at(inner + j)) {
+                            return true;
+                        }
+                        j += 1;
                     }
-                    j += 1;
                 }
             }
             i += 1;
@@ -563,7 +574,7 @@ impl Quick {
                 self.is_simple_type(type_) && self.is_simple_call_argument(self.n.at(n + 4), 1)?
             );
         }
-        if self.is_call_like(n) && self.n.at(self.n.at(n + 5)) > 1 {
+        if self.is_call_like(n) && self.n.at(self.n.at(n + 5)) > 1 && !self.is_chain_expression(n) {
             return Ok(false);
         }
         if self.is_binaryish(n) {
@@ -1058,7 +1069,7 @@ impl Quick {
     fn is_call_link(&self, n: i32) -> bool {
         self.is_call_expression(n)
             && ((self.n.at(n) & (F_PAREN | F_CHAIN)) != (F_PAREN | F_CHAIN)
-                || !(self.mode.is_type_script || (self.mode.is_flow && !self.mode.is_babel_flow)))
+                || !self.mode.wraps_chains)
     }
 
     pub(crate) fn is_computed_numeric(&self, n: i32) -> bool {

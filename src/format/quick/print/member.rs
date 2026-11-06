@@ -105,10 +105,7 @@ impl Quick {
             if (self.n.at(child) & 0xff) == k::MemberExpression {
                 is_chain = (self.n.at(child) & F_CHAIN) != 0;
             }
-            if is_chain
-                && (self.mode.is_type_script || (self.mode.is_flow && !self.mode.is_babel_flow))
-                && self.ends_chain(child, first_non_member)
-            {
+            if is_chain && self.mode.wraps_chains && self.ends_chain(child, first_non_member) {
                 is_in_chain_expression = true;
                 is_chain = false;
             }

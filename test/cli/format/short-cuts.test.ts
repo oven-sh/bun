@@ -93,6 +93,83 @@ async function memoryInMegabytes(name: string, text: string, flags: string[]) {
   return (proc.resourceUsage()?.maxRSS ?? 0) / (1 << 20);
 }
 
+// Everything below passes if every short cut refuses everything. These don't.
+describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
+  /** What `--bench` says about `name` with `text` in it: how long the best round took, and which way its scripts went. */
+  async function bench(name: string, text: string, flags: string[]) {
+    using dir = tempDir("format-short-cuts", { [name]: text });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", ...plainly, "--threads=1", "--bench=5", ...flags, name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return {
+      milliseconds: Number(/^best round ([\d.]+) ms$/m.exec(stderr)?.[1]),
+      ways: stderr.split("\n").filter(line => /^the quick way|refused/.test(line)),
+    };
+  }
+
+  const script = `export function f(a, b) {\n  if (a > 1) {\n    return b + a;\n  }\n  const c = { d: 1, e: [a, b] };\n  return g(c, (h) => h.d);\n}\n`;
+  const typed = script.replace("(a, b)", "(a: number, b: string): string");
+  const element = `export const A = () => (\n  <div className="a">\n    <B c={d}>e</B>\n  </div>\n);\n`;
+  test.concurrent.each([
+    ["a.js", script, 1],
+    ["a.mjs", script, 1],
+    ["a.cjs", script.replace("export ", ""), 1],
+    ["a.jsx", script + element, 1],
+    ["a.ts", typed, 1],
+    ["a.mts", typed, 1],
+    ["a.tsx", typed + element, 1],
+    ["a.js.flow", typed, 1],
+    ["a.vue", `<script setup lang="ts">\n${typed}</script>\n\n<template>\n  <div>{{ a }}</div>\n</template>\n`, 1],
+    // A block that is formatted is seen to be without that.
+    ["a.md", `# a\n\n\`\`\`js\n  ${script}\`\`\`\n\n\`\`\`ts\n  ${typed}\`\`\`\n`, 2],
+    ["a.mdx", `import a from "a";\n\n# b\n\n\`\`\`js\n  ${script}\`\`\`\n`, 2],
+  ])("the scripts of %s", async (name, text, scripts) => {
+    const { ways } = await bench(name, text, []);
+    expect(ways).toEqual([expect.stringMatching(new RegExp(`^the quick way: ${scripts} scripts, \\d+ bytes$`))]);
+  });
+
+  // Nothing counts which way a text in these languages goes. The long way takes three to twenty times as long.
+  test.concurrent.each([
+    [
+      "a.css",
+      "a {\n  color: red;\n  margin: 0 auto;\n}\n\n.b > .c:hover {\n  background: url(a.png) no-repeat;\n}\n\n",
+    ],
+    [
+      "a.scss",
+      "$a: 1px;\n\n.b {\n  color: $a;\n\n  &:hover {\n    margin: 0 auto;\n  }\n\n  .c {\n    @include d(1px);\n  }\n}\n\n",
+    ],
+    [
+      "a.less",
+      "@a: 1px;\n\n.b {\n  color: @a;\n\n  &:hover {\n    margin: 0 auto;\n  }\n\n  .c {\n    .d();\n  }\n}\n\n",
+    ],
+    ["a.yaml", 'a: 1\nb:\n  - c\n  - d: e\n    f: "g"\n# h\ni:\n  j: k\n  l: [m, n]\n'],
+    [
+      "a.graphql",
+      "query A($b: Int) {\n  c(d: $b) {\n    e\n    ...F\n  }\n}\n\ntype G {\n  h: Int!\n  i(j: String): [K]\n}\n\n",
+    ],
+    [
+      "a.hbs",
+      '<div class="a">\n  <p>Some text {{this.name}}</p>\n  {{#if this.b}}\n    <Foo @a={{this.c}} @d="e" />\n  {{else}}\n    {{yield (hash f=this.g)}}\n  {{/if}}\n</div>\n',
+    ],
+    [
+      "a.md",
+      "# a\n\nSome text with **bold** and `code` and a [link](http://a.b).\n\n- one\n- two\n  - three\n\n| a   | b   |\n| --- | --- |\n| c   | d   |\n\n",
+    ],
+    ["a.mdx", '# a\n\nSome text with **bold** and `code`.\n\n<A b="c">d</A>\n\n- one\n- two\n\n'],
+    ["a.html", '<div class="a">\n  <p>Some text</p>\n  <ul>\n    <li>one</li>\n    <li>two</li>\n  </ul>\n</div>\n'],
+    ["a.ts", typed + "\n"],
+  ])("%s takes less than half the time", async (name, text) => {
+    const [short, long] = await Promise.all([[], ["--no-short-cuts"]].map(own => bench(name, text.repeat(200), own)));
+    expect(short.milliseconds * 2).toBeLessThan(long.milliseconds);
+  });
+});
+
 describe("YAML", () => {
   // An item with a block scalar in it doesn't go the long way by itself, whichever `#` starts the comment behind the header.
   const headersBehindQuotes = [

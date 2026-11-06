@@ -2,7 +2,7 @@
 // its run time must be linear in the input size. The inputs, and what each one used to cause, are in
 // oracle/robustness/cases.ts.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -71,5 +71,28 @@ describe.concurrent("bun lint", () => {
       });
     },
     (seconds + 5) * 1000,
+  );
+
+  // bun-musl is statically linked, and ASAN builds have their own pthread_create, so neither calls the one below.
+  test.skipIf(!isLinux || isMusl || isASAN || !Bun.which("cc"))(
+    "a system that starts no thread is an error, and nothing waits forever",
+    async () => {
+      using dir = tempDir("bun-lint-robustness", {
+        "shim.c": `#include <errno.h>\n#include <pthread.h>\nint pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*start)(void *), void *argument) { return EAGAIN; }\n`,
+        "src/a.js": "debugger;\n",
+        "src/b.js": "debugger;\n",
+      });
+      const shim = compileFixture(join(String(dir), "shim.c"));
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "src"],
+        env: { ...env, LD_PRELOAD: [shim, env.LD_PRELOAD].filter(Boolean).join(":") },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toStartWith("error: Failed to start a thread of the thread pool: ");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    },
   );
 });

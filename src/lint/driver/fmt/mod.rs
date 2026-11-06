@@ -1860,6 +1860,7 @@ impl Run<'_> {
         // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
         // allows.
         bun_sema_driver::use_dedicated_pool("Bun Format");
+        bun_threading::thread_pool::exit_without_any_thread();
         let pool = Pool::new(options.threads).with_standing_threads("Bun Format");
         let dot = [b".".to_vec()];
         let patterns = if options.patterns.is_empty() {

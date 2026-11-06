@@ -3,6 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  compileFixture,
   isASAN,
   isDebug,
   isLinux,
@@ -9885,6 +9886,29 @@ try {
       expect(stderr).toContain("error: experimentalTailwindcss, sortTailwindcss are not supported yet");
       expect(exitCode).toBe(2);
     });
+
+    // bun-musl is statically linked, and ASAN builds have their own pthread_create, so neither calls the one below.
+    test.skipIf(!isLinux || isMusl || isASAN || !Bun.which("cc"))(
+      "a system that starts no thread is an error, and nothing waits forever",
+      async () => {
+        using dir = tempDir("bun-format", {
+          "shim.c": `#include <errno.h>\n#include <pthread.h>\nint pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*start)(void *), void *argument) { return EAGAIN; }\n`,
+          "src/a.ts": ugly,
+          "src/b.ts": ugly,
+        });
+        const shim = compileFixture(join(String(dir), "shim.c"));
+        await using proc = spawn({
+          cmd: [...command, "--check", "src"],
+          env: { ...env, LD_PRELOAD: [shim, env.LD_PRELOAD].filter(Boolean).join(":") },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toStartWith("error: Failed to start a thread of the thread pool: ");
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      },
+    );
 
     test.each([2, 7])("%d threads write in different directories at the same time", async threads => {
       const text = ugly.repeat(50);

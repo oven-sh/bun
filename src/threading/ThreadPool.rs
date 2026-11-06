@@ -839,8 +839,9 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
 };
 
 /// Set in a process that runs an ahead-of-time compiled program, which starts
-/// its threads late, when a limit on threads may have been reached, and in one
-/// that compiles such a program.
+/// its threads late, when a limit on threads may have been reached, in one that
+/// compiles such a program, and by `bun fmt` and `bun lint`, whose calling thread
+/// waits for what it hands to a pool.
 static EXITS_WITHOUT_ANY_THREAD: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 

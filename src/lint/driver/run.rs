@@ -1049,6 +1049,7 @@ impl Run<'_> {
         }
         let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
         bun_sema_driver::use_dedicated_pool("Bun Lint");
+        bun_threading::thread_pool::exit_without_any_thread();
         let pool = Pool::new(options.threads);
         // Nothing starts unless a config has a JavaScript plugin.
         let js_plugins = Host::with_engine(

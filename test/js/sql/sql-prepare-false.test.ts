@@ -115,7 +115,7 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
     await using db = new SQL({ ...options(), max: 8 });
 
     // Fire many concurrent queries to stress-test unnamed statement handling
-    const promises = [];
+    const promises: Promise<{ expected: number; actual: any }>[] = [];
     for (let i = 0; i < 50; i++) {
       promises.push(db`SELECT ${i}::int AS x`.then(r => ({ expected: i, actual: r[0].x })));
     }

@@ -1,5 +1,7 @@
 vendor
 test/snapshots
+# written by Jest and Vitest, and compared byte for byte
+test/js/bun/test/snapshot-tests/formats
 test/bundler/transpiler/react-compiler-fixtures
 src/**/*.generated.rs
 test/js/deno
@@ -16,6 +18,8 @@ scripts/build/xmac.mjs
 
 # the output codeblocks need to stay minified
 docs/bundler/minifier.mdx
+# Prettier would reformat the code examples, and test/cli/lint/rule-docs.test.ts runs them exactly as written
+docs/lint/rules
 
 # `declare module "*" with { type: "text" }` is TypeScript 7.1 syntax that
 # prettier's parser does not accept yet
@@ -29,14 +33,32 @@ docs/.rust-rewrite-verified-claims.md
 
 # Verbatim ports from Node.js v26.3.0 (lib/) — keep close to upstream
 # (mirrors the oxlint.json ignore block for the same files)
-src/js/node/repl.js
-src/js/node/readline.js
-src/js/node/readline.promises.js
-src/js/internal/repl.js
+src/js/node/repl.ts
+src/js/node/readline.ts
+src/js/node/readline.promises.ts
+src/js/internal/repl.ts
 src/js/internal/readline
-src/js/internal/repl/history.js
-src/js/internal/repl/utils.js
-src/js/internal/repl/completion.js
-src/js/internal/repl/await.js
-src/js/internal/repl/acorn.js
-src/js/internal/repl/acorn-walk.js
+src/js/internal/repl/history.ts
+src/js/internal/repl/utils.ts
+src/js/internal/repl/completion.ts
+src/js/internal/repl/await.ts
+src/js/internal/repl/acorn.ts
+src/js/internal/repl/acorn-walk.ts
+
+# each line is a constructor as somebody may write it, and where its tokens stand is what is tested
+test/aot/parallel/errors/error-out-of-making-this-*
+test/aot/parallel/errors/error-at-shorthand-property-names-the-property.js
+
+# several reads of one name stand on one line, some behind types, and where they stand is what is tested
+test/aot/parallel/errors/quoted-where-a-line-reads-one-name-of-two-objects*
+
+# how the blanks, the commas and the line breaks of each list are written is what is tested
+test/aot/parallel/errors/list-patterns-are-quoted-as-printed-*
+
+# over which lines each chain is written is what is tested
+test/aot/parallel/errors/quoted-from-expressions-written-over-several-lines.js
+test/aot/parallel/errors/quoted-from-typed-expressions-written-over-several-lines.ts
+
+# in which column and line each private name stands is what is tested
+test/aot/parallel/errors/frames-of-private-names-read-from-paths.js
+test/aot/parallel/errors/static-private-fields-of-other-values-are-refused-in-the-words-of-plain-bun.js

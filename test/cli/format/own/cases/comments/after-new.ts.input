@@ -1,0 +1,5 @@
+new /* a */ A<T>();
+new /* b */ B();
+new /* c */ C;
+new /* d */ D.E<T>(f);
+new (/* g */ G)<T>();

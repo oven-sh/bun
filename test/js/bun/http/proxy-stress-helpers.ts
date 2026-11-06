@@ -585,14 +585,14 @@ export async function createAdversarialOrigin(opts: AdversarialOriginOptions = {
 
   const handleClient = (sock: net.Socket) => {
     sock.on("error", () => {});
-    let buf = Buffer.alloc(0);
+    let buf: Buffer = Buffer.alloc(0);
     let headParsed = false;
     let method = "";
     let path = "";
     let headers: Record<string, string> = {};
     let bodyNeed = 0;
     let chunked = false;
-    let body = Buffer.alloc(0);
+    let body: Buffer = Buffer.alloc(0);
 
     const finish = () => {
       requests.push({ method, path, headers, body });
@@ -631,7 +631,7 @@ export async function createAdversarialOrigin(opts: AdversarialOriginOptions = {
       }
     };
 
-    sock.on("data", chunk => {
+    sock.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!headParsed) {
         const end = buf.indexOf("\r\n\r\n");

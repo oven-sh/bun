@@ -1,0 +1,1 @@
+exports.tag = "first plugin";

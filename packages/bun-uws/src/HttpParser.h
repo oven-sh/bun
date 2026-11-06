@@ -106,6 +106,8 @@ struct HttpResponseData;
          * body. llhttp reports HPE_INVALID_CONTENT_LENGTH ("Content-Length can't
          * be present with Transfer-Encoding"). node:http compat only. */
         HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
+        /* A byte in the request target that llhttp rejects (HPE_INVALID_URL). node:http compat only. */
+        HTTP_PARSER_ERROR_INVALID_URL = 18,
     };
 
 
@@ -116,6 +118,7 @@ struct HttpResponseData;
         HTTP_HEADER_PARSER_ERROR_INVALID_METHOD = 3,
         HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 4,
         HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE = 5,
+        HTTP_HEADER_PARSER_ERROR_INVALID_URL = 6,
     };
 
     struct HttpParserResult {
@@ -588,7 +591,8 @@ struct HttpResponseData;
          * chunked) is only partially received. Used by onEnd to surface a
          * mid-body FIN as HPE_INVALID_EOF_STATE like Node's parser.finish(). */
         bool hasIncompleteRequestBody() const {
-            return remainingStreamingBytes != 0;
+            /* A data handler that stops the parse at the last chunk leaves STATE_IS_TRAILERS_DONE. */
+            return remainingStreamingBytes != 0 && remainingStreamingBytes != STATE_IS_TRAILERS_DONE;
         }
 
         /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
@@ -638,7 +642,7 @@ struct HttpResponseData;
                 p++;
                 char *valueStart = p;
                 while (true) {
-                    p = tryConsumeFieldValue(p);
+                    p = tryConsumeFieldValue<true>(p);
                     const unsigned char stopByte = (unsigned char) p[0];
                     if (stopByte == '\t') { p++; continue; }
                     /* Same lenient-header-value acceptance as getHeaders. */
@@ -755,6 +759,11 @@ struct HttpResponseData;
 
         static inline uint64_t hasLess(uint64_t x, uint64_t n) {
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);
+        }
+
+        /* Nonzero if any byte of x is 0x7f or above. Adding 1 to a byte carries only out of 0xff, which x itself flags. */
+        static inline uint64_t hasDeleteOrAbove(uint64_t x) {
+            return ((x + ~0ULL/255) | x) & (~0ULL/255*128);
         }
 
         /* RFC 9110 5.6.2. Tokens */
@@ -889,6 +898,7 @@ struct HttpResponseData;
 
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
+        template <bool IsNodeHttp>
         static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
@@ -947,9 +957,22 @@ struct HttpResponseData;
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     }
                     if (hasLess(word, 33)) {
-                        while (*(unsigned char *)data > 32) data++;
+                        while (*(unsigned char *)data > 32) {
+                            if constexpr (IsNodeHttp) {
+                                if (*(unsigned char *)data >= 0x7f) [[unlikely]] {
+                                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                                }
+                            }
+                            data++;
+                        }
                         if(maxHeaderSize && (uintptr_t)(data - start) > maxHeaderSize) {
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                        }
+                        if constexpr (IsNodeHttp) {
+                            /* A CR at end is the post padding. */
+                            if (data[0] != 32 && !isNewline(data[0])) [[unlikely]] {
+                                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                            }
                         }
                         /* Now we stand on space */
                         header.value = {start, (size_t) (data - start)};
@@ -974,6 +997,12 @@ struct HttpResponseData;
                         /* nextPosition < end here, so data < end: any CR is real input, not the
                          * post-padding sentinel. Fall through to the version error. */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
+                    }
+                    if constexpr (IsNodeHttp) {
+                        /* llhttp accepts only 0x21 to 0x7e in a request target, with or without insecureHTTPParser. */
+                        if (hasDeleteOrAbove(word)) [[unlikely]] {
+                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                        }
                     }
                 }
             }
@@ -1013,19 +1042,29 @@ struct HttpResponseData;
         /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed; htab (9) is also allowed)
         * Field values are usually constrained to the range of US-ASCII characters [...]
         * Field values containing CR, LF, or NUL characters are invalid and dangerous [...]
-        * Field values containing other CTL characters are also invalid. */
+        * Field values containing other CTL characters are also invalid.
+        * node:http also stops at DEL (127), which llhttp treats like the other CTL characters. */
+        template <bool IsNodeHttp>
         static inline char * tryConsumeFieldValue(char *p) {
             for (; true; p += 8) {
                 uint64_t word;
                 memcpy(&word, p, sizeof(uint64_t));
-                if (hasLess(word, 32)) {
-                    while (*(unsigned char *)p > 31) p++;
-                    return p;
+                if constexpr (IsNodeHttp) {
+                    if (hasLess(word, 32) || hasLess(word ^ (~0ULL/255*127), 1)) {
+                        while (*(unsigned char *)p > 31 && *(unsigned char *)p != 127) p++;
+                        return p;
+                    }
+                } else {
+                    if (hasLess(word, 32)) {
+                        while (*(unsigned char *)p > 31) p++;
+                        return p;
+                    }
                 }
             }
         }
 
         /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields must not exceed MAX_HEADER_FIELDS: it bounds the writes to headers. */
+        template <bool IsNodeHttp>
         static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize, unsigned int maxHeaderFields) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
@@ -1033,7 +1072,7 @@ struct HttpResponseData;
             * if we managed to parse a complete HTTP request (minus data). */
 
             /* The request line is different from the field names / field values */
-            auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0], useStrictMethodValidation, maxHeaderSize);
+            auto requestLineResult = consumeRequestLine<IsNodeHttp>(postPaddedBuffer, end, headers[0], useStrictMethodValidation, maxHeaderSize);
 
             if (requestLineResult.isErrorOrShortRead()) {
                 /* Error - invalid request line */
@@ -1049,6 +1088,8 @@ struct HttpResponseData;
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     case HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE:
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE);
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_URL:
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_URL);
                     default: {
                         /* Short read */
                     }
@@ -1115,7 +1156,7 @@ struct HttpResponseData;
                 preliminaryValue = postPaddedBuffer;
                 /* The goal of this call is to find next "\r\n", or any invalid field value chars, fast */
                 while (true) {
-                    postPaddedBuffer = tryConsumeFieldValue(postPaddedBuffer);
+                    postPaddedBuffer = tryConsumeFieldValue<IsNodeHttp>(postPaddedBuffer);
                     const unsigned char stopByte = (unsigned char) postPaddedBuffer[0];
                     /* If this is not CR then we caught some stinky invalid char on the way */
                     if (stopByte != '\r') {
@@ -1258,7 +1299,7 @@ struct HttpResponseData;
                 return HttpParserResult::success(consumedTotal + length, user);
             }
             bool isConnectRequestLine = false;
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
+            auto result = getHeaders<IsNodeHttp>(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
             if(result.isError()) {
                 return result;
             }
@@ -1397,14 +1438,14 @@ struct HttpResponseData;
             }
 
             /* Break if no host header (but we can have empty string which is different from nullptr).
-             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
-             * 'upgrade'/'connect' events before its Host requirement is enforced.
+             * node:http only: Upgrade and CONNECT requests are exempt, because Node.js dispatches
+             * them through the 'upgrade'/'connect' events before its Host requirement is enforced.
              * Checked after the Content-Length / Transfer-Encoding smuggling checks: those are
              * detected while llhttp parses the headers, whereas the Host requirement is a
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
             if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
-                && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
+                && !(IsNodeHttp && (isConnectRequestLine || req->getHeader("upgrade").data()))) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -1429,7 +1470,13 @@ struct HttpResponseData;
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
             /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
-            req->head = std::span<const char>(data, length);
+            if constexpr (ConsumeMinimally && IsNodeHttp) {
+                /* consumePostPadded set head to the part of the read that is not in this buffer. The bytes behind
+                 * the request head here are copies of the bytes of the read right in front of that part. */
+                req->head = std::span<const char>(req->head.data() - length, req->head.size() + length);
+            } else {
+                req->head = std::span<const char>(data, length);
+            }
             /* Same verdict that selects chunked framing below, so the handler's
              * has-body decision cannot disagree with how the body is consumed. */
             req->hasTransferEncoding = transferEncoding.has;
@@ -1661,15 +1708,26 @@ public:
 
             size_t maxCopyDistance = std::min<size_t>(maxFallbackSize - fallback.length(), (size_t) length);
 
-            /* We don't want fallback to be short string optimized, since we want to move it */
-            fallback.reserve(fallback.length() + maxCopyDistance + std::max<unsigned int>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
-            fallback.append(data, maxCopyDistance);
+            /* This frame owns the bytes for the dispatch: the handler can destroy this parser while the request
+             * views them, and a parser that lives on must not keep a head that was dispatched. */
+            std::string reassembled = std::move(fallback);
+            fallback.clear();
+
+            /* The parser reads and writes behind the bytes it is given: the block has room for that padding. */
+            reassembled.reserve(reassembled.length() + maxCopyDistance + std::max<unsigned int>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
+            reassembled.append(data, maxCopyDistance);
+
+            if constexpr (IsNodeHttp) {
+                /* The part of this read that is not in the buffer. The dispatch extends it to the whole rest of the read. */
+                req.head = std::span<const char>(data + maxCopyDistance, length - maxCopyDistance);
+            }
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
-            /* Return data will be different than user if we are upgraded to WebSocket or have an error */
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &req, requestHandler, dataHandler);
+            /* Return data will be different than user if we are upgraded to WebSocket or have an error.
+             * The parser can be gone by then: no member is touched before this return. */
             if (consumed.returnedData != user) {
-                /* The count is in fallback bytes, and the first `had` of them came from
+                /* The count is in bytes of the buffer, and the first `had` of them came from
                  * earlier reads. The head ends past them: those reads did not complete it. */
                 if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
                     consumed.errorStatusCodeOrConsumedBytes -= had;
@@ -1680,10 +1738,12 @@ public:
             auto consumedBytes = consumed.consumedBytes();
             if (consumedBytes) {
 
-                /* This logic assumes that we consumed everything in fallback buffer.
+                /* This logic assumes that we consumed everything in the buffer.
                 * This is critically important, as we will get an integer overflow in case
                 * of "had" being larger than what we consumed, and that we would drop data */
-                fallback.clear();
+                /* The answer was user, so the parser is alive: it gets the block back for the next head that takes several reads. */
+                reassembled.clear();
+                fallback = std::move(reassembled);
                 data += consumedBytes - had;
                 length -= consumedBytes - had;
 
@@ -1695,7 +1755,10 @@ public:
                     return HttpParserResult::success(0, user);
                 } else if (remainingStreamingBytes) {
                     if(isConnectRequest) {
-                        dataHandler(user, std::string_view(data, length), false);
+                        /* node:http got the whole rest of this read as the head of the request. */
+                        if constexpr (!IsNodeHttp) {
+                            dataHandler(user, std::string_view(data, length), false);
+                        }
                         return HttpParserResult::success(0, user);
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                         /* It's either chunked or with a content-length */
@@ -1753,6 +1816,8 @@ public:
                 }
 
             } else {
+                /* The head is not complete: nothing was dispatched, and the parser keeps what it has of it. */
+                fallback = std::move(reassembled);
                 if (fallback.length() == maxFallbackSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }

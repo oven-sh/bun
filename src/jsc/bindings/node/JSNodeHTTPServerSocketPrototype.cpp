@@ -3,7 +3,6 @@
 #include "JSSocketAddressDTO.h"
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
@@ -12,8 +11,6 @@
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" void us_socket_resume(us_socket_t*);
-extern "C" void us_socket_pause(us_socket_t*);
 extern "C" void us_socket_shutdown(us_socket_t*);
 extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 
@@ -63,8 +60,11 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterServername);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasQueuedTunnelReads);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosedWithUnsentData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterCloseError);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent);
 
 JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
@@ -101,8 +101,11 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
     { "peerCertVerified"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerCertVerified, noOpSetter } },
+    { "hasQueuedTunnelReads"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterHasQueuedTunnelReads, noOpSetter } },
+    { "closedWithUnsentData"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosedWithUnsentData, noOpSetter } },
     { "closeError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterCloseError, noOpSetter } },
     { "peerEnded"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerEnded, noOpSetter } },
+    { "finSent"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterFinSent, noOpSetter } },
 };
 
 void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
@@ -148,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     }
     // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
     // once the request body has been fully parsed (Upgrade requests with a body).
-    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(1)));
+    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(1)));
     return JSValue::encode(JSC::jsUndefined());
 }
 
@@ -227,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
     }
-    auto* response = dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(0));
+    auto* response = dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(0));
     if (!response) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
     }
@@ -311,22 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
         return JSValue::encode(JSC::jsUndefined());
     }
     if (bufferedSize == 0) {
-        // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-        // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
-        // re-add), without which macOS 26 does not deliver the peer's close.
-        // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
-        const bool cycleReads = !thisObject->upgraded && !thisObject->tunnelReadsPaused();
-        if (thisObject->socket && cycleReads) {
-            us_socket_pause(thisObject->socket);
-        }
-        auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, thisObject->hasUnsentResponseBytes(), thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        // Undo the pause above after the shutdown so the unread body drains
-        // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
-        // SHUT_WR) is not deleted by a W -> R|W -> R step.
-        if (thisObject->socket && cycleReads) {
-            us_socket_resume(thisObject->socket);
-        }
-        return result;
+        return thisObject->halfClose(globalObject);
     }
     return JSValue::encode(JSC::jsUndefined());
 }
@@ -370,6 +358,26 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError, (JSC::J
     return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String::fromLatin1(code)));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasQueuedTunnelReads, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    // The peer's FIN is a queued chunk of length 0. Once JS has it, the Duplex isn't readable and nobody asks.
+    return JSValue::encode(JSC::jsBoolean(thisObject->queuedTunnelBytes > 0 || thisObject->tunnelReadEnded));
+}
+
+// undefined until the connection has closed.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosedWithUnsentData, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject || !thisObject->closedWithUnsentData) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(*thisObject->closedWithUnsentData));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
@@ -396,6 +404,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded, (JSC::JSGlobalOb
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsBoolean(thisObject->peer_ended));
+}
+
+// The FIN of socket.end() has left. It waits for bytes that are still queued.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(thisObject->ended && !thisObject->isClosed() && us_socket_is_shut_down(thisObject->socket)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -628,7 +646,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSC::JSGloba
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten()));
+    // Like Node's bytesWritten, this counts bytes still buffered as well as bytes already sent.
+    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten() + thisObject->streamBuffer.bufferedSize()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
@@ -637,11 +656,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObj
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    if (!thisObject->currentResponseObject) {
+    auto* response = thisObject->currentResponse();
+    if (!response) {
         return JSValue::encode(JSC::jsNull());
     }
 
-    return JSValue::encode(thisObject->currentResponseObject.get());
+    return JSValue::encode(response);
 }
 
 } // namespace Bun

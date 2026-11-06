@@ -1,10 +1,7 @@
-interface Glob {
-  $pull(opts);
-  $resolveSync(opts);
-}
+type Glob = import("bun").Glob;
 
-export function scan(this: Glob, opts) {
-  const valuesPromise = this.$pull(opts);
+export function scan(this: Glob, opts?: Parameters<Glob["$globScan"]>[0]) {
+  const valuesPromise = this.$globScan(opts);
   async function* iter() {
     const values = (await valuesPromise) || [];
     yield* values;
@@ -12,8 +9,8 @@ export function scan(this: Glob, opts) {
   return iter();
 }
 
-export function scanSync(this: Glob, opts) {
-  const arr = this.$resolveSync(opts) || [];
+export function scanSync(this: Glob, opts?: Parameters<Glob["$globScan"]>[0]) {
+  const arr = this.$globScanSync(opts) || [];
   function* iter() {
     yield* arr;
   }

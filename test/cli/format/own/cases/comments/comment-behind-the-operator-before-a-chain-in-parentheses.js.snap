@@ -1,0 +1,59 @@
+------------------
+{ printWidth: 80 }
+------------------
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || // c1
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ||
+  // c2
+  cccccccccccccccccccccccccccc ||
+  ddddddddddddddddddddddddddd
+) {
+}
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && // c3
+  cccccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddddd
+) {
+}
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || // c4
+  (cccccccccccccccccccccccccccc && ddddddddddddddddddddddddddd)
+) {
+}
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /* c5 */ ||
+  cccccccccccccccccccccccccccc ||
+  ddddddddddddddddddddddddddd
+) {
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || // c1
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ||
+  // c2
+  cccccccccccccccccccccccccccc ||
+  ddddddddddddddddddddddddddd
+) {
+}
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && // c3
+  cccccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddddd
+) {
+}
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || // c4
+  (cccccccccccccccccccccccccccc && ddddddddddddddddddddddddddd)
+) {
+}
+if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /* c5 */ ||
+  cccccccccccccccccccccccccccc ||
+  ddddddddddddddddddddddddddd
+) {
+}
+
+===================== End =====================

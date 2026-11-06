@@ -1,6 +1,8 @@
 // An accessor laid under a name out of the compiler's sight, turned back into a value or deleted or left; then names are added, changed and taken away.
-// Sizes: 1000 4000 16000
-// Passes: 12
+// The sizes are small: four objects of 16,000 names are some megabytes, and what a name costs then hangs on the caches of the machine, in plain Bun too. A look through the names at every store
+// reads 12 at these sizes, where 4 is linear.
+// Sizes: 250 1000 4000
+// Passes: 96
 // Grows: linear
 const size = Number(process.env.SIZE ?? 500),
   passes = Number(process.env.PASSES ?? 1);

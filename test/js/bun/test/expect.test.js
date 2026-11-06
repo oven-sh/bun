@@ -4922,6 +4922,37 @@ describe("expect()", () => {
       }).toThrow(/*"You must provide an array to ArrayNotContaining, not 'string'."*/);
     });
 
+    test_skipIf(!isBun)("failure messages print expect.arrayContaining() with its sample", () => {
+      const messageOf = (/** @type {() => unknown} */ fails) => {
+        try {
+          fails();
+        } catch (error) {
+          return stripVTControlCharacters(ANY(error).message);
+        }
+      };
+      const sample = () => expect.arrayContaining([2, "x"]);
+      const thrower = () => {
+        throw new Error("thrown");
+      };
+
+      expect(messageOf(() => expect({ a: [1] }).toEqual({ a: sample() }))).toContain(
+        `-   "a": ArrayContaining [\n-     2,\n-     "x",\n+   "a": [\n+     1,\n    ],\n`,
+      );
+      expect(messageOf(() => expect({ a: [1] }).toEqual({ a: expect.not.arrayContaining([1]) }))).toContain(
+        `-   "a": ArrayNotContaining [\n+   "a": [\n      1,\n`,
+      );
+      expect(messageOf(() => expect({ a: [1] }).toEqual({ a: expect.resolvesTo.arrayContaining([1]) }))).toContain(
+        `-   "a": promise resolved to ArrayContaining [\n+   "a": [\n      1,\n`,
+      );
+      expect(messageOf(() => expect([1]).toBe(sample()))).toContain(`Expected: ArrayContaining [ 2, "x" ]\n`);
+      expect(messageOf(() => expect([[1]]).toContainEqual(sample()))).toContain(
+        `Expected to contain: ArrayContaining [ 2, "x" ]\n`,
+      );
+      expect(messageOf(() => expect(thrower).toThrow(sample()))).toContain(
+        `Expected value: ArrayContaining [ 2, "x" ]\n`,
+      );
+    });
+
     test("ObjectContaining matches", () => {
       // we differ in jest on these cases: bun will fail matching non-object expected values, while jest doesn't
       const foo = Symbol("foo");

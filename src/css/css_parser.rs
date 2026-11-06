@@ -2137,6 +2137,10 @@ mod rule_parsers {
                     let Err(e) = result else {
                         continue;
                     };
+                    if iter.parser.options.error_recovery {
+                        iter.parser.options.warn(&e);
+                        continue;
+                    }
                     // `:global { color: red }` outside of a style rule: a declaration with no selector.
                     let input = &mut *iter.input;
                     input.reset(&item);

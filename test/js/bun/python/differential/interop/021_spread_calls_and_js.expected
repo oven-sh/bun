@@ -1,0 +1,143 @@
+status: 0
+oracle: none
+---
+--- functions of JS
+describe f(*p) | undefined 0:  | undefined 0:  | undefined 1: number:7 | undefined 1: number:7 | undefined 2: number:7 number:8 | undefined 2: number:7 number:8 | undefined 3: number:7 number:8.5 string:nine | undefined 3: number:7 number:8.5 string:nine 
+describe f(0, *p) | undefined 1: number:0 | undefined 1: number:0 | undefined 2: number:0 number:7 | undefined 2: number:0 number:7 | undefined 3: number:0 number:7 number:8 | undefined 3: number:0 number:7 number:8 | undefined 4: number:0 number:7 number:8.5 string:nine | undefined 4: number:0 number:7 number:8.5 string:nine 
+describe f(0, 1.0, *p) | undefined 2: number:0 number:1 | undefined 2: number:0 number:1 | undefined 3: number:0 number:1 number:7 | undefined 3: number:0 number:1 number:7 | undefined 4: number:0 number:1 number:7 number:8 | undefined 4: number:0 number:1 number:7 number:8 | undefined 5: number:0 number:1 number:7 number:8.5 string:nine | undefined 5: number:0 number:1 number:7 number:8.5 string:nine 
+describe f(**k) | undefined 0:  | undefined 1: {b:8} | undefined 0:  | undefined 1: {b:8} | undefined 0:  | undefined 1: {b:8} | undefined 0:  | undefined 1: {b:8} 
+describe f(*p, **k) | undefined 0:  | undefined 1: {b:8} | undefined 1: number:7 | undefined 2: number:7 {b:8} | undefined 2: number:7 number:8 | undefined 3: number:7 number:8 {b:8} | undefined 3: number:7 number:8.5 string:nine | undefined 4: number:7 number:8.5 string:nine {b:8} 
+describe f(0, *p, **k) | undefined 1: number:0 | undefined 2: number:0 {b:8} | undefined 2: number:0 number:7 | undefined 3: number:0 number:7 {b:8} | undefined 3: number:0 number:7 number:8 | undefined 4: number:0 number:7 number:8 {b:8} | undefined 4: number:0 number:7 number:8.5 string:nine | undefined 5: number:0 number:7 number:8.5 string:nine {b:8} 
+describe f(0, **k) | undefined 1: number:0 | undefined 2: number:0 {b:8} | undefined 1: number:0 | undefined 2: number:0 {b:8} | undefined 1: number:0 | undefined 2: number:0 {b:8} | undefined 1: number:0 | undefined 2: number:0 {b:8} 
+describe f(*p, x=1) | undefined 1: {x:1} | undefined 1: {x:1} | undefined 2: number:7 {x:1} | undefined 2: number:7 {x:1} | undefined 3: number:7 number:8 {x:1} | undefined 3: number:7 number:8 {x:1} | undefined 4: number:7 number:8.5 string:nine {x:1} | undefined 4: number:7 number:8.5 string:nine {x:1} 
+describe f(*p, *p) | undefined 0:  | undefined 0:  | undefined 2: number:7 number:7 | undefined 2: number:7 number:7 | undefined 4: number:7 number:8 number:7 number:8 | undefined 4: number:7 number:8 number:7 number:8 | undefined 3: number:7 number:8.5 string:nine | undefined 3: number:7 number:8.5 string:nine 
+sloppy f(*p) | true 0 undefined undefined | true 0 undefined undefined | true 1 7 undefined | true 1 7 undefined | true 2 7 8 | true 2 7 8 | true 3 7 8.5 | true 3 7 8.5 
+sloppy f(0, *p) | true 1 0 undefined | true 1 0 undefined | true 2 0 7 | true 2 0 7 | true 3 0 7 | true 3 0 7 | true 4 0 7 | true 4 0 7 
+sloppy f(0, 1.0, *p) | true 2 0 1 | true 2 0 1 | true 3 0 1 | true 3 0 1 | true 4 0 1 | true 4 0 1 | true 5 0 1 | true 5 0 1 
+sloppy f(**k) | true 0 undefined undefined | true 1 [object Object] undefined | true 0 undefined undefined | true 1 [object Object] undefined | true 0 undefined undefined | true 1 [object Object] undefined | true 0 undefined undefined | true 1 [object Object] undefined 
+sloppy f(*p, **k) | true 0 undefined undefined | true 1 [object Object] undefined | true 1 7 undefined | true 2 7 [object Object] | true 2 7 8 | true 3 7 8 | true 3 7 8.5 | true 4 7 8.5 
+sloppy f(0, *p, **k) | true 1 0 undefined | true 2 0 [object Object] | true 2 0 7 | true 3 0 7 | true 3 0 7 | true 4 0 7 | true 4 0 7 | true 5 0 7 
+sloppy f(0, **k) | true 1 0 undefined | true 2 0 [object Object] | true 1 0 undefined | true 2 0 [object Object] | true 1 0 undefined | true 2 0 [object Object] | true 1 0 undefined | true 2 0 [object Object] 
+sloppy f(*p, x=1) | true 1 [object Object] undefined | true 1 [object Object] undefined | true 2 7 [object Object] | true 2 7 [object Object] | true 3 7 8 | true 3 7 8 | true 4 7 8.5 | true 4 7 8.5 
+sloppy f(*p, *p) | true 0 undefined undefined | true 0 undefined undefined | true 2 7 7 | true 2 7 7 | true 4 7 8 | true 4 7 8 | true 3 7 8.5 | true 3 7 8.5 
+arrow f(*p) | undefined/default/0 | undefined/default/0 | 7/default/0 | 7/default/0 | 7/8/0 | 7/8/0 | 7/8.5/1 | 7/8.5/1 
+arrow f(0, *p) | 0/default/0 | 0/default/0 | 0/7/0 | 0/7/0 | 0/7/1 | 0/7/1 | 0/7/2 | 0/7/2 
+arrow f(0, 1.0, *p) | 0/1/0 | 0/1/0 | 0/1/1 | 0/1/1 | 0/1/2 | 0/1/2 | 0/1/3 | 0/1/3 
+arrow f(**k) | undefined/default/0 | [object Object]/default/0 | undefined/default/0 | [object Object]/default/0 | undefined/default/0 | [object Object]/default/0 | undefined/default/0 | [object Object]/default/0 
+arrow f(*p, **k) | undefined/default/0 | [object Object]/default/0 | 7/default/0 | 7/[object Object]/0 | 7/8/0 | 7/8/1 | 7/8.5/1 | 7/8.5/2 
+arrow f(0, *p, **k) | 0/default/0 | 0/[object Object]/0 | 0/7/0 | 0/7/1 | 0/7/1 | 0/7/2 | 0/7/2 | 0/7/3 
+arrow f(0, **k) | 0/default/0 | 0/[object Object]/0 | 0/default/0 | 0/[object Object]/0 | 0/default/0 | 0/[object Object]/0 | 0/default/0 | 0/[object Object]/0 
+arrow f(*p, x=1) | [object Object]/default/0 | [object Object]/default/0 | 7/[object Object]/0 | 7/[object Object]/0 | 7/8/1 | 7/8/1 | 7/8.5/2 | 7/8.5/2 
+arrow f(*p, *p) | undefined/default/0 | undefined/default/0 | 7/7/0 | 7/7/0 | 7/8/2 | 7/8/2 | 7/8.5/1 | 7/8.5/1 
+Class f(*p) | Point(undefined,undefined) | Point(undefined,undefined) | Point(7,undefined) | Point(7,undefined) | Point(7,8) | Point(7,8) | Point(7,8.5) | Point(7,8.5) 
+Class f(0, *p) | Point(0,undefined) | Point(0,undefined) | Point(0,7) | Point(0,7) | Point(0,7) | Point(0,7) | Point(0,7) | Point(0,7) 
+Class f(0, 1.0, *p) | Point(0,1) | Point(0,1) | Point(0,1) | Point(0,1) | Point(0,1) | Point(0,1) | Point(0,1) | Point(0,1) 
+Class f(**k) | Point(undefined,undefined) | Point([object Object],undefined) | Point(undefined,undefined) | Point([object Object],undefined) | Point(undefined,undefined) | Point([object Object],undefined) | Point(undefined,undefined) | Point([object Object],undefined) 
+Class f(*p, **k) | Point(undefined,undefined) | Point([object Object],undefined) | Point(7,undefined) | Point(7,[object Object]) | Point(7,8) | Point(7,8) | Point(7,8.5) | Point(7,8.5) 
+Class f(0, *p, **k) | Point(0,undefined) | Point(0,[object Object]) | Point(0,7) | Point(0,7) | Point(0,7) | Point(0,7) | Point(0,7) | Point(0,7) 
+Class f(0, **k) | Point(0,undefined) | Point(0,[object Object]) | Point(0,undefined) | Point(0,[object Object]) | Point(0,undefined) | Point(0,[object Object]) | Point(0,undefined) | Point(0,[object Object]) 
+Class f(*p, x=1) | Point([object Object],undefined) | Point([object Object],undefined) | Point(7,[object Object]) | Point(7,[object Object]) | Point(7,8) | Point(7,8) | Point(7,8.5) | Point(7,8.5) 
+Class f(*p, *p) | Point(undefined,undefined) | Point(undefined,undefined) | Point(7,7) | Point(7,7) | Point(7,8) | Point(7,8) | Point(7,8.5) | Point(7,8.5) 
+bound f(*p) | bound,first,, | bound,first,, | bound,first,7, | bound,first,7, | bound,first,7,8 | bound,first,7,8 | bound,first,7,8.5 | bound,first,7,8.5 
+bound f(0, *p) | bound,first,0, | bound,first,0, | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 
+bound f(0, 1.0, *p) | bound,first,0,1 | bound,first,0,1 | bound,first,0,1 | bound,first,0,1 | bound,first,0,1 | bound,first,0,1 | bound,first,0,1 | bound,first,0,1 
+bound f(**k) | bound,first,, | bound,first,[object Object], | bound,first,, | bound,first,[object Object], | bound,first,, | bound,first,[object Object], | bound,first,, | bound,first,[object Object], 
+bound f(*p, **k) | bound,first,, | bound,first,[object Object], | bound,first,7, | bound,first,7,[object Object] | bound,first,7,8 | bound,first,7,8 | bound,first,7,8.5 | bound,first,7,8.5 
+bound f(0, *p, **k) | bound,first,0, | bound,first,0,[object Object] | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 | bound,first,0,7 
+bound f(0, **k) | bound,first,0, | bound,first,0,[object Object] | bound,first,0, | bound,first,0,[object Object] | bound,first,0, | bound,first,0,[object Object] | bound,first,0, | bound,first,0,[object Object] 
+bound f(*p, x=1) | bound,first,[object Object], | bound,first,[object Object], | bound,first,7,[object Object] | bound,first,7,[object Object] | bound,first,7,8 | bound,first,7,8 | bound,first,7,8.5 | bound,first,7,8.5 
+bound f(*p, *p) | bound,first,, | bound,first,, | bound,first,7,7 | bound,first,7,7 | bound,first,7,8 | bound,first,7,8 | bound,first,7,8.5 | bound,first,7,8.5 
+trapped f(*p) | trapped 0  | trapped 0  | trapped 1 7 | trapped 1 7 | trapped 2 7,8 | trapped 2 7,8 | trapped 3 7,8.5,nine | trapped 3 7,8.5,nine 
+trapped f(0, *p) | trapped 1 0 | trapped 1 0 | trapped 2 0,7 | trapped 2 0,7 | trapped 3 0,7,8 | trapped 3 0,7,8 | trapped 4 0,7,8.5,nine | trapped 4 0,7,8.5,nine 
+trapped f(0, 1.0, *p) | trapped 2 0,1 | trapped 2 0,1 | trapped 3 0,1,7 | trapped 3 0,1,7 | trapped 4 0,1,7,8 | trapped 4 0,1,7,8 | trapped 5 0,1,7,8.5,nine | trapped 5 0,1,7,8.5,nine 
+trapped f(**k) | trapped 0  | trapped 1 [object Object] | trapped 0  | trapped 1 [object Object] | trapped 0  | trapped 1 [object Object] | trapped 0  | trapped 1 [object Object] 
+trapped f(*p, **k) | trapped 0  | trapped 1 [object Object] | trapped 1 7 | trapped 2 7,[object Object] | trapped 2 7,8 | trapped 3 7,8,[object Object] | trapped 3 7,8.5,nine | trapped 4 7,8.5,nine,[object Object] 
+trapped f(0, *p, **k) | trapped 1 0 | trapped 2 0,[object Object] | trapped 2 0,7 | trapped 3 0,7,[object Object] | trapped 3 0,7,8 | trapped 4 0,7,8,[object Object] | trapped 4 0,7,8.5,nine | trapped 5 0,7,8.5,nine,[object Object] 
+trapped f(0, **k) | trapped 1 0 | trapped 2 0,[object Object] | trapped 1 0 | trapped 2 0,[object Object] | trapped 1 0 | trapped 2 0,[object Object] | trapped 1 0 | trapped 2 0,[object Object] 
+trapped f(*p, x=1) | trapped 1 [object Object] | trapped 1 [object Object] | trapped 2 7,[object Object] | trapped 2 7,[object Object] | trapped 3 7,8,[object Object] | trapped 3 7,8,[object Object] | trapped 4 7,8.5,nine,[object Object] | trapped 4 7,8.5,nine,[object Object] 
+trapped f(*p, *p) | trapped 0  | trapped 0  | trapped 2 7,7 | trapped 2 7,7 | trapped 4 7,8,7,8 | trapped 4 7,8,7,8 | trapped 3 7,8.5,nine | trapped 3 7,8.5,nine 
+throws f(*p) | JSError: RangeError: from JS undefined | JSError: RangeError: from JS undefined | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 
+throws f(0, *p) | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 
+throws f(0, 1.0, *p) | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 
+throws f(**k) | JSError: RangeError: from JS undefined | JSError: RangeError: from JS [object Object] | JSError: RangeError: from JS undefined | JSError: RangeError: from JS [object Object] | JSError: RangeError: from JS undefined | JSError: RangeError: from JS [object Object] | JSError: RangeError: from JS undefined | JSError: RangeError: from JS [object Object] 
+throws f(*p, **k) | JSError: RangeError: from JS undefined | JSError: RangeError: from JS [object Object] | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 
+throws f(0, *p, **k) | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 
+throws f(0, **k) | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 | JSError: RangeError: from JS 0 
+throws f(*p, x=1) | JSError: RangeError: from JS [object Object] | JSError: RangeError: from JS [object Object] | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 
+throws f(*p, *p) | JSError: RangeError: from JS undefined | JSError: RangeError: from JS undefined | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 | JSError: RangeError: from JS 7 
+Math.max f(*p) | -inf | -inf | 7 | 7 | 8 | 8 | nan | nan 
+Math.max f(0, *p) | 0 | 0 | 7 | 7 | 8 | 8 | nan | nan 
+Math.max f(0, 1.0, *p) | 1 | 1 | 7 | 7 | 8 | 8 | nan | nan 
+Math.max f(**k) | -inf | nan | -inf | nan | -inf | nan | -inf | nan 
+Math.max f(*p, **k) | -inf | nan | 7 | nan | 8 | nan | nan | nan 
+Math.max f(0, *p, **k) | 0 | nan | 7 | nan | 8 | nan | nan | nan 
+Math.max f(0, **k) | 0 | nan | 0 | nan | 0 | nan | 0 | nan 
+Math.max f(*p, x=1) | nan | nan | nan | nan | nan | nan | nan | nan 
+Math.max f(*p, *p) | -inf | -inf | 7 | 7 | 8 | 8 | nan | nan 
+Array.of f(*p) | [] | [] | [7] | [7] | [7, 8] | [7, 8] | [7, 8.5, 'nine'] | [7, 8.5, 'nine'] 
+Array.of f(0, *p) | [0] | [0] | [0, 7] | [0, 7] | [0, 7, 8] | [0, 7, 8] | [0, 7, 8.5, 'nine'] | [0, 7, 8.5, 'nine'] 
+Array.of f(0, 1.0, *p) | [0, 1] | [0, 1] | [0, 1, 7] | [0, 1, 7] | [0, 1, 7, 8] | [0, 1, 7, 8] | [0, 1, 7, 8.5, 'nine'] | [0, 1, 7, 8.5, 'nine'] 
+Array.of f(**k) | [] | [<JavaScript Object at ADDRESS>] | [] | [<JavaScript Object at ADDRESS>] | [] | [<JavaScript Object at ADDRESS>] | [] | [<JavaScript Object at ADDRESS>] 
+Array.of f(*p, **k) | [] | [<JavaScript Object at ADDRESS>] | [7] | [7, <JavaScript Object at ADDRESS>] | [7, 8] | [7, 8, <JavaScript Object at ADDRESS>] | [7, 8.5, 'nine'] | [7, 8.5, 'nine', <JavaScript Object at ADDRESS>] 
+Array.of f(0, *p, **k) | [0] | [0, <JavaScript Object at ADDRESS>] | [0, 7] | [0, 7, <JavaScript Object at ADDRESS>] | [0, 7, 8] | [0, 7, 8, <JavaScript Object at ADDRESS>] | [0, 7, 8.5, 'nine'] | [0, 7, 8.5, 'nine', <JavaScript Object at ADDRESS>] 
+Array.of f(0, **k) | [0] | [0, <JavaScript Object at ADDRESS>] | [0] | [0, <JavaScript Object at ADDRESS>] | [0] | [0, <JavaScript Object at ADDRESS>] | [0] | [0, <JavaScript Object at ADDRESS>] 
+Array.of f(*p, x=1) | [<JavaScript Object at ADDRESS>] | [<JavaScript Object at ADDRESS>] | [7, <JavaScript Object at ADDRESS>] | [7, <JavaScript Object at ADDRESS>] | [7, 8, <JavaScript Object at ADDRESS>] | [7, 8, <JavaScript Object at ADDRESS>] | [7, 8.5, 'nine', <JavaScript Object at ADDRESS>] | [7, 8.5, 'nine', <JavaScript Object at ADDRESS>] 
+Array.of f(*p, *p) | [] | [] | [7, 7] | [7, 7] | [7, 8, 7, 8] | [7, 8, 7, 8] | [7, 8.5, 'nine'] | [7, 8.5, 'nine'] 
+holder 2 1 2 holder 2 1 2 holder 0 undefined undefined holder 2 1 [object Object] AttributeError: 'JSPlainObject' object has no attribute 'absent'
+--- arrays and other things of JS after the star
+ints | ((1, 2, 3), {}) | ((0, 1, 2, 3), {}) | ((1, 2, 3), {}) | ((1, 2, 3), {'x': 1}) | undefined 3: number:1 number:2 number:3 | undefined 4: number:0 number:1 number:2 number:3 | undefined 3: number:1 number:2 number:3 | undefined 4: number:1 number:2 number:3 {x:1} 
+doubles | ((1.5, 2.5), {}) | ((0, 1.5, 2.5), {}) | ((1.5, 2.5), {}) | ((1.5, 2.5), {'x': 1}) | undefined 2: number:1.5 number:2.5 | undefined 3: number:0 number:1.5 number:2.5 | undefined 2: number:1.5 number:2.5 | undefined 3: number:1.5 number:2.5 {x:1} 
+mixed | ((1, 'two', None, None, 3.5), {}) | ((0, 1, 'two', None, None, 3.5), {}) | ((1, 'two', None, None, 3.5), {}) | ((1, 'two', None, None, 3.5), {'x': 1}) | undefined 5: number:1 string:two null undefined:undefined number:3.5 | undefined 6: number:0 number:1 string:two null undefined:undefined number:3.5 | undefined 5: number:1 string:two null undefined:undefined number:3.5 | undefined 6: number:1 string:two null undefined:undefined number:3.5 {x:1} 
+empty | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) | undefined 0:  | undefined 1: number:0 | undefined 0:  | undefined 1: {x:1} 
+a hole | ((1, None, 3), {}) | ((0, 1, None, 3), {}) | ((1, None, 3), {}) | ((1, None, 3), {'x': 1}) | undefined 3: number:1 undefined:undefined number:3 | undefined 4: number:0 number:1 undefined:undefined number:3 | undefined 3: number:1 undefined:undefined number:3 | undefined 4: number:1 undefined:undefined number:3 {x:1} 
+only holes | ((None, None, None), {}) | ((0, None, None, None), {}) | ((None, None, None), {}) | ((None, None, None), {'x': 1}) | undefined 3: undefined:undefined undefined:undefined undefined:undefined | undefined 4: number:0 undefined:undefined undefined:undefined undefined:undefined | undefined 3: undefined:undefined undefined:undefined undefined:undefined | undefined 4: undefined:undefined undefined:undefined undefined:undefined {x:1} 
+a hole among doubles | ((1.5, None, 3.5), {}) | ((0, 1.5, None, 3.5), {}) | ((1.5, None, 3.5), {}) | ((1.5, None, 3.5), {'x': 1}) | undefined 3: number:1.5 undefined:undefined number:3.5 | undefined 4: number:0 number:1.5 undefined:undefined number:3.5 | undefined 3: number:1.5 undefined:undefined number:3.5 | undefined 4: number:1.5 undefined:undefined number:3.5 {x:1} 
+sparse | ((1, None, None, None), {}) | ((0, 1, None, None, None), {}) | ((1, None, None, None), {}) | ((1, None, None, None), {'x': 1}) | undefined 4: number:1 undefined:undefined undefined:undefined undefined:undefined | undefined 5: number:0 number:1 undefined:undefined undefined:undefined undefined:undefined | undefined 4: number:1 undefined:undefined undefined:undefined undefined:undefined | undefined 5: number:1 undefined:undefined undefined:undefined undefined:undefined {x:1} 
+frozen | ((1, 2), {}) | ((0, 1, 2), {}) | ((1, 2), {}) | ((1, 2), {'x': 1}) | undefined 2: number:1 number:2 | undefined 3: number:0 number:1 number:2 | undefined 2: number:1 number:2 | undefined 3: number:1 number:2 {x:1} 
+of a class | ((1, 2), {}) | ((0, 1, 2), {}) | ((1, 2), {}) | ((1, 2), {'x': 1}) | undefined 2: number:1 number:2 | undefined 3: number:0 number:1 number:2 | undefined 2: number:1 number:2 | undefined 3: number:1 number:2 {x:1} 
+a set | ((1, 2), {}) | ((0, 1, 2), {}) | ((1, 2), {}) | ((1, 2), {'x': 1}) | undefined 2: number:1 number:2 | undefined 3: number:0 number:1 number:2 | undefined 2: number:1 number:2 | undefined 3: number:1 number:2 {x:1} 
+a map | ((1,), {}) | ((0, 1), {}) | ((1,), {}) | ((1,), {'x': 1}) | undefined 1: number:1 | undefined 2: number:0 number:1 | undefined 1: number:1 | undefined 2: number:1 {x:1} 
+a generator | ((1, 2), {}) | ((0, 1, 2), {}) | ((1, 2), {}) | ((1, 2), {'x': 1}) | undefined 2: number:1 number:2 | undefined 3: number:0 number:1 number:2 | undefined 2: number:1 number:2 | undefined 3: number:1 number:2 {x:1} 
+a typed array | ((1, 2), {}) | ((0, 1, 2), {}) | ((1, 2), {}) | ((1, 2), {'x': 1}) | undefined 2: number:1 number:2 | undefined 3: number:0 number:1 number:2 | undefined 2: number:1 number:2 | undefined 3: number:1 number:2 {x:1} 
+a string object | (('a', 'b'), {}) | ((0, 'a', 'b'), {}) | (('a', 'b'), {}) | (('a', 'b'), {'x': 1}) | undefined 2: string:a string:b | undefined 3: number:0 string:a string:b | undefined 2: string:a string:b | undefined 3: string:a string:b {x:1} 
+arguments | ((1, 2), {}) | ((0, 1, 2), {}) | ((1, 2), {}) | ((1, 2), {'x': 1}) | undefined 2: number:1 number:2 | undefined 3: number:0 number:1 number:2 | undefined 2: number:1 number:2 | undefined 3: number:1 number:2 {x:1} 
+an object | (('a',), {}) | ((0, 'a'), {}) | (('a',), {}) | (('a',), {'x': 1}) | undefined 1: string:a | undefined 2: number:0 string:a | undefined 1: string:a | undefined 2: string:a {x:1} 
+a function | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) | undefined 0:  | undefined 1: number:0 | undefined 0:  | undefined 1: {x:1} 
+a generator that throws | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator | JSTypeError: TypeError: from the generator 
+--- arrays that say they are longer than any call can take
+4294967295 f(*p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967295 f(0, *p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967295 f(0, 1.0, *p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967295 f(*p, **k) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967295 f(0, *p, **k) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967295 f(*p, x=1) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967294 f(*p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967294 f(0, *p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967294 f(0, 1.0, *p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967294 f(*p, **k) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967294 f(0, *p, **k) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+4294967294 f(*p, x=1) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+1048577 f(*p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+1048577 f(0, *p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+1048577 f(0, 1.0, *p) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+1048577 f(*p, **k) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+1048577 f(0, *p, **k) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+1048577 f(*p, x=1) | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError | RecursionError
+--- a prototype that answers for the holes
+[1, , 3] | ((1, None, 3), {}) | ((0, 1, None, 3), {}) | ((1, None, 3), {'x': 1}) | undefined 3: number:1 undefined:undefined number:3 | undefined 4: number:0 number:1 undefined:undefined number:3 | undefined 4: number:1 undefined:undefined number:3 {x:1}
+new Array(2) | ((None, None), {}) | ((0, None, None), {}) | ((None, None), {'x': 1}) | undefined 2: undefined:undefined undefined:undefined | undefined 3: number:0 undefined:undefined undefined:undefined | undefined 3: undefined:undefined undefined:undefined {x:1}
+[1.5, , 3.5] | ((1.5, None, 3.5), {}) | ((0, 1.5, None, 3.5), {}) | ((1.5, None, 3.5), {'x': 1}) | undefined 3: number:1.5 undefined:undefined number:3.5 | undefined 4: number:0 number:1.5 undefined:undefined number:3.5 | undefined 4: number:1.5 undefined:undefined number:3.5 {x:1}
+--- things of JS after the two stars
+an object | ((), {'a': 1, 'b': 2}) | ((5,), {'a': 1, 'b': 2}) | ((0,), {'a': 1, 'b': 2}) | (1, 2) | TypeError: f2() got multiple values for argument 'a' | TypeError: f2() got multiple values for argument 'a' | undefined 1: {a:1,b:2} | undefined 2: number:5 {a:1,b:2} | undefined 2: number:0 {a:1,b:2} 
+empty | ((), {}) | ((5,), {}) | ((0,), {}) | TypeError: f2() missing 1 required positional argument: 'a' | (5, 2) | (0, 2) | undefined 0:  | undefined 1: number:5 | undefined 1: number:0 
+a map | ((), {'a': 1}) | ((5,), {'a': 1}) | ((0,), {'a': 1}) | (1, 2) | TypeError: f2() got multiple values for argument 'a' | TypeError: f2() got multiple values for argument 'a' | undefined 1: {a:1} | undefined 2: number:5 {a:1} | undefined 2: number:0 {a:1} 
+null prototype | ((), {'a': 1}) | ((5,), {'a': 1}) | ((0,), {'a': 1}) | (1, 2) | TypeError: f2() got multiple values for argument 'a' | TypeError: f2() got multiple values for argument 'a' | undefined 1: {a:1} | undefined 2: number:5 {a:1} | undefined 2: number:0 {a:1} 
+an array | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list | TypeError: Value after ** must be a mapping, not list 
+a number key | ((), {'1': 2}) | ((5,), {'1': 2}) | ((0,), {'1': 2}) | TypeError: f2() got an unexpected keyword argument '1' | TypeError: f2() got an unexpected keyword argument '1' | TypeError: f2() got an unexpected keyword argument '1' | undefined 1: {1:2} | undefined 2: number:5 {1:2} | undefined 2: number:0 {1:2} 
+a getter | ((), {'a': 'got'}) | ((5,), {'a': 'got'}) | ((0,), {'a': 'got'}) | ('got', 2) | TypeError: f2() got multiple values for argument 'a' | TypeError: f2() got multiple values for argument 'a' | undefined 1: {a:got} | undefined 2: number:5 {a:got} | undefined 2: number:0 {a:got} 
+of a class | ((), {'a': 1}) | ((5,), {'a': 1}) | ((0,), {'a': 1}) | (1, 2) | TypeError: f2() got multiple values for argument 'a' | TypeError: f2() got multiple values for argument 'a' | undefined 1: {a:1} | undefined 2: number:5 {a:1} | undefined 2: number:0 {a:1} 
+a function | ((), {}) | ((5,), {}) | ((0,), {}) | TypeError: f2() missing 1 required positional argument: 'a' | (5, 2) | (0, 2) | undefined 0:  | undefined 1: number:5 | undefined 1: number:0 
+--- JS calls Python, which passes it on
+passes_on ((), {}) ((1,), {}) ((1, 2.5, 'three'), {}) (([1, 2],), {}) ((None,), {})
+passes_on_with_more (('more',), {}) (('more', 1), {}) (('more', 1, 2.5, 'three'), {}) (('more', [1, 2]), {}) (('more', None), {})
+passes_on_to_js undefined 0:  undefined 1: number:1 undefined 3: number:1 number:2.5 string:three undefined 1: [1,2] undefined 1: undefined:undefined

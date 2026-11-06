@@ -1,0 +1,365 @@
+status: 0
+script: f7aebe8457ec85be
+---
+--- nobody listens
+fvk(*(1, 2)) | ((1, 2), {}) | []
+fvk(*[1, 2]) | ((1, 2), {}) | []
+fvk(*()) | ((), {}) | []
+fvk(*(), **{}) | ((), {}) | []
+fvk(**{}) | ((), {}) | []
+fvk(**{'x': 1}) | ((), {'x': 1}) | []
+fvk(*(), **{'x': 1}) | ((), {'x': 1}) | []
+fvk(0, *(1,)) | ((0, 1), {}) | []
+fvk(0, *()) | ((0,), {}) | []
+fvk(0, **{'x': 1}) | ((0,), {'x': 1}) | []
+fvk(0, **{}) | ((0,), {}) | []
+fvk(*(1,), x=2) | ((1,), {'x': 2}) | []
+fvk(*(), x=2) | ((), {'x': 2}) | []
+fvk(*(1,), *(2,)) | ((1, 2), {}) | []
+fvk(*(), 3) | ((3,), {}) | []
+fvk(*Iterable(1, 2)) | ((1, 2), {}) | ['iter', 'end of iter']
+fvk(*Iterable()) | ((), {}) | ['iter', 'end of iter']
+fvk(0, *Iterable(1)) | ((0, 1), {}) | ['iter', 'end of iter']
+fvk(*Iterable(1), **Mapping('x')) | ((1,), {'x': 1}) | ['keys', "item of 'x'", 'iter', 'end of iter']
+fvk(0, *Iterable(1), **Mapping('x')) | ((0, 1), {'x': 1}) | ['iter', 'end of iter', 'keys', "item of 'x'"]
+fvk(**Mapping('x', 'y')) | ((), {'x': 1, 'y': 1}) | ['keys', "item of 'x'", "item of 'y'"]
+fvk(*Iterable(1), x=2, **Mapping('y')) | ((1,), {'x': 2, 'y': 1}) | ['keys', "item of 'y'", 'iter', 'end of iter']
+fvk(*Iterable(1, fails=True)) | LookupError: the iterable | ['iter']
+fvk(0, *Iterable(1, fails=True), **Mapping('x')) | LookupError: the iterable | ['iter']
+fvk(*Iterable(1, fails=True), **Mapping('x')) | LookupError: the iterable | ['keys', "item of 'x'", 'iter']
+fvk(*5) | TypeError: Value after * must be an iterable, not int | []
+fvk(**5) | TypeError: Value after ** must be a mapping, not int | []
+fvk(*Iterable(1), **5) | TypeError: Value after ** must be a mapping, not int | []
+fvk(*(1,), **{1: 2}) | TypeError: keywords must be strings | []
+fvk(*Iterable(1), **{1: 2}) | TypeError: keywords must be strings | ['iter', 'end of iter']
+fvk(*Iterable(1), **Mapping(1)) | TypeError: keywords must be strings | ['keys', 'item of 1', 'iter', 'end of iter']
+fvk(x=1, **Mapping('x')) | TypeError: __main__.fvk() got multiple values for keyword argument 'x' | ['keys']
+f2(*(1,), **{'a': 2}) | TypeError: f2() got multiple values for argument 'a' | []
+f2(*(1, 2, 3)) | TypeError: f2() takes from 1 to 2 positional arguments but 3 were given | []
+f2(*Iterable(1, 2, 3)) | TypeError: f2() takes from 1 to 2 positional arguments but 3 were given | ['iter', 'end of iter']
+f2(**Mapping('c')) | TypeError: f2() got an unexpected keyword argument 'c' | ['keys', "item of 'c'"]
+fvk(**{Name('x'): 1, Name('y'): 2}) | ((), {'x': 1, 'y': 2}) | ['hash of x', 'hash of y', 'x == y', 'hash of x', 'hash of y', 'x == y']
+fvk(*(1,), **{Name('x'): 1, Name('y'): 2}) | ((1,), {'x': 1, 'y': 2}) | ['hash of x', 'hash of y', 'x == y', 'hash of x', 'hash of y', 'x == y']
+fvk(*Iterable(1), **{Name('x'): 1, Name('y'): 2}) | ((1,), {'x': 1, 'y': 2}) | ['hash of x', 'hash of y', 'x == y', 'iter', 'end of iter', 'hash of x', 'hash of y', 'x == y']
+f2(**{Name('a'): 1, Name('b'): 2}) | (1, 2) | ['hash of a', 'hash of b', 'a == b', 'a == a', 'b == a', 'b == b']
+dict(**{Name('x'): 1, Name('y'): 2}) | {'x': 1, 'y': 2} | ['hash of x', 'hash of y', 'x == y', 'hash of x', 'hash of y', 'x == y']
+len(*('ab',)) | 2 | []
+len(*Iterable('ab')) | 2 | ['iter', 'end of iter']
+len(*()) | TypeError: len() takes exactly one argument (0 given) | []
+len(*(1,)) | TypeError: object of type 'int' has no len() | []
+len(*('ab',), **{}) | 2 | []
+len(*('ab',), **{'x': 1}) | TypeError: len() takes no keyword arguments | []
+len(*('ab',), **{1: 2}) | TypeError: keywords must be strings | []
+max(1, *(2, 3)) | 3 | []
+max(*Iterable(1, 2), **Mapping('key')) | TypeError: 'int' object is not callable | ['keys', "item of 'key'", 'iter', 'end of iter']
+dict(*(), **Mapping('x')) | {'x': 1} | ['keys', "item of 'x'"]
+dict(**{'x': 1}) | {'x': 1} | []
+Plain(*(1,)) | Plain() | []
+Plain(*Iterable(1), **Mapping('x')) | Plain() | ['keys', "item of 'x'", 'iter', 'end of iter']
+Plain(**{}) | Plain() | []
+o(*(1,)) | ((1,), {}) | []
+o(*Iterable(1), **Mapping('x')) | ((1,), {'x': 1}) | ['keys', "item of 'x'", 'iter', 'end of iter']
+o(*()) | ((), {}) | []
+o.method(*(1,)) | ((1,), {}) | []
+o.method(*()) | ((), {}) | []
+o.method(0, *Iterable(1), **Mapping('x')) | ((0, 1), {'x': 1}) | ['iter', 'end of iter', 'keys', "item of 'x'"]
+bound(*(1,)) | ((1,), {}) | []
+bound(*()) | ((), {}) | []
+bound(**{'x': 1}) | ((), {'x': 1}) | []
+Plain.method(*(o, 1)) | ((1,), {}) | []
+Plain.method(o, *(1,)) | ((1,), {}) | []
+[].append(*(1,)) | None | []
+'{}'.format(*(1,)) | '1' | []
+str.upper(*('a',)) | 'A' | []
+None(*Iterable(1)) | TypeError: 'NoneType' object is not callable | ['iter', 'end of iter']
+None(*(1,), **Mapping('x')) | TypeError: 'NoneType' object is not callable | ['keys', "item of 'x'"]
+(lambda *a: a)(*(1,)) | (1,) | []
+--- sys.monitoring: CALL, C_RETURN, C_RAISE, PY_START
+fvk(*(1, 2)) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*[1, 2]) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*()) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(*(), **{}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(**{}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(**{'x': 1}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(*(), **{'x': 1}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(0, *(1,)) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(0, *()) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(0, **{'x': 1}) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(0, **{}) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(*(1,), x=2) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*(), x=2) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(*(1,), *(2,)) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*(), 3) | True | ['CALL fvk 3', 'PY_START fvk']
+fvk(*Iterable(1, 2)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL fvk 1', 'PY_START fvk']
+fvk(*Iterable()) | True | ['CALL Iterable MISSING', 'C_RETURN Iterable MISSING', 'iter', 'end of iter', 'CALL fvk MISSING', 'PY_START fvk']
+fvk(0, *Iterable(1)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL fvk 0', 'PY_START fvk']
+fvk(*Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter', 'end of iter', 'CALL fvk 1', 'PY_START fvk']
+fvk(0, *Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL fvk 0', 'PY_START fvk']
+fvk(**Mapping('x', 'y')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", "item of 'y'", 'CALL fvk MISSING', 'PY_START fvk']
+fvk(*Iterable(1), x=2, **Mapping('y')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'y'", "C_RETURN Mapping 'y'", 'keys', "item of 'y'", 'iter', 'end of iter', 'CALL fvk 1', 'PY_START fvk']
+fvk(*Iterable(1, fails=True)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter']
+fvk(0, *Iterable(1, fails=True), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter']
+fvk(*Iterable(1, fails=True), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter']
+fvk(*5) | True | []
+fvk(**5) | True | []
+fvk(*Iterable(1), **5) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1']
+fvk(x=1, **Mapping('x')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys']
+f2(*(1,), **{'a': 2}) | True | ['CALL f2 1']
+f2(*(1, 2, 3)) | True | ['CALL f2 1']
+f2(*Iterable(1, 2, 3)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL f2 1']
+f2(**Mapping('c')) | True | ["CALL Mapping 'c'", "C_RETURN Mapping 'c'", 'keys', "item of 'c'", 'CALL f2 MISSING']
+fvk(**{Name('x'): 1, Name('y'): 2}) | True | ["CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'CALL fvk MISSING', 'hash of x', 'hash of y', 'x == y', 'PY_START fvk']
+fvk(*(1,), **{Name('x'): 1, Name('y'): 2}) | True | ["CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'CALL fvk 1', 'hash of x', 'hash of y', 'x == y', 'PY_START fvk']
+fvk(*Iterable(1), **{Name('x'): 1, Name('y'): 2}) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'iter', 'end of iter', 'CALL fvk 1', 'hash of x', 'hash of y', 'x == y', 'PY_START fvk']
+f2(**{Name('a'): 1, Name('b'): 2}) | True | ["CALL Name 'a'", "C_RETURN Name 'a'", "CALL Name 'b'", "C_RETURN Name 'b'", 'hash of a', 'hash of b', 'a == b', 'CALL f2 MISSING', 'a == a', 'b == a', 'b == b', 'PY_START f2']
+dict(**{Name('x'): 1, Name('y'): 2}) | True | ["CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'CALL dict MISSING', 'hash of x', 'hash of y', 'x == y', 'C_RETURN dict MISSING']
+len(*('ab',)) | True | ["CALL len 'ab'", "C_RETURN len 'ab'"]
+len(*Iterable('ab')) | True | ["CALL Iterable 'ab'", "C_RETURN Iterable 'ab'", 'iter', 'end of iter', "CALL len 'ab'", "C_RETURN len 'ab'"]
+len(*()) | True | ['CALL len MISSING', 'C_RAISE len MISSING']
+len(*(1,)) | True | ['CALL len 1', 'C_RAISE len 1']
+len(*('ab',), **{}) | True | ["CALL len 'ab'", "C_RETURN len 'ab'"]
+len(*('ab',), **{'x': 1}) | True | ["CALL len 'ab'", "C_RAISE len 'ab'"]
+max(1, *(2, 3)) | True | ['CALL max 1', 'C_RETURN max 1']
+max(*Iterable(1, 2), **Mapping('key')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'key'", "C_RETURN Mapping 'key'", 'keys', "item of 'key'", 'iter', 'end of iter', 'CALL max 1', 'C_RAISE max 1']
+dict(*(), **Mapping('x')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL dict MISSING', 'C_RETURN dict MISSING']
+dict(**{'x': 1}) | True | ['CALL dict MISSING', 'C_RETURN dict MISSING']
+Plain(*(1,)) | True | ['CALL Plain 1', 'PY_START Plain.__init__', 'C_RETURN Plain 1']
+Plain(*Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter', 'end of iter', 'CALL Plain 1', 'PY_START Plain.__init__', 'C_RETURN Plain 1']
+Plain(**{}) | True | ['CALL Plain MISSING', 'PY_START Plain.__init__', 'C_RETURN Plain MISSING']
+o(*(1,)) | True | ['CALL Plain() 1', 'PY_START Plain.__call__', 'C_RETURN Plain() 1']
+o(*Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter', 'end of iter', 'CALL Plain() 1', 'PY_START Plain.__call__', 'C_RETURN Plain() 1']
+o(*()) | True | ['CALL Plain() MISSING', 'PY_START Plain.__call__', 'C_RETURN Plain() MISSING']
+o.method(*(1,)) | True | ['CALL Plain.method 1', 'PY_START Plain.method']
+o.method(*()) | True | ['CALL Plain.method MISSING', 'PY_START Plain.method']
+o.method(0, *Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL Plain.method 0', 'PY_START Plain.method']
+bound(*(1,)) | True | ['CALL Plain.method 1', 'PY_START Plain.method']
+bound(*()) | True | ['CALL Plain.method MISSING', 'PY_START Plain.method']
+bound(**{'x': 1}) | True | ['CALL Plain.method MISSING', 'PY_START Plain.method']
+Plain.method(*(o, 1)) | True | ['CALL Plain.method Plain()', 'PY_START Plain.method']
+Plain.method(o, *(1,)) | True | ['CALL Plain.method Plain()', 'PY_START Plain.method']
+[].append(*(1,)) | True | ['CALL list.append 1', 'C_RETURN list.append 1']
+'{}'.format(*(1,)) | True | ['CALL str.format 1', 'C_RETURN str.format 1']
+str.upper(*('a',)) | True | ["CALL str.upper 'a'", "C_RETURN str.upper 'a'"]
+None(*Iterable(1)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL None 1', 'C_RAISE None 1']
+None(*(1,), **Mapping('x')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL None 1', 'C_RAISE None 1']
+(lambda *a: a)(*(1,)) | True | ['CALL <lambda> 1', 'PY_START <lambda>']
+fvk(*(1, 2)) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*[1, 2]) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*()) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(*(), **{}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(**{}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(**{'x': 1}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(*(), **{'x': 1}) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(0, *(1,)) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(0, *()) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(0, **{'x': 1}) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(0, **{}) | True | ['CALL fvk 0', 'PY_START fvk']
+fvk(*(1,), x=2) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*(), x=2) | True | ['CALL fvk MISSING', 'PY_START fvk']
+fvk(*(1,), *(2,)) | True | ['CALL fvk 1', 'PY_START fvk']
+fvk(*(), 3) | True | ['CALL fvk 3', 'PY_START fvk']
+fvk(*Iterable(1, 2)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL fvk 1', 'PY_START fvk']
+fvk(*Iterable()) | True | ['CALL Iterable MISSING', 'C_RETURN Iterable MISSING', 'iter', 'end of iter', 'CALL fvk MISSING', 'PY_START fvk']
+fvk(0, *Iterable(1)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL fvk 0', 'PY_START fvk']
+fvk(*Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter', 'end of iter', 'CALL fvk 1', 'PY_START fvk']
+fvk(0, *Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL fvk 0', 'PY_START fvk']
+fvk(**Mapping('x', 'y')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", "item of 'y'", 'CALL fvk MISSING', 'PY_START fvk']
+fvk(*Iterable(1), x=2, **Mapping('y')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'y'", "C_RETURN Mapping 'y'", 'keys', "item of 'y'", 'iter', 'end of iter', 'CALL fvk 1', 'PY_START fvk']
+fvk(*Iterable(1, fails=True)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter']
+fvk(0, *Iterable(1, fails=True), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter']
+fvk(*Iterable(1, fails=True), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter']
+fvk(*5) | True | []
+fvk(**5) | True | []
+fvk(*Iterable(1), **5) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1']
+fvk(x=1, **Mapping('x')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys']
+f2(*(1,), **{'a': 2}) | True | ['CALL f2 1']
+f2(*(1, 2, 3)) | True | ['CALL f2 1']
+f2(*Iterable(1, 2, 3)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL f2 1']
+f2(**Mapping('c')) | True | ["CALL Mapping 'c'", "C_RETURN Mapping 'c'", 'keys', "item of 'c'", 'CALL f2 MISSING']
+fvk(**{Name('x'): 1, Name('y'): 2}) | True | ["CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'CALL fvk MISSING', 'hash of x', 'hash of y', 'x == y', 'PY_START fvk']
+fvk(*(1,), **{Name('x'): 1, Name('y'): 2}) | True | ["CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'CALL fvk 1', 'hash of x', 'hash of y', 'x == y', 'PY_START fvk']
+fvk(*Iterable(1), **{Name('x'): 1, Name('y'): 2}) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'iter', 'end of iter', 'CALL fvk 1', 'hash of x', 'hash of y', 'x == y', 'PY_START fvk']
+f2(**{Name('a'): 1, Name('b'): 2}) | True | ["CALL Name 'a'", "C_RETURN Name 'a'", "CALL Name 'b'", "C_RETURN Name 'b'", 'hash of a', 'hash of b', 'a == b', 'CALL f2 MISSING', 'a == a', 'b == a', 'b == b', 'PY_START f2']
+dict(**{Name('x'): 1, Name('y'): 2}) | True | ["CALL Name 'x'", "C_RETURN Name 'x'", "CALL Name 'y'", "C_RETURN Name 'y'", 'hash of x', 'hash of y', 'x == y', 'CALL dict MISSING', 'hash of x', 'hash of y', 'x == y', 'C_RETURN dict MISSING']
+len(*('ab',)) | True | ["CALL len 'ab'", "C_RETURN len 'ab'"]
+len(*Iterable('ab')) | True | ["CALL Iterable 'ab'", "C_RETURN Iterable 'ab'", 'iter', 'end of iter', "CALL len 'ab'", "C_RETURN len 'ab'"]
+len(*()) | True | ['CALL len MISSING', 'C_RAISE len MISSING']
+len(*(1,)) | True | ['CALL len 1', 'C_RAISE len 1']
+len(*('ab',), **{}) | True | ["CALL len 'ab'", "C_RETURN len 'ab'"]
+len(*('ab',), **{'x': 1}) | True | ["CALL len 'ab'", "C_RAISE len 'ab'"]
+max(1, *(2, 3)) | True | ['CALL max 1', 'C_RETURN max 1']
+max(*Iterable(1, 2), **Mapping('key')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'key'", "C_RETURN Mapping 'key'", 'keys', "item of 'key'", 'iter', 'end of iter', 'CALL max 1', 'C_RAISE max 1']
+dict(*(), **Mapping('x')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL dict MISSING', 'C_RETURN dict MISSING']
+dict(**{'x': 1}) | True | ['CALL dict MISSING', 'C_RETURN dict MISSING']
+Plain(*(1,)) | True | ['CALL Plain 1', 'PY_START Plain.__init__', 'C_RETURN Plain 1']
+Plain(*Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter', 'end of iter', 'CALL Plain 1', 'PY_START Plain.__init__', 'C_RETURN Plain 1']
+Plain(**{}) | True | ['CALL Plain MISSING', 'PY_START Plain.__init__', 'C_RETURN Plain MISSING']
+o(*(1,)) | True | ['CALL Plain() 1', 'PY_START Plain.__call__', 'C_RETURN Plain() 1']
+o(*Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'iter', 'end of iter', 'CALL Plain() 1', 'PY_START Plain.__call__', 'C_RETURN Plain() 1']
+o(*()) | True | ['CALL Plain() MISSING', 'PY_START Plain.__call__', 'C_RETURN Plain() MISSING']
+o.method(*(1,)) | True | ['CALL Plain.method 1', 'PY_START Plain.method']
+o.method(*()) | True | ['CALL Plain.method MISSING', 'PY_START Plain.method']
+o.method(0, *Iterable(1), **Mapping('x')) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', "CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL Plain.method 0', 'PY_START Plain.method']
+bound(*(1,)) | True | ['CALL Plain.method 1', 'PY_START Plain.method']
+bound(*()) | True | ['CALL Plain.method MISSING', 'PY_START Plain.method']
+bound(**{'x': 1}) | True | ['CALL Plain.method MISSING', 'PY_START Plain.method']
+Plain.method(*(o, 1)) | True | ['CALL Plain.method Plain()', 'PY_START Plain.method']
+Plain.method(o, *(1,)) | True | ['CALL Plain.method Plain()', 'PY_START Plain.method']
+[].append(*(1,)) | True | ['CALL list.append 1', 'C_RETURN list.append 1']
+'{}'.format(*(1,)) | True | ['CALL str.format 1', 'C_RETURN str.format 1']
+str.upper(*('a',)) | True | ["CALL str.upper 'a'", "C_RETURN str.upper 'a'"]
+None(*Iterable(1)) | True | ['CALL Iterable 1', 'C_RETURN Iterable 1', 'iter', 'end of iter', 'CALL None 1', 'C_RAISE None 1']
+None(*(1,), **Mapping('x')) | True | ["CALL Mapping 'x'", "C_RETURN Mapping 'x'", 'keys', "item of 'x'", 'CALL None 1', 'C_RAISE None 1']
+(lambda *a: a)(*(1,)) | True | ['CALL <lambda> 1', 'PY_START <lambda>']
+--- sys.setprofile
+fvk(*(1, 2)) | True | ['call fvk']
+fvk(*[1, 2]) | True | ['call fvk']
+fvk(*()) | True | ['call fvk']
+fvk(*(), **{}) | True | ['call fvk']
+fvk(**{}) | True | ['call fvk']
+fvk(**{'x': 1}) | True | ['call fvk']
+fvk(*(), **{'x': 1}) | True | ['call fvk']
+fvk(0, *(1,)) | True | ['call fvk']
+fvk(0, *()) | True | ['call fvk']
+fvk(0, **{'x': 1}) | True | ['call fvk']
+fvk(0, **{}) | True | ['call fvk']
+fvk(*(1,), x=2) | True | ['call fvk']
+fvk(*(), x=2) | True | ['call fvk']
+fvk(*(1,), *(2,)) | True | ['call fvk']
+fvk(*(), 3) | True | ['call fvk']
+fvk(*Iterable(1, 2)) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'call Iterable.__iter__', 'end of iter', 'call fvk']
+fvk(*Iterable()) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'end of iter', 'call fvk']
+fvk(0, *Iterable(1)) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call fvk']
+fvk(*Iterable(1), **Mapping('x')) | True | ['call Iterable.__init__', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call fvk']
+fvk(0, *Iterable(1), **Mapping('x')) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call fvk']
+fvk(**Mapping('x', 'y')) | True | ['call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call Mapping.__getitem__', "item of 'y'", 'call fvk']
+fvk(*Iterable(1), x=2, **Mapping('y')) | True | ['call Iterable.__init__', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'y'", 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call fvk']
+fvk(*Iterable(1, fails=True)) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__']
+fvk(0, *Iterable(1, fails=True), **Mapping('x')) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__']
+fvk(*Iterable(1, fails=True), **Mapping('x')) | True | ['call Iterable.__init__', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__']
+fvk(*5) | True | []
+fvk(**5) | True | []
+fvk(*Iterable(1), **5) | True | ['call Iterable.__init__']
+fvk(x=1, **Mapping('x')) | True | ['call Mapping.__init__', 'call Mapping.keys', 'keys']
+f2(*(1,), **{'a': 2}) | True | []
+f2(*(1, 2, 3)) | True | []
+f2(*Iterable(1, 2, 3)) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'call Iterable.__iter__', 'call Iterable.__iter__', 'end of iter']
+f2(**Mapping('c')) | True | ['call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'c'"]
+fvk(**{Name('x'): 1, Name('y'): 2}) | True | ['hash of x', 'hash of y', 'x == y', 'hash of x', 'hash of y', 'x == y', 'call fvk']
+fvk(*(1,), **{Name('x'): 1, Name('y'): 2}) | True | ['hash of x', 'hash of y', 'x == y', 'hash of x', 'hash of y', 'x == y', 'call fvk']
+fvk(*Iterable(1), **{Name('x'): 1, Name('y'): 2}) | True | ['call Iterable.__init__', 'hash of x', 'hash of y', 'x == y', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'hash of x', 'hash of y', 'x == y', 'call fvk']
+f2(**{Name('a'): 1, Name('b'): 2}) | True | ['hash of a', 'hash of b', 'a == b', 'a == a', 'b == a', 'b == b', 'call f2']
+dict(**{Name('x'): 1, Name('y'): 2}) | True | ['hash of x', 'hash of y', 'x == y', 'hash of x', 'hash of y', 'x == y']
+len(*('ab',)) | True | ['c_call len', 'c_return len']
+len(*Iterable('ab')) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'c_call len', 'c_return len']
+len(*()) | True | ['c_call len', 'c_exception len']
+len(*(1,)) | True | ['c_call len', 'c_exception len']
+len(*('ab',), **{}) | True | ['c_call len', 'c_return len']
+len(*('ab',), **{'x': 1}) | True | ['c_call len', 'c_exception len']
+max(1, *(2, 3)) | True | ['c_call max', 'c_return max']
+max(*Iterable(1, 2), **Mapping('key')) | True | ['call Iterable.__init__', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'key'", 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'call Iterable.__iter__', 'end of iter', 'c_call max', 'c_exception max']
+dict(*(), **Mapping('x')) | True | ['call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'"]
+dict(**{'x': 1}) | True | []
+Plain(*(1,)) | True | ['call Plain.__init__']
+Plain(*Iterable(1), **Mapping('x')) | True | ['call Iterable.__init__', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call Plain.__init__']
+Plain(**{}) | True | ['call Plain.__init__']
+o(*(1,)) | True | ['call Plain.__call__']
+o(*Iterable(1), **Mapping('x')) | True | ['call Iterable.__init__', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call Plain.__call__']
+o(*()) | True | ['call Plain.__call__']
+o.method(*(1,)) | True | ['call Plain.method']
+o.method(*()) | True | ['call Plain.method']
+o.method(0, *Iterable(1), **Mapping('x')) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter', 'call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'", 'call Plain.method']
+bound(*(1,)) | True | ['call Plain.method']
+bound(*()) | True | ['call Plain.method']
+bound(**{'x': 1}) | True | ['call Plain.method']
+Plain.method(*(o, 1)) | True | ['call Plain.method']
+Plain.method(o, *(1,)) | True | ['call Plain.method']
+[].append(*(1,)) | True | ['c_call list.append', 'c_return list.append']
+'{}'.format(*(1,)) | True | ['c_call str.format', 'c_return str.format']
+str.upper(*('a',)) | True | ['c_call str.upper', 'c_return str.upper']
+None(*Iterable(1)) | True | ['call Iterable.__init__', 'call Iterable.__iter__', 'iter', 'call Iterable.__iter__', 'end of iter']
+None(*(1,), **Mapping('x')) | True | ['call Mapping.__init__', 'call Mapping.keys', 'keys', 'call Mapping.__getitem__', "item of 'x'"]
+(lambda *a: a)(*(1,)) | True | ['call <lambda>']
+--- what the one who listens does to the operands
+fvk(*the_list) | ((1, 2), {}) | ['CALL fvk 1'] [1, 2, 'late'] {'x': 1, 'late': 1}
+fvk(**the_dict) | ((), {'x': 1}) | ['CALL fvk MISSING'] [1, 2, 'late'] {'x': 1, 'late': 1}
+fvk(*the_list, **the_dict) | ((1, 2), {'x': 1}) | ['CALL fvk 1'] [1, 2, 'late'] {'x': 1, 'late': 1}
+fvk(0, *the_list, **the_dict) | ((0, 1, 2), {'x': 1}) | ['CALL fvk 0'] [1, 2, 'late'] {'x': 1, 'late': 1}
+max(*the_list[:2]) | 2 | ['CALL max 1'] [1, 2, 'late'] {'x': 1, 'late': 1}
+dict(**the_dict) | {'x': 1} | ['CALL dict MISSING'] [1, 2, 'late'] {'x': 1, 'late': 1}
+fvk(*the_list, x=1) | ((1, 2), {'x': 1}) | ['CALL fvk 1'] [1, 2, 'late'] {'y': 1, 'late': 1}
+fvk(*Iterable(1), **Mapping("x")) | KeyError: 'the listener' | []
+len(*Iterable("a")) | KeyError: 'the listener' | []
+fvk(0, *(1,)) | KeyError: 'the listener' | []
+--- whoever is told of the lines changes the list
+on_lines ((0, 1, 'line 1', 'line 2', 'line 1'), {}) [1, 'line 1', 'line 2', 'line 1', 'line 3', 'line 1']
+on_one_line ((0, 1, 'line 1'), {}) [1, 'line 1']
+on_lines_keyword ((0, 1, 'line 1', 'line 2', 'line 1'), {'x': {}}) [1, 'line 1', 'line 2', 'line 1', 'line 3', 'line 1']
+--- lines
+c1 [1, 2, 3, 1, 4, 1, 5, 1] [1, 2, 3, 1, 4, 1, 5, 1] [1, 2, 3, 1, 4, 1, 5, 1] [0, 1, 2, 3, 1, 4, 1, 5, 1] (0,)
+c2 [1, 2, 1, 3, 1] [1, 2, 1, 3, 1] [1, 2, 1, 3, 1] [0, 1, 2, 1, 3, 1] (0,)
+c3 [1, 3, 1] [1, 3, 1] [1, 3, 1] [0, 1, 3, 1] (0, (0,))
+c4 [1, 2, 1, 3, 1, 4, 1, 5, 1] [1, 2, 1, 3, 1, 4, 1, 5, 1] [1, 2, 1, 3, 1, 4, 1, 5, 1] [0, 1, 2, 1, 3, 1, 4, 1, 5, 1] (0, 'x')
+c5 [1, 2, 3, 1, 4, 1, 5, 1] [1, 2, 3, 1, 4, 1, 5, 1] [1, 2, 3, 1, 4, 1, 5, 1] [0, 1, 2, 3, 1, 4, 1, 5, 1] (None,)
+c6 [1, 2, 1, 3, 1, 4, 1] [1, 2, 1, 3, 1, 4, 1] [1, 2, 1, 3, 1, 4, 1] [0, 1, 2, 1, 3, 1, 4, 1] (None,)
+c7 [1, 3, 1] [1, 3, 1] [1, 3, 1] [0, 1, 3, 1] (1, (1, 2, 3))
+c8 [1, 3, 1] [1, 3, 1] [1, 3, 1] [0, 1, 3, 1] (1, (1, 2, 3))
+c9 [1, 2, 3, 2, 1, 5, 6, 5, 7, 5, 1, 8, 9, 8, 10, 8, 11, 8, 12, 8, 1] [1, 2, 3, 2, 1, 5, 6, 5, 7, 5, 1, 8, 9, 8, 10, 8, 11, 8, 12, 8, 1] [1, 2, 3, 2, 1, 5, 6, 5, 7, 5, 1, 8, 9, 8, 10, 8, 11, 8, 12, 8, 1] [0, 1, 2, 3, 2, 1, 5, 6, 5, 7, 5, 1, 8, 9, 8, 10, 8, 11, 8, 12, 8, 1] (0, ())
+c10 [1, 2, 1, 3, 1, 4, 1, 6] [1, 2, 1, 3, 1, 4, 1, 6] [1, 2, 1, 3, 1, 4, 1, 6] [0, 1, 2, 1, 3, 1, 4, 1, 6] (0, 'y')
+--- as many arguments before the star as CPython has on its stack, and more
+2 constants *a 6 [1, 2, 3, 1, 4, 1] [1, 2, 3, 1, 4, 1] [0] 1
+2 constants **k 3 [1, 4, 1] [1, 4, 1] [0, ('tuple of', 2)] 2
+2 constants *a, **k 8 [1, 2, 3, 1, 4, 1, 5, 1] [3, 1, 4, 1, 5, 1] [0] 1
+2 constants *a, x=1 8 [1, 2, 3, 1, 4, 1, 5, 1] [3, 1, 4, 1, 5, 1] [0, 'x'] 2
+2 variables *a 6 [1, 2, 3, 1, 4, 1] [1, 2, 3, 1, 4, 1] [None] 1
+2 variables **k 6 [1, 2, 3, 1, 4, 1] [1, 2, 3, 1, 4, 1] [None] 1
+2 variables *a, **k 8 [1, 2, 3, 1, 4, 1, 5, 1] [3, 1, 4, 1, 5, 1] [None] 1
+2 variables *a, x=1 8 [1, 2, 3, 1, 4, 1, 5, 1] [3, 1, 4, 1, 5, 1] ['x'] 1
+3 constants *a 3 [1, 5, 1] [1, 5, 1] [0, ('tuple of', 3)] 2
+3 constants **k 3 [1, 5, 1] [1, 5, 1] [0, ('tuple of', 3)] 2
+3 constants *a, **k 5 [1, 5, 1, 6, 1] [1, 5, 1, 6, 1] [0, ('tuple of', 3)] 2
+3 constants *a, x=1 5 [1, 5, 1, 6, 1] [1, 5, 1, 6, 1] [0, 'x', ('tuple of', 3)] 3
+3 variables *a 7 [1, 2, 3, 4, 1, 5, 1] [2, 3, 4, 1, 5, 1] [None] 1
+3 variables **k 7 [1, 2, 3, 4, 1, 5, 1] [2, 3, 4, 1, 5, 1] [None] 1
+3 variables *a, **k 9 [1, 2, 3, 4, 1, 5, 1, 6] [4, 1, 5, 1, 6, 1] [None] 1
+3 variables *a, x=1 9 [1, 2, 3, 4, 1, 5, 1, 6] [4, 1, 5, 1, 6, 1] ['x'] 1
+28 constants *a 3 [1, 30, 1] [1, 30, 1] [0, ('tuple of', 28)] 2
+28 constants **k 3 [1, 30, 1] [1, 30, 1] [0, ('tuple of', 28)] 2
+28 constants *a, **k 5 [1, 30, 1, 31, 1] [1, 30, 1, 31, 1] [0, ('tuple of', 28)] 2
+28 constants *a, x=1 5 [1, 30, 1, 31, 1] [1, 30, 1, 31, 1] [0, 'x', ('tuple of', 28)] 3
+28 variables *a 32 [1, 2, 3, 4, 5, 6, 7, 8] [27, 28, 29, 1, 30, 1] [None] 1
+28 variables **k 32 [1, 2, 3, 4, 5, 6, 7, 8] [27, 28, 29, 1, 30, 1] [None] 1
+28 variables *a, **k 34 [1, 2, 3, 4, 5, 6, 7, 8] [29, 1, 30, 1, 31, 1] [None] 1
+28 variables *a, x=1 34 [1, 2, 3, 4, 5, 6, 7, 8] [29, 1, 30, 1, 31, 1] ['x'] 1
+29 constants *a 3 [1, 31, 1] [1, 31, 1] [0, ('tuple of', 29)] 2
+29 constants **k 3 [1, 31, 1] [1, 31, 1] [0, ('tuple of', 29)] 2
+29 constants *a, **k 5 [1, 31, 1, 32, 1] [1, 31, 1, 32, 1] [0, ('tuple of', 29)] 2
+29 constants *a, x=1 5 [1, 31, 1, 32, 1] [1, 31, 1, 32, 1] [0, 'x', ('tuple of', 29)] 3
+29 variables *a 33 [1, 2, 3, 4, 5, 6, 7, 8] [28, 29, 30, 1, 31, 1] [None] 1
+29 variables **k 33 [1, 2, 3, 4, 5, 6, 7, 8] [28, 29, 30, 1, 31, 1] [None] 1
+29 variables *a, **k 35 [1, 2, 3, 4, 5, 6, 7, 8] [30, 1, 31, 1, 32, 1] [None] 1
+29 variables *a, x=1 35 [1, 2, 3, 4, 5, 6, 7, 8] [30, 1, 31, 1, 32, 1] ['x'] 1
+30 constants *a 63 [1, 2, 1, 3, 1, 4, 1, 5] [30, 1, 31, 1, 32, 1] [0] 1
+30 constants **k 3 [1, 32, 1] [1, 32, 1] [0, ('tuple of', 30)] 2
+30 constants *a, **k 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] [0] 1
+30 constants *a, x=1 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] [0, 'x'] 2
+30 variables *a 63 [1, 2, 1, 3, 1, 4, 1, 5] [30, 1, 31, 1, 32, 1] [None] 1
+30 variables **k 34 [1, 2, 3, 4, 5, 6, 7, 8] [29, 30, 31, 1, 32, 1] [None] 1
+30 variables *a, **k 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] [None] 1
+30 variables *a, x=1 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] ['x'] 1
+31 constants *a 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] [0] 1
+31 constants **k 3 [1, 33, 1] [1, 33, 1] [0, ('tuple of', 31)] 2
+31 constants *a, **k 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] [0] 1
+31 constants *a, x=1 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] [0, 'x'] 2
+31 variables *a 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] [None] 1
+31 variables **k 65 [1, 2, 1, 3, 1, 4, 1, 5] [31, 1, 32, 1, 33, 1] [None] 1
+31 variables *a, **k 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] [None] 1
+31 variables *a, x=1 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] ['x'] 1
+32 constants *a 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] [0] 1
+32 constants **k 3 [1, 34, 1] [1, 34, 1] [0, ('tuple of', 32)] 2
+32 constants *a, **k 69 [1, 2, 1, 3, 1, 4, 1, 5] [33, 1, 34, 1, 35, 1] [0] 1
+32 constants *a, x=1 69 [1, 2, 1, 3, 1, 4, 1, 5] [33, 1, 34, 1, 35, 1] [0, 'x'] 2
+32 variables *a 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] [None] 1
+32 variables **k 67 [1, 2, 1, 3, 1, 4, 1, 5] [32, 1, 33, 1, 34, 1] [None] 1
+32 variables *a, **k 69 [1, 2, 1, 3, 1, 4, 1, 5] [33, 1, 34, 1, 35, 1] [None] 1
+32 variables *a, x=1 69 [1, 2, 1, 3, 1, 4, 1, 5] [33, 1, 34, 1, 35, 1] ['x'] 1

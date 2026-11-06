@@ -1,0 +1,1168 @@
+status: 0
+script: ec3b43e3b4467ecc
+source: 3244770b42b0cca4
+---
+no break | c(a) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | c(a) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | y = c(a) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | y = c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | y = c(a) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | y = c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | y = c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | y = c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | y = a and c(1) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | y = a and c(1) | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,5 R5 ; =
+no break | y = a and c(1) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | y = a and c(1) | more behind | 0 | tool | S L2 >2,5 L5 >5,5 L6 R6 ; = ; S L2 >2,5 L5 <5,5 L6 R6 ; =
+no break | y = a and c(1) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | y = a and c(1) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; =
+no break | pass | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | pass | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | pass | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | pass | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | pass | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | return | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | return | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | return | more behind | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | return | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | return | loop | 0 | trace | C1 L2 L3 E3 L6 R6 ; = ; = ; =
+no break | return | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+no break | return c(a) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | return c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | return c(a) | more behind | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | return c(a) | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | return c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 R6 ; = ; = ; =
+no break | return c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+no break | return 5 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | return 5 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | return 5 | more behind | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | return 5 | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | return 5 | loop | 0 | trace | C1 L2 L3 E3 L6 R6 ; = ; = ; =
+no break | return 5 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+no break | if a: y = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | if a: y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,5 R5 ; =
+no break | if a: y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | if a: y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,6 L6 R6 ; = ; S L2 >2,5 L5 <5,5 L6 R6 ; =
+no break | if a: y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | if a: y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; =
+no break | if a: /    y = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; C1 L2 E2 L5 L6 R6 ; =
+no break | if a: /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+no break | if a: /    y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L7 R7 ; = ; C1 L2 E2 L5 L6 L7 R7 ; =
+no break | if a: /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 R7 ; = ; S L2 >2,5 L5 <5,6 L6 L7 R7 ; =
+no break | if a: /    y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+no break | if a: /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 >6,7 L7 J7,2 L2 >2,2 R2 ; =
+no break | if a: /    y = 1 /else: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L8 R8 ; = ; C1 L2 E2 L5 L6 R6 ; =
+no break | if a: /    y = 1 /else: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 >5,8 L8 R8 ; = ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+no break | if a: /    y = 1 /else: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L8 L9 R9 ; = ; C1 L2 E2 L5 L6 L9 R9 ; =
+no break | if a: /    y = 1 /else: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 >5,8 L8 L9 R9 ; = ; S L2 >2,5 L5 <5,6 L6 L9 R9 ; =
+no break | if a: /    y = 1 /else: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L9 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+no break | if a: /    y = 1 /else: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; =
+no break | if a: /    y = 1 /elif b: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L7 R7 ; C1 L2 E2 L5 L7 L8 R8 ; C1 L2 E2 L5 L6 R6 ; =
+no break | if a: /    y = 1 /elif b: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 >5,7 L7 >7,7 R7 ; S L2 >2,5 L5 >5,7 L7 <7,8 L8 R8 ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+no break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L7 L9 R9 ; C1 L2 E2 L5 L7 L8 L9 R9 ; C1 L2 E2 L5 L6 L9 R9 ; =
+no break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 >7,9 L9 R9 ; S L2 >2,5 L5 >5,7 L7 <7,8 L8 L9 R9 ; S L2 >2,5 L5 <5,6 L6 L9 R9 ; =
+no break | if a: /    y = 1 /elif b: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L8 L2 R2 ; C1 L2 L3 E3 L6 L8 L9 L2 R2 ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+no break | if a: /    y = 1 /elif b: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,8 L8 <8,8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 >3,6 L6 >6,8 L8 >8,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; =
+no break | while c(0): /    y = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | while c(0): /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; = ; =
+no break | while c(0): /    y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L7 R7 ; = ; = ; =
+no break | while c(0): /    y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | while c(0): /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | for j in (1,): /    y = j | alone | 0 | trace | C1 L2 E2 L5 L6 L5 R5 ; = ; = ; =
+no break | for j in (1,): /    y = j | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; = ; = ; =
+no break | for j in (1,): /    y = j | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L7 R7 ; = ; = ; =
+no break | for j in (1,): /    y = j | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; = ; = ; =
+no break | for j in (1,): /    y = j | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L2 R2 ; = ; = ; =
+no break | for j in (1,): /    y = j | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 L5 L8 R8 ; = ; C1 L2 E2 L5 L6 R6 ; =
+no break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 R8 ; = ; S L2 >2,5 L5 <5,5 L6 >6,6 R6 ; =
+no break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L8 L9 R9 ; = ; C1 L2 E2 L5 L6 L9 R9 ; =
+no break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 L9 R9 ; = ; S L2 >2,5 L5 <5,5 L6 >6,6 L9 R9 ; =
+no break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L9 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+no break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 <7,7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 L7 >7,7 J7,2 L2 >2,2 R2 ; =
+no break | with M(): /    y = 1 | alone | 0 | trace | C1 L2 E2 L5 L6 L5 R5 ; = ; = ; =
+no break | with M(): /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 L6 L5 R5 ; = ; = ; =
+no break | with M(): /    y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L7 R7 ; = ; = ; =
+no break | with M(): /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 L5 L7 R7 ; = ; = ; =
+no break | with M(): /    y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L2 R2 ; = ; = ; =
+no break | with M(): /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | with M(): /    c(a) | alone | 0 | trace | C1 L2 E2 L5 L6 L5 R5 ; = ; = ; =
+no break | with M(): /    c(a) | alone | 0 | tool | S L2 >2,5 L5 L6 L5 R5 ; = ; = ; =
+no break | with M(): /    c(a) | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L7 R7 ; = ; = ; =
+no break | with M(): /    c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 L5 L7 R7 ; = ; = ; =
+no break | with M(): /    c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L2 R2 ; = ; = ; =
+no break | with M(): /    c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | try: /    y = 1 /finally: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 L8 R8 ; = ; = ; =
+no break | try: /    y = 1 /finally: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 L8 R8 ; = ; = ; =
+no break | try: /    y = 1 /finally: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L8 L9 R9 ; = ; = ; =
+no break | try: /    y = 1 /finally: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 L8 L9 R9 ; = ; = ; =
+no break | try: /    y = 1 /finally: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L9 L2 R2 ; = ; = ; =
+no break | try: /    y = 1 /finally: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; = ; = ; =
+no break | try: /    c(a) /except E: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | try: /    c(a) /except E: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | try: /    c(a) /except E: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L9 R9 ; = ; = ; =
+no break | try: /    c(a) /except E: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 L9 R9 ; = ; = ; =
+no break | try: /    c(a) /except E: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; = ; =
+no break | try: /    c(a) /except E: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; = ; = ; =
+no break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 R8 ; =
+no break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 R6 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; =
+no break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L9 R9 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 L9 R9 ; =
+no break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,6 L9 R9 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L9 R9 ; =
+no break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 E7 L8 L9 L2 R2 ; =
+no break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; =
+no break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 0 | trace | C1 L2 E2 L5 L6 L10 R10 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 R8 ; =
+no break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 L10 R10 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; =
+no break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 0 | trace | C1 L2 E2 L5 L6 L10 L11 R11 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 L11 R11 ; =
+no break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,6 L10 L11 R11 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L11 R11 ; =
+no break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L11 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 E7 L8 L9 L2 R2 ; =
+no break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,7 L11 J11,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; =
+no break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 L8 L9 R9 ; = ; C1 L2 E2 L5 L6 L7 R7 ; =
+no break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 L9 R9 ; = ; S L2 >2,5 L5 L6 <6,7 L7 R7 ; =
+no break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L8 L9 L10 R10 ; = ; C1 L2 E2 L5 L6 L7 L10 R10 ; =
+no break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 L9 L10 R10 ; = ; S L2 >2,5 L5 L6 <6,7 L7 L10 R10 ; =
+no break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L9 L10 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L8 L2 R2 ; =
+no break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,9 L9 L10 J10,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,8 L8 J8,2 L2 >2,2 R2 ; =
+no break | match a: /    case 1: /        y = 1 | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; C1 L2 E2 L5 L6 L7 R7 ; =
+no break | match a: /    case 1: /        y = 1 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 R6 ; = ; S L2 >2,5 L5 L6 <6,7 L7 R7 ; =
+no break | match a: /    case 1: /        y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 L8 R8 ; = ; C1 L2 E2 L5 L6 L7 L8 R8 ; =
+no break | match a: /    case 1: /        y = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 R8 ; = ; S L2 >2,5 L5 L6 <6,7 L7 L8 R8 ; =
+no break | match a: /    case 1: /        y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L8 L2 R2 ; =
+no break | match a: /    case 1: /        y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 <7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 >7,8 L8 J8,2 L2 >2,2 R2 ; =
+no break | assert c(1) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | assert c(1) | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; = ; =
+no break | assert c(1) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | assert c(1) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | assert c(1) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | assert (a or /    c(1)) | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; C1 L2 E2 L5 R5 ; =
+no break | assert (a or /    c(1)) | alone | 0 | tool | S L2 >2,5 L5 <5,6 L6 >6,6 R6 ; = ; S L2 >2,5 L5 >5,5 R5 ; =
+no break | assert (a or /    c(1)) | more behind | 0 | trace | C1 L2 E2 L5 L6 L7 R7 ; = ; C1 L2 E2 L5 L7 R7 ; =
+no break | assert (a or /    c(1)) | more behind | 0 | tool | S L2 >2,5 L5 <5,6 L6 >6,7 L7 R7 ; = ; S L2 >2,5 L5 >5,7 L7 R7 ; =
+no break | assert (a or /    c(1)) | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; C1 L2 L3 E3 L6 L2 R2 ; =
+no break | assert (a or /    c(1)) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,7 L7 <7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; =
+no break | del a | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | del a | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | del a | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | del a | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | del a | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | del a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | global z; z = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | global z; z = 1 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | global z; z = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | global z; z = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | global z; z = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | global z; z = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | y = [k for k in (1, 2)] | alone | 0 | trace | C1 L2 E2 L5 L5 L5 R5 ; = ; = ; =
+no break | y = [k for k in (1, 2)] | more behind | 0 | trace | C1 L2 E2 L5 L5 L5 L6 R6 ; = ; = ; =
+no break | y = [k for k in (1, 2)] | loop | 0 | trace | C1 L2 L3 E3 L6 L6 L6 L2 R2 ; = ; = ; =
+no break | y = all(k for k in (1, 2)) | alone | 0 | trace | C1 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; = ; = ; =
+no break | y = all(k for k in (1, 2)) | more behind | 0 | trace | C1 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; = ; = ; =
+no break | y = all(k for k in (1, 2)) | loop | 0 | trace | C1 L2 L3 E3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; = ; = ; =
+no break | import sys | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | import sys | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | import sys | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | import sys | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | import sys | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | import sys | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | def h(): pass | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | def h(): pass | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | def h(): pass | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | def h(): pass | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | def h(): pass | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | def h(): pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | class H: pass | alone | 0 | trace | C1 L2 E2 L5 C5 L5 R5 R5 ; = ; = ; =
+no break | class H: pass | alone | 0 | tool | S L2 >2,5 L5 S L5 R5 R5 ; = ; = ; =
+no break | class H: pass | more behind | 0 | trace | C1 L2 E2 L5 C5 L5 R5 L6 R6 ; = ; = ; =
+no break | class H: pass | more behind | 0 | tool | S L2 >2,5 L5 S L5 R5 L6 R6 ; = ; = ; =
+no break | class H: pass | loop | 0 | trace | C1 L2 L3 E3 L6 C6 L6 R6 L2 R2 ; = ; = ; =
+no break | class H: pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | y: int = a | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | y: int = a | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | y: int = a | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | y: int = a | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | y: int = a | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | y: int = a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | y += a | alone | 0 | trace | C1 L2 E2 L5 E5 R5 UnboundLocalError ; = ; = ; =
+no break | y += a | alone | 0 | tool | S L2 >2,5 L5 UnboundLocalError ; = ; = ; =
+no break | y += a | more behind | 0 | trace | C1 L2 E2 L5 E5 R5 UnboundLocalError ; = ; = ; =
+no break | y += a | more behind | 0 | tool | S L2 >2,5 L5 UnboundLocalError ; = ; = ; =
+no break | y += a | loop | 0 | trace | C1 L2 L3 E3 L6 E6 R6 UnboundLocalError ; = ; = ; =
+no break | y += a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 UnboundLocalError ; = ; = ; =
+no break | async for j in Items(1): /    y = j | alone | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 R5 ; = ; = ; =
+no break | async for j in Items(1): /    y = j | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; = ; = ; =
+no break | async for j in Items(1): /    y = j | more behind | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 L7 R7 ; = ; = ; =
+no break | async for j in Items(1): /    y = j | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; = ; = ; =
+no break | async for j in Items(1): /    y = j | loop | 0 | trace | C1 L2 L3 E3 L6 E6 L7 L6 E6 L2 R2 ; = ; = ; =
+no break | async for j in Items(1): /    y = j | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 L8 R8 ; = ; = ; =
+no break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; = ; = ; =
+no break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 L8 L9 R9 ; = ; = ; =
+no break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; = ; = ; =
+no break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 E6 L7 L6 E6 L9 L2 R2 ; = ; = ; =
+no break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; = ; =
+no break | await K() | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | await K() | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | await K() | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | await K() | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | await K() | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | await K() | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | y = await K() | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | y = await K() | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | y = await K() | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | y = await K() | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | y = await K() | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | y = await K() | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | lambda: 0 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | lambda: 0 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | lambda: 0 | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | lambda: 0 | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | lambda: 0 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | lambda: 0 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | "s" | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | "s" | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | "s" | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | "s" | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | "s" | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | "s" | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+no break | ... | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+no break | ... | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+no break | ... | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+no break | ... | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+no break | ... | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+no break | ... | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | c(a) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | c(a) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | c(a) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | c(a) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | c(a) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | y = c(a) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | y = c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | y = c(a) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | y = c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | y = c(a) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | y = c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | y = c(a) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | y = c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | y = c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | y = c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | y = c(a) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | y = c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | y = a and c(1) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | y = a and c(1) | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,5 R5 ; =
+break | y = a and c(1) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | y = a and c(1) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | y = a and c(1) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | y = a and c(1) | more behind | 0 | tool | S L2 >2,5 L5 >5,5 L6 R6 ; = ; S L2 >2,5 L5 <5,5 L6 R6 ; =
+break | y = a and c(1) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | y = a and c(1) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | y = a and c(1) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | y = a and c(1) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; =
+break | y = a and c(1) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | y = a and c(1) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | pass | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | pass | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | pass | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | pass | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | pass | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | pass | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | pass | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | pass | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | pass | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | pass | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | pass | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | return | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | return | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | return | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | return | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | return | more behind | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | return | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | return | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 L6 R6
+break | return | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6
+break | return | loop | 0 | trace | C1 L2 L3 E3 L6 R6 ; = ; = ; =
+break | return | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+break | return | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 R6 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 R6 ; C1 L2 L3 E3 L4 L2 R2
+break | return | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | return c(a) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | return c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | return c(a) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | return c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | return c(a) | more behind | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | return c(a) | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | return c(a) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 L6 R6
+break | return c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6
+break | return c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 R6 ; = ; = ; =
+break | return c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+break | return c(a) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 R6 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 R6 ; C1 L2 L3 E3 L4 L2 R2
+break | return c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | return 5 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | return 5 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | return 5 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | return 5 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | return 5 | more behind | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | return 5 | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | return 5 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 L6 R6
+break | return 5 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6
+break | return 5 | loop | 0 | trace | C1 L2 L3 E3 L6 R6 ; = ; = ; =
+break | return 5 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+break | return 5 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 R6 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 R6 ; C1 L2 L3 E3 L4 L2 R2
+break | return 5 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | if a: y = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | if a: y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,5 R5 ; =
+break | if a: y = 1 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | if a: y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | if a: y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | if a: y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,6 L6 R6 ; = ; S L2 >2,5 L5 <5,5 L6 R6 ; =
+break | if a: y = 1 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | if a: y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,6 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | if a: y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | if a: y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; =
+break | if a: y = 1 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | if a: y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | if a: /    y = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; C1 L2 E2 L5 L6 R6 ; =
+break | if a: /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+break | if a: /    y = 1 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3
+break | if a: /    y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+break | if a: /    y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L7 R7 ; = ; C1 L2 E2 L5 L6 L7 R7 ; =
+break | if a: /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 R7 ; = ; S L2 >2,5 L5 <5,6 L6 L7 R7 ; =
+break | if a: /    y = 1 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 L6 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | if a: /    y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+break | if a: /    y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+break | if a: /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 >6,7 L7 J7,2 L2 >2,2 R2 ; =
+break | if a: /    y = 1 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | if a: /    y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,7 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | if a: /    y = 1 /else: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L8 R8 ; = ; C1 L2 E2 L5 L6 R6 ; =
+break | if a: /    y = 1 /else: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 >5,8 L8 R8 ; = ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+break | if a: /    y = 1 /else: /    y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L8 R8 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3
+break | if a: /    y = 1 /else: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+break | if a: /    y = 1 /else: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L8 L9 R9 ; = ; C1 L2 E2 L5 L6 L9 R9 ; =
+break | if a: /    y = 1 /else: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 >5,8 L8 L9 R9 ; = ; S L2 >2,5 L5 <5,6 L6 L9 R9 ; =
+break | if a: /    y = 1 /else: /    y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L8 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 L6 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | if a: /    y = 1 /else: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | if a: /    y = 1 /else: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L9 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+break | if a: /    y = 1 /else: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; =
+break | if a: /    y = 1 /else: /    y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | if a: /    y = 1 /else: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | if a: /    y = 1 /elif b: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L7 R7 ; C1 L2 E2 L5 L7 L8 R8 ; C1 L2 E2 L5 L6 R6 ; =
+break | if a: /    y = 1 /elif b: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 >5,7 L7 >7,7 R7 ; S L2 >2,5 L5 >5,7 L7 <7,8 L8 R8 ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+break | if a: /    y = 1 /elif b: /    y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L7 R7 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3
+break | if a: /    y = 1 /elif b: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 >7,7 R7 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L7 L9 R9 ; C1 L2 E2 L5 L7 L8 L9 R9 ; C1 L2 E2 L5 L6 L9 R9 ; =
+break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 >7,9 L9 R9 ; S L2 >2,5 L5 >5,7 L7 <7,8 L8 L9 R9 ; S L2 >2,5 L5 <5,6 L6 L9 R9 ; =
+break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L7 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 L6 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 >7,9 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | if a: /    y = 1 /elif b: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L8 L2 R2 ; C1 L2 L3 E3 L6 L8 L9 L2 R2 ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+break | if a: /    y = 1 /elif b: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,8 L8 <8,8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 >3,6 L6 >6,8 L8 >8,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; =
+break | if a: /    y = 1 /elif b: /    y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L8 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | if a: /    y = 1 /elif b: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,8 L8 <8,8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | while c(0): /    y = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | while c(0): /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; = ; =
+break | while c(0): /    y = 1 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | while c(0): /    y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | while c(0): /    y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L7 R7 ; = ; = ; =
+break | while c(0): /    y = 1 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | while c(0): /    y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | while c(0): /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | while c(0): /    y = 1 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | while c(0): /    y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | for j in (1,): /    y = j | alone | 0 | trace | C1 L2 E2 L5 L6 L5 R5 ; = ; = ; =
+break | for j in (1,): /    y = j | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; = ; = ; =
+break | for j in (1,): /    y = j | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 L5 R5 ; C1 L2 E2 L3 R3
+break | for j in (1,): /    y = j | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | for j in (1,): /    y = j | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L7 R7 ; = ; = ; =
+break | for j in (1,): /    y = j | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; = ; = ; =
+break | for j in (1,): /    y = j | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 L6 L5 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | for j in (1,): /    y = j | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+break | for j in (1,): /    y = j | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L2 R2 ; = ; = ; =
+break | for j in (1,): /    y = j | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | for j in (1,): /    y = j | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | for j in (1,): /    y = j | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 L5 L8 R8 ; = ; C1 L2 E2 L5 L6 R6 ; =
+break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 R8 ; = ; S L2 >2,5 L5 <5,5 L6 >6,6 R6 ; =
+break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 L8 R8 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3
+break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3
+break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L8 L9 R9 ; = ; C1 L2 E2 L5 L6 L9 R9 ; =
+break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 L9 R9 ; = ; S L2 >2,5 L5 <5,5 L6 >6,6 L9 R9 ; =
+break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 L8 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 L6 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 >6,6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L9 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L2 R2 ; =
+break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 <7,7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 L7 >7,7 J7,2 L2 >2,2 R2 ; =
+break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 <7,7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 >7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | with M(): /    y = 1 | alone | 0 | trace | C1 L2 E2 L5 L6 L5 R5 ; = ; = ; =
+break | with M(): /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 L6 L5 R5 ; = ; = ; =
+break | with M(): /    y = 1 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 L5 R5 ; C1 L2 E2 L3 R3
+break | with M(): /    y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | with M(): /    y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L7 R7 ; = ; = ; =
+break | with M(): /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 L5 L7 R7 ; = ; = ; =
+break | with M(): /    y = 1 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 L6 L5 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | with M(): /    y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+break | with M(): /    y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L2 R2 ; = ; = ; =
+break | with M(): /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | with M(): /    y = 1 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | with M(): /    y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | with M(): /    c(a) | alone | 0 | trace | C1 L2 E2 L5 L6 L5 R5 ; = ; = ; =
+break | with M(): /    c(a) | alone | 0 | tool | S L2 >2,5 L5 L6 L5 R5 ; = ; = ; =
+break | with M(): /    c(a) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 L5 R5 ; C1 L2 E2 L3 R3
+break | with M(): /    c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | with M(): /    c(a) | more behind | 0 | trace | C1 L2 E2 L5 L6 L5 L7 R7 ; = ; = ; =
+break | with M(): /    c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 L5 L7 R7 ; = ; = ; =
+break | with M(): /    c(a) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L5 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 L6 L5 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | with M(): /    c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+break | with M(): /    c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L6 L2 R2 ; = ; = ; =
+break | with M(): /    c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | with M(): /    c(a) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | with M(): /    c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | try: /    y = 1 /finally: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 L8 R8 ; = ; = ; =
+break | try: /    y = 1 /finally: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 L8 R8 ; = ; = ; =
+break | try: /    y = 1 /finally: /    y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L8 R8 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 L8 R8 ; C1 L2 E2 L3 R3
+break | try: /    y = 1 /finally: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+break | try: /    y = 1 /finally: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L8 L9 R9 ; = ; = ; =
+break | try: /    y = 1 /finally: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 L8 L9 R9 ; = ; = ; =
+break | try: /    y = 1 /finally: /    y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L8 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 L6 L8 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | try: /    y = 1 /finally: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | try: /    y = 1 /finally: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L9 L2 R2 ; = ; = ; =
+break | try: /    y = 1 /finally: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; = ; = ; =
+break | try: /    y = 1 /finally: /    y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | try: /    y = 1 /finally: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | try: /    c(a) /except E: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | try: /    c(a) /except E: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | try: /    c(a) /except E: /    y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3
+break | try: /    c(a) /except E: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+break | try: /    c(a) /except E: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L9 R9 ; = ; = ; =
+break | try: /    c(a) /except E: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 L9 R9 ; = ; = ; =
+break | try: /    c(a) /except E: /    y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 L6 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | try: /    c(a) /except E: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | try: /    c(a) /except E: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; = ; =
+break | try: /    c(a) /except E: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; = ; = ; =
+break | try: /    c(a) /except E: /    y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | try: /    c(a) /except E: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 R8 ; =
+break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 R6 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; =
+break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 E6 L7 L8 R8 ; C1 L2 E2 L3 R3
+break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L9 R9 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 L9 R9 ; =
+break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,6 L9 R9 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L9 R9 ; =
+break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 L6 E6 L7 L8 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 E7 L8 L9 L2 R2 ; =
+break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; =
+break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 E7 L8 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 0 | trace | C1 L2 E2 L5 L6 L10 R10 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 R8 ; =
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 L10 R10 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; =
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L10 R10 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 E6 L7 L8 R8 ; C1 L2 E2 L3 R3
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 L10 R10 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 0 | trace | C1 L2 E2 L5 L6 L10 L11 R11 ; = ; C1 L2 E2 L5 L6 E6 L7 L8 L11 R11 ; =
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,6 L10 L11 R11 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L11 R11 ; =
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L10 L11 R11 ; C1 L2 E2 L3 L11 R11 ; C1 L2 E2 L3 L2 E2 L5 L6 E6 L7 L8 L11 R11 ; C1 L2 E2 L3 L11 R11
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 L10 L11 R11 ; S L2 <2,2 L3 >3,3 L11 R11 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L11 R11 ; S L2 <2,2 L3 >3,3 L11 R11
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L11 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 E7 L8 L9 L2 R2 ; =
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,7 L11 J11,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; =
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L11 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 E7 L8 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,7 L11 J11,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 0 | trace | C1 L2 E2 L5 L6 L8 L9 R9 ; = ; C1 L2 E2 L5 L6 L7 R7 ; =
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 L9 R9 ; = ; S L2 >2,5 L5 L6 <6,7 L7 R7 ; =
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L8 L9 R9 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 L7 R7 ; C1 L2 E2 L3 R3
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 R7 ; S L2 <2,2 L3 >3,3 R3
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 0 | trace | C1 L2 E2 L5 L6 L8 L9 L10 R10 ; = ; C1 L2 E2 L5 L6 L7 L10 R10 ; =
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 L9 L10 R10 ; = ; S L2 >2,5 L5 L6 <6,7 L7 L10 R10 ; =
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L8 L9 L10 R10 ; C1 L2 E2 L3 L10 R10 ; C1 L2 E2 L3 L2 E2 L5 L6 L7 L10 R10 ; C1 L2 E2 L3 L10 R10
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,8 L8 L9 L10 R10 ; S L2 <2,2 L3 >3,3 L10 R10 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 L10 R10 ; S L2 <2,2 L3 >3,3 L10 R10
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L9 L10 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L8 L2 R2 ; =
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,9 L9 L10 J10,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,8 L8 J8,2 L2 >2,2 R2 ; =
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L9 L10 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L8 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,9 L9 L10 J10,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,8 L8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | match a: /    case 1: /        y = 1 | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; C1 L2 E2 L5 L6 L7 R7 ; =
+break | match a: /    case 1: /        y = 1 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 R6 ; = ; S L2 >2,5 L5 L6 <6,7 L7 R7 ; =
+break | match a: /    case 1: /        y = 1 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L6 L7 R7 ; C1 L2 E2 L3 R3
+break | match a: /    case 1: /        y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 R7 ; S L2 <2,2 L3 >3,3 R3
+break | match a: /    case 1: /        y = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 L8 R8 ; = ; C1 L2 E2 L5 L6 L7 L8 R8 ; =
+break | match a: /    case 1: /        y = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 R8 ; = ; S L2 >2,5 L5 L6 <6,7 L7 L8 R8 ; =
+break | match a: /    case 1: /        y = 1 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L8 R8 ; C1 L2 E2 L3 L8 R8 ; C1 L2 E2 L3 L2 E2 L5 L6 L7 L8 R8 ; C1 L2 E2 L3 L8 R8
+break | match a: /    case 1: /        y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,8 L8 R8 ; S L2 <2,2 L3 >3,3 L8 R8 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 L8 R8 ; S L2 <2,2 L3 >3,3 L8 R8
+break | match a: /    case 1: /        y = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; C1 L2 L3 E3 L6 L7 L8 L2 R2 ; =
+break | match a: /    case 1: /        y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 <7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 >7,8 L8 J8,2 L2 >2,2 R2 ; =
+break | match a: /    case 1: /        y = 1 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L7 L8 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | match a: /    case 1: /        y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,8 L8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | assert c(1) | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | assert c(1) | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; = ; =
+break | assert c(1) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | assert c(1) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | assert c(1) | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | assert c(1) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | assert c(1) | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | assert c(1) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | assert c(1) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | assert c(1) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | assert (a or /    c(1)) | alone | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; C1 L2 E2 L5 R5 ; =
+break | assert (a or /    c(1)) | alone | 0 | tool | S L2 >2,5 L5 <5,6 L6 >6,6 R6 ; = ; S L2 >2,5 L5 >5,5 R5 ; =
+break | assert (a or /    c(1)) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | assert (a or /    c(1)) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | assert (a or /    c(1)) | more behind | 0 | trace | C1 L2 E2 L5 L6 L7 R7 ; = ; C1 L2 E2 L5 L7 R7 ; =
+break | assert (a or /    c(1)) | more behind | 0 | tool | S L2 >2,5 L5 <5,6 L6 >6,7 L7 R7 ; = ; S L2 >2,5 L5 >5,7 L7 R7 ; =
+break | assert (a or /    c(1)) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | assert (a or /    c(1)) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 >6,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+break | assert (a or /    c(1)) | loop | 0 | trace | C1 L2 L3 E3 L6 L7 L2 R2 ; = ; C1 L2 L3 E3 L6 L2 R2 ; =
+break | assert (a or /    c(1)) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,7 L7 <7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; =
+break | assert (a or /    c(1)) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L7 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | assert (a or /    c(1)) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,7 L7 <7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | del a | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | del a | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | del a | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | del a | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | del a | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | del a | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | del a | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | del a | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | del a | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | del a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | del a | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | del a | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | global z; z = 1 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | global z; z = 1 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | global z; z = 1 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | global z; z = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | global z; z = 1 | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | global z; z = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | global z; z = 1 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | global z; z = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | global z; z = 1 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | global z; z = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | global z; z = 1 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | global z; z = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | y = [k for k in (1, 2)] | alone | 0 | trace | C1 L2 E2 L5 L5 L5 R5 ; = ; = ; =
+break | y = [k for k in (1, 2)] | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L5 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 L5 L5 R5 ; C1 L2 E2 L3 R3
+break | y = [k for k in (1, 2)] | more behind | 0 | trace | C1 L2 E2 L5 L5 L5 L6 R6 ; = ; = ; =
+break | y = [k for k in (1, 2)] | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L5 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L5 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | y = [k for k in (1, 2)] | loop | 0 | trace | C1 L2 L3 E3 L6 L6 L6 L2 R2 ; = ; = ; =
+break | y = [k for k in (1, 2)] | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L6 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L6 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | y = all(k for k in (1, 2)) | alone | 0 | trace | C1 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; = ; = ; =
+break | y = all(k for k in (1, 2)) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; C1 L2 E2 L3 R3
+break | y = all(k for k in (1, 2)) | more behind | 0 | trace | C1 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; = ; = ; =
+break | y = all(k for k in (1, 2)) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | y = all(k for k in (1, 2)) | loop | 0 | trace | C1 L2 L3 E3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; = ; = ; =
+break | y = all(k for k in (1, 2)) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | import sys | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | import sys | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | import sys | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | import sys | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | import sys | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | import sys | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | import sys | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | import sys | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | import sys | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | import sys | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | import sys | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | import sys | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | def h(): pass | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | def h(): pass | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | def h(): pass | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | def h(): pass | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | def h(): pass | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | def h(): pass | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | def h(): pass | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | def h(): pass | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | def h(): pass | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | def h(): pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | def h(): pass | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | def h(): pass | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | class H: pass | alone | 0 | trace | C1 L2 E2 L5 C5 L5 R5 R5 ; = ; = ; =
+break | class H: pass | alone | 0 | tool | S L2 >2,5 L5 S L5 R5 R5 ; = ; = ; =
+break | class H: pass | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 R5 ; C1 L2 E2 L3 R3
+break | class H: pass | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | class H: pass | more behind | 0 | trace | C1 L2 E2 L5 C5 L5 R5 L6 R6 ; = ; = ; =
+break | class H: pass | more behind | 0 | tool | S L2 >2,5 L5 S L5 R5 L6 R6 ; = ; = ; =
+break | class H: pass | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 C5 L5 R5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | class H: pass | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | class H: pass | loop | 0 | trace | C1 L2 L3 E3 L6 C6 L6 R6 L2 R2 ; = ; = ; =
+break | class H: pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | class H: pass | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | class H: pass | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | y: int = a | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | y: int = a | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | y: int = a | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | y: int = a | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | y: int = a | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | y: int = a | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | y: int = a | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | y: int = a | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | y: int = a | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | y: int = a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | y: int = a | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | y: int = a | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | y += a | alone | 0 | trace | C1 L2 E2 L5 E5 R5 UnboundLocalError ; = ; = ; =
+break | y += a | alone | 0 | tool | S L2 >2,5 L5 UnboundLocalError ; = ; = ; =
+break | y += a | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 E5 R5 UnboundLocalError ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 E5 R5 UnboundLocalError ; C1 L2 E2 L3 R3
+break | y += a | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 R3
+break | y += a | more behind | 0 | trace | C1 L2 E2 L5 E5 R5 UnboundLocalError ; = ; = ; =
+break | y += a | more behind | 0 | tool | S L2 >2,5 L5 UnboundLocalError ; = ; = ; =
+break | y += a | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 E5 R5 UnboundLocalError ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 E5 R5 UnboundLocalError ; C1 L2 E2 L3 L6 R6
+break | y += a | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 L6 R6
+break | y += a | loop | 0 | trace | C1 L2 L3 E3 L6 E6 R6 UnboundLocalError ; = ; = ; =
+break | y += a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 UnboundLocalError ; = ; = ; =
+break | y += a | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 E6 R6 UnboundLocalError ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 E6 R6 UnboundLocalError ; C1 L2 L3 E3 L4 L2 R2
+break | y += a | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 UnboundLocalError ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 UnboundLocalError ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | async for j in Items(1): /    y = j | alone | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 R5 ; = ; = ; =
+break | async for j in Items(1): /    y = j | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; = ; = ; =
+break | async for j in Items(1): /    y = j | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 R5 ; C1 L2 E2 L3 R3
+break | async for j in Items(1): /    y = j | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | async for j in Items(1): /    y = j | more behind | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 L7 R7 ; = ; = ; =
+break | async for j in Items(1): /    y = j | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; = ; = ; =
+break | async for j in Items(1): /    y = j | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 L7 R7 ; C1 L2 E2 L3 L7 R7 ; C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 L7 R7 ; C1 L2 E2 L3 L7 R7
+break | async for j in Items(1): /    y = j | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+break | async for j in Items(1): /    y = j | loop | 0 | trace | C1 L2 L3 E3 L6 E6 L7 L6 E6 L2 R2 ; = ; = ; =
+break | async for j in Items(1): /    y = j | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | async for j in Items(1): /    y = j | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 E6 L7 L6 E6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 E6 L7 L6 E6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | async for j in Items(1): /    y = j | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 L8 R8 ; = ; = ; =
+break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; = ; = ; =
+break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 L8 R8 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 L8 R8 ; C1 L2 E2 L3 R3
+break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 0 | trace | C1 L2 E2 L5 E5 L6 L5 E5 L8 L9 R9 ; = ; = ; =
+break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; = ; = ; =
+break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 L8 L9 R9 ; C1 L2 E2 L3 L9 R9 ; C1 L2 E2 L3 L2 E2 L5 E5 L6 L5 E5 L8 L9 R9 ; C1 L2 E2 L3 L9 R9
+break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 0 | trace | C1 L2 L3 E3 L6 E6 L7 L6 E6 L9 L2 R2 ; = ; = ; =
+break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; = ; =
+break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 E6 L7 L6 E6 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 E6 L7 L6 E6 L9 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | await K() | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | await K() | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | await K() | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | await K() | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | await K() | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | await K() | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | await K() | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | await K() | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | await K() | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | await K() | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | await K() | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | await K() | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | y = await K() | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | y = await K() | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | y = await K() | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | y = await K() | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | y = await K() | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | y = await K() | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | y = await K() | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | y = await K() | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | y = await K() | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | y = await K() | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | y = await K() | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | y = await K() | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | lambda: 0 | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | lambda: 0 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | lambda: 0 | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | lambda: 0 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | lambda: 0 | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | lambda: 0 | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | lambda: 0 | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | lambda: 0 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | lambda: 0 | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | lambda: 0 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | lambda: 0 | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | lambda: 0 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | "s" | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | "s" | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | "s" | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | "s" | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | "s" | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | "s" | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | "s" | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | "s" | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | "s" | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | "s" | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | "s" | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | "s" | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+break | ... | alone | 0 | trace | C1 L2 E2 L5 R5 ; = ; = ; =
+break | ... | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+break | ... | alone | 1 | trace | C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3 ; C1 L2 E2 L3 L2 E2 L5 R5 ; C1 L2 E2 L3 R3
+break | ... | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+break | ... | more behind | 0 | trace | C1 L2 E2 L5 L6 R6 ; = ; = ; =
+break | ... | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+break | ... | more behind | 1 | trace | C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6 ; C1 L2 E2 L3 L2 E2 L5 L6 R6 ; C1 L2 E2 L3 L6 R6
+break | ... | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+break | ... | loop | 0 | trace | C1 L2 L3 E3 L6 L2 R2 ; = ; = ; =
+break | ... | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+break | ... | loop | 1 | trace | C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2 ; C1 L2 L3 E3 L4 L3 E3 L6 L2 R2 ; C1 L2 L3 E3 L4 L2 R2
+break | ... | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | c(a) | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | c(a) | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | c(a) | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | c(a) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | c(a) | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | c(a) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | y = c(a) | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | y = c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | y = c(a) | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | y = c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | y = c(a) | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | y = c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | y = c(a) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | y = c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | y = c(a) | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | y = c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | y = c(a) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | y = c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | y = a and c(1) | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | y = a and c(1) | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,5 R5 ; =
+for, break | y = a and c(1) | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | y = a and c(1) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | y = a and c(1) | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | y = a and c(1) | more behind | 0 | tool | S L2 >2,5 L5 >5,5 L6 R6 ; = ; S L2 >2,5 L5 <5,5 L6 R6 ; =
+for, break | y = a and c(1) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | y = a and c(1) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | y = a and c(1) | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | y = a and c(1) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; =
+for, break | y = a and c(1) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | y = a and c(1) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | pass | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | pass | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | pass | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | pass | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | pass | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | pass | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | pass | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | pass | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | pass | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | pass | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | pass | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | return | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | return | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | return | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | return | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | return | more behind | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | return | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | return | more behind | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 L6 R6
+for, break | return | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | return | loop | 0 | trace | C1 L2 L3 L6 R6 ; = ; = ; =
+for, break | return | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+for, break | return | loop | 1 | trace | C1 L2 L3 L4 L3 L6 R6 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 R6 ; C1 L2 L3 L4 L2 R2
+for, break | return | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | return c(a) | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | return c(a) | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | return c(a) | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | return c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | return c(a) | more behind | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | return c(a) | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | return c(a) | more behind | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 L6 R6
+for, break | return c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | return c(a) | loop | 0 | trace | C1 L2 L3 L6 R6 ; = ; = ; =
+for, break | return c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+for, break | return c(a) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 R6 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 R6 ; C1 L2 L3 L4 L2 R2
+for, break | return c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | return 5 | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | return 5 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | return 5 | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | return 5 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | return 5 | more behind | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | return 5 | more behind | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | return 5 | more behind | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 L6 R6
+for, break | return 5 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | return 5 | loop | 0 | trace | C1 L2 L3 L6 R6 ; = ; = ; =
+for, break | return 5 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 R6 ; = ; = ; =
+for, break | return 5 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 R6 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 R6 ; C1 L2 L3 L4 L2 R2
+for, break | return 5 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 R6 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | if a: y = 1 | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | if a: y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,5 R5 ; =
+for, break | if a: y = 1 | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | if a: y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | if a: y = 1 | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | if a: y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,6 L6 R6 ; = ; S L2 >2,5 L5 <5,5 L6 R6 ; =
+for, break | if a: y = 1 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | if a: y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,6 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | if a: y = 1 | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | if a: y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; =
+for, break | if a: y = 1 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | if a: y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | if a: /    y = 1 | alone | 0 | trace | C1 L2 L5 R5 ; = ; C1 L2 L5 L6 R6 ; =
+for, break | if a: /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+for, break | if a: /    y = 1 | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3
+for, break | if a: /    y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+for, break | if a: /    y = 1 | more behind | 0 | trace | C1 L2 L5 L7 R7 ; = ; C1 L2 L5 L6 L7 R7 ; =
+for, break | if a: /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 R7 ; = ; S L2 >2,5 L5 <5,6 L6 L7 R7 ; =
+for, break | if a: /    y = 1 | more behind | 1 | trace | C1 L2 L3 L2 L5 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 L6 L7 R7 ; C1 L2 L3 L7 R7
+for, break | if a: /    y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | if a: /    y = 1 | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; C1 L2 L3 L6 L7 L2 R2 ; =
+for, break | if a: /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 >6,7 L7 J7,2 L2 >2,2 R2 ; =
+for, break | if a: /    y = 1 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | if a: /    y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,7 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | if a: /    y = 1 /else: /    y = 2 | alone | 0 | trace | C1 L2 L5 L8 R8 ; = ; C1 L2 L5 L6 R6 ; =
+for, break | if a: /    y = 1 /else: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 >5,8 L8 R8 ; = ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+for, break | if a: /    y = 1 /else: /    y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L8 R8 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3
+for, break | if a: /    y = 1 /else: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+for, break | if a: /    y = 1 /else: /    y = 2 | more behind | 0 | trace | C1 L2 L5 L8 L9 R9 ; = ; C1 L2 L5 L6 L9 R9 ; =
+for, break | if a: /    y = 1 /else: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 >5,8 L8 L9 R9 ; = ; S L2 >2,5 L5 <5,6 L6 L9 R9 ; =
+for, break | if a: /    y = 1 /else: /    y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L8 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 L6 L9 R9 ; C1 L2 L3 L9 R9
+for, break | if a: /    y = 1 /else: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | if a: /    y = 1 /else: /    y = 2 | loop | 0 | trace | C1 L2 L3 L6 L9 L2 R2 ; = ; C1 L2 L3 L6 L7 L2 R2 ; =
+for, break | if a: /    y = 1 /else: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; =
+for, break | if a: /    y = 1 /else: /    y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L9 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | if a: /    y = 1 /else: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | if a: /    y = 1 /elif b: /    y = 2 | alone | 0 | trace | C1 L2 L5 L7 R7 ; C1 L2 L5 L7 L8 R8 ; C1 L2 L5 L6 R6 ; =
+for, break | if a: /    y = 1 /elif b: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 >5,7 L7 >7,7 R7 ; S L2 >2,5 L5 >5,7 L7 <7,8 L8 R8 ; S L2 >2,5 L5 <5,6 L6 R6 ; =
+for, break | if a: /    y = 1 /elif b: /    y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L7 R7 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3
+for, break | if a: /    y = 1 /elif b: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 >7,7 R7 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+for, break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 0 | trace | C1 L2 L5 L7 L9 R9 ; C1 L2 L5 L7 L8 L9 R9 ; C1 L2 L5 L6 L9 R9 ; =
+for, break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 >7,9 L9 R9 ; S L2 >2,5 L5 >5,7 L7 <7,8 L8 L9 R9 ; S L2 >2,5 L5 <5,6 L6 L9 R9 ; =
+for, break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L7 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 L6 L9 R9 ; C1 L2 L3 L9 R9
+for, break | if a: /    y = 1 /elif b: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 >7,9 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | if a: /    y = 1 /elif b: /    y = 2 | loop | 0 | trace | C1 L2 L3 L6 L8 L2 R2 ; C1 L2 L3 L6 L8 L9 L2 R2 ; C1 L2 L3 L6 L7 L2 R2 ; =
+for, break | if a: /    y = 1 /elif b: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,8 L8 <8,8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 >3,6 L6 >6,8 L8 >8,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; =
+for, break | if a: /    y = 1 /elif b: /    y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L8 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | if a: /    y = 1 /elif b: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,8 L8 <8,8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,7 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | while c(0): /    y = 1 | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | while c(0): /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; = ; =
+for, break | while c(0): /    y = 1 | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | while c(0): /    y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | while c(0): /    y = 1 | more behind | 0 | trace | C1 L2 L5 L7 R7 ; = ; = ; =
+for, break | while c(0): /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 >5,7 L7 R7 ; = ; = ; =
+for, break | while c(0): /    y = 1 | more behind | 1 | trace | C1 L2 L3 L2 L5 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 L7 R7 ; C1 L2 L3 L7 R7
+for, break | while c(0): /    y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | while c(0): /    y = 1 | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | while c(0): /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | while c(0): /    y = 1 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | while c(0): /    y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | for j in (1,): /    y = j | alone | 0 | trace | C1 L2 L5 L6 L5 R5 ; = ; = ; =
+for, break | for j in (1,): /    y = j | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; = ; = ; =
+for, break | for j in (1,): /    y = j | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 L5 R5 ; C1 L2 L3 R3
+for, break | for j in (1,): /    y = j | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | for j in (1,): /    y = j | more behind | 0 | trace | C1 L2 L5 L6 L5 L7 R7 ; = ; = ; =
+for, break | for j in (1,): /    y = j | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; = ; = ; =
+for, break | for j in (1,): /    y = j | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L5 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 L6 L5 L7 R7 ; C1 L2 L3 L7 R7
+for, break | for j in (1,): /    y = j | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | for j in (1,): /    y = j | loop | 0 | trace | C1 L2 L3 L6 L7 L6 L2 R2 ; = ; = ; =
+for, break | for j in (1,): /    y = j | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | for j in (1,): /    y = j | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | for j in (1,): /    y = j | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 0 | trace | C1 L2 L5 L6 L5 L8 R8 ; = ; C1 L2 L5 L6 R6 ; =
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 R8 ; = ; S L2 >2,5 L5 <5,5 L6 >6,6 R6 ; =
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L5 L8 R8 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 0 | trace | C1 L2 L5 L6 L5 L8 L9 R9 ; = ; C1 L2 L5 L6 L9 R9 ; =
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 L9 R9 ; = ; S L2 >2,5 L5 <5,5 L6 >6,6 L9 R9 ; =
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L5 L8 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 L6 L9 R9 ; C1 L2 L3 L9 R9
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 <6,6 J6,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 >6,6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 0 | trace | C1 L2 L3 L6 L7 L6 L9 L2 R2 ; = ; C1 L2 L3 L6 L7 L2 R2 ; =
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 <7,7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 L7 >7,7 J7,2 L2 >2,2 R2 ; =
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L6 L9 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | for j in (1,): /    if a: break /else: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 <7,7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 >7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | with M(): /    y = 1 | alone | 0 | trace | C1 L2 L5 L6 L5 R5 ; = ; = ; =
+for, break | with M(): /    y = 1 | alone | 0 | tool | S L2 >2,5 L5 L6 L5 R5 ; = ; = ; =
+for, break | with M(): /    y = 1 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 L5 R5 ; C1 L2 L3 R3
+for, break | with M(): /    y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | with M(): /    y = 1 | more behind | 0 | trace | C1 L2 L5 L6 L5 L7 R7 ; = ; = ; =
+for, break | with M(): /    y = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 L5 L7 R7 ; = ; = ; =
+for, break | with M(): /    y = 1 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L5 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 L6 L5 L7 R7 ; C1 L2 L3 L7 R7
+for, break | with M(): /    y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | with M(): /    y = 1 | loop | 0 | trace | C1 L2 L3 L6 L7 L6 L2 R2 ; = ; = ; =
+for, break | with M(): /    y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | with M(): /    y = 1 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | with M(): /    y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | with M(): /    c(a) | alone | 0 | trace | C1 L2 L5 L6 L5 R5 ; = ; = ; =
+for, break | with M(): /    c(a) | alone | 0 | tool | S L2 >2,5 L5 L6 L5 R5 ; = ; = ; =
+for, break | with M(): /    c(a) | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 L5 R5 ; C1 L2 L3 R3
+for, break | with M(): /    c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | with M(): /    c(a) | more behind | 0 | trace | C1 L2 L5 L6 L5 L7 R7 ; = ; = ; =
+for, break | with M(): /    c(a) | more behind | 0 | tool | S L2 >2,5 L5 L6 L5 L7 R7 ; = ; = ; =
+for, break | with M(): /    c(a) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L5 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 L6 L5 L7 R7 ; C1 L2 L3 L7 R7
+for, break | with M(): /    c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L5 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | with M(): /    c(a) | loop | 0 | trace | C1 L2 L3 L6 L7 L6 L2 R2 ; = ; = ; =
+for, break | with M(): /    c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | with M(): /    c(a) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | with M(): /    c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | try: /    y = 1 /finally: /    y = 2 | alone | 0 | trace | C1 L2 L5 L6 L8 R8 ; = ; = ; =
+for, break | try: /    y = 1 /finally: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 L8 R8 ; = ; = ; =
+for, break | try: /    y = 1 /finally: /    y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L8 R8 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 L8 R8 ; C1 L2 L3 R3
+for, break | try: /    y = 1 /finally: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+for, break | try: /    y = 1 /finally: /    y = 2 | more behind | 0 | trace | C1 L2 L5 L6 L8 L9 R9 ; = ; = ; =
+for, break | try: /    y = 1 /finally: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 L8 L9 R9 ; = ; = ; =
+for, break | try: /    y = 1 /finally: /    y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L8 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 L6 L8 L9 R9 ; C1 L2 L3 L9 R9
+for, break | try: /    y = 1 /finally: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | try: /    y = 1 /finally: /    y = 2 | loop | 0 | trace | C1 L2 L3 L6 L7 L9 L2 R2 ; = ; = ; =
+for, break | try: /    y = 1 /finally: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; = ; = ; =
+for, break | try: /    y = 1 /finally: /    y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L9 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L9 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | try: /    y = 1 /finally: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | try: /    c(a) /except E: /    y = 2 | alone | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | try: /    c(a) /except E: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | try: /    c(a) /except E: /    y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3
+for, break | try: /    c(a) /except E: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 R3
+for, break | try: /    c(a) /except E: /    y = 2 | more behind | 0 | trace | C1 L2 L5 L6 L9 R9 ; = ; = ; =
+for, break | try: /    c(a) /except E: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 L9 R9 ; = ; = ; =
+for, break | try: /    c(a) /except E: /    y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 L6 L9 R9 ; C1 L2 L3 L9 R9
+for, break | try: /    c(a) /except E: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | try: /    c(a) /except E: /    y = 2 | loop | 0 | trace | C1 L2 L3 L6 L7 L2 R2 ; = ; = ; =
+for, break | try: /    c(a) /except E: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; = ; = ; =
+for, break | try: /    c(a) /except E: /    y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | try: /    c(a) /except E: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 0 | trace | C1 L2 L5 L6 R6 ; = ; C1 L2 L5 L6 E6 L7 L8 R8 ; =
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 R6 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; =
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 E6 L7 L8 R8 ; C1 L2 L3 R3
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 0 | trace | C1 L2 L5 L6 L9 R9 ; = ; C1 L2 L5 L6 E6 L7 L8 L9 R9 ; =
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,6 L9 R9 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L9 R9 ; =
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 L6 E6 L7 L8 L9 R9 ; C1 L2 L3 L9 R9
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 0 | trace | C1 L2 L3 L6 L7 L2 R2 ; = ; C1 L2 L3 L6 L7 E7 L8 L9 L2 R2 ; =
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; =
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 E7 L8 L9 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | try: /    if a: raise E /except E as e: /    y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 0 | trace | C1 L2 L5 L6 L10 R10 ; = ; C1 L2 L5 L6 E6 L7 L8 R8 ; =
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 L10 R10 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; =
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L10 R10 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 E6 L7 L8 R8 ; C1 L2 L3 R3
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 L10 R10 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 0 | trace | C1 L2 L5 L6 L10 L11 R11 ; = ; C1 L2 L5 L6 E6 L7 L8 L11 R11 ; =
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,6 L10 L11 R11 ; = ; S L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L11 R11 ; =
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L10 L11 R11 ; C1 L2 L3 L11 R11 ; C1 L2 L3 L2 L5 L6 E6 L7 L8 L11 R11 ; C1 L2 L3 L11 R11
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 L10 L11 R11 ; S L2 <2,2 L3 >3,3 L11 R11 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,6 L7 <7,7 L8 L11 R11 ; S L2 <2,2 L3 >3,3 L11 R11
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 0 | trace | C1 L2 L3 L6 L7 L11 L2 R2 ; = ; C1 L2 L3 L6 L7 E7 L8 L9 L2 R2 ; =
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,7 L11 J11,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; =
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L11 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 E7 L8 L9 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | try: /    if a: raise E /except E: /    c(a) /else: /    c(b) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,7 L11 J11,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,7 L8 <8,8 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 0 | trace | C1 L2 L5 L6 L8 L9 R9 ; = ; C1 L2 L5 L6 L7 R7 ; =
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 L9 R9 ; = ; S L2 >2,5 L5 L6 <6,7 L7 R7 ; =
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 L8 L9 R9 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 L7 R7 ; C1 L2 L3 R3
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 R7 ; S L2 <2,2 L3 >3,3 R3
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 0 | trace | C1 L2 L5 L6 L8 L9 L10 R10 ; = ; C1 L2 L5 L6 L7 L10 R10 ; =
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 L9 L10 R10 ; = ; S L2 >2,5 L5 L6 <6,7 L7 L10 R10 ; =
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L8 L9 L10 R10 ; C1 L2 L3 L10 R10 ; C1 L2 L3 L2 L5 L6 L7 L10 R10 ; C1 L2 L3 L10 R10
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,8 L8 L9 L10 R10 ; S L2 <2,2 L3 >3,3 L10 R10 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 L10 R10 ; S L2 <2,2 L3 >3,3 L10 R10
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 0 | trace | C1 L2 L3 L6 L7 L9 L10 L2 R2 ; = ; C1 L2 L3 L6 L7 L8 L2 R2 ; =
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 >7,9 L9 L10 J10,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 <7,8 L8 J8,2 L2 >2,2 R2 ; =
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L9 L10 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L8 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | match a: /    case 1: /        y = 1 /    case _: /        y = 2 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,9 L9 L10 J10,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,8 L8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | match a: /    case 1: /        y = 1 | alone | 0 | trace | C1 L2 L5 L6 R6 ; = ; C1 L2 L5 L6 L7 R7 ; =
+for, break | match a: /    case 1: /        y = 1 | alone | 0 | tool | S L2 >2,5 L5 L6 >6,6 R6 ; = ; S L2 >2,5 L5 L6 <6,7 L7 R7 ; =
+for, break | match a: /    case 1: /        y = 1 | alone | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L6 L7 R7 ; C1 L2 L3 R3
+for, break | match a: /    case 1: /        y = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 R7 ; S L2 <2,2 L3 >3,3 R3
+for, break | match a: /    case 1: /        y = 1 | more behind | 0 | trace | C1 L2 L5 L6 L8 R8 ; = ; C1 L2 L5 L6 L7 L8 R8 ; =
+for, break | match a: /    case 1: /        y = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 >6,8 L8 R8 ; = ; S L2 >2,5 L5 L6 <6,7 L7 L8 R8 ; =
+for, break | match a: /    case 1: /        y = 1 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L8 R8 ; C1 L2 L3 L8 R8 ; C1 L2 L3 L2 L5 L6 L7 L8 R8 ; C1 L2 L3 L8 R8
+for, break | match a: /    case 1: /        y = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 >6,8 L8 R8 ; S L2 <2,2 L3 >3,3 L8 R8 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 <6,7 L7 L8 R8 ; S L2 <2,2 L3 >3,3 L8 R8
+for, break | match a: /    case 1: /        y = 1 | loop | 0 | trace | C1 L2 L3 L6 L7 L2 R2 ; = ; C1 L2 L3 L6 L7 L8 L2 R2 ; =
+for, break | match a: /    case 1: /        y = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 L7 <7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 L7 >7,8 L8 J8,2 L2 >2,2 R2 ; =
+for, break | match a: /    case 1: /        y = 1 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L7 L8 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | match a: /    case 1: /        y = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 <7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 L7 >7,8 L8 J8,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | assert c(1) | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | assert c(1) | alone | 0 | tool | S L2 >2,5 L5 >5,5 R5 ; = ; = ; =
+for, break | assert c(1) | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | assert c(1) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | assert c(1) | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | assert c(1) | more behind | 0 | tool | S L2 >2,5 L5 >5,6 L6 R6 ; = ; = ; =
+for, break | assert c(1) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | assert c(1) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,6 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,6 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | assert c(1) | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | assert c(1) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | assert c(1) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | assert c(1) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | assert (a or /    c(1)) | alone | 0 | trace | C1 L2 L5 L6 R6 ; = ; C1 L2 L5 R5 ; =
+for, break | assert (a or /    c(1)) | alone | 0 | tool | S L2 >2,5 L5 <5,6 L6 >6,6 R6 ; = ; S L2 >2,5 L5 >5,5 R5 ; =
+for, break | assert (a or /    c(1)) | alone | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | assert (a or /    c(1)) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 >6,6 R6 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | assert (a or /    c(1)) | more behind | 0 | trace | C1 L2 L5 L6 L7 R7 ; = ; C1 L2 L5 L7 R7 ; =
+for, break | assert (a or /    c(1)) | more behind | 0 | tool | S L2 >2,5 L5 <5,6 L6 >6,7 L7 R7 ; = ; S L2 >2,5 L5 >5,7 L7 R7 ; =
+for, break | assert (a or /    c(1)) | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 L7 R7 ; C1 L2 L3 L7 R7
+for, break | assert (a or /    c(1)) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,6 L6 >6,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | assert (a or /    c(1)) | loop | 0 | trace | C1 L2 L3 L6 L7 L2 R2 ; = ; C1 L2 L3 L6 L2 R2 ; =
+for, break | assert (a or /    c(1)) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 >6,7 L7 <7,7 J7,2 L2 >2,2 R2 ; = ; S L2 <2,2 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; =
+for, break | assert (a or /    c(1)) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L7 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | assert (a or /    c(1)) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 >6,7 L7 <7,7 J7,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | del a | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | del a | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | del a | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | del a | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | del a | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | del a | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | del a | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | del a | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | del a | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | del a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | del a | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | del a | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | global z; z = 1 | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | global z; z = 1 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | global z; z = 1 | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | global z; z = 1 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | global z; z = 1 | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | global z; z = 1 | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | global z; z = 1 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | global z; z = 1 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | global z; z = 1 | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | global z; z = 1 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | global z; z = 1 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | global z; z = 1 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | y = [k for k in (1, 2)] | alone | 0 | trace | C1 L2 L5 L5 L5 R5 ; = ; = ; =
+for, break | y = [k for k in (1, 2)] | alone | 1 | trace | C1 L2 L3 L2 L5 L5 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 L5 L5 R5 ; C1 L2 L3 R3
+for, break | y = [k for k in (1, 2)] | more behind | 0 | trace | C1 L2 L5 L5 L5 L6 R6 ; = ; = ; =
+for, break | y = [k for k in (1, 2)] | more behind | 1 | trace | C1 L2 L3 L2 L5 L5 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L5 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | y = [k for k in (1, 2)] | loop | 0 | trace | C1 L2 L3 L6 L6 L6 L2 R2 ; = ; = ; =
+for, break | y = [k for k in (1, 2)] | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L6 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L6 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | y = all(k for k in (1, 2)) | alone | 0 | trace | C1 L2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; = ; = ; =
+for, break | y = all(k for k in (1, 2)) | alone | 1 | trace | C1 L2 L3 L2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 R5 ; C1 L2 L3 R3
+for, break | y = all(k for k in (1, 2)) | more behind | 0 | trace | C1 L2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; = ; = ; =
+for, break | y = all(k for k in (1, 2)) | more behind | 1 | trace | C1 L2 L3 L2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 C5 L5 R5 L5 C5 L5 R5 L5 C5 L5 R5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | y = all(k for k in (1, 2)) | loop | 0 | trace | C1 L2 L3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; = ; = ; =
+for, break | y = all(k for k in (1, 2)) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 C6 L6 R6 L6 C6 L6 R6 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | import sys | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | import sys | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | import sys | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | import sys | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | import sys | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | import sys | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | import sys | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | import sys | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | import sys | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | import sys | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | import sys | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | import sys | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | def h(): pass | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | def h(): pass | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | def h(): pass | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | def h(): pass | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | def h(): pass | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | def h(): pass | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | def h(): pass | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | def h(): pass | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | def h(): pass | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | def h(): pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | def h(): pass | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | def h(): pass | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | class H: pass | alone | 0 | trace | C1 L2 L5 C5 L5 R5 R5 ; = ; = ; =
+for, break | class H: pass | alone | 0 | tool | S L2 >2,5 L5 S L5 R5 R5 ; = ; = ; =
+for, break | class H: pass | alone | 1 | trace | C1 L2 L3 L2 L5 C5 L5 R5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 C5 L5 R5 R5 ; C1 L2 L3 R3
+for, break | class H: pass | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | class H: pass | more behind | 0 | trace | C1 L2 L5 C5 L5 R5 L6 R6 ; = ; = ; =
+for, break | class H: pass | more behind | 0 | tool | S L2 >2,5 L5 S L5 R5 L6 R6 ; = ; = ; =
+for, break | class H: pass | more behind | 1 | trace | C1 L2 L3 L2 L5 C5 L5 R5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 C5 L5 R5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | class H: pass | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 S L5 R5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | class H: pass | loop | 0 | trace | C1 L2 L3 L6 C6 L6 R6 L2 R2 ; = ; = ; =
+for, break | class H: pass | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | class H: pass | loop | 1 | trace | C1 L2 L3 L4 L3 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 C6 L6 R6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | class H: pass | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 S L6 R6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | y: int = a | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | y: int = a | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | y: int = a | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | y: int = a | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | y: int = a | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | y: int = a | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | y: int = a | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | y: int = a | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | y: int = a | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | y: int = a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | y: int = a | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | y: int = a | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | y += a | alone | 0 | trace | C1 L2 L5 E5 R5 UnboundLocalError ; = ; = ; =
+for, break | y += a | alone | 0 | tool | S L2 >2,5 L5 UnboundLocalError ; = ; = ; =
+for, break | y += a | alone | 1 | trace | C1 L2 L3 L2 L5 E5 R5 UnboundLocalError ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 E5 R5 UnboundLocalError ; C1 L2 L3 R3
+for, break | y += a | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 R3
+for, break | y += a | more behind | 0 | trace | C1 L2 L5 E5 R5 UnboundLocalError ; = ; = ; =
+for, break | y += a | more behind | 0 | tool | S L2 >2,5 L5 UnboundLocalError ; = ; = ; =
+for, break | y += a | more behind | 1 | trace | C1 L2 L3 L2 L5 E5 R5 UnboundLocalError ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 E5 R5 UnboundLocalError ; C1 L2 L3 L6 R6
+for, break | y += a | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 UnboundLocalError ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | y += a | loop | 0 | trace | C1 L2 L3 L6 E6 R6 UnboundLocalError ; = ; = ; =
+for, break | y += a | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 UnboundLocalError ; = ; = ; =
+for, break | y += a | loop | 1 | trace | C1 L2 L3 L4 L3 L6 E6 R6 UnboundLocalError ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 E6 R6 UnboundLocalError ; C1 L2 L3 L4 L2 R2
+for, break | y += a | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 UnboundLocalError ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 UnboundLocalError ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | async for j in Items(1): /    y = j | alone | 0 | trace | C1 L2 L5 E5 L6 L5 E5 R5 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j | alone | 1 | trace | C1 L2 L3 L2 L5 E5 L6 L5 E5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 E5 L6 L5 E5 R5 ; C1 L2 L3 R3
+for, break | async for j in Items(1): /    y = j | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | async for j in Items(1): /    y = j | more behind | 0 | trace | C1 L2 L5 E5 L6 L5 E5 L7 R7 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j | more behind | 1 | trace | C1 L2 L3 L2 L5 E5 L6 L5 E5 L7 R7 ; C1 L2 L3 L7 R7 ; C1 L2 L3 L2 L5 E5 L6 L5 E5 L7 R7 ; C1 L2 L3 L7 R7
+for, break | async for j in Items(1): /    y = j | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,7 L7 R7 ; S L2 <2,2 L3 >3,3 L7 R7
+for, break | async for j in Items(1): /    y = j | loop | 0 | trace | C1 L2 L3 L6 E6 L7 L6 E6 L2 R2 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j | loop | 1 | trace | C1 L2 L3 L4 L3 L6 E6 L7 L6 E6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 E6 L7 L6 E6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | async for j in Items(1): /    y = j | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 0 | trace | C1 L2 L5 E5 L6 L5 E5 L8 R8 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 1 | trace | C1 L2 L3 L2 L5 E5 L6 L5 E5 L8 R8 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 E5 L6 L5 E5 L8 R8 ; C1 L2 L3 R3
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 R8 ; S L2 <2,2 L3 >3,3 R3
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 0 | trace | C1 L2 L5 E5 L6 L5 E5 L8 L9 R9 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 0 | tool | S L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 1 | trace | C1 L2 L3 L2 L5 E5 L6 L5 E5 L8 L9 R9 ; C1 L2 L3 L9 R9 ; C1 L2 L3 L2 L5 E5 L6 L5 E5 L8 L9 R9 ; C1 L2 L3 L9 R9
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 <5,5 L6 J6,5 L5 >5,8 L8 L9 R9 ; S L2 <2,2 L3 >3,3 L9 R9
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 0 | trace | C1 L2 L3 L6 E6 L7 L6 E6 L9 L2 R2 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; = ; = ; =
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 1 | trace | C1 L2 L3 L4 L3 L6 E6 L7 L6 E6 L9 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 E6 L7 L6 E6 L9 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | async for j in Items(1): /    y = j /else: /    c(a) | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 <6,6 L7 J7,6 L6 >6,9 L9 J9,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | await K() | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | await K() | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | await K() | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | await K() | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | await K() | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | await K() | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | await K() | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | await K() | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | await K() | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | await K() | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | await K() | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | await K() | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | y = await K() | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | y = await K() | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | y = await K() | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | y = await K() | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | y = await K() | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | y = await K() | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | y = await K() | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | y = await K() | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | y = await K() | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | y = await K() | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | y = await K() | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | y = await K() | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | lambda: 0 | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | lambda: 0 | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | lambda: 0 | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | lambda: 0 | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | lambda: 0 | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | lambda: 0 | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | lambda: 0 | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | lambda: 0 | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | lambda: 0 | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | lambda: 0 | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | lambda: 0 | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | lambda: 0 | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | "s" | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | "s" | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | "s" | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | "s" | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | "s" | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | "s" | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | "s" | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | "s" | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | "s" | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | "s" | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | "s" | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | "s" | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2
+for, break | ... | alone | 0 | trace | C1 L2 L5 R5 ; = ; = ; =
+for, break | ... | alone | 0 | tool | S L2 >2,5 L5 R5 ; = ; = ; =
+for, break | ... | alone | 1 | trace | C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3 ; C1 L2 L3 L2 L5 R5 ; C1 L2 L3 R3
+for, break | ... | alone | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 R5 ; S L2 <2,2 L3 >3,3 R3
+for, break | ... | more behind | 0 | trace | C1 L2 L5 L6 R6 ; = ; = ; =
+for, break | ... | more behind | 0 | tool | S L2 >2,5 L5 L6 R6 ; = ; = ; =
+for, break | ... | more behind | 1 | trace | C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6 ; C1 L2 L3 L2 L5 L6 R6 ; C1 L2 L3 L6 R6
+for, break | ... | more behind | 1 | tool | S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6 ; S L2 <2,2 L3 <3,3 J3,2 L2 >2,5 L5 L6 R6 ; S L2 <2,2 L3 >3,3 L6 R6
+for, break | ... | loop | 0 | trace | C1 L2 L3 L6 L2 R2 ; = ; = ; =
+for, break | ... | loop | 0 | tool | S L2 <2,2 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; = ; = ; =
+for, break | ... | loop | 1 | trace | C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2 ; C1 L2 L3 L4 L3 L6 L2 R2 ; C1 L2 L3 L4 L2 R2
+for, break | ... | loop | 1 | tool | S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 <4,4 J4,3 L3 >3,6 L6 J6,2 L2 >2,2 R2 ; S L2 <2,2 L3 <3,3 L4 >4,4 J4,2 L2 >2,2 R2

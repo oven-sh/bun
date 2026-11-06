@@ -66,16 +66,10 @@ enum class CipherOperation {
     recover,
 };
 
-// Reads an option that names a digest. `digest` stays empty if the option is undefined.
-static void getDigestOption(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* options, ASCIILiteral name, ASCIILiteral argName, ncrypto::Digest& digest)
+// Looks up the digest that a string option names.
+static void getDigestOption(JSGlobalObject* globalObject, ThrowScope& scope, JSValue name, ncrypto::Digest& digest)
 {
-    JSValue value = options->get(globalObject, Identifier::fromString(globalObject->vm(), name));
-    RETURN_IF_EXCEPTION(scope, );
-    if (value.isUndefined())
-        return;
-    V::validateString(scope, globalObject, value, argName);
-    RETURN_IF_EXCEPTION(scope, );
-    GCOwnedDataScope<WTF::StringView> view = asString(value)->view(globalObject);
+    GCOwnedDataScope<WTF::StringView> view = asString(name)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     digest = ncrypto::Digest::FromName(view);
     if (!digest)
@@ -92,13 +86,16 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
 
-    // The cipher options (padding, oaepHash, mgf1Hash, oaepLabel) are validated before any key
-    // parsing so an invalid digest is reported even when the key material itself is invalid.
-    ncrypto::Digest digest;
-    ncrypto::Digest mgf1Digest;
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/cipher.js#L67-L87
+    auto preparedKey = KeyObject::prepareAsymmetricKey(globalObject, scope, optionsValue,
+        keyType == KeyType::Private ? KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate : KeyObject::PrepareAsymmetricKeyMode::ConsumePublic);
+    RETURN_IF_EXCEPTION(scope, {});
+
     int32_t padding = defaultPadding;
-    std::optional<WTF::Vector<uint8_t>> oaepLabel;
+    JSValue oaepHashValue = jsUndefined();
+    JSValue mgf1HashValue = jsUndefined();
     JSValue encodingValue = jsUndefined();
+    BufferArgument oaepLabel;
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -108,38 +105,53 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        getDigestOption(lexicalGlobalObject, scope, options, "oaepHash"_s, "key.oaepHash"_s, digest);
+        oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        getDigestOption(lexicalGlobalObject, scope, options, "mgf1Hash"_s, "key.mgf1Hash"_s, mgf1Digest);
+        mgf1HashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "mgf1Hash"_s));
         RETURN_IF_EXCEPTION(scope, {});
-
         encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, {});
-
         JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!oaepLabelValue.isUndefined()) {
-            // Key parsing below runs user JS (option getters, warning events) that could
-            // detach a borrowed label buffer, so copy the bytes instead of holding a view.
-            auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "key.oaepLabel"_s, encodingValue);
+
+        if (!oaepHashValue.isUndefined()) {
+            V::validateString(scope, lexicalGlobalObject, oaepHashValue, "key.oaepHash"_s);
             RETURN_IF_EXCEPTION(scope, {});
-            oaepLabel = copyArgumentBytes(lexicalGlobalObject, scope, std::span { view->data(), view->size() }, "oaepLabel"_s);
-            if (!oaepLabel) return {};
         }
+        if (!mgf1HashValue.isUndefined()) {
+            V::validateString(scope, lexicalGlobalObject, mgf1HashValue, "key.mgf1Hash"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (!oaepLabelValue.isUndefined()) {
+            oaepLabel = getArrayBufferOrView(lexicalGlobalObject, scope, oaepLabelValue, "key.oaepLabel"_s, encodingValue);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    auto buffer = getArrayBufferOrView(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Node looks the digests up after it has read the key. For the private functions it reads a public key
+    // too, which the import below refuses, so a digest that is not known has to be reported before it.
+    ncrypto::Digest digest;
+    ncrypto::Digest mgf1Digest;
+    if (!oaepHashValue.isUndefined()) {
+        getDigestOption(lexicalGlobalObject, scope, oaepHashValue, digest);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (!mgf1HashValue.isUndefined()) {
+        getDigestOption(lexicalGlobalObject, scope, mgf1HashValue, mgf1Digest);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     KeyObject keyObject;
     {
         ncrypto::MarkPopErrorOnReturn popErrorScope;
-        keyObject = KeyObject::getAsymmetricKeyFromJS(globalObject, scope, optionsValue,
-            keyType == KeyType::Private ? KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate : KeyObject::PrepareAsymmetricKeyMode::ConsumePublic);
+        keyObject = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedKey));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto& pkey = keyObject.asymmetricKey();
-
-    auto buffer = getArrayBufferOrView2(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (operation == CipherOperation::decrypt && keyType == KeyType::Private && padding == RSA_PKCS1_PADDING) {
         ncrypto::EVPKeyCtxPointer ctx = pkey.newCtx();
@@ -153,31 +165,31 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
+    // Read after the import, which runs the getters of a JWK.
+    std::span<const uint8_t> input = buffer.span();
+    std::span<const uint8_t> label = oaepLabel.span();
+    if (label.size() > INT32_MAX) [[unlikely]] {
+        throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "oaepLabel is too big"_s);
+        return {};
+    }
+
     // Under another padding, OpenSSL's encryption and decryption ignore the OAEP options. BoringSSL refuses them.
     if (padding != RSA_PKCS1_OAEP_PADDING && (operation == CipherOperation::encrypt || operation == CipherOperation::decrypt)) {
         digest = nullptr;
         mgf1Digest = nullptr;
-        oaepLabel.reset();
-    }
-
-    ncrypto::Buffer<const void> labelBuf = {};
-    if (oaepLabel) {
-        labelBuf = {
-            .data = oaepLabel->begin(),
-            .len = oaepLabel->size(),
-        };
+        label = {};
     }
 
     ncrypto::Cipher::CipherParams cipherParams {
         .padding = padding,
         .digest = digest,
         .mgf1_digest = mgf1Digest,
-        .label = labelBuf,
+        .label = { .data = label.data(), .len = label.size() },
     };
 
     ncrypto::Buffer<const void> bufferBuf {
-        .data = buffer->data(),
-        .len = buffer->size(),
+        .data = input.data(),
+        .len = input.size(),
     };
 
     ncrypto::DataPointer result;

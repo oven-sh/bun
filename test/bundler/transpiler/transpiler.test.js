@@ -1943,6 +1943,348 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
+    // tsc emits `var a = b.c` for an `import a = b.c` that is not exported only where a value reads `a`.
+    describe("import a = b.c that is not exported", () => {
+      const modes = {
+        "by default": { loader: "ts" },
+        // One part for each top-level statement, constants inlined, syntax minified.
+        "as bun run": { loader: "ts", target: "bun", treeShaking: true, inline: true, minify: { syntax: true } },
+        "with minify.syntax": { loader: "ts", minify: { syntax: true } },
+        "with inline": { loader: "ts", inline: true },
+        "with treeShaking": { loader: "ts", treeShaking: true },
+        "without deadCodeElimination": { loader: "ts", deadCodeElimination: false },
+        "with replMode": { loader: "ts", replMode: true },
+      };
+      const print = (source, options = modes["by default"]) => new Bun.Transpiler(options).transformSync(source);
+      // What the printed program passes to `emit`.
+      const run = (source, options) => {
+        const emitted = [];
+        new Function("emit", print(source, options))(value => emitted.push(value));
+        return emitted;
+      };
+
+      // The output of tsc emits the same values.
+      const noValueReadsIt = [
+        [
+          "only a type names it",
+          `namespace N { export type T = number; }
+           namespace M { import T = N.T; export const x: T = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "nothing names it",
+          `const N = { get v() { emit("read"); return 1; } };
+           namespace M { import V = N.v; export const x = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "a chain, root first",
+          `namespace N { export namespace Inner { export type T = number; } }
+           namespace M { import I = N.Inner; import T = I.T; export const x: T = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "a chain, leaf first",
+          `namespace N { export namespace Inner { export type T = number; } }
+           namespace M { import T = I.T; import I = N.Inner; export const x: T = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "before a const",
+          `namespace N { export type T = number; }
+           function f() { return 2; }
+           namespace M { import T = N.T; const y: T = f(); export const x = y; }
+           emit(M.x);`,
+          [2],
+        ],
+        [
+          "after a const",
+          `namespace N { export type T = number; }
+           function f() { return 2; }
+           namespace M { const y = f(); import T = N.T; export const x: T = y; }
+           emit(M.x);`,
+          [2],
+        ],
+        [
+          "its root is the const before it",
+          `function make() { emit("made"); return {}; }
+           namespace M { const base = make(); import T = base.T; export const x = 1; }
+           emit(M.x);`,
+          ["made", 1],
+        ],
+        [
+          "in a dotted namespace",
+          `namespace N { export type T = number; }
+           namespace A.B { import T = N.T; export const x: T = 1; }
+           emit(A.B.x);`,
+          [1],
+        ],
+        [
+          "in two blocks of one namespace",
+          `namespace N { export type T = number; export type U = string; }
+           namespace M { import T = N.T; export const x: T = 1; }
+           namespace M { import U = N.U; export const y: U = "2"; }
+           emit(M.x + M.y);`,
+          ["12"],
+        ],
+        [
+          "its root is a namespace of interfaces",
+          `namespace app.models { export interface IUser { name: string } }
+           namespace app.controllers { import IUser = app.models.IUser; export const user: IUser = { name: "a" }; }
+           emit(app.controllers.user.name);`,
+          ["a"],
+        ],
+        [
+          "a parameter shadows it",
+          `namespace N { export type T = number; }
+           namespace M { import T = N.T; export function f(T: number): T { return T + 1; } }
+           emit(M.f(1));`,
+          [2],
+        ],
+        [
+          "a type of a nested namespace names it",
+          `namespace N { export type T = number; }
+           namespace M { import T = N.T; export namespace Inner { export const y: T = 7; } }
+           emit(M.Inner.y);`,
+          [7],
+        ],
+        [
+          "only an alias of a nested namespace reads it",
+          `declare namespace D { namespace Inner { type T = number } }
+           namespace Outer { import I = D.Inner; export namespace Nested { import T = I.T; export const x: T = 1; } }
+           emit(Outer.Nested.x);`,
+          [1],
+        ],
+        [
+          "at module scope, only an alias of a namespace below reads it",
+          `declare namespace D { namespace Inner { type T = number } }
+           import I = D.Inner;
+           namespace M { import T = I.T; export const x: T = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "at module scope, only an alias of a namespace above reads it",
+          `declare namespace D { namespace Inner { type T = number } }
+           namespace M { import T = I.T; export const x: T = 1; }
+           import I = D.Inner;
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "at module scope, a chain, root first",
+          `declare namespace D { namespace Inner { type T = number } }
+           import I = D.Inner;
+           import T = I.T;
+           const x: T = 1;
+           emit(x);`,
+          [1],
+        ],
+        [
+          "at module scope, before a const",
+          `namespace N { export type T = number; }
+           import T = N.T;
+           const y: T = 2;
+           emit(y);`,
+          [2],
+        ],
+      ];
+      const aValueReadsIt = [
+        [
+          "the statement after it",
+          `namespace N { export const v = 5; }
+           namespace M { import V = N.v; export const x = V + 1; }
+           emit(M.x);`,
+          [6],
+        ],
+        [
+          "a function before it",
+          `namespace N { export const v = 5; }
+           namespace M { export function f() { return V; } import V = N.v; }
+           emit(M.f());`,
+          [5],
+        ],
+        [
+          "the heritage of a class",
+          `namespace N { export class Base { hi() { return "hi"; } } }
+           namespace M { import Base = N.Base; export class C extends Base {} }
+           emit(new M.C().hi());`,
+          ["hi"],
+        ],
+        [
+          "a nested namespace",
+          `namespace N { export const v = 5; }
+           namespace M { import V = N.v; export namespace Inner { export const y = V * 2; } }
+           emit(M.Inner.y);`,
+          [10],
+        ],
+        [
+          "a shorthand property and typeof",
+          `namespace N { export const v = 5; }
+           namespace M { import V = N.v; export const x = [{ V }.V, typeof V]; }
+           emit(M.x.join());`,
+          ["5,number"],
+        ],
+        [
+          "the alias after it",
+          `namespace N { export namespace Inner { export const v = 3; } }
+           namespace M { import I = N.Inner; import V = I.v; export const x = V; }
+           emit(M.x);`,
+          [3],
+        ],
+        [
+          "a member of an enum, before and after it",
+          `enum E { A = 1 }
+           namespace M { export const before = () => B; import B = E.A; export const x = B; }
+           emit(M.before() + M.x);`,
+          [2],
+        ],
+        [
+          "at module scope, the statement after it",
+          `namespace N { export const v = 5; }
+           import V = N.v;
+           emit(V);`,
+          [5],
+        ],
+        [
+          "at module scope, a function before it",
+          `namespace N { export const v = 5; }
+           const f = () => V;
+           import V = N.v;
+           emit(f());`,
+          [5],
+        ],
+      ];
+
+      describe.each(Object.entries(modes))("%s", (_, options) => {
+        it.each(noValueReadsIt)("no value reads it: %s", (_, source, emitted) => {
+          expect(run(source, options)).toEqual(emitted);
+        });
+        it.each(aValueReadsIt)("a value reads it: %s", (_, source, emitted) => {
+          expect(run(source, options)).toEqual(emitted);
+        });
+      });
+
+      it("prints nothing of an alias that no value reads", () => {
+        const source = `namespace N { export type T = number; }\nnamespace M { import T = N.T; export const x: T = 1; }`;
+        expect(print(source)).toBe("var M;\n((M) => {\n  M.x = 1;\n})(M ||= {});\n");
+        expect(print(source, modes["as bun run"])).toBe("var M;\n((M) => M.x = 1)(M ||= {});\n");
+      });
+
+      it("prints an alias that a value reads where it is written", () => {
+        expect(
+          print(
+            `namespace M { export const f = () => V; import V = I.v; const y = 1; import I = N.Inner; import T = N.T; }`,
+          ),
+        ).toBe(
+          "var M;\n((M) => {\n  M.f = () => V;\n  const V = I.v;\n  const y = 1;\n  const I = N.Inner;\n})(M ||= {});\n",
+        );
+        expect(print(`const f = () => V;\nimport V = I.v;\nconst y = 1;\nimport I = N.Inner;\nimport T = N.T;`)).toBe(
+          "const f = () => V;\nconst V = I.v;\nconst y = 1;\nconst I = N.Inner;\n",
+        );
+      });
+
+      // `bun run` inlines the constant where tsc has a `var` that is still undefined.
+      it.each(["as bun run", "with inline"])("a reader that runs before an alias of an enum member: %s", mode => {
+        expect(
+          run(
+            `enum E { A = 1 }
+             namespace M { export const x = f(); import B = E.A; import C = B; function f() { return B + C; } }
+             emit(M.x);`,
+            modes[mode],
+          ),
+        ).toEqual([2]);
+        expect(
+          run(
+            `namespace N { export enum E { A = "a" } }
+             namespace M { export const x = f(); import B = N.E.A; function f() { return B; } }
+             emit(M.x);`,
+            modes[mode],
+          ),
+        ).toEqual(["a"]);
+        expect(
+          run(
+            `enum E { A = 1 }
+             const x = f();
+             import B = E.A;
+             function f() { return B; }
+             emit(x);`,
+            modes[mode],
+          ),
+        ).toEqual([1]);
+      });
+
+      it("code that never runs does not read it", () => {
+        const source = `const N = { get v() { emit("read"); return 1; } };
+          namespace M { import V = N.v; if (false) emit(V); export const x = 1; }
+          emit(M.x);`;
+        expect(run(source, modes["by default"])).toEqual([1]);
+        expect(run(source, modes["as bun run"])).toEqual([1]);
+        // The statement stays, so it is a reader.
+        expect(run(source, modes["without deadCodeElimination"])).toEqual(["read", 1]);
+      });
+
+      it("an import that only the alias names stays, as an import of nothing", () => {
+        const star = `import * as n from "./m";\nnamespace M { import T = n.T; export const x: T = 1; }`;
+        const named = `import { NS, real } from "./m";\nnamespace M { import T = NS.T; export const x: T = real; }`;
+        const options = modes["as bun run"];
+        expect(print(star, options)).toBe('import"./m";\nvar M;\n((M) => M.x = 1)(M ||= {});\n');
+        expect(print(named, options)).toBe('import { real } from "./m";\nvar M;\n((M) => M.x = real)(M ||= {});\n');
+        expect(new Bun.Transpiler(options).scanImports(star)).toEqual([{ kind: "import-statement", path: "./m" }]);
+      });
+
+      it("goes before a `using` of its list is lowered", () => {
+        const inNamespace = print(
+          `namespace N { export type T = number; }\nnamespace M { import T = N.T; using u = null; export const x: T = 1; }`,
+        );
+        expect(inNamespace).toContain("__callDispose");
+        expect(inNamespace).not.toContain("N.T");
+        const atModuleScope = print(
+          `namespace N { export type T = number; }\nimport T = N.T;\nusing u = null;\nconst x: T = 1;`,
+        );
+        expect(atModuleScope).toContain("__callDispose");
+        expect(atModuleScope).not.toContain("N.T");
+      });
+
+      it("leaves the namespace of an `export declare` its object", () => {
+        expect(
+          print(`namespace N { export type T = number; }\nnamespace M { import T = N.T; export declare const y: T; }`),
+        ).toBe("var M;\n((M) => {})(M ||= {});\n");
+      });
+
+      it("leaves `export import` and `import a = require()`", () => {
+        expect(print(`namespace M { export import V = N.v; import fs = require("fs"); }`)).toBe(
+          'var M;\n((M) => {\n  M.V = N.v;\n  const fs = require("fs");\n})(M ||= {});\n',
+        );
+      });
+
+      it("is read by the metadata of a decorator and by a JSX element", () => {
+        const metadata = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+        }).transformSync(`namespace M { import Dep = N.Dep; export class C { @d dep: Dep; } }`);
+        expect(metadata).toContain("const Dep = N.Dep;");
+        expect(metadata).toContain('"design:type", typeof Dep === "undefined" ? Object : Dep');
+
+        const jsx = new Bun.Transpiler({
+          loader: "tsx",
+          tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } },
+        }).transformSync(`namespace M { import h = Lib.h; export const element = <a />; }`);
+        expect(jsx).toBe('var M;\n((M) => {\n  const h = Lib.h;\n  M.element = h("a", null);\n})(M ||= {});\n');
+      });
+
+      it("reports a root that is a reserved word of strict mode", () => {
+        ts.expectParseError(
+          "import T = yield.T;\nexport {};",
+          '"yield" is a reserved word and cannot be used in strict mode',
+        );
+      });
+    });
+
     it("re-declaring an import binding that is kept in the output is an error", () => {
       const err = ts.expectParseError;
 

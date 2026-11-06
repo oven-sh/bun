@@ -713,7 +713,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ImportEqualsEliminationTest", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -749,7 +748,7 @@ describe("bundler", () => {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
         import used = foo.used
-        import unused_keep = foo.unused
+        import unused_drop = foo.unused
         export { used }
       `,
     },
@@ -759,7 +758,6 @@ describe("bundler", () => {
     external: ["pkg"],
   });
   itBundled("ts/ImportEqualsTreeShakingTrue", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -774,7 +772,6 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("ts/ImportEqualsBundle", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -787,6 +784,68 @@ describe("bundler", () => {
     treeShaking: true,
     external: ["pkg"],
   });
+  // tsc emits an unexported `import a = b.c` only where a value reads `a`.
+  const importEqualsInNamespaceBody = {
+    "/entry.ts": /* ts */ `
+      import * as types from "./types";
+      namespace Local { export type T = number; }
+      namespace M {
+        import T = Local.T;
+        import Other = types.Other;
+        export const x: T = 1;
+      }
+      console.log(M.x);
+    `,
+    "/types.ts": /* ts */ `
+      export type Other = string;
+      console.log("types");
+    `,
+  };
+  itBundled("ts/ImportEqualsInNamespaceBody", {
+    files: importEqualsInNamespaceBody,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Other");
+    },
+    run: {
+      stdout: "types\n1",
+    },
+  });
+  itBundled("ts/ImportEqualsInNamespaceBodySplitting", {
+    files: importEqualsInNamespaceBody,
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      stdout: "types\n1",
+    },
+  });
+  // The parser counts the reads of a `require()` namespace to tell which exports the bundle needs.
+  for (const [name, x] of [
+    ["ts/ImportEqualsOfRequireNamespaceInNamespaceBody", "1"],
+    ["ts/ImportEqualsOfRequireNamespaceReadInNamespaceBody", "A"],
+  ]) {
+    itBundled(name, {
+      files: {
+        "/entry.ts": /* ts */ `
+          const ns = Math.random() < 2 ? require("./lib") : null;
+          namespace M {
+            import A = ns.a;
+            export const x = ${x};
+          }
+          console.log(Object.keys(ns).join(","), M.x);
+        `,
+        "/lib.ts": /* ts */ `
+          export const a = 1;
+          export const b = 2;
+          export const c = 3;
+        `,
+      },
+      run: {
+        stdout: "a,b,c 1",
+      },
+    });
+  }
   itBundled("ts/MinifiedBundleES6", {
     files: {
       "/entry.ts": /* ts */ `

@@ -540,9 +540,11 @@ impl StackIterator {
             return None;
         }
         // A frame record lies in its frame, so not below the stack pointer. Code that keeps none has anything in the register: glibc's
-        // raise() has the id of the thread there, which every eighth time is aligned, and is an address in the image of an
-        // executable that is loaded low.
-        if self.returned_to.is_some_and(|(_, sp)| fp < sp) {
+        // raise() has the id of the thread there, which every eighth time is aligned, and is an address in the image of a
+        // compiled executable, which is loaded low.
+        if HOLDS_COMPILED_CODE.load(core::sync::atomic::Ordering::Relaxed)
+            && self.returned_to.is_some_and(|(_, sp)| fp < sp)
+        {
             return None;
         }
         let new_fp = self.ma.load_usize(fp)?;

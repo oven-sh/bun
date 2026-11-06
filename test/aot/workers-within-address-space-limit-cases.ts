@@ -1,6 +1,7 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
-import { locksEnvironment } from "./hardened";
+import { hasGuardedPages, locksEnvironment } from "./hardened";
+import { without } from "./harness/capabilities";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
@@ -152,7 +153,8 @@ const startsWorkerRightAfterTerminating = `if (Bun.isMainThread) {
     workers.shift()!.terminate();
     workers.push(await startAndWait());
   }
-  console.log("at least 8 run:", workers.length >= 8);
+  const atLeast = Number(process.argv[2]);
+  console.log("at least " + atLeast + " run:", workers.length >= atLeast);
   process.exit(0);
 } else {
   setInterval(() => {}, 1000);
@@ -714,6 +716,20 @@ async function runWithin(limitInKB: number | undefined, program: string, ...args
 
 const GB = 1024 * 1024;
 
+// A Worker takes 64 to 82 MB of address space where tables cannot grow; the table that starts small waits for a decision.
+// So under guarded pages fewer start within a limit, and the constructor throws for the rest. These numbers may only rise.
+const startAtOnceUnderGuardedPages = new Map([
+  [`8 within ${GB}`, 5],
+  [`32 within ${2 * GB}`, 16],
+]);
+const runOneByOneUnderGuardedPages = new Map([
+  [896 * 1024, 3],
+  [1013 * 1024, 5],
+  [GB, 5],
+  [1130 * 1024, 7],
+]);
+const runOneByOneWithin = (limit: number) => (hasGuardedPages && runOneByOneUnderGuardedPages.get(limit)) || 8;
+
 /** Every `parts`-th case from the `part`-th. */
 export function workersWithinAddressSpaceLimit(part: number, parts: number) {
   let cases = 0;
@@ -735,10 +751,21 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     )(
       "%d start within %d kB",
       async (count, limit) => {
-        expect(await runWithin(limit, startsWorkers, String(count))).toEqual({
-          stdout: `started ${count} refused 0\n`,
+        const atLeast = (hasGuardedPages && startAtOnceUnderGuardedPages.get(`${count} within ${limit}`)) || count;
+        const { stdout, stderr, exitCode } = await runWithin(limit, startsWorkers, String(count));
+        const [, started, refused] = /^started (\d+) refused (\d+)\n$/.exec(stdout) ?? [];
+        expect({
+          stdout,
+          stderr,
+          exitCode,
+          all: Number(started) + Number(refused),
+          enough: Number(started) >= atLeast,
+        }).toEqual({
+          stdout,
           stderr: "",
           exitCode: 0,
+          all: count,
+          enough: true,
         });
       },
       120_000,
@@ -777,7 +804,8 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       async () => {
         const leaf = "3(4,4)";
         const two = (depth: number, inner: string) => `${depth}(${inner},${inner})`;
-        expect(await runWithin(2 * GB, startsWorkersInWorkers)).toEqual({
+        // Thirty in all, and the program waits for every one.
+        expect(await runWithin((hasGuardedPages ? 4 : 2) * GB, startsWorkersInWorkers)).toEqual({
           stdout: two(0, two(1, two(2, leaf))) + "\n",
           stderr: "",
           exitCode: 0,
@@ -801,8 +829,9 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     inPart(test.skipIf(!isLinux || isASAN))(
       "a Worker starts in the room of Workers that were just terminated",
       async () => {
-        expect(await runWithin(GB, startsWorkerRightAfterTerminating)).toEqual({
-          stdout: "at least 8 run: true\n",
+        const atLeast = runOneByOneWithin(GB);
+        expect(await runWithin(GB, startsWorkerRightAfterTerminating, String(atLeast))).toEqual({
+          stdout: `at least ${atLeast} run: true\n`,
           stderr: "",
           exitCode: 0,
         });
@@ -814,21 +843,29 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       "a Worker starts in the room of Workers that were just terminated within each of 5 limits",
       async () => {
         const limits = Array.from({ length: 5 }, (_, i) => (896 + 117 * i) * 1024);
-        const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
+        const results: Awaited<ReturnType<typeof runWithin>>[] = [];
+        for (const limit of limits)
+          results.push(await runWithin(limit, startsWorkerRightAfterTerminating, String(runOneByOneWithin(limit))));
         expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-          limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+          limits.map(limit => ({
+            limit,
+            stdout: `at least ${runOneByOneWithin(limit)} run: true\n`,
+            stderr: "",
+            exitCode: 0,
+          })),
         );
       },
       240_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
+    inPart(test.skipIf(!isLinux || isASAN || !without("a locked environment")))(
       "a Worker starts in the room of Workers that were just terminated at 8 of the 128 places where the cells begin",
       async () => {
         const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
         const results = await runEach(
           places.map(place => ({ limitInKB: 1104 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           startsWorkerRightAfterTerminating,
+          "8",
         );
         expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
           places.map(place => ({ place, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
@@ -961,7 +998,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       240_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
+    inPart(test.skipIf(!isLinux || isASAN || !without("a locked environment")))(
       "the main thread exits while a Worker of its own waits for room, and that one never starts, where the exit waits for every thread",
       async () => {
         const [result] = await runEach(

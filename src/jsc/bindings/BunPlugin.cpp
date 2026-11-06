@@ -5593,8 +5593,8 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     for (auto* mock : unawaited)
         mock->detach(globalObject);
 
-    // The runner's own load of a test file has no importer, so no factory is asking.
-    if (importer.isNull())
+    // A compiled test run's own load of a test file has no importer, so no factory is asking.
+    if (globalObject->vm().hasCompiledCode() && importer.isNull())
         return key;
 
     // A module that is still loading can't be running import(), so `importer` is exactly that module and not a factory's copy of it.

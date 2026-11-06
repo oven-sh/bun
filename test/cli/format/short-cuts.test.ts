@@ -4048,6 +4048,9 @@ describe("templates in another language", () => {
   // A property whose value may be in another language isn't written as a line, whether or not the language's parser
   // takes it.
   const texts = [
+    // How far the line of a template is indented, behind a byte order mark.
+    '\ufeff    h = html`<script type="application/json">{"a":["aaaaaaaaaa","bbbbbbbbbb","cccccccccc","dddddddddd","eeeeeeeeee"]}</script>`;\n',
+    '\ufeff\n    h = html`<script type="application/json">{"a":["aaaaaaaaaa","bbbbbbbbbb","cccccccccc","dddddddddd","eeeeeeeeee"]}</script>`;\n',
     '@Component({\n  selector: "a",\n  template: `<p>a</p>`,\n})\nclass A {}\n',
     '@Component({\n  selector: "a",\n  template: `\n    <div><p>a</p>\n    <p [b]="c+1">{{d}}</p></div>\n  `,\n  styles: `a{color:red}`,\n})\nclass A {}\n',
     // What the parser refuses stays as it is.

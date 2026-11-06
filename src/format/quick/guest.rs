@@ -190,6 +190,10 @@ impl Sink<'_> {
         let line = crate::Bytes::last_index_of(self.q.t.sub(0, at), 10, at - 1)
             .max(self.q.text.src_start - 1)
             + 1;
+        // The first line starts with the byte order mark, which is no blank. It isn't in the buffer.
+        if self.q.had_bom && line == self.q.text.src_start {
+            return 0;
+        }
         let mut columns = 0u32;
         for byte in self.q.t.sub(line, at) {
             columns = columns.saturating_add(match byte {

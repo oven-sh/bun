@@ -148,9 +148,6 @@ pub(crate) struct Snapshots {
     values: StringArrayHashMap<Entry>,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
-    /// Directory whose `__snapshots__/` was last created (or found existing);
-    /// borrowed from the runner's `File::source.path`, a `Path<'static>`.
-    snapshot_dir_path: Option<&'static [u8]>,
     inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
@@ -174,7 +171,6 @@ impl Snapshots {
             values: StringArrayHashMap::new(),
             counts: StringHashMap::new(),
             _current_file: None,
-            snapshot_dir_path: None,
             inline_snapshots_to_write: IndexMap::new(),
             last_error_snapshot_name: None,
         }
@@ -486,7 +482,7 @@ impl Snapshots {
         if let Some(file) = self._current_file.as_mut() {
             // The flush opens the file again, after the tests. If it can't be opened now, the test that changes it fails.
             if file.pending == Pending::Nothing
-                && let Err(err) = Self::open(&mut self.snapshot_dir_path, files, file.id)
+                && let Err(err) = Self::open(files, file.id)
             {
                 file.keeps_all = true;
                 return Err(Self::error_of_open(err));
@@ -614,7 +610,8 @@ impl Snapshots {
                 return Ok(());
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            let len = snapshot_file_path(files, file.id, path_buf.0.as_mut_slice()).map_or(0, |(_, _, len)| len);
+            let (_, _, len) = snapshot_file_path(files, file.id, path_buf.0.as_mut_slice())
+                .ok_or_else(|| LeftAsItIs::NotWritable(Self::path_is_too_long()))?;
             return Err(LeftAsItIs::DoesNotParse(Box::from(&path_buf.0[..len])));
         }
         if file.keeps_all {
@@ -631,7 +628,7 @@ impl Snapshots {
             return Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable);
         }
         if file.pending == Pending::Nothing {
-            Self::open(&mut self.snapshot_dir_path, files, file.id).map_err(LeftAsItIs::NotWritable)?;
+            Self::open(files, file.id).map_err(LeftAsItIs::NotWritable)?;
         }
         file.pending = Pending::WholeFile;
         Ok(())
@@ -639,9 +636,8 @@ impl Snapshots {
 
     fn remove_file(files: &FileList, file_id: FileId) -> bun_sys::Result<()> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some((_, _, len)) = snapshot_file_path(files, file_id, path_buf.0.as_mut_slice()) else {
-            return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::unlink));
-        };
+        let (_, _, len) =
+            snapshot_file_path(files, file_id, path_buf.0.as_mut_slice()).ok_or_else(Self::path_is_too_long)?;
         match bun_sys::unlink(ZStr::from_buf(&path_buf.0[..], len)) {
             Err(err) if err.get_errno() != bun_sys::Errno::ENOENT => Err(err),
             _ => Ok(()),
@@ -808,19 +804,13 @@ impl Snapshots {
 
     /// jest-snapshot's `saveSnapshotFile`. The text comes from `values` alone.
     #[optimize(size)]
-    fn write_pending(&mut self, files: &FileList, file: &File) -> bun_sys::Result<()> {
+    fn write_pending(&self, files: &FileList, file: &File) -> bun_sys::Result<()> {
         // `remove_obsolete` decides if a file that doesn't parse is replaced.
         if file.pending == Pending::Nothing || file.unparsed {
             return Ok(());
         }
         // By path: the file that was loaded can be gone, or another file can have its name now.
-        let opened = match Self::open(&mut self.snapshot_dir_path, files, file.id) {
-            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => {
-                self.snapshot_dir_path = None;
-                Self::open(&mut self.snapshot_dir_path, files, file.id)?
-            }
-            opened => opened?,
-        };
+        let opened = Self::open(files, file.id)?;
         // A file with another length was changed after it was loaded. The whole file is printed then, as for a changed entry.
         let is_appended = file.pending == Pending::NewEntries && opened.get_end_pos()? == file.loaded_len;
         let offset = if is_appended { file.loaded_len } else { 0 };
@@ -1307,29 +1297,22 @@ impl Snapshots {
         }
     }
 
-    /// Opens the snapshot file for writing. Makes it, and `__snapshots__`, if they aren't there.
-    fn open(
-        snapshot_dir_path: &mut Option<&'static [u8]>,
-        files: &FileList,
-        file_id: FileId,
-    ) -> bun_sys::Result<bun_sys::File> {
-        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
-        let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let Some((dir_path, dir_len, len)) = snapshot_file_path(files, file_id, buf) else {
-            return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
-        };
+    fn path_is_too_long() -> bun_sys::Error {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+    }
 
-        if !snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached, true)) {
-            let after_dir = core::mem::replace(&mut buf[dir_len], 0);
-            match bun_sys::mkdir(ZStr::from_buf(&buf[..], dir_len), 0o777) {
-                Err(err) if err.get_errno() != bun_sys::Errno::EEXIST => return Err(err),
-                _ => *snapshot_dir_path = Some(dir_path),
-            }
-            buf[dir_len] = after_dir;
-        }
-
+    /// Opens the snapshot file for writing. Makes it, and the directories above it, if they aren't there.
+    fn open(files: &FileList, file_id: FileId) -> bun_sys::Result<bun_sys::File> {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let (_, dir_len, len) =
+            snapshot_file_path(files, file_id, path_buf.0.as_mut_slice()).ok_or_else(Self::path_is_too_long)?;
         // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
         let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-        Ok(bun_sys::File::from_fd(bun_sys::open(ZStr::from_buf(&buf[..], len), flags, 0o644)?))
+        match bun_sys::open(ZStr::from_buf(&path_buf.0[..], len), flags, 0o644) {
+            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => {}
+            opened => return opened.map(bun_sys::File::from_fd),
+        }
+        bun_sys::mkdir_recursive_at_mode(bun_sys::Fd::cwd(), &path_buf.0[..dir_len], 0o777)?;
+        bun_sys::open(ZStr::from_buf(&path_buf.0[..], len), flags, 0o644).map(bun_sys::File::from_fd)
     }
 }

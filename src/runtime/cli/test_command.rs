@@ -5567,7 +5567,7 @@ impl TestCommand {
                     let top_level_dir = FileSystem::instance().top_level_dir();
                     match left {
                         LeftAsItIs::DoesNotParse(path) => pretty_error!(
-                            "<r><red>error<r>: --update-snapshots left {} as it is: the file doesn't parse\n<blue>note<r><d>:<r> --update-snapshots replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+                            "<r><red>error<r>: --update-snapshots left {} as it is: the file doesn't parse\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. A test that is skipped, filtered out, test.failing or a todo with a body does not.\n<blue>note<r><d>:<r> Fix the snapshot file, or delete it and run --update-snapshots again.\n",
                             bun_fmt::quote(resolve_path::relative(top_level_dir, &path))
                         ),
                         LeftAsItIs::NotWritable(err) => Output::err(

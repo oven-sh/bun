@@ -452,8 +452,9 @@ describe.concurrent("--update-snapshots", () => {
       snapshot: unreadable,
       stderr: expect.stringContaining(
         `error: --update-snapshots left ${JSON.stringify(join("__snapshots__", "a.test.ts.snap"))} as it is: the file doesn't parse\n` +
-          "note: --update-snapshots replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. " +
-          "Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+          "note: A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. " +
+          "A test that is skipped, filtered out, test.failing or a todo with a body does not.\n" +
+          "note: Fix the snapshot file, or delete it and run --update-snapshots again.\n",
       ),
       exitCode: 1,
     });
@@ -578,8 +579,7 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
-  // A worker that stops at --bail writes its file without the pass that removes entries.
-  test("--parallel --bail keeps the entries of the tests that did not run", async () => {
+  test("--parallel --bail keeps the entries of a test that fails", async () => {
     const result = await update(
       {
         "a.test.ts": `import { expect, test } from "bun:test";
@@ -677,8 +677,7 @@ describe.concurrent("a run without --update-snapshots", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The first matcher loads the file, and the run writes it after the tests. Another process can change it in between.
-  // The run then has the last word, as before: it prints the file from the entries that it loaded and the new ones.
+  // The run loads the file at its first matcher and writes it after the tests. If the file has another length by then, the run prints it from its entries.
   const oneAndTwo = header + '\nexports[`one 1`] = `"1"`;\n\nexports[`two 1`] = `"2"`;\n';
   const withZero = header + '\nexports[`zero 1`] = `"0"`;\n\nexports[`one 1`] = `"1"`;\n';
   test.each([
@@ -717,7 +716,7 @@ describe.concurrent("a run without --update-snapshots", () => {
     expect(next.exitCode).toBe(0);
   });
 
-  // Both runs have taken the snapshot of "two" before one of them writes the file.
+  // Both runs have taken the snapshot of "two" before one of them writes the file. A run that only appends would write the key a second time.
   test("two runs of one test file at the same time leave each entry once", async () => {
     using dir = tempDir("snapshot-two-runs", {
       "a.test.ts": `

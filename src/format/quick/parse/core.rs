@@ -4850,7 +4850,7 @@ impl Quick {
                         while i <= self.n.at(args) {
                             let argument = self.n.at(args + i);
                             if (self.n.at(argument) & 0xff) == k::TypeCastExpression
-                                && self.t.at(self.n.at(argument + 1)) != 40
+                                && self.n.at(argument + 1) == self.n.at(self.n.at(argument + 4) + 1)
                             {
                                 return Err(self.text_refuse());
                             }
@@ -5025,14 +5025,19 @@ impl Quick {
                             if self.lexer.tok == tk::Function {
                                 return self.parse_function(start, k::FunctionExpression, F_ASYNC);
                             }
-                            if self.lexer.tok == tk::Lt && self.parse.typed != 0 {
+                            if self.lexer.tok == tk::Lt {
                                 // async <T>(x: T) => y
-                                let arrow = self.ts_parse_less_than_expression(start, F_ASYNC)?;
+                                let arrow = if self.parse.typed != 0 {
+                                    self.ts_parse_less_than_expression(start, F_ASYNC)?
+                                } else {
+                                    0
+                                };
                                 if arrow != 0 {
                                     return Ok(arrow);
                                 }
-                                // `async<A>(b)`: no call for Flow's own parser, and a rare one for the others. (The trial has saved places of its own:
-                                // restore() would not lead back to `async`.)
+                                // `async<A>(b)`: no call for Flow's own parser, and a rare one for the others. `async < a, b`: the start of a function
+                                // for TypeScript's parser, which reads every file first. (The trial has saved places of its own: restore() would not
+                                // lead back to `async`.)
                                 return Err(self.text_refuse());
                             } else if self.lexer.tok == tk::Name {
                                 // async x => y
@@ -5050,6 +5055,12 @@ impl Quick {
                             } else if self.lexer.tok == tk::Do {
                                 return Err(self.text_refuse());
                             }
+                        }
+                        // (the long way looks for type arguments, on whatever line, and gives up if there are some)
+                        if (self.lexer.tok == tk::Lt || self.lexer.tok == tk::Shl)
+                            && self.parse.typed == TYPED_FLOW
+                        {
+                            return Err(self.text_refuse());
                         }
                         self.restore(saved);
                     } else if self.lexer.tok_kw == kw::Module {

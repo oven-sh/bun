@@ -6649,6 +6649,9 @@ describe("JavaScript and Flow that the long way rejects", () => {
     'class A {\n  static "prot\\u006ftype" = 1;\n}\n',
     '({ __proto__: a, "__pr\\u006fto__": b });\n',
     'x = {\n  "\\x5f_proto__": 1,\n  __proto__: 2,\n};\n',
+    // `async <`, which starts a function for TypeScript's parser
+    "x = [async<o, p]\n",
+    "x = [async < o, p];\n",
   ]);
   expectRejected("a.js.flow, what only Flow has", "a.js.flow", [
     // two expressions behind `%checks`
@@ -6715,6 +6718,13 @@ describe("JavaScript and Flow that the long way rejects", () => {
     // `constructor`, `prototype` and `__proto__` with an escape
     'class A { "\\u0063onstructor" = 1 }\n',
     'class A { static "\\x70rototype": T }\n',
+    // `async <`, which Flow's parser does not take for a call
+    "x = async\n<T>(a)\n",
+    "x = async << a\n",
+    "async\n<< a\n",
+    "a = async ((x) => x: any);\n",
+    "x = a as const < b\n",
+    "x = a as const\n< b;\n",
   ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared

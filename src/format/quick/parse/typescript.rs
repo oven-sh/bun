@@ -2581,6 +2581,10 @@ impl Quick {
                 // AsConstExpression: there is no node for the `const`
                 self.next()?;
                 type_ = 0;
+                // (type arguments of `const` for the long way)
+                if self.lexer.tok == tk::Lt {
+                    return Err(self.text_refuse());
+                }
             } else {
                 type_ = self.const_type_reference()?;
             }

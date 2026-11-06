@@ -1890,6 +1890,14 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Event => {
+                    // The walk of the Object arm adds the attributes of an event. The rest of this arm is what older
+                    // versions printed: a text by the `type` for "message" and "error", own properties for any other.
+                    if self.like_older_bun.is_none() {
+                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                            writer.ctx, value, JSType::Event,
+                        );
+                    }
+
                     let event_type_value: JSValue = 'brk: {
                         let value_: JSValue = match value.get(self.global_this, "type")? {
                             Some(v) => v,
@@ -3526,6 +3534,7 @@ impl bun_io::Write for ExpectedText<'_> {
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// Of an event they printed the own properties, or for a `type` of "message" or "error" the `Tag::Event` text.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);

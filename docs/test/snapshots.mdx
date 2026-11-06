@@ -288,7 +288,11 @@ Bun reads and writes each snapshot file in the format of the runner that created
 | `// Jest Snapshot v1`   | `outer inner 1`   | `pretty-format` | the error message                |
 | `// Vitest Snapshot v1` | `outer > inner 1` | `pretty-format` | the error                        |
 
-Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
+Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements, events and a few others.
+
+In Bun's format, a snapshot of an `Event`, `CustomEvent`, `MessageEvent`, `ErrorEvent` or `CloseEvent` stores the event's own properties and these fields, when the event has them: `type`, `bubbles`, `cancelable`, `composed`, `defaultPrevented`, `detail`, `data`, `lastEventId`, `message`, `filename`, `lineno`, `colno`, `error`, `code`, `reason` and `wasClean`. It leaves out `timeStamp`, `target`, `currentTarget`, `srcElement`, `source`, `ports`, `eventPhase`, `cancelBubble`, `returnValue` and `origin`. Jest's and Vitest's formats store the own properties only, which is `isTrusted`. In a [happy-dom or jsdom test environment](/test/dom#test-environments), the event classes come from that library, and their events print like its other objects.
+
+Earlier versions of Bun stored `isTrusted` alone for an event. If the type was `message` or `error`, they stored the type with the data, or with the message and the error. Such a snapshot still passes, and a change to a field that it lacks goes unnoticed. Run `bun test --update-snapshots` to store the fields.
 
 A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, and Bun's format otherwise.
 

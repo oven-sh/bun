@@ -243,7 +243,14 @@ impl Sink<'_> {
         let width = self.q.text_width(start, end);
         // The long way skips a text without width when it measures, together with the blank in front of it.
         self.is_uncertain |= width == 0 && start < end;
+        self.note_line_breaks(start, end);
         self.q.slice_w(start, end, width);
+    }
+
+    /// Only a `literalline` gets the mark of `Options::marks_line_breaks_in_texts`: a line break in T[start, end) gets none.
+    fn note_line_breaks(&mut self, start: i32, end: i32) {
+        self.is_uncertain |=
+            self.q.options.marks_line_breaks_in_texts && self.q.has_newline_in_range(start, end);
     }
 
     /// A string. A line break in it is a character without width, as it is for Prettier.
@@ -278,6 +285,7 @@ impl Sink<'_> {
         let from = self.q.doc.d_pos;
         let (start, end) = self.place(text);
         self.room();
+        self.note_line_breaks(start, end);
         self.q.slice_w(start, end, width);
         self.note_ends(text, from);
     }

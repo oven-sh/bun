@@ -3901,6 +3901,8 @@ describe("code in Markdown and MDX", () => {
     // An empty line in a text has the indentation of the host on it, one between two lines of code has nothing.
     '- a\n\n  ```vue\n  <style lang="stylus">\n  .a\n    color red\n\n  .b\n    color blue\n  </style>\n  ```\n\n> ```vue\n> <script lang="coffee">\n> a = 1\n>\n> b = 2\n> </script>\n> ```\n\n1. ```vue\n   <script>\n   const a = ;\n\n   const b = 2;\n   </script>\n   ```\n',
     '- ```vue\n  <custom>\n  a\n\n\n\n  b\n  </custom>\n\n  <style>\n  ---\n  a: 1\n  ---\n\n  a {\n  }\n  </style>\n  ```\n\n```vue\n<style lang="stylus">\n.a\n\n.b\n</style>\n```\n',
+    '- ```js\n  const a = css`\n    a {\n      color: red;\n\n      /* c\n\n         d */\n\n      margin: 0;\n    }\n  `;\n  ```\n\n> ```js\n> const a = css`\n>   /* prettier-ignore */\n>   a   {\n>\n>   b:c }\n>   d { content: "x\\\n>\n> y" }\n> `;\n> ```\n',
+    "> ```js\n> const h = html`\n>   <style>\n>     /* a\n>\n>      b */\n>     a {\n>       color: red;\n>     }\n>   </style>\n>   <script>\n>     // prettier-ignore\n>     const a = [\n>       1,0,\n>\n>       0,1,\n>     ];\n>   </script>\n> `;\n> ```\n",
     '- ```js\n  const m = markdown`\n    ~~~toml\n    a = 1\n\n\n\n    [b]\n    ~~~\n\n    ~~~yaml\n    a: |\n      x\n\n      y\n    ~~~\n  `;\n  ```\n\n> ```js\n> const h = html`\n>   <script type="importmap">a\n>\n>\n>   b</script>\n>   <script type="text/x-handlebars-template">\n>   a = b</script>\n> `;\n> ```\n',
     // The fence is longer than every run in the code, before and after.
     "````js\nfoo(`a\n```\nb`);\n````\n\n```js\n// ``\n```\n\n~~~js\n// ```\n~~~\n\n```md\n~~~js\nconst  a=1\n~~~\n```\n\n~~~md\n```js\nconst  a=1\n```\n~~~\n\n`````js\na\n`````\n",

@@ -5224,6 +5224,26 @@ describe("JavaScript and TypeScript in a host", () => {
           [0, 3, 5, 1, 9, 14, 2].flatMap(count => [unformatted.repeat(count) || "a\n", ...blocks]),
           [[]],
         ));
+      // .. which have code of other kinds in them: each leaves the parser, the reader and the printers as it has set them.
+      const kinds = [
+        "```ts\ntype  A<T>=B<T>\n```",
+        "```tsx\nconst a=<b>c</b>\n```",
+        "```jsx\n<a  b='c'/>\n```",
+        "```js\n// @flow\ntype A = ?B\n```",
+        "```js\nthis is (no code\n```",
+        "```ts\nfoo(a, b); // c\u0085\n```",
+        "```mjs\nawait  a\n```",
+        "```cts\nimport a = require('a')\n```",
+        '```vue\n<script setup lang="ts">\nconst  a=1\n</script>\n\n<template>\n  <div :a="b?.c(d, e)"></div>\n</template>\n```',
+        "```html\n<script>\n  const  a=1\n</script>\n```",
+        "```js\nconst a = css`a{color:red}`\n```",
+      ];
+      describe("code blocks behind code of other kinds", () =>
+        expectSameInOrder(
+          "a.md",
+          kinds.flatMap(kind => [`${kind}\n`, ...blocks]),
+          [[]],
+        ));
 
       // A statement fits where it is in the source, and doesn't where it is printed: the file is formatted again. After two such
       // files guesses leave some columns free, after two more nothing is guessed. One of the three statements is as wide as

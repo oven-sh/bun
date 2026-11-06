@@ -2197,6 +2197,77 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a new @import in a style sheet is a new module import, like a new url()", async () => {
+    const rule = ".a { color: red }\n";
+    const { text, exitCode } = await pretty({
+      "a/bare.css": rule,
+      "b/bare.css": `@import "bare-pkg/x.css";\n@import url("https://example.com/r.css");\n` + rule,
+      "a/conditional.css": rule,
+      "b/conditional.css": `@import url(cond-pkg/y.css) layer(base) supports(display: grid) screen;\n` + rule,
+      // One import is only spelled differently, and the other is a file of the package itself.
+      "a/kept.css": `@import "kept-pkg/k.css";\n` + rule,
+      "b/kept.css": `@import url("kept-pkg/k.css");\n@import "./local.css";\n` + rule,
+      // The targets of one file are listed in source order.
+      "a/order.css": rule,
+      "b/order.css": `@preload url(first-pkg/f.png);\n@import "second-pkg/s.css";\n.a { color: red; background: url(third-pkg/t.png) }\n`,
+    });
+    expect(text).toContain(
+      "▲ new module imports: bare-pkg/x.css, https://example.com/r.css, cond-pkg/y.css, first-pkg/f.png, second-pkg/s.css, third-pkg/t.png\n",
+    );
+    expect(changed(text)).toEqual([
+      '+ @import "bare-pkg/x.css";',
+      '+ @import "https://example.com/r.css";',
+      "+ ",
+      '+ @import "cond-pkg/y.css" layer(base) supports(display: grid) screen;',
+      "+ ",
+      '+ @import "./local.css";',
+      '+ @preload url("first-pkg/f.png");',
+      "+ ",
+      '+ @import "second-pkg/s.css";',
+      "+ ",
+      '+   background: url("third-pkg/t.png");',
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a CSS target is a URL: a file of the package, a fragment and a data: URL are not module imports", async () => {
+    const rule = ".a { color: red }\n";
+    const parts = ["one", "two", "three", "four", "five", "six"];
+    const files = {
+      // If they counted, six partials would fill the note and hide `evil-pkg`.
+      "a/app.css": rule,
+      "b/app.css": parts.map(part => `@import "parts/${part}.css";\n`).join("") + rule,
+      ...Object.fromEntries(parts.map(part => [`b/parts/${part}.css`, rule])),
+      "a/z.js": "module.exports = 1;\n",
+      "b/z.js": 'module.exports = require("evil-pkg");\n',
+      // A style sheet cannot import a Node.js builtin.
+      "a/builtin.css": rule,
+      "b/builtin.css": '@import "fs";\n' + rule,
+      "a/data.css": rule,
+      "b/data.css": parts.map((part, i) => `.${part} { background: url(data:image/png;base64,AAAA${i}) }\n`).join(""),
+      // The query and the fragment are not part of the file name.
+      "a/fonts.css": rule,
+      "b/fonts.css": "@font-face { font-family: x; src: url(fonts/x.woff2?v=1#iefix) }\n" + rule,
+      "b/fonts/x.woff2": "wOF2",
+      // `#theme/x.css` is a package.json "imports" alias, and `#clip` is a part of the document.
+      "a/hash.css": rule,
+      "b/hash.css": '@import "#theme/x.css";\n.a { clip-path: url(#clip) }\n',
+      "a/remote.css": rule,
+      "b/remote.css": "@import url(//cdn.example.com/x.css);\n" + rule,
+      // A bare path is relative to the folder of the style sheet, not to the package.
+      "a/styles/main.css": rule,
+      "b/styles/main.css": '@import "sibling.css";\n@import "reset.css";\n' + rule,
+      "b/styles/sibling.css": rule,
+      "b/reset.css": rule,
+    };
+    const notes = async (...args: string[]) => JSON.parse((await pretty(files, [...args, "--json"])).raw).notes;
+    expect(await notes()).toEqual([
+      "new module imports: fs, #theme/x.css, //cdn.example.com/x.css, reset.css, evil-pkg",
+    ]);
+    // A file that the filter leaves out of the diff is still a file of the package.
+    expect(await notes(":app.css")).toEqual([]);
+  });
+
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(
     "a file over the normalization size limit is diffed as text and says so",

@@ -138,6 +138,9 @@ pub(crate) fn exec(
             }
         }
     }
+    // A file that a filter keeps out of the diff is still a file of the package.
+    let new_paths: Option<Vec<Vec<u8>>> =
+        (!filters.is_empty()).then(|| right.files.keys().cloned().collect());
     if !filters.is_empty() {
         let (before_l, before_r) = (left.files.len(), right.files.len());
         let prepared: Vec<Filter<'_>> = filters.iter().map(|it| Filter::new(it)).collect();
@@ -156,7 +159,7 @@ pub(crate) fn exec(
             Global::exit(1);
         }
     }
-    print_diff(&left, &right, flags);
+    print_diff(&left, &right, new_paths.as_deref(), flags);
     Output::flush();
     Ok(())
 }
@@ -1084,7 +1087,7 @@ struct FileChange<'a> {
     mode_change: Option<(u32, u32)>,
     /// A parseable kind that was skipped (size cap or parse failure), for the header.
     not_normalized: Option<&'static str>,
-    /// New `import`/`require` specifiers and risky-API counts vs the old side, filled when both sides parsed.
+    /// New imports that are not `is_own_import`, and risky-API counts vs the old side, filled when both sides parsed.
     new_imports: Vec<Vec<u8>>,
     signal_deltas: Vec<(&'static str, usize)>,
     old: Option<&'a [u8]>,
@@ -1106,6 +1109,32 @@ fn is_js_like(path: &[u8]) -> bool {
         normalize::kind_for(path),
         Some(normalize::Kind::Js(_) | normalize::Kind::Json)
     ) || path.ends_with(b".jsonc")
+}
+
+fn is_style_sheet(path: &[u8]) -> bool {
+    matches!(normalize::kind_for(path), Some(normalize::Kind::Css))
+}
+
+/// Returns true if `target` names a file of the package itself. `sheet` is the importing file if it is a style sheet.
+fn is_own_import(target: &[u8], sheet: Option<&[u8]>, has_file: impl Fn(&[u8]) -> bool) -> bool {
+    let relative = target.starts_with(b".") || target.starts_with(b"/");
+    let Some(sheet) = sheet else {
+        return relative;
+    };
+    // A CSS target is a URL: `//host` is another site, and a bare path is tried against the sheet's folder first.
+    if relative {
+        return !target.starts_with(b"//");
+    }
+    let file = &target[..strings::index_of_any(target, b"?#").unwrap_or(target.len())];
+    // A scheme or an escape is not looked up, so such a target stays listed.
+    if strings::index_of_any(file, b":\\%").is_some() {
+        return false;
+    }
+    use bun_paths::resolve_path::{join, platform};
+    has_file(join::<platform::Posix>(&[
+        bun_paths::dirname_simple(sheet),
+        file,
+    ]))
 }
 
 fn has_terminal_escapes(bytes: &[u8]) -> bool {
@@ -1259,9 +1288,16 @@ fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     out
 }
 
-fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
+/// `new_paths` is every file of `right` in order, when a filter took some out of it.
+fn print_diff(left: &Tree, right: &Tree, new_paths: Option<&[Vec<u8>]>, flags: DiffFlags) {
     let style = Style::detect(flags);
     let mut changes: Vec<FileChange> = Vec::new();
+    let has_file = |file: &[u8]| match new_paths {
+        Some(paths) => paths
+            .binary_search_by(|path| path.as_slice().cmp(file))
+            .is_ok(),
+        None => right.files.contains_key(file),
+    };
 
     let mut paths: Vec<&[u8]> = left
         .files
@@ -1374,8 +1410,12 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         }
         if let Some(n) = &norm_new {
             let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
+            let sheet = is_style_sheet(path).then_some(path);
             for imp in &n.imports {
-                if !old_imports.contains(imp) && !change.new_imports.contains(imp) {
+                if !old_imports.contains(imp)
+                    && !change.new_imports.contains(imp)
+                    && !is_own_import(imp, sheet, has_file)
+                {
                     change.new_imports.push(imp.clone());
                 }
             }
@@ -2050,12 +2090,13 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) 
     let mut builtins: Vec<(Vec<u8>, &[u8])> = Vec::new();
     let mut packages: Vec<Vec<u8>> = Vec::new();
     for c in changes {
+        let has_builtins = !is_style_sheet(c.path);
         for imp in &c.new_imports {
-            if normalize::notable_builtin(imp) {
+            if has_builtins && normalize::notable_builtin(imp) {
                 if !builtins.iter().any(|(b, _)| b == imp) {
                     builtins.push((imp.clone(), c.path));
                 }
-            } else if !imp.starts_with(b".") && !imp.starts_with(b"/") && !packages.contains(imp) {
+            } else if !packages.contains(imp) {
                 packages.push(imp.clone());
             }
         }

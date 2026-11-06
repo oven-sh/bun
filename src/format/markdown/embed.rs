@@ -156,9 +156,16 @@ pub(crate) fn with_document_of_template<R>(
     .flatten()
 }
 
-/// Line breaks that are written as is, with nothing trimmed before them and nothing added after them.
-fn write_line_breaks(count: usize, f: &mut Formatter<'_>) {
-    f.write_text(&vec![b'\n'; count], Some(TextWidth::multiline(0)));
+/// Line breaks that are written as is, with nothing trimmed before them and nothing added after them. The first one is a
+/// `literalline` if `is_literal`, the others are `hardline`s.
+fn write_line_breaks(is_literal: bool, count: usize, f: &mut Formatter<'_>) {
+    if is_literal {
+        f.write_text(b"\n", Some(TextWidth::multiline(0)));
+    }
+    let count = count - usize::from(is_literal);
+    if count > 0 {
+        f.write_text(&vec![b'\n'; count], Some(TextWidth::forced_line_breaks()));
+    }
 }
 
 /// Prettier's `escapeTemplateCharacters(doc, true)`, for one text.
@@ -202,7 +209,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                     .rposition(|op| matches!(op, Op::Line(Line::Hard)));
                 let Some(last) = last else {
                     if is_literal {
-                        write_line_breaks(1, f);
+                        write_line_breaks(true, 1, f);
                     }
                     f.write_element(FormatElement::Line(LineMode::Hard));
                     continue;
@@ -214,7 +221,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                 let is_single_empty_line = count == 2 && !is_literal;
                 match is_single_empty_line {
                     true => f.write_element(FormatElement::Line(LineMode::Hard)),
-                    false => write_line_breaks(count, f),
+                    false => write_line_breaks(is_literal, count, f),
                 }
                 for op in rest {
                     if let Op::Element(element) = op {
@@ -286,7 +293,7 @@ pub(crate) fn write_template<'a>(
     let is_written = with_document_of_template(&text, &options, scratch, |_, ops| {
         f.write_token("`");
         if indentation.is_empty() {
-            write_line_breaks(1, f);
+            write_line_breaks(true, 1, f);
             f.write_element(FormatElement::ExpandParent);
             f.write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
             write_ops(ops, f);

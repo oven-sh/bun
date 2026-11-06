@@ -3896,6 +3896,7 @@ describe("code in Markdown and MDX", () => {
     "```js a \nb\n```\n\n```js a\t\nb\n```\n\n```js  two  blanks\nb\n```\n\n``` js\nb\n```\n\n```js {1,3}\nb\n```\n\n```js \\\nb\n```\n",
     // A line break in a text isn't one that the code is indented after.
     "```js\nlet a = `\n  b\n`;\n```\n\n```js\n/* a\n   b */\n```\n\n- ```js\n  let a = `\n    b\n  `;\n  ```\n\n> ```js\n> let a = `\n>   b\n> `;\n> ```\n",
+    '- ```js\n  const m = markdown`\n    ~~~toml\n    a = 1\n\n\n\n    [b]\n    ~~~\n\n    ~~~yaml\n    a: |\n      x\n\n      y\n    ~~~\n  `;\n  ```\n\n> ```js\n> const h = html`\n>   <script type="importmap">a\n>\n>\n>   b</script>\n>   <script type="text/x-handlebars-template">\n>   a = b</script>\n> `;\n> ```\n',
     // The fence is longer than every run in the code, before and after.
     "````js\nfoo(`a\n```\nb`);\n````\n\n```js\n// ``\n```\n\n~~~js\n// ```\n~~~\n\n```md\n~~~js\nconst  a=1\n~~~\n```\n\n~~~md\n```js\nconst  a=1\n```\n~~~\n\n`````js\na\n`````\n",
     // Nothing in it, white space in it, white space at its end.

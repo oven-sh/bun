@@ -1125,7 +1125,10 @@ impl<'d> Printer<'d> {
         self.has_empty_line = false;
         if width.is_multiline() {
             let line_width = self.line_width + width.value() as usize;
-            self.print_lines(text.get(range).unwrap_or_default());
+            self.print_lines(
+                text.get(range).unwrap_or_default(),
+                !width.is_forced_line_breaks(),
+            );
             // Prettier adds the whole string's width, counting a line break like any other character.
             if width.is_one_string() {
                 self.line_width = line_width;
@@ -1137,8 +1140,11 @@ impl<'d> Printer<'d> {
     }
 
     #[cold]
-    fn print_lines(&mut self, text: &[u8]) {
-        if !self.options.marks_line_breaks_in_texts
+    fn print_lines(&mut self, text: &[u8], is_text: bool) {
+        // In the flavor of oxfmt every line break that is written as a text has the mark.
+        let marks_line_breaks =
+            self.options.marks_line_breaks_in_texts && (is_text || self.options.flavor.is_oxfmt());
+        if !marks_line_breaks
             && matches!(self.options.line_ending, LineEnding::Lf | LineEnding::Auto)
             && let Some(last_line_break) = bun_core::strings::last_index_of_char(text, b'\n')
         {
@@ -1157,7 +1163,7 @@ impl<'d> Printer<'d> {
         }
         let mut last = None;
         for line in lines {
-            if self.options.marks_line_breaks_in_texts {
+            if marks_line_breaks {
                 self.out.bytes(b"\r");
             }
             self.print_line_break();

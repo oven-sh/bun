@@ -281,6 +281,19 @@ impl TextWidth {
         Self(width & !Self::FLAGS | Self::MULTILINE | Self::ONE_STRING)
     }
 
+    /// For a text of nothing but line breaks that stands for as many `hardline`s, of which the printer would print no more
+    /// than two. It's measured like [`TextWidth::multiline`], but its line breaks are in no text: see
+    /// `FormatOptions::is_in_markdown`.
+    #[inline]
+    pub(crate) const fn forced_line_breaks() -> Self {
+        Self(Self::MULTILINE | 1 << Self::AFTER_SHIFT)
+    }
+
+    #[inline]
+    pub(crate) const fn is_forced_line_breaks(self) -> bool {
+        self.0 == Self::forced_line_breaks().0
+    }
+
     #[inline]
     pub(crate) const fn value(self) -> u32 {
         self.0 & !Self::FLAGS

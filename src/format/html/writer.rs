@@ -282,8 +282,10 @@ impl<'w, 'f> Writer<'w, 'f> {
             self.f
                 .write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
-            self.f
-                .write_text(&b"\n".repeat(count as usize), Some(TextWidth::multiline(0)));
+            self.f.write_text(
+                &b"\n".repeat(count as usize),
+                Some(TextWidth::forced_line_breaks()),
+            );
             self.f
                 .write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));

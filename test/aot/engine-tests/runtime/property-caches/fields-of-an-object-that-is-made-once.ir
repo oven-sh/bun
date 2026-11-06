@@ -1,0 +1,238 @@
+# globalThis.seen = (0, eval)("(function (object) { return object; })");
+# function Made(base) {
+#     seen(this);
+#     this.field0 = base + 0;
+#     this.field1 = base + 1;
+#     this.field2 = base + 2;
+#     this.field3 = base + 3;
+#     this.field4 = base + 4;
+#     this.field5 = base + 5;
+#     this.field6 = base + 6;
+#     this.field7 = base + 7;
+#     this.field8 = base + 8;
+#     this.field9 = base + 9;
+#     this.field10 = base + 10;
+#     this.field11 = base + 11;
+#     this.field12 = base + 12;
+#     this.field13 = base + 13;
+#     this.field14 = base + 14;
+#     this.field15 = base + 15;
+#     this.field16 = base + 16;
+#     this.field17 = base + 17;
+#     this.field18 = base + 18;
+#     this.field19 = base + 19;
+#     this.field20 = base + 20;
+#     this.field21 = base + 21;
+#     this.field22 = base + 22;
+#     this.field23 = base + 23;
+# }
+# const made = new Made(1);
+# let sum = 0;
+# for (const name in made) sum += made[name];
+# report(sum);
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["PutByIdAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 6 ? "seldom" : calls); } };
+# Evaluated text gets hold of the object before it has a field, so nothing is proven about it where its 24 fields are stored. It is made once, so no store comes a second time.
+# Only the first two stores leave the stubs.
+# CHECK: 300
+# CHECK-NEXT: PutByIdAndCache seldom
+# CHECK-NEXT: exited with 0
+
+module m0 path="text-0.cjs" displayPath="text-0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="a-function.cjs" displayPath="a-function.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g1
+entry module=m1
+layout L0 module=m0
+layout L1 module=m1
+layout L2 kind=Instance name="Made" module=m1 constructor=f5 fields=[{key="field0" declared={type=anything} flags=[IsRequired]}, {key="field1" declared={type=anything} flags=[IsRequired]}, {key="field2" declared={type=anything} flags=[IsRequired]}, {key="field3" declared={type=anything} flags=[IsRequired]}, {key="field4" declared={type=anything} flags=[IsRequired]}, {key="field5" declared={type=anything} flags=[IsRequired]}, {key="field6" declared={type=anything} flags=[IsRequired]}, {key="field7" declared={type=anything} flags=[IsRequired]}, {key="field8" declared={type=anything} flags=[IsRequired]}, {key="field9" declared={type=anything} flags=[IsRequired]}, {key="field10" declared={type=anything} flags=[IsRequired]}, {key="field11" declared={type=anything} flags=[IsRequired]}, {key="field12" declared={type=anything} flags=[IsRequired]}, {key="field13" declared={type=anything} flags=[IsRequired]}, {key="field14" declared={type=anything} flags=[IsRequired]}, {key="field15" declared={type=anything} flags=[IsRequired]}, {key="field16" declared={type=anything} flags=[IsRequired]}, {key="field17" declared={type=anything} flags=[IsRequired]}, {key="field18" declared={type=anything} flags=[IsRequired]}, {key="field19" declared={type=anything} flags=[IsRequired]}, {key="field20" declared={type=anything} flags=[IsRequired]}, {key="field21" declared={type=anything} flags=[IsRequired]}, {key="field22" declared={type=anything} flags=[IsRequired]}, {key="field23" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=24
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 flags=[IsSloppy] syntax=[IsEvaluatedScript] thisType={type=anything} results=[{type=undefined|null|function|f2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    Return v1
+}
+function f2 module=m0 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    Return v0
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f4 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g1
+    v3 = NewClosure function=f5
+    v4 = Convert v3 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="globalThis" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="eval" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(Eval) flags=[IsExpected]}
+    v11 = String string="(function (object) { return object; })"
+    v12 = Builtin builtin=Eval [isNotReadFromHolder]
+    v13 = StrictEq v10, v12
+    Branch v13 -> taken b2(), notTaken b3(| 0)
+  b2():
+    v14 = NewClosure function=f1
+    v15 = Call v14 calledBuiltin=Eval [isNeverInlined]
+    Jump -> next b4(v15)
+  b3(v16):
+    v17 = Call v16, -, v11
+    Jump -> next b4(v17)
+  b4(v18):
+    PropSet v7, v18 key="seen" mode=Sloppy
+    v20 = Integer integer=1
+    v21 = Construct v4, -, v20 calleeName="Made" @828 constructs
+    v22 = Convert v21 declared={type=undefined|null|object flags=[IsExpected]}
+    v23 = Integer
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    v25 = ForInOpen v22
+    Jump -> next b5(v24)
+  b5(v26):
+    LoopHint
+    v28 = ForInStep v25, v22
+    v29 = ResultAt v28
+    v30 = ResultAt v28 index=1
+    Branch v29 -> taken b6(), notTaken b7()
+  b6():
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="report" [isFreeName]
+    v33 = Call v32, -, v26 calleeName="report"
+    v34 = Undefined
+    Return v34
+  b7():
+    v35 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]}
+    v36 = ElemGet v22, v35
+    v37 = Add v26, v36
+    v38 = Convert v37 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v38)
+}
+function f5 name="Made" module=m1 flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsLongConstructor] constructedClass=L2 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = ToThis v0
+    v3 = Convert v2 declared={type=L2 flags=[IsExpected]}
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="seen" [isFreeName]
+    v6 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v7 = Call v5, -, v6 calleeName="seen"
+    v8 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Integer
+    v11 = Add v9, v10
+    PropSet v8, v11 key="field0" mode=Sloppy
+    v13 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v14 = Integer integer=1
+    v15 = Add v9, v14
+    PropSet v13, v15 key="field1" mode=Sloppy
+    v17 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v18 = Integer integer=2
+    v19 = Add v9, v18
+    PropSet v17, v19 key="field2" mode=Sloppy
+    v21 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v22 = Integer integer=3
+    v23 = Add v9, v22
+    PropSet v21, v23 key="field3" mode=Sloppy
+    v25 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v26 = Integer integer=4
+    v27 = Add v9, v26
+    PropSet v25, v27 key="field4" mode=Sloppy
+    v29 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v30 = Integer integer=5
+    v31 = Add v9, v30
+    PropSet v29, v31 key="field5" mode=Sloppy
+    v33 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v34 = Integer integer=6
+    v35 = Add v9, v34
+    PropSet v33, v35 key="field6" mode=Sloppy
+    v37 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v38 = Integer integer=7
+    v39 = Add v9, v38
+    PropSet v37, v39 key="field7" mode=Sloppy
+    v41 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v42 = Integer integer=8
+    v43 = Add v9, v42
+    PropSet v41, v43 key="field8" mode=Sloppy
+    v45 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v46 = Integer integer=9
+    v47 = Add v9, v46
+    PropSet v45, v47 key="field9" mode=Sloppy
+    v49 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v50 = Integer integer=10
+    v51 = Add v9, v50
+    PropSet v49, v51 key="field10" mode=Sloppy
+    v53 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v54 = Integer integer=11
+    v55 = Add v9, v54
+    PropSet v53, v55 key="field11" mode=Sloppy
+    v57 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v58 = Integer integer=12
+    v59 = Add v9, v58
+    PropSet v57, v59 key="field12" mode=Sloppy
+    v61 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v62 = Integer integer=13
+    v63 = Add v9, v62
+    PropSet v61, v63 key="field13" mode=Sloppy
+    v65 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v66 = Integer integer=14
+    v67 = Add v9, v66
+    PropSet v65, v67 key="field14" mode=Sloppy
+    v69 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v70 = Integer integer=15
+    v71 = Add v9, v70
+    PropSet v69, v71 key="field15" mode=Sloppy
+    v73 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v74 = Integer integer=16
+    v75 = Add v9, v74
+    PropSet v73, v75 key="field16" mode=Sloppy
+    v77 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v78 = Integer integer=17
+    v79 = Add v9, v78
+    PropSet v77, v79 key="field17" mode=Sloppy
+    v81 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v82 = Integer integer=18
+    v83 = Add v9, v82
+    PropSet v81, v83 key="field18" mode=Sloppy
+    v85 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v86 = Integer integer=19
+    v87 = Add v9, v86
+    PropSet v85, v87 key="field19" mode=Sloppy
+    v89 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v90 = Integer integer=20
+    v91 = Add v9, v90
+    PropSet v89, v91 key="field20" mode=Sloppy
+    v93 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v94 = Integer integer=21
+    v95 = Add v9, v94
+    PropSet v93, v95 key="field21" mode=Sloppy
+    v97 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v98 = Integer integer=22
+    v99 = Add v9, v98
+    PropSet v97, v99 key="field22" mode=Sloppy
+    v101 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v102 = Integer integer=23
+    v103 = Add v9, v102
+    PropSet v101, v103 key="field23" mode=Sloppy
+    v105 = Undefined
+    Return v105
+}

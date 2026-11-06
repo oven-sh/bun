@@ -1,0 +1,374 @@
+# None of these modules looks at `module` for anything but `module.exports`, or at `require` but to call it with a name: to require one is to call its code, once. What a program can see stays as it is
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="seen.cjs" displayPath="seen.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="named.cjs" displayPath="named.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="replaced.cjs" displayPath="replaced.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g2 requests=[{target=m0 kind=Require completes=true}]
+module m3 path="second-of-cycle.cjs" displayPath="second-of-cycle.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f6 requests=[{target=m0 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m4 path="first-of-cycle.cjs" displayPath="first-of-cycle.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f7 exportsVariable=g4 requests=[{target=m0 kind=Require completes=true}, {target=m3 kind=Require completes=true}]
+module m5 path="lazy.cjs" displayPath="lazy.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f10 exportsVariable=g5 requests=[{target=m0 kind=Require completes=true}]
+module m6 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f11 exportsVariable=g6 requests=[{target=m0 kind=Require completes=true}, {target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}, {target=m5 kind=Require completes=true}]
+module m7 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary] namespaceLayout=L(m7)
+module m8 path="/$bun/js/engine/DisposableStackPrototype.ts" displayPath="/$bun/js/engine/DisposableStackPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m8)
+module m9 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m9)
+module m10 path="internal:primordials" displayPath="internal:primordials" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalPrimordials body=f16
+module m11 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f17
+entry module=m6
+layout L0 module=m0
+layout L1 module=m1 fields=[{key="one" declared={type=anything}}, {key="two" declared={type=anything}}] ownFieldCount=2
+layout L2 module=m2
+layout L3 module=m4 fields=[{key="early" declared={type=anything}}, {key="late" declared={type=anything}}, {key="describe" declared={type=anything}}] ownFieldCount=3
+layout L4 module=m5 position=58 fields=[{key="value" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L5 fields=[{key="configurable" declared={type=true} flags=[IsRequired]}, {key="enumerable" declared={type=true} flags=[IsRequired]}] supertypes=[L6] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L6 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f20|f22|f24 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function|f21|f23|f25 flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] supertypes=[L5] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L7 module=m8 position=690 fields=[{key="method" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L8 module=m9 position=6451 fields=[{key="done" declared={type=undefined|boolean flags=[IsExpected]}}, {key="value" declared={type=anything}}] ownFieldCount=2
+layout L9 module=m10 position=4548 fields=[{key="configurable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="enumerable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="writable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L6] declaredOrder=[2, 3, 1, 0] ownFieldCount=4
+layout L10 name="Context" module=m11 position=11187 fields=[{key="breakLength" declared={type=number} flags=[IsRequired]}, {key="budget" declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="circular" declared={type=undefined|null|Map<anything, number> flags=[OmitsNull]}}, {key="colors" declared={type=boolean} flags=[IsRequired]}, {key="compact" declared={type=boolean|number} flags=[IsRequired]}, {key="currentDepth" declared={type=number} flags=[IsRequired]}, {key="customInspect" declared={type=boolean} flags=[IsRequired]}, {key="depth" declared={type=null|number} flags=[IsRequired]}, {key="getters" declared={type=undefined|null|boolean|"get"|"set" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="indentationLvl" declared={type=number} flags=[IsRequired]}, {key="maxArrayLength" declared={type=number} flags=[IsRequired]}, {key="maxStringLength" declared={type=number} flags=[IsRequired]}, {key="numericSeparator" declared={type=boolean} flags=[IsRequired]}, {key="seen" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="seenRefs" declared={type=undefined|null|Set<number> flags=[OmitsNull]}}, {key="showHidden" declared={type=boolean} flags=[IsRequired]}, {key="showProxy" declared={type=boolean} flags=[IsRequired]}, {key="sorted" declared={type=undefined|null|boolean|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="stylize" declared={type=undefined|null|function|f18|f19 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="userOptions" declared={type=undefined|null|object flags=[OmitsNull]}}] supertypes=[L11] declaredOrder=[1, 9, 13, 5, 18, 15, 7, 3, 6, 16, 10, 11, 0, 4, 17, 8, 12, 19, 2, 14] ownFieldCount=20
+layout L11 name="InspectOptions" module=m11 position=10770 fields=[{key="breakLength" declared={type=undefined|number}}, {key="colors" declared={type=undefined|boolean}}, {key="compact" declared={type=undefined|boolean|number}}, {key="customInspect" declared={type=undefined|boolean}}, {key="depth" declared={type=undefined|null|number}}, {key="getters" declared={type=undefined|null|boolean|"get"|"set" flags=[OmitsNull]}}, {key="maxArrayLength" declared={type=undefined|null|number}}, {key="maxStringLength" declared={type=undefined|null|number}}, {key="numericSeparator" declared={type=undefined|boolean}}, {key="showHidden" declared={type=undefined|boolean}}, {key="showProxy" declared={type=undefined|boolean}}, {key="sorted" declared={type=undefined|null|boolean|function flags=[OmitsNull]}}, {key="stylize" declared={type=undefined|null|function|f18|f19 flags=[OmitsNull]}}] declaredOrder=[12, 9, 4, 1, 3, 10, 6, 7, 0, 2, 11, 5, 8] ownFieldCount=13
+layout L12 fields=[{key="breakLength" declared={type=number} flags=[IsRequired]}, {key="colors" declared={type=anything} flags=[IsRequired]}, {key="compact" declared={type=number} flags=[IsRequired]}, {key="customInspect" declared={type=boolean} flags=[IsRequired]}, {key="depth" declared={type=number} flags=[IsRequired]}, {key="getters" declared={type=boolean} flags=[IsRequired]}, {key="maxArrayLength" declared={type=number} flags=[IsRequired]}, {key="maxStringLength" declared={type=number} flags=[IsRequired]}, {key="numericSeparator" declared={type=boolean} flags=[IsRequired]}, {key="showHidden" declared={type=boolean} flags=[IsRequired]}, {key="showProxy" declared={type=boolean} flags=[IsRequired]}, {key="sorted" declared={type=boolean} flags=[IsRequired]}] declaredOrder=[9, 4, 1, 3, 10, 6, 7, 0, 2, 11, 5, 8] ownFieldCount=12
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g4 name="exports" module=m4 declared={type=anything} initialization=Undefined
+variable g5 name="exports" module=m5 declared={type=anything} initialization=Undefined
+variable g6 name="exports" module=m6 declared={type=anything} initialization=Undefined
+variable g7 name="sawOfFirst" module=m3 declared={type=anything} initialization=Undefined
+variable g8 name="seesNow" module=m3 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = Data data=d0
+    v4 = Convert v3 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    PutModuleVariable v4 variable=g0
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g1
+    EvaluateModule module=m0 referrer=m1 [isBare, isCallOfRequire]
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g1
+    v6 = Convert v5 declared={type=L1 flags=[IsExpected]}
+    v7 = Integer integer=1
+    v8 = Convert v7 declared={type=1 flags=[IsExpected]}
+    PropSet v6, v8 key="one" mode=Sloppy
+    v10 = GetModuleVariable variable=g1
+    v11 = Convert v10 declared={type=L1 flags=[IsExpected]}
+    v12 = NewClosure function=f2
+    v13 = Convert v12 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    PropSet v11, v13 key="two" mode=Sloppy
+    v15 = Undefined
+    Return v15
+}
+function f2 module=m1 position=92 flags=[IsSloppy] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Convert v0 declared={type=L1 flags=[IsExpected]}
+    v2 = PropGet v1 key="one"
+    v3 = Convert v2 declared={type=1 flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v6
+}
+function f3 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f4 module=m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L2
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    EvaluateModule module=m0 referrer=m2 [isBare, isCallOfRequire]
+    v5 = GetModuleVariable variable=g0
+    v6 = NewClosure function=f5
+    PutModuleVariable v6 variable=g2
+    v8 = GetModuleVariable variable=g2
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectKeys
+    v11 = GetModuleVariable variable=g3
+    v12 = Call v10, v9, v11 calleeName="Object.keys"
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v14 = PropGet v13 key="join"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = Call v15, v13 calleeKey="join" calleeName="join"
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v8, v17 key="kept" mode=Sloppy
+    v19 = Undefined
+    Return v19
+}
+function f5 module=m2 position=102 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer integer=21
+    v3 = Mul v1, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v4
+}
+function f6 module=m3 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m4 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L3
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g4
+    EvaluateModule module=m0 referrer=m4 [isBare, isCallOfRequire]
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g4
+    v6 = Convert v5 declared={type=L3 flags=[IsExpected]}
+    v7 = NewClosure function=f8
+    v8 = Convert v7 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    PropSet v6, v8 key="describe" mode=Sloppy
+    v10 = Undefined
+    Return v10
+}
+function f8 module=m4 position=152 flags=[IsSloppy] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g7
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
+    v2 = String string=" | "
+    v3 = Add v1, v2
+    v4 = GetModuleVariable variable=g8
+    v5 = Undefined
+    v6 = Call v4, v5 calleeName="second.seesNow"
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    v8 = Add v3, v7
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v9
+}
+function f9 module=m4 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m5 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    EvaluateModule module=m0 referrer=m5 [isBare, isCallOfRequire]
+    v1 = GetModuleVariable variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f11 module=m6 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f12
+    v1 = Convert v0 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    EvaluateModule module=m0 referrer=m6 [isBare, isCallOfRequire]
+    v3 = GetModuleVariable variable=g0
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g1
+    v6 = Convert v5 declared={type=L1 flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v8 = GetModuleVariable variable=g2
+    v9 = Convert v8 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    EvaluateModule module=m4 referrer=m6 [isBare, isCallOfRequire]
+    v11 = GetModuleVariable variable=g4
+    v12 = Convert v11 declared={type=L3 flags=[IsExpected]}
+    v13 = Convert v12 declared={type=undefined|null|L3 flags=[IsExpected]}
+    v14 = PropGet v4 key="push"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = String string="main: "
+    v17 = PropGet v7 key="one"
+    v18 = Convert v17 declared={type=1 flags=[IsExpected]}
+    v19 = Add v16, v18
+    v20 = String string=" "
+    v21 = Add v19, v20
+    v22 = PropGet v7 key="two"
+    v23 = Convert v22 declared={type=undefined|null|function|f2 flags=[IsExpected]}
+    v24 = Call v23, v7 calleeKey="two" calleeName="named.two"
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    v26 = Add v21, v25
+    v27 = String string=" "
+    v28 = Add v26, v27
+    v29 = Integer integer=2
+    v30 = Call v9, -, v29 calleeName="replaced"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Add v28, v31
+    v33 = String string=" "
+    v34 = Add v32, v33
+    v35 = PropGet v13 key="describe"
+    v36 = Convert v35 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v37 = Call v36, v13 calleeKey="describe" calleeName="first.describe"
+    v38 = Convert v37 declared={type=undefined|null|string flags=[IsExpected]}
+    v39 = Add v34, v38
+    v40 = Call v15, v4, v39 calleeKey="push" calleeName="seen.push"
+    v41 = Call v1 calleeName="load"
+    v42 = Undefined
+    Return v42
+}
+function f12 name="load" module=m6 position=781 flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L4|L6|L7|L8|L9 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    EvaluateModule module=m5 referrer=m6 [isCallOfRequire]
+    v1 = GetModuleVariable variable=g5
+    v2 = Convert v1 declared={type=undefined|null|L4|L6|L7|L8|L9 flags=[IsExpected]}
+    Return v2
+}
+function f13 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m7 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m7 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m10 kind=Module role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f17 module=m11 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f18 name="stylizeWithColor" module=m11 position=32390 role=Library flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f19 name="stylizeNoColor" module=m11 position=32895 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f20 name="get" module=m11 position=19269 kind=Method role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L10|L11|L12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f21 name="set" module=m11 position=19318 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f22 name="get" module=m11 position=19508 kind=Method role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L10|L11|L12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f23 name="set" module=m11 position=19555 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f24 name="get" module=m11 position=21693 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f25 name="set" module=m11 position=21739 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f26 module=m11 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f28 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f29 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f30 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f31 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f32 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f33 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+function f34 module=m11 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+# -- generated: f0 f1 f2 f4 f5 f7 f8 f10 f11
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f36
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f1 module=
+# CHECK: m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L1 = NewObject layout=L1 allocationSite=2 allocationClass=1
+# CHECK-NEXT: v1: L1 = FinishObject v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g1
+# CHECK-NEXT: v3: undefined = CallDirect function=f0 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v1, -, v4 key="one" receivers=[L1] level=Proven accessSite=0
+# CHECK-NEXT: v6: f2 = NewClosure function=f2 allocationSite=3
+# CHECK-NEXT: PutSlot v1, -, v6 key="two" receivers=[L1] level=Proven accessSite=1
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m1 position=92 flags=[IsSloppy] thisType={type=anything} results=[{type=int|whole}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L1 = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v0 key="one" receivers=[L1] level=Proven accessSite=2
+# CHECK-NEXT: v2: undefined|int[-2147483643, 2147483647] ~ 1 = Upcast v1 castType=anything
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: number ~ 2 = Add v2, v3
+# CHECK-NEXT: v5: int|whole ~ 2 = AssumeType v4 provenType=int|whole
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L2 = NewObject layout=L2 allocationSite=4 allocationClass=2
+# CHECK-NEXT: v1: L2 = FinishObject v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g2
+# CHECK-NEXT: v3: undefined = CallDirect function=f0 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v4: f5 = NewClosure function=f5 allocationSite=5
+# CHECK-NEXT: PutModuleVariable v4 variable=g2
+# CHECK-NEXT: v6: Array<string> = CallBuiltin -, v1 overload=ObjectKeys/0 accessSite=3
+# CHECK-NEXT: v7: Array<"kept", proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<"kept", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: string = CallBuiltin v7 overload=ArrayPrototypeJoin/0 accessSite=5
+# CHECK-NEXT: PropSet v4, v8 key="kept" mode=Sloppy accessSite=6 receivers=[L2, ..]
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m2 position=102 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=int|whole}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int):
+# CHECK-NEXT: v1: 21 = Integer integer=21
+# CHECK-NEXT: v2: int|whole = Mul v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f7 module=
+# CHECK: m4 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L3 = NewObject layout=L3 allocationSite=6 allocationClass=3
+# CHECK-NEXT: v1: L3 = FinishObject v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g4
+# CHECK-NEXT: v3: f8 = NewClosure function=f8 allocationSite=7
+# CHECK-NEXT: PutSlot v1, -, v3 key="describe" receivers=[L3] level=Proven accessSite=7
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function f8 module=
+# CHECK: m4 position=152 flags=[IsSloppy] thisType={type=anything} results=[{type=string}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: never = Call v0, v1 calleeName="second.seesNow" accessSite=8 callees=[]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function f10 module=
+# CHECK: m5 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f37
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f11 module=
+# CHECK: m6 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m2}, {callee=f12 callPosition=4294967295 module=m6}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f0 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v1: L0|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: L0|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> ~ Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v1 castType=anything
+# CHECK-NEXT: v3: L1 = GetModuleVariable variable=g1
+# CHECK-NEXT: v4: L2|f5 = GetModuleVariable variable=g2
+# CHECK-NEXT: v5: L2|f5 ~ f5 = Upcast v4 castType=anything
+# CHECK-NEXT: v6: undefined = CallDirect function=f7 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v7: L3 = GetModuleVariable variable=g4
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v9: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b3(v11: undefined|builtin(ArrayPrototypePush) ~ builtin(ArrayPrototypePush)):
+# CHECK-NEXT: v12: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v3 key="one" receivers=[L1] level=Proven accessSite=10
+# CHECK-NEXT: v13: undefined|int[-2147483643, 2147483647] ~ 1 = Upcast v12 castType=anything
+# CHECK-NEXT: v14: undefined|f2 = GetSlotOrUndefined v3 key="two" receivers=[L1] level=Proven accessSite=11
+# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=f2
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b10()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v16: int|whole = CallDirect function=f2 accessSite=12
+# CHECK-NEXT: v17: " " = String string=" "
+# CHECK-NEXT: v18: "main: " = String string="main: "
+# CHECK-NEXT: v19: " " = String string=" "
+# CHECK-NEXT: v20: string = Strcat v18, v13, v19, v16, v17
+# CHECK-NEXT: v21: boolean ~ true = TypeTest v5 testedType=f5
+# CHECK-NEXT: Branch v21 -> taken b5(), notTaken b6(| 0)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v22: 42 = Integer integer=42
+# CHECK-NEXT: Jump -> next b7(v22)
+# CHECK-NEXT: b6(v23: L2) frequency=Unlikely:
+# CHECK-NEXT: v24: 2 = Integer integer=2
+# CHECK-NEXT: v25: anything = Call v23, -, v24 calleeName="replaced" accessSite=13 callees=[f5, ..]
+# CHECK-NEXT: v26: int|whole = AssumeType v25 provenType=int|whole
+# CHECK-NEXT: Jump -> next b7(v26)
+# CHECK-NEXT: b7(v27: int|whole ~ 42):
+# CHECK-NEXT: v28: " " = String string=" "
+# CHECK-NEXT: v29: string = Strcat v20, v27, v28
+# CHECK-NEXT: v30: undefined|f8 = GetSlotOrUndefined v7 key="describe" receivers=[L3] level=Proven accessSite=14
+# CHECK-NEXT: v31: boolean = TypeTest v30 testedType=f8
+# CHECK-NEXT: Branch v31 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v32: string = CallDirect function=f8 accessSite=15
+# CHECK-NEXT: v33: string = Add v29, v32
+# CHECK-NEXT: v34: anything = Call v11, v2, v33 calleeKey="push" calleeName="seen.push" accessSite=16 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: v35: undefined = CallDirect function=f10 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: Return v36
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: v38: never = Call v37, v7 calleeKey="describe" calleeName="first.describe" accessSite=15 callees=[f8]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: v40: never = Call v39, v3 calleeKey="two" calleeName="named.two" accessSite=12 callees=[f2]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }

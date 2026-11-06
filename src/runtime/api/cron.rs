@@ -277,6 +277,7 @@ enum RegisterState {
 // `maybe_finished` (via `CronJobBase`) may free `this`.
 bun_io::impl_buffered_reader_parent! {
     CronRegister for CronRegisterJob;
+    feature = Cron;
     has_on_read_chunk = false;
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
@@ -979,6 +980,7 @@ enum RemoveState {
 // `maybe_finished` (via `CronJobBase`) may free `this`.
 bun_io::impl_buffered_reader_parent! {
     CronRemove for CronRemoveJob;
+    feature = Cron;
     has_on_read_chunk = false;
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));

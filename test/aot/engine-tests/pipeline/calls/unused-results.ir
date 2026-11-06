@@ -1,0 +1,387 @@
+# -- source: unused-results.ts
+# // A function too large to inline that returns a fresh record returns its fields in registers. Fields that no caller reads are not returned, and the code that only computed them is removed.
+# // IR= 0 make string = Add
+# // IR= 0 make Div
+# // IR- ResultAt v\d+ index=[23]\b
+# type Point = { x: number; y: number; z: number; label: string };
+# function make(i: number, n: number): Point {
+#   let a = 0;
+#   for (let k = 0; k < n; k++) {
+#     a += k * i;
+#     if (a > 1e9) a -= 7;
+#     for (let j = 0; j < k; j++) {
+#       a ^= j;
+#       a += (j * 3) % 5;
+#     }
+#   }
+#   let b = 0;
+#   for (let k = 0; k < n; k++) {
+#     b += k + i;
+#     if (b > 1e9) b -= 9;
+#     for (let j = 0; j < k; j++) {
+#       b ^= j + 1;
+#       b += (j * 5) % 7;
+#     }
+#   }
+#   return { x: a, y: b, z: a / b, label: "p" + i };
+# }
+# export function onlyX(i: number): number {
+#   return make(i, 3).x;
+# }
+# export function onlyY(i: number): number {
+#   return make(i, 4).y;
+# }
+# console.log(onlyX(1), onlyX(2), onlyY(1), onlyY(2));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="unused-results.ts" displayPath="unused-results.ts" body=f0 exports=[{name="onlyX" variable=g0}, {name="onlyY" variable=g1}] namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=794 kind=Parameter
+typesite w1 module=m0 position=772 kind=Result
+typesite w2 module=m0 position=862 kind=Parameter
+typesite w3 module=m0 position=840 kind=Result
+typesite w4 module=m0 position=348 kind=Parameter
+typesite w5 module=m0 position=359 kind=Parameter
+typesite w6 module=m0 position=334 kind=Result
+typesite w7 module=m0 position=920 kind=CallResult
+typesite w8 module=m0 position=930 kind=CallResult
+typesite w9 module=m0 position=940 kind=CallResult
+typesite w10 module=m0 position=950 kind=CallResult
+typesite w11 module=m0 position=824 kind=CallResult
+typesite w12 module=m0 position=892 kind=CallResult
+typesite w13 module=m0 position=385 kind=Variable
+typesite w14 module=m0 position=553 kind=Variable
+typesite w15 module=m0 position=403 kind=Variable
+typesite w16 module=m0 position=478 kind=Variable
+typesite w17 module=m0 position=571 kind=Variable
+typesite w18 module=m0 position=646 kind=Variable
+layout L0 name="Point" module=m0 position=274 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 2, 3, 0] ownFieldCount=4
+variable g0 name="onlyX" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="onlyY" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="make" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g0
+    v6 = Integer integer=1
+    v7 = Call v5, -, v6 calleeName="onlyX"
+    v8 = Convert v7 declared={type=number site=w7}
+    v9 = GetModuleVariable variable=g0
+    v10 = Integer integer=2
+    v11 = Call v9, -, v10 calleeName="onlyX"
+    v12 = Convert v11 declared={type=number site=w8}
+    v13 = GetModuleVariable variable=g1
+    v14 = Integer integer=1
+    v15 = Call v13, -, v14 calleeName="onlyY"
+    v16 = Convert v15 declared={type=number site=w9}
+    v17 = GetModuleVariable variable=g1
+    v18 = Integer integer=2
+    v19 = Call v17, -, v18 calleeName="onlyY"
+    v20 = Convert v19 declared={type=number site=w10}
+    v21 = Call v4, v2, v8, v12, v16, v20 calleeKey="log" calleeName="console.log"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="onlyX" module=m0 position=772 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g2
+    v2 = Integer integer=3
+    v3 = Call v1, -, v0, v2 calleeName="make"
+    v4 = Convert v3 declared={type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]}
+    v5 = PropGet v4 key="x"
+    v6 = Convert v5 declared={type=number site=w1}
+    Return v6
+}
+function f2 name="onlyY" module=m0 position=840 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g2
+    v2 = Integer integer=4
+    v3 = Call v1, -, v0, v2 calleeName="make"
+    v4 = Convert v3 declared={type=undefined|null|L0 site=w12 flags=[OmitsNull, OmitsUndefined]}
+    v5 = PropGet v4 key="y"
+    v6 = Convert v5 declared={type=number site=w3}
+    Return v6
+}
+function f3 name="make" module=m0 position=334 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w4}, {type=number site=w5}] results=[{type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w13}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w15}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b16(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Mul v10, v0
+    v13 = Add v6, v12
+    v14 = Convert v13 declared={type=number site=w13}
+    v15 = Integer integer=1000000000
+    v16 = Greater v14, v15
+    Branch v16 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v17):
+    Jump -> next b6()
+  b6():
+    v18 = Integer integer=7
+    v19 = Sub v17, v18
+    v20 = Convert v19 declared={type=number site=w13}
+    Jump -> next b8(v20)
+  b7(v21):
+    Jump -> next b8(v21)
+  b8(v22: number):
+    v23 = Integer
+    v24 = Convert v23 declared={type=number site=w16}
+    Jump -> next b9(v22, v24)
+  b9(v25: number, v26: number):
+    LoopHint
+    v28 = Less v26, v10
+    Branch v28 -> taken b10(| 0, 1), notTaken b13(| 0, 1)
+  b10(v29, v30):
+    Jump -> next b11()
+  b11():
+    v31 = BitXor v25, v29
+    v32 = Convert v31 declared={type=number site=w13}
+    v33 = Integer integer=3
+    v34 = Mul v29, v33
+    v35 = Integer integer=5
+    v36 = Mod v34, v35
+    v37 = Add v32, v36
+    v38 = Convert v37 declared={type=number site=w13}
+    Jump -> next b12()
+  b12():
+    v39 = Increment v29
+    v40 = Convert v39 declared={type=number site=w16}
+    Jump -> next b9(v38, v40)
+  b13(v41, v42):
+    Jump -> next b14()
+  b14():
+    Jump -> next b15()
+  b15():
+    v43 = Increment v42
+    v44 = Convert v43 declared={type=number site=w15}
+    Jump -> next b2(v25, v44)
+  b16(v45, v46):
+    Jump -> next b17()
+  b17():
+    v47 = Integer
+    v48 = Convert v47 declared={type=number site=w14}
+    v49 = Integer
+    v50 = Convert v49 declared={type=number site=w17}
+    Jump -> next b18(v48, v50)
+  b18(v51: number, v52: number):
+    LoopHint
+    v54 = Less v52, v46
+    Branch v54 -> taken b19(| 0, 1), notTaken b32(| 0, 1)
+  b19(v55, v56):
+    Jump -> next b20()
+  b20():
+    v57 = Add v55, v0
+    v58 = Add v51, v57
+    v59 = Convert v58 declared={type=number site=w14}
+    v60 = Integer integer=1000000000
+    v61 = Greater v59, v60
+    Branch v61 -> taken b21(| 0), notTaken b23(| 0)
+  b21(v62):
+    Jump -> next b22()
+  b22():
+    v63 = Integer integer=9
+    v64 = Sub v62, v63
+    v65 = Convert v64 declared={type=number site=w14}
+    Jump -> next b24(v65)
+  b23(v66):
+    Jump -> next b24(v66)
+  b24(v67: number):
+    v68 = Integer
+    v69 = Convert v68 declared={type=number site=w18}
+    Jump -> next b25(v67, v69)
+  b25(v70: number, v71: number):
+    LoopHint
+    v73 = Less v71, v55
+    Branch v73 -> taken b26(| 0, 1), notTaken b29(| 0, 1)
+  b26(v74, v75):
+    Jump -> next b27()
+  b27():
+    v76 = Integer integer=1
+    v77 = Add v74, v76
+    v78 = BitXor v70, v77
+    v79 = Convert v78 declared={type=number site=w14}
+    v80 = Integer integer=5
+    v81 = Mul v74, v80
+    v82 = Integer integer=7
+    v83 = Mod v81, v82
+    v84 = Add v79, v83
+    v85 = Convert v84 declared={type=number site=w14}
+    Jump -> next b28()
+  b28():
+    v86 = Increment v74
+    v87 = Convert v86 declared={type=number site=w18}
+    Jump -> next b25(v85, v87)
+  b29(v88, v89):
+    Jump -> next b30()
+  b30():
+    Jump -> next b31()
+  b31():
+    v90 = Increment v89
+    v91 = Convert v90 declared={type=number site=w17}
+    Jump -> next b18(v70, v91)
+  b32(v92, v93):
+    Jump -> next b33()
+  b33():
+    v94 = Convert v6 declared={type=number}
+    v95 = Convert v51 declared={type=number}
+    v96 = Div v6, v51
+    v97 = Convert v96 declared={type=number}
+    v98 = String string="p"
+    v99 = Add v98, v0
+    v100 = Convert v99 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v101 = NewObject -, v94, v95, v97, v100 layout=L0 fields=[1, 2, 3, 0]
+    v102 = FinishObject v101
+    v103 = Convert v102 declared={type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}
+    Return v103
+}
+# -- generated: f0 onlyX onlyY make
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v1: int|whole = CallDirect v0 function=f1 accessSite=2
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: int|whole = CallDirect v2 function=f1 accessSite=3
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: int|whole = CallDirect v4 function=f2 accessSite=4
+# CHECK-NEXT: v6: 2 = Integer integer=2
+# CHECK-NEXT: v7: int|whole = CallDirect v6 function=f2 accessSite=5
+# CHECK-NEXT: v8: undefined = CallBuiltin -, v1, v3, v5, v7 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="onlyX"
+# CHECK: module=m0 position=772 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2] site=w0}] results=[{type=int|whole site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: int[1, 2]):
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f5
+# CHECK-NEXT: v3: int[-2147483648, 4294967271] = ResultAt v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="onlyY"
+# CHECK: module=m0 position=840 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2] site=w2}] results=[{type=int|whole site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: int[1, 2]):
+# CHECK-NEXT: v1: 4 = Integer integer=4
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f5
+# CHECK-NEXT: v3: int[-2147483648, 4294967199] = ResultAt v2 index=1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="make"
+# CHECK: module=m0 position=334 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[1, 2] site=w4}, {type=int[3, 4] site=w5}] results=[{type=L0 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f5 layout=L0} {
+# CHECK-NEXT: b0(v0: int[1, 2], v1: int[3, 4]):
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f5
+# CHECK-NEXT: v3: int[-2147483648, 4294967271] = ResultAt v2
+# CHECK-NEXT: v4: int[-2147483648, 4294967199] = ResultAt v2 index=1
+# CHECK-NEXT: v5: L0 = NewObject -, v3, v4 layout=L0 fields=[1, 2] allocationSite=0 allocationClass=0
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="make"
+# CHECK: module=m0 position=334 role=ResultWorker flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[1, 2] site=w4}, {type=int[3, 4] site=w5}] results=[{type=int[-2147483648, 4294967271]}, {type=int[-2147483648, 4294967199]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f3} {
+# CHECK-NEXT: b0(v0: int[1, 2], v1: int[3, 4]):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: int[-2147483648, 4294967247] ~ int[-2147483648, 4294967235], v5: int[0, 4]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: boolean = Less v5, v1
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b9()
+# CHECK-NEXT: b2(v8: int[0, 3]):
+# CHECK-NEXT: v9: int[0, 6] = Mul v8, v0
+# CHECK-NEXT: v10: int[-2147483648, 4294967253] ~ int[-2147483648, 4294967241] = Add v4, v9
+# CHECK-NEXT: v11: 1000000000 = Integer integer=1000000000
+# CHECK-NEXT: v12: boolean = Greater v10, v11
+# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b3(v13: int[1000000001, 4294967253] ~ int[1000000001, 4294967241]):
+# CHECK-NEXT: v14: 7 = Integer integer=7
+# CHECK-NEXT: v15: int[999999994, 4294967246] ~ int[999999994, 4294967234] = Sub v13, v14
+# CHECK-NEXT: Jump -> next b5(v15)
+# CHECK-NEXT: b4(v16: int[-2147483648, 1000000000]):
+# CHECK-NEXT: Jump -> next b5(v16)
+# CHECK-NEXT: b5(v17: int[-2147483648, 4294967247] ~ int[-2147483648, 4294967235]):
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: Jump -> next b6(v17, v18)
+# CHECK-NEXT: b6(v19: int[-2147483648, 4294967247] ~ int[-2147483648, 4294967235], v20: int[0, 3]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v22: boolean = Less v20, v8
+# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v23: int[0, 2]):
+# CHECK-NEXT: v24: i32 = BitXor v19, v23
+# CHECK-NEXT: v25: 3 = Integer integer=3
+# CHECK-NEXT: v26: int[0, 6] = Mul v23, v25
+# CHECK-NEXT: v27: 5 = Integer integer=5
+# CHECK-NEXT: v28: int[0, 4] = Mod v26, v27
+# CHECK-NEXT: v29: int[-2147483648, 2147483651] = Add v24, v28
+# CHECK-NEXT: v30: int[1, 3] = Increment v23
+# CHECK-NEXT: Jump -> next b6(v29, v30)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v31: int[1, 4] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v19, v31)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: v33: 0 = Integer
+# CHECK-NEXT: Jump -> next b10(v32, v33)
+# CHECK-NEXT: b10(v34: int[-2147483648, 4294967103] ~ int[-2147483648, 4294967055], v35: int[0, 4]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v37: boolean = Less v35, v1
+# CHECK-NEXT: Branch v37 -> taken b11(| 0), notTaken b18()
+# CHECK-NEXT: b11(v38: int[0, 3]):
+# CHECK-NEXT: v39: int[1, 5] = Add v38, v0
+# CHECK-NEXT: v40: int[-2147483647, 4294967108] ~ int[-2147483647, 4294967060] = Add v34, v39
+# CHECK-NEXT: v41: 1000000000 = Integer integer=1000000000
+# CHECK-NEXT: v42: boolean = Greater v40, v41
+# CHECK-NEXT: Branch v42 -> taken b12(| 0), notTaken b13(| 0)
+# CHECK-NEXT: b12(v43: int[1000000001, 4294967108] ~ int[1000000001, 4294967060]):
+# CHECK-NEXT: v44: 9 = Integer integer=9
+# CHECK-NEXT: v45: int[999999992, 4294967099] ~ int[999999992, 4294967051] = Sub v43, v44
+# CHECK-NEXT: Jump -> next b14(v45)
+# CHECK-NEXT: b13(v46: int[-2147483647, 1000000000]):
+# CHECK-NEXT: Jump -> next b14(v46)
+# CHECK-NEXT: b14(v47: int[-2147483647, 4294967103] ~ int[-2147483647, 4294967055]):
+# CHECK-NEXT: v48: 0 = Integer
+# CHECK-NEXT: Jump -> next b15(v47, v48)
+# CHECK-NEXT: b15(v49: int[-2147483648, 4294967103] ~ int[-2147483648, 4294967055], v50: int[0, 3]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v52: boolean = Less v50, v38
+# CHECK-NEXT: Branch v52 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v53: int[0, 2]):
+# CHECK-NEXT: v54: 1 = Integer integer=1
+# CHECK-NEXT: v55: int[1, 3] = Add v53, v54
+# CHECK-NEXT: v56: i32 = BitXor v49, v55
+# CHECK-NEXT: v57: 5 = Integer integer=5
+# CHECK-NEXT: v58: int[0, 10] = Mul v53, v57
+# CHECK-NEXT: v59: 7 = Integer integer=7
+# CHECK-NEXT: v60: int[0, 6] = Mod v58, v59
+# CHECK-NEXT: v61: int[-2147483648, 2147483653] = Add v56, v60
+# CHECK-NEXT: v62: int[1, 3] = Increment v53
+# CHECK-NEXT: Jump -> next b15(v61, v62)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v63: int[1, 4] = Increment v38
+# CHECK-NEXT: Jump -> next b10(v49, v63)
+# CHECK-NEXT: b18():
+# CHECK-NEXT: v64: undefined = Results v4, v34
+# CHECK-NEXT: Return v64
+# CHECK-NEXT: }

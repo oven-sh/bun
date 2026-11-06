@@ -21,11 +21,12 @@ use crate::config::{change_extension, compare_strings_case_insensitive};
 use crate::json::Json;
 use crate::program::{get_output_extension, source_file_may_be_emitted};
 use crate::resolve::{
-    JsxEmit, ObjectKind, ancestors, contains_path, ensure_path_is_non_module_name,
-    equate_string_case_insensitive, get_base_file_name, get_declaration_file_extension,
-    get_relative_path_from_directory, get_root_length, has_ts_implementation_extension, inside,
-    is_declaration_file_name, is_relative, is_rooted_disk_path, join, known_extension,
-    node_module_path_parts, normalize_path, object_kind, path_is_relative, remove_file_extension,
+    JsxEmit, ObjectKind, Paths, ancestors, best_pattern, contains_path,
+    ensure_path_is_non_module_name, equate_string_case_insensitive, get_base_file_name,
+    get_declaration_file_extension, get_relative_path_from_directory, get_root_length,
+    has_ts_implementation_extension, inside, is_declaration_file_name, is_relative,
+    is_rooted_disk_path, join, known_extension, node_module_path_parts, normalize_path,
+    object_kind, path_is_relative, paths_of_types_versions, remove_file_extension,
 };
 use crate::util::SharedSort;
 use bstr::ByteSlice;
@@ -33,6 +34,7 @@ use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::rc::Rc;
 
 mod commonjs;
@@ -94,7 +96,7 @@ impl Meaning {
 }
 
 /// `symbolTableID`
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Table {
     Locals(FileId, ScopeId),
     /// The members of a class or an interface that are types: the type parameters of all its declarations.
@@ -910,24 +912,49 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
 }
 
 /// The memos of `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`,
-/// `getExportsOfSymbol`, `getSymbolTableAliases` and `getSpecifierForModuleSymbol`.
+/// `getExportsOfSymbol` and `getSpecifierForModuleSymbol`.
 #[derive(Default)]
 pub(super) struct EmitResolverLinks {
     /// `declarationLinks.isVisible`
     visibility: FxHashMap<(FileId, Decl), bool>,
 
-    // `symbolContainerLinks`, `symbolTableAliasCache`
+    // `symbolContainerLinks`
     chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
     containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
     variable_matches: FxHashMap<(Sym, FileId, ScopeId), Rc<Vec<Sym>>>,
+    /// Of the symbols that aren't modules.
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
-    global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
     /// The locals of the blocks `enterNewScope` has pushed in front of the enclosing declaration, innermost first, for
     /// the duration of one symbol chain lookup from there. An entry without a symbol was created by
     /// `instantiateSymbol`.
     fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
     /// `specifierCache`
     specifiers: FxHashMap<(Sym, FileId, ResolutionMode), Vec<u8>>,
+}
+
+/// `symbolTableAliasCache`. Unlike `EmitResolverLinks`, it's the same for every file.
+#[derive(Default)]
+pub(super) struct AliasesInTables {
+    by_table: FxHashMap<Table, Rc<Vec<(Atom, Sym)>>>,
+    /// How many of those tables were read, for a test.
+    #[cfg(any(test, feature = "test_support"))]
+    tables_read: usize,
+}
+
+/// What `getExportsOfSymbol` returns. A module's table belongs to the program.
+pub(super) enum ExportsOfSymbol<'p> {
+    OfModule(&'p [(Atom, Sym)]),
+    Other(Rc<Vec<(Atom, Sym)>>),
+}
+
+impl std::ops::Deref for ExportsOfSymbol<'_> {
+    type Target = [(Atom, Sym)];
+    fn deref(&self) -> &[(Atom, Sym)] {
+        match self {
+            ExportsOfSymbol::OfModule(exports) => exports,
+            ExportsOfSymbol::Other(exports) => exports,
+        }
+    }
 }
 
 /// The modules that `getAlternativeContainingModules` searches when no import of the file exports the symbol.
@@ -1550,25 +1577,37 @@ impl<'p, 's> Checker<'p, 's> {
 
 impl<'p, 's> Checker<'p, 's> {
     /// `getExportsOfSymbol`
-    pub(super) fn exports_of_symbol(&mut self, symbol: Sym) -> Rc<Vec<(Atom, Sym)>> {
+    pub(super) fn exports_of_symbol(&mut self, symbol: Sym) -> ExportsOfSymbol<'p> {
         let symbol = self.target_of_module_clone(symbol);
-        if let Some(known) = self.emit_resolver_links.exports.get(&symbol) {
-            return Rc::clone(known);
-        }
         let files = self.files();
-        let exports = if symbol == files.global_this_symbol {
-            Vec::new()
-        } else if files.flags(symbol).intersects(SymFlags::MODULE) {
+        if symbol == files.global_this_symbol {
+            return ExportsOfSymbol::OfModule(&[]);
+        }
+        if files.flags(symbol).intersects(SymFlags::MODULE) {
             // `getExportsOfModuleWorker`
-            files.exports_of_module(symbol).to_vec()
-        } else {
-            files.exports(symbol)
-        };
-        let exports = Rc::new(exports);
+            return ExportsOfSymbol::OfModule(files.exports_of_module(symbol));
+        }
+        if let Some(known) = self.emit_resolver_links.exports.get(&symbol) {
+            return ExportsOfSymbol::Other(Rc::clone(known));
+        }
+        let exports = Rc::new(files.exports(symbol));
         self.emit_resolver_links
             .exports
             .insert(symbol, Rc::clone(&exports));
-        exports
+        ExportsOfSymbol::Other(exports)
+    }
+
+    /// `getExportsOfSymbol(symbol)[name]`
+    pub(super) fn export_of_symbol(&mut self, symbol: Sym, name: Atom) -> Option<Sym> {
+        let symbol = self.target_of_module_clone(symbol);
+        let files = self.files();
+        if symbol != files.global_this_symbol && files.flags(symbol).intersects(SymFlags::MODULE) {
+            let exports = &files.module_links(symbol).resolved_exports;
+            return exports.get(name).copied();
+        }
+        let exports = self.exports_of_symbol(symbol);
+        let found = exports.iter().find(|export| export.0 == name);
+        found.map(|export| export.1)
     }
 
     /// `someSymbolTableInScope`: the tables, innermost first.
@@ -1647,11 +1686,9 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(files.prototype_symbol)
             }
             Table::Exports(symbol) => files.export_in_table(symbol, name),
-            Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => self
-                .exports_of_symbol(symbol)
-                .iter()
-                .find(|export| export.0 == name)
-                .map(|export| export.1),
+            Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => {
+                self.export_of_symbol(symbol, name)
+            }
             Table::ResolvedExports(_) | Table::Globals => files.globals.get(name).copied(),
         }
     }
@@ -1697,21 +1734,47 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// How many export tables and global tables `aliases_in_table` has read, for a test.
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn tables_read_for_aliases(&self) -> usize {
+        self.aliases_in_tables.tables_read
+    }
+
     /// `getSymbolTableAliases`, each with its name in the table.
     fn aliases_in_table(&mut self, table: Table) -> Rc<Vec<(Atom, Sym)>> {
         let files = self.files();
-        let is_globals = match table {
-            Table::ResolvedExports(symbol) => symbol == files.global_this_symbol,
-            table => table == Table::Globals,
+        let table = match table {
+            // "Members tables never contain alias symbols; skip entirely."
+            Table::TypeMembers(_) => return Rc::default(),
+            Table::ResolvedExports(symbol) if symbol == files.global_this_symbol => Table::Globals,
+            table => table,
         };
-        if is_globals && let Some(known) = &self.emit_resolver_links.global_aliases {
+        // "Locals tables are small and per-scope, so they are filtered but not cached."
+        let is_cached = !matches!(table, Table::Locals(..));
+        if is_cached && let Some(known) = self.aliases_in_tables.by_table.get(&table) {
             return Rc::clone(known);
         }
-        let mut aliases = self.symbols_in_table(table);
-        aliases.retain(|entry| files.flags(entry.1).contains(SymFlags::ALIAS));
+        #[cfg(any(test, feature = "test_support"))]
+        {
+            self.aliases_in_tables.tables_read += usize::from(is_cached);
+        }
+        let is_alias = |entry: &(Atom, Sym)| files.flags(entry.1).contains(SymFlags::ALIAS);
+        let aliases: Vec<(Atom, Sym)> = match table {
+            Table::ResolvedExports(symbol) => {
+                let exports = self.exports_of_symbol(symbol);
+                exports.iter().copied().filter(is_alias).collect()
+            }
+            Table::Globals => files.globals.iter().copied().filter(is_alias).collect(),
+            table => {
+                let mut symbols = self.symbols_in_table(table);
+                symbols.retain(is_alias);
+                symbols.shrink_to_fit();
+                symbols
+            }
+        };
         let aliases = Rc::new(aliases);
-        if is_globals {
-            self.emit_resolver_links.global_aliases = Some(Rc::clone(&aliases));
+        if is_cached {
+            (self.aliases_in_tables.by_table).insert(table, Rc::clone(&aliases));
         }
         aliases
     }
@@ -2073,13 +2136,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Some(container);
         }
-        let exports = self.exports_of_symbol(container);
         let name = self.name_of(symbol);
-        if let Some(quick) = exports.iter().find(|export| export.0 == name)
-            && self.is_same_reference(quick.1, symbol)
+        if let Some(quick) = self.export_of_symbol(container, name)
+            && self.is_same_reference(quick, symbol)
         {
-            return Some(quick.1);
+            return Some(quick);
         }
+        let exports = self.exports_of_symbol(container);
         let mut same = Vec::new();
         for &(_, exported) in exports.iter() {
             if self.is_same_reference(exported, symbol) {
@@ -2171,10 +2234,11 @@ impl<'p, 's> Checker<'p, 's> {
         modules
     }
 
-    /// The first call builds the index.
-    fn exporting_modules(&mut self) -> Rc<ExportingModules> {
-        if let Some(index) = &self.exporting_modules {
-            return Rc::clone(index);
+    /// The first call for the program builds the index.
+    fn exporting_modules(&mut self) -> &'p ExportingModules {
+        let program = self.p;
+        if let Some(index) = program.exporting_modules.get() {
+            return index;
         }
         let files = self.files();
         let mut index = ExportingModules::default();
@@ -2198,9 +2262,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let index = Rc::new(index);
-        self.exporting_modules = Some(Rc::clone(&index));
-        index
+        program.exporting_modules.get_or_init(|| index)
     }
 
     /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts
@@ -2319,7 +2381,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[target].kind else {
+        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(target)
+        else {
             return None;
         };
         if !is_entity_name_expression(self.hir(file), obj) {
@@ -3268,7 +3331,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             };
             // `GetLeftmostAccessExpression`
             let mut root = target;
-            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
+            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } =
+                hir.checked_kind(root)
+            {
                 if is_parenthesized(hir, root) {
                     break;
                 }
@@ -3327,7 +3392,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 _ => continue,
             }
             // `tryGetPropertyName`
-            let property = match hir[target].kind {
+            let property = match hir.checked_kind(target) {
                 ExprKind::Dot { name, .. } => Some(name),
                 ExprKind::Index { index, .. } => match hir[index].kind {
                     ExprKind::String(name) => Some(name),
@@ -6297,7 +6362,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `node_modules`. Empty if it has no specifier through `node_modules`.
     fn try_get_module_name_as_node_module(
         &self,
-        path: &[u8],
+        (path, is_redirect): (&[u8], bool),
         importing: FileId,
         mode: ResolutionMode,
         prefers_js: bool,
@@ -6310,6 +6375,8 @@ impl<'p, 's> Checker<'p, 's> {
             return Vec::new();
         };
         let package_directory = &path[..package_root];
+        let allowed_endings = || self.allowed_endings(importing, prefers_js, ResolutionMode::None);
+        let mut module_file_to_try = Cow::Borrowed(path);
         // `tryDirectoryWithPackageJson`
         let is_package_root = match files.package_jsons.get(package_directory) {
             // An `index` file resolves from the package name anyway.
@@ -6346,28 +6413,56 @@ impl<'p, 's> Checker<'p, 's> {
                         &self.get_conditions(mode),
                     );
                 }
+                // The resolver maps what follows the package name through `typesVersions`, so the specifier has what
+                // is mapped to the file.
+                let version_paths = paths_of_types_versions(json);
+                let mut maybe_blocked_by_types_versions = false;
+                if let Some(paths) = &version_paths {
+                    let from_paths = self.try_get_module_name_from_paths(
+                        paths,
+                        &path[package_root + 1..],
+                        &allowed_endings(),
+                        package_directory,
+                    );
+                    if from_paths.is_empty() {
+                        maybe_blocked_by_types_versions = true;
+                    } else {
+                        module_file_to_try = Cow::Owned(join(package_directory, &from_paths));
+                    }
+                }
+                let path = &*module_file_to_try;
                 // The main file's specifier is the package name.
                 let main = [b"typings".as_slice(), b"types", b"main"]
                     .iter()
                     .find_map(|field| json.get(field).and_then(Json::as_str))
                     .unwrap_or(b"index.js");
+                // "The 'main' file is also subject to mapping through typesVersions, and we couldn't come up with a
+                // path explicitly through typesVersions, so if it matches a key in typesVersions now, it's not
+                // reachable."
+                let is_main_mapped = maybe_blocked_by_types_versions
+                    && (version_paths.as_ref())
+                        .is_some_and(|paths| best_pattern(paths.iter(), main).is_some());
                 let main = join(package_directory, main);
-                remove_file_extension(&main) == remove_file_extension(path)
-                    || json.get(b"type").and_then(Json::as_str) != Some(b"module")
-                        && !matches!(
-                            known_extension(path),
-                            b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
-                        )
-                        && dirname::<Posix>(path) == main
-                        && remove_file_extension(&path[main.len()..]) == b"/index"
+                !is_main_mapped
+                    && (remove_file_extension(&main) == remove_file_extension(path)
+                        || json.get(b"type").and_then(Json::as_str) != Some(b"module")
+                            && !matches!(
+                                known_extension(path),
+                                b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
+                            )
+                            && dirname::<Posix>(path) == main
+                            && remove_file_extension(&path[main.len()..]) == b"/index")
             }
         };
         let module_specifier = if is_package_root {
             package_directory.to_vec()
         } else {
-            let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
-            self.process_ending(path, &allowed)
+            self.process_ending(&module_file_to_try, &allowed_endings())
         };
+        // The output of a referenced project is named by its package alone.
+        if is_redirect && !is_package_root {
+            return Vec::new();
+        }
         if !dirname::<Posix>(files.module(importing).file_name())
             .starts_with(&path[..top_level_node_modules])
         {
@@ -6488,8 +6583,12 @@ impl<'p, 's> Checker<'p, 's> {
             let is_in_node_modules = strings::contains(path, b"/node_modules/");
             let mut specifier = Vec::new();
             if is_in_node_modules {
-                specifier =
-                    self.try_get_module_name_as_node_module(path, importing, mode, prefers_js);
+                specifier = self.try_get_module_name_as_node_module(
+                    (path, is_redirect),
+                    importing,
+                    mode,
+                    prefers_js,
+                );
             }
             let paths_only = is_redirect || !specifier.is_empty();
             if !specifier.is_empty() {
@@ -6595,6 +6694,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if maybe_non_relative.is_empty() {
             maybe_non_relative = self.try_get_module_name_from_paths(
+                &options.paths,
                 &relative_to_base_url,
                 allowed_endings,
                 base_directory,
@@ -6715,11 +6815,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// with the same host.
     fn try_get_module_name_from_paths(
         &self,
+        paths: &Paths,
         relative_to_base_url: &[u8],
         allowed_endings: &[Ending],
         base_directory: &[u8],
     ) -> Vec<u8> {
-        for (key, values) in self.files().options.paths.iter() {
+        for (key, values) in paths {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
                 let pattern =
@@ -7069,7 +7170,7 @@ fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
     match hir.data(node) {
         NodeData::Expr(e) => match hir[e].kind {
             // `GetElementOrPropertyAccessName`, falling back to the left operand.
-            ExprKind::Assign { target, .. } => match hir[target].kind {
+            ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
                 {

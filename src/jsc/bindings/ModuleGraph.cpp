@@ -847,6 +847,7 @@ const ClassInfo JSModuleGraphConstructor::s_info = { "ModuleGraph"_s, &Base::s_i
 // new Bun.ModuleGraph({ globals?, onError? })
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(ModuleGraph, JSModuleGraphConstructor::construct);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

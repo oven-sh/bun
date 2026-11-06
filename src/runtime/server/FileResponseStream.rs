@@ -608,7 +608,7 @@ impl FileResponseStream {
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
             // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
+            return unsafe { (*self.event_loop().r#loop()).uv_loop() };
         }
         #[cfg(not(windows))]
         {
@@ -623,6 +623,7 @@ impl FileResponseStream {
 // the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
+    feature = Serve;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
         let _guard = RefPtr::init_ref(this);

@@ -1,0 +1,17 @@
+# A program that loads nothing through the host leaves the host's require() (overridableRequire, runtimefunction 65547) out of the image.
+# module-that-the-host-answers-enters-the-loader-of-the-host.ir has such a load
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65547 function=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="require" role=Library flags=[HasThis] enclosingRuntimeFunction=65547 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v1
+}

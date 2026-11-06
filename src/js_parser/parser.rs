@@ -198,6 +198,8 @@ pub mod Runtime {
         pub commonjs_named_exports: bool,
 
         pub minify_syntax: bool,
+        /// `--library` and `--dts`: the output has to type check once the types of its sources are put back.
+        pub is_library: bool,
         pub minify_identifiers: bool,
         /// Preserve function/class names during minification (CLI: --keep-names)
         pub minify_keep_names: bool,
@@ -291,6 +293,7 @@ pub mod Runtime {
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
+                is_library: false,
                 minify_identifiers: false,
                 minify_keep_names: false,
                 minify_whitespace: false,

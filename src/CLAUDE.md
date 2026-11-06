@@ -192,6 +192,12 @@ Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
 source lint bans the `core::arch` intrinsics. A new kernel goes in
 `src/jsc/bindings/highway_strings.cpp`, with its safe wrapper in `src/highway/lib.rs`.
 
+The one exception is `bun_http1` (`src/http1`). Its `response::index_of` is plain
+Rust that LLVM vectorizes, 16 bytes at a time. A search in a response head ends
+after 15 to 50 bytes, where a loop inlined into the parser is faster than a call
+through Highway's dispatch, and a crate without dependencies runs under
+`cargo test`, under Miri and in a fuzzer.
+
 ```rust
 use bun_core::strings;
 

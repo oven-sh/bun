@@ -285,7 +285,7 @@ impl Pipeline {
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         let stderr_fd = match &interp.as_pipeline(this).io.stderr {
-            OutKind::Fd(fd) => Some((std::sync::Arc::clone(&fd.writer), fd.captured)),
+            OutKind::Fd(fd) => Some((std::rc::Rc::clone(&fd.writer), fd.captured)),
             OutKind::Pipe | OutKind::Ignore => None,
         };
         if let Some((writer, captured)) = stderr_fd {

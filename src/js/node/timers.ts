@@ -15,14 +15,14 @@ export default {
   set promises(value) {
     timersPromisesValue = value;
   },
-  active(timer) {
+  active(timer: NodeJS.Timeout) {
     if ($isCallable(timer?.refresh)) {
       timer.refresh();
     } else {
       throwNotImplemented("'timers.active'");
     }
   },
-  unenroll(timer) {
+  unenroll(timer: NodeJS.Timeout) {
     if ($isCallable(timer?.refresh)) {
       clearTimeout(timer);
       return;
@@ -30,7 +30,7 @@ export default {
 
     throwNotImplemented("'timers.unenroll'");
   },
-  enroll(timer, _msecs) {
+  enroll(timer: NodeJS.Timeout, _msecs?: number) {
     if ($isCallable(timer?.refresh)) {
       timer.refresh();
       return;

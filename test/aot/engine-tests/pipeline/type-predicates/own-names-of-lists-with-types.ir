@@ -1,0 +1,211 @@
+# Whether a list has a name of its own, asked in a function whose parameter is declared a list: of plain lists, which have none but `length`, and of lists that were given names, lost them again, or got them by a definition, a class, a match or a template.
+# FORM: AsRead
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="own-names-of-lists-with-types.ts" displayPath="own-names-of-lists-with-types.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Stack" module=m0 position=1110 constructor=f2 fields=[{key="pos" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=1
+layout L1 kind=Instance name="Bare" module=m0 position=1158 constructor=f3 flags=[HasHeritage]
+layout L2 module=m0 position=1742 fields=[{key="bare" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="defined" declared={type=anything} flags=[IsRequired]}, {key="empty" declared={type=undefined|null|Array<never> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="from" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="frozen" declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="hidden" declared={type=anything} flags=[IsRequired]}, {key="keys" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="made" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="many" declared={type=anything} flags=[IsRequired]}, {key="manyRemoved" declared={type=anything} flags=[IsRequired]}, {key="mapped" declared={type=anything} flags=[IsRequired]}, {key="match" declared={type=anything} flags=[IsRequired]}, {key="nodes" declared={type=anything} flags=[IsRequired]}, {key="own" declared={type=anything} flags=[IsRequired]}, {key="plain" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="prototype" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="removed" declared={type=anything} flags=[IsRequired]}, {key="sliced" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="sparse" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="stack" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="symbolic" declared={type=anything} flags=[IsRequired]}, {key="template" declared={type=anything} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType] declaredOrder=[14, 12, 16, 1, 5, 20, 19, 0, 11, 21, 4, 18, 8, 9, 13, 15, 2, 7, 3, 17, 10, 6] ownFieldCount=22
+data d0 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}]} module=m0
+data d2 root=Array{contents=anything} module=m0
+data d3 root=Array{contents=anything} module=m0
+data d4 root=Array{contents=anything} module=m0
+data d5 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+variable g0 name="has" module=m0 declared={type=undefined|null|function|absent|builtin(ObjectPrototypeHasOwnProperty) flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v3 = Convert v2 declared={type=undefined|null|function|builtin(ObjectPrototypeHasOwnProperty) flags=[IsExpected]}
+    PutModuleVariable v3 variable=g0
+    v5 = Data data=d0
+    v6 = Convert v5 declared={type=undefined|null|number|symbol|bigint|object flags=[IsExpected]}
+    v7 = Builtin builtin=Array
+    v8 = ResolveHeritage v7
+    v9 = NewClosure function=f2
+    v10 = NewClass v9, v7, v8 layout=L0
+    v11 = FinishClass v10 layout=L0
+    v12 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Builtin builtin=Array
+    v14 = ResolveHeritage v13
+    v15 = NewClosure function=f3
+    v16 = NewClass v15, v13, v14 layout=L1
+    v17 = FinishClass v16 layout=L1
+    v18 = Convert v17 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v19 = NewRegExp pattern="a"
+    v20 = PropGet v19 key="exec"
+    v21 = String string="a"
+    v22 = Call v20, v19, v21 calleeKey="exec" calleeName="exec"
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v24 = NewClosure function=f4
+    v25 = NewTemplateObject templateStrings=[{cooked="x" raw="x"}]
+    v26 = Call v24, -, v25
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v28 = Builtin builtin=Object
+    v29 = Builtin builtin=ObjectFreeze
+    v30 = Data data=d1
+    v31 = Call v29, v28, v30 calleeName="Object.freeze"
+    v32 = Convert v31 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v33 = Data data=d2
+    v34 = Convert v33 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v35 = Data data=d3
+    v36 = Integer
+    v37 = Convert v36 declared={type=number}
+    v38 = Convert v37 declared={type=i32 flags=[IsExpected]}
+    v39 = Convert v35 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v40 = Data data=d4
+    v41 = Integer
+    v42 = Convert v41 declared={type=number}
+    v43 = Convert v42 declared={type=i32 flags=[IsExpected]}
+    v44 = Integer
+    v45 = Convert v44 declared={type=number}
+    v46 = Convert v45 declared={type=i32 flags=[IsExpected]}
+    v47 = Data data=d5
+    v48 = NewObject layout=L2
+    v49 = Convert v6 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PropDefine v48, v49 key="symbolic"
+    v51 = Construct v12 calleeName="Stack"
+    v52 = Convert v51 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v53 = Convert v52 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v54 = Convert v53 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v48, v54 key="stack"
+    v56 = Construct v18 calleeName="Bare"
+    v57 = Convert v56 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v58 = Convert v57 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v59 = Convert v58 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v48, v59 key="bare"
+    v61 = Convert v23 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PropDefine v48, v61 key="match"
+    v63 = Convert v27 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PropDefine v48, v63 key="template"
+    v65 = Convert v32 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v66 = Convert v65 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v48, v66 key="frozen"
+    PropDefine v48, v34 key="sparse"
+    v69 = Convert v39 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PropDefine v48, v69 key="many"
+    v71 = Convert v40 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PropDefine v48, v71 key="manyRemoved"
+    v73 = Convert v47 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PropDefine v48, v73 key="own"
+    v75 = FinishObject v48
+    v76 = Convert v75 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}
+    v77 = ForInOpen v76
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v79 = ForInStep v77, v76
+    v80 = ResultAt v79
+    v81 = ResultAt v79 index=1
+    Branch v80 -> taken b2(), notTaken b3()
+  b2():
+    v82 = Undefined
+    Return v82
+  b3():
+    v83 = Convert v81 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v84 = Builtin builtin=GlobalThis
+    v85 = PropGet v84 key="console" [isFreeName]
+    v86 = Convert v85 declared={type=builtin(Console) flags=[IsExpected]}
+    v87 = PropGet v86 key="log"
+    v88 = Convert v87 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v89 = ElemGet v76, v83
+    v90 = Convert v89 declared={type=undefined|null|Array flags=[OmitsNull]} illTypedCause=FromLooseType
+    v91 = Call v1, -, v90 calleeName="onlyLists"
+    v92 = Convert v91 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v93 = Call v88, v86, v83, v92 calleeKey="log" calleeName="console.log"
+    Jump -> next b1()
+}
+function f1 name="onlyLists" module=m0 position=302 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="has"
+    v3 = PropGet v2 key="call"
+    v4 = Convert v3 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v5 = String string="pos"
+    v6 = Call v4, v2, v0, v5 calleeKey="call" calleeName="has.call"
+    v7 = Convert v6 declared={type=boolean} illTypedCause=FromLooseType
+    v8 = GetModuleVariable variable=g0
+    v9 = CheckInitialized v8 name="has"
+    v10 = PropGet v9 key="call"
+    v11 = Convert v10 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v12 = String string="end"
+    v13 = Call v11, v9, v0, v12 calleeKey="call" calleeName="has.call"
+    v14 = Convert v13 declared={type=boolean} illTypedCause=FromLooseType
+    v15 = Builtin builtin=Object
+    v16 = Builtin builtin=ObjectHasOwn
+    v17 = String string="index"
+    v18 = Call v16, v15, v0, v17 calleeName="Object.hasOwn"
+    v19 = Convert v18 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v20 = Builtin builtin=Object
+    v21 = Builtin builtin=ObjectHasOwn
+    v22 = String string="raw"
+    v23 = Call v21, v20, v0, v22 calleeName="Object.hasOwn"
+    v24 = Convert v23 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v25 = Builtin builtin=Object
+    v26 = Builtin builtin=ObjectHasOwn
+    v27 = String string="map"
+    v28 = Call v26, v25, v0, v27 calleeName="Object.hasOwn"
+    v29 = Convert v28 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v30 = Builtin builtin=Object
+    v31 = Builtin builtin=ObjectHasOwn
+    v32 = String string="length"
+    v33 = Call v31, v30, v0, v32 calleeName="Object.hasOwn"
+    v34 = Convert v33 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v35 = Builtin builtin=Object
+    v36 = Builtin builtin=ObjectHasOwn
+    v37 = String string="0"
+    v38 = Call v36, v35, v0, v37 calleeName="Object.hasOwn"
+    v39 = Convert v38 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v40 = Builtin builtin=Object
+    v41 = Builtin builtin=ObjectHasOwn
+    v42 = String string="constructor"
+    v43 = Call v41, v40, v0, v42 calleeName="Object.hasOwn"
+    v44 = Convert v43 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v45 = Builtin builtin=Object
+    v46 = Builtin builtin=ObjectHasOwn
+    v47 = String string="__proto__"
+    v48 = Call v46, v45, v0, v47 calleeName="Object.hasOwn"
+    v49 = Convert v48 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v50 = Builtin builtin=Object
+    v51 = Builtin builtin=ObjectHasOwn
+    v52 = Builtin builtin=SymbolIterator
+    v53 = Call v51, v50, v0, v52 calleeName="Object.hasOwn"
+    v54 = Convert v53 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v55 = Builtin builtin=Object
+    v56 = Builtin builtin=ObjectHasOwn
+    v57 = String string="name7"
+    v58 = Call v56, v55, v0, v57 calleeName="Object.hasOwn"
+    v59 = Convert v58 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v60 = NewArray v7, v14, v19, v24, v29, v34, v39, v44, v49, v54, v59 contents=boolean
+    v61 = PropGet v60 key="join"
+    v62 = Call v61, v60 calleeKey="join" calleeName="join"
+    ReturnCall v62 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f2 name="Stack" module=m0 position=1110 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L0
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f3 name="Bare" module=m0 position=1158 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f4 module=m0 position=1246 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    Return v1
+}
+# -- generated: onlyLists
+# CHECK-LABEL: function {{*}}name="onlyLists"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 162, patchpoints: 32, rare instructions: 36
+# CHECK-NEXT: end of function f1

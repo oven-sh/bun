@@ -1,0 +1,91 @@
+# An arguments object that a closure captures, or that a new list holds, is within reach of whoever gets the closure or the list: they may give it another length, other elements, or another method under @@iterator. Its walks follow the protocol, whatever becomes of the holder. The state of a walk holds the object too, and only the walk reads that state
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="capturedByAClosureThatIsKept" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = NewClosure v3 function=f5
+    PutModuleVariable v4 variable=g0
+    v6 = NewArray contents=anything
+    AppendSpread v6, v3
+    Return v6
+# CHECK: undefined = CallDirect v6, {{*}} function=f6 [isNeverInlined]
+# CHECK-NOT: AppendElement
+}
+
+function f1 name="capturedByAClosureAndWalkedInALoop" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = NewClosure v3 function=f5
+    PutModuleVariable v4 variable=g0
+    v6 = IteratorOpen v3 iteratorKind=Sync
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = IteratorResume v6 iteratorKind=Sync resumeMode=Next
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    Return v1
+  b3():
+    PutModuleVariable v10 variable=g0
+    Jump -> next b1()
+# CHECK: [[opened1]]: undefined = CallDirect v3 function=f7 [isNeverInlined]
+# CHECK: [[next1]]: anything = ResultAt [[opened1]] index=1
+# CHECK: anything = Call [[next1]],
+# CHECK-NOT: ElemGet
+}
+
+function f2 name="capturedByAClosureThatIsDropped" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = NewClosure v3 function=f5
+    v5 = NewArray contents=anything
+    AppendSpread v5, v3
+    Return v5
+# CHECK: undefined = CallDirect v5, {{*}} function=f6 [isNeverInlined]
+}
+
+function f3 name="heldByAListThatIsKept" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = NewArray v3 contents=anything
+    PutModuleVariable v4 variable=g0
+    v6 = NewArray contents=anything
+    AppendSpread v6, v3
+    Return v6
+# CHECK: undefined = CallDirect v6, {{*}} function=f6 [isNeverInlined]
+}
+
+function f4 name="heldByTheStateOfAWalkAlone" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = IteratorOpen v3 iteratorKind=Sync
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4 iteratorKind=Sync resumeMode=Next
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v1
+  b3():
+    PutModuleVariable v8 variable=g0
+    Jump -> next b1()
+# CHECK-NOT: CallDirect
+# CHECK: anything = ElemGet v3, {{*}} [keyIsIntegral]
+}
+
+function f5 name="stores" kind=Arrow captures=[{type=Arguments}] results=[{type=anything}] {
+  b0(v0: Arguments):
+    v1 = Integer integer=0
+    ElemSet v0, v1, v1 mode=Strict
+    Return v1
+}

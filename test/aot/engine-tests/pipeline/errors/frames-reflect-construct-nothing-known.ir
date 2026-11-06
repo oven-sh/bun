@@ -1,0 +1,186 @@
+# Prints the frames under a constructor that is called by Reflect.construct(..) with operands whose kinds are not known where the call is written.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="/$bun/text/frames-reflect-construct-nothing-known.js/0.cjs" displayPath="/$bun/text/frames-reflect-construct-nothing-known.js/0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="frames-reflect-construct-nothing-known.js" displayPath="frames-reflect-construct-nothing-known.js" body=f2 namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Instance name="F" module=m1 position=432 constructor=f3 fields=[{key="s" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="A" module=m1 position=348 constructor=f4 fields=[{key="s" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="B" module=m1 position=417 base=L1 constructor=f5 supertypes=[L1] flags=[HasHeritage]
+layout L3 name="ProxyHandler<typeof A>" fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
+data d0 root=Array{contents=anything} module=m1
+data d1 root=Object{layout=L3} module=m1
+data d2 root=Array{contents=anything} module=m1
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 name="anonymous" module=m0 position=1 flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: int[0, 4294967295], v2: Array):
+    v3 = CreateMappedArguments v0, v1, v2
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    Return v5
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = NewClass v2 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f5
+    v8 = NewClass v7, v5, v6 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = Convert v9 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v11 = NewClosure function=f1
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
+    v13 = Builtin builtin=Reflect
+    v14 = Builtin builtin=ReflectConstruct
+    v15 = Data data=d0
+    v16 = Convert v15 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v17 = Call v12, -, v16 calleeName="through"
+    v18 = Convert v17 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v19 = Call v14, v13, v5, v18 calleeName="Reflect.construct" [isDoneInPlace]
+    v20 = Call v12, -, v10 calleeName="through"
+    v21 = Call v12, -, v1 calleeName="through"
+    v22 = Builtin builtin=Reflect
+    v23 = Builtin builtin=ReflectConstruct
+    v24 = Builtin builtin=Proxy
+    v25 = Data data=d1
+    v26 = Construct v24, -, v5, v25 calleeName="Proxy"
+    v27 = Convert v26 declared={type=undefined|null|function|f4|f5 flags=[IsExpected]}
+    v28 = Call v12, -, v27 calleeName="through"
+    v29 = Convert v28 declared={type=undefined|null|function|f4|f5 flags=[IsExpected]}
+    v30 = Data data=d2
+    v31 = Convert v30 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v32 = Call v23, v22, v29, v31 calleeName="Reflect.construct" [isDoneInPlace]
+    v33 = Undefined
+    Return v33
+}
+function f3 name="F" module=m1 position=432 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Error" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Error) flags=[IsExpected]}
+    v5 = String string="x"
+    v6 = Construct v4, -, v5 calleeName="Error"
+    v7 = Convert v6 declared={type=undefined|null|Error flags=[IsExpected]}
+    v8 = PropGet v7 key="stack"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v1, v9 key="s"
+    v11 = Undefined
+    Return v11
+}
+function f4 name="A" module=m1 position=365 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=undefined|null|L1|L2 flags=[IsExpected]}
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Error" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Error) flags=[IsExpected]}
+    v8 = String string="x"
+    v9 = Construct v7, -, v8 calleeName="Error"
+    v10 = Convert v9 declared={type=undefined|null|Error flags=[IsExpected]}
+    v11 = PropGet v10 key="stack"
+    v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v4, v12 key="s"
+    v14 = Undefined
+    Return v14
+}
+function f5 name="B" module=m1 position=417 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2
+function f6 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f7 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6, f7]
+# -- generated: anonymous f2 F A
+# CHECK-LABEL: function {{*}}name="anonymous"
+# CHECK: module=m0 position=1 flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: Array):
+# CHECK-NEXT: v6: f1 = AssumeType v0 provenType=f1
+# CHECK-NEXT: v7: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: Arguments = CreateMappedArguments v6, v1, v7 allocationSite=0
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: anything = ElemGet v3, v4 accessSite=0
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m1 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=1
+# CHECK-NEXT: v1: f4 = NewClosure function=f4 allocationSite=2
+# CHECK-NEXT: v2: f4 = NewClass v1 layout=L1
+# CHECK-NEXT: v3: f4 = FinishClass v2 layout=L1
+# CHECK-NEXT: v4: null|object = ResolveHeritage v3
+# CHECK-NEXT: v5: f5 = NewClosure function=f5 allocationSite=3
+# CHECK-NEXT: v6: f5 = NewClass v5, v3, v4 layout=L2
+# CHECK-NEXT: v7: f5 = FinishClass v6 layout=L2
+# CHECK-NEXT: v8: f1 = NewClosure function=f1 allocationSite=4
+# CHECK-NEXT: v9: builtin(Reflect) = Builtin builtin=Reflect
+# CHECK-NEXT: v10: builtin(ReflectConstruct) = Builtin builtin=ReflectConstruct
+# CHECK-NEXT: v11: Array = Data data=d0 allocationSite=5
+# CHECK-NEXT: v12: Array ~ Array<never> = Upcast v11 castType=Array
+# CHECK-NEXT: v13: anything = Call v8, -, v12 calleeName="through" accessSite=1 callees=[f1]
+# CHECK-NEXT: v14: anything ~ undefined|null|Array<never> = Upcast v13 castType=anything
+# CHECK-NEXT: v15: anything = Call v10, v9, v3, v14 calleeName="Reflect.construct" accessSite=2 callees=[builtin(ReflectConstruct)] [isDoneInPlace]
+# CHECK-NEXT: v16: anything = Call v8, -, v7 calleeName="through" accessSite=3 callees=[f1]
+# CHECK-NEXT: v17: anything = Call v8, -, v0 calleeName="through" accessSite=4 callees=[f1]
+# CHECK-NEXT: v18: builtin(Reflect) = Builtin builtin=Reflect
+# CHECK-NEXT: v19: builtin(ReflectConstruct) = Builtin builtin=ReflectConstruct
+# CHECK-NEXT: v20: builtin(Proxy) = Builtin builtin=Proxy
+# CHECK-NEXT: v21: L3 = Data data=d1 allocationSite=6
+# CHECK-NEXT: v22: anything ~ object = Construct v20, -, v3, v21 calleeName="Proxy" accessSite=5 callees=[builtin(Proxy)]
+# CHECK-NEXT: v23: anything ~ function = Upcast v22 castType=anything
+# CHECK-NEXT: v24: anything = Call v8, -, v23 calleeName="through" accessSite=6 callees=[f1]
+# CHECK-NEXT: v25: anything ~ undefined|null|function = Upcast v24 castType=anything
+# CHECK-NEXT: v26: Array = Data data=d2 allocationSite=7
+# CHECK-NEXT: v27: Array ~ Array<never> = Upcast v26 castType=Array
+# CHECK-NEXT: v30: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v28: anything = Call v19, v18, v25, v30 calleeName="Reflect.construct" accessSite=7 callees=[builtin(ReflectConstruct)] [isDoneInPlace]
+# CHECK-NEXT: v29: undefined = Undefined
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="F"
+# CHECK: module=m1 position=432 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: v1: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v2: anything = PropGet v1 key="Error" accessSite=8 [isFreeName]
+# CHECK-NEXT: v11: builtin(Error) = AssumeType v2 provenType=builtin(Error)
+# CHECK-NEXT: v3: builtin(Error) = Upcast v11 castType=anything
+# CHECK-NEXT: v12: builtin(Error) = AssumeType v3 provenType=builtin(Error)
+# CHECK-NEXT: v4: "x" = String string="x"
+# CHECK-NEXT: v5: anything ~ object = Construct v12, -, v4 calleeName="Error" accessSite=9 callees=[builtin(Error)]
+# CHECK-NEXT: v13: Error = AssumeType v5 provenType=Error
+# CHECK-NEXT: v6: Error = Upcast v13 castType=anything
+# CHECK-NEXT: v14: Error = AssumeType v6 provenType=Error
+# CHECK-NEXT: v7: anything = PropGet v14 key="stack" accessSite=10
+# CHECK-NEXT: v8: anything ~ undefined|null|string = Upcast v7 castType=anything
+# CHECK-NEXT: PropSet v0, v8 key="s" accessSite=11
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="A"
+# CHECK: module=m1 position=365 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L1
+# CHECK-NEXT: v2: object ~ L1|L2 = NewObject v1 layout=L1 allocationSite=8 allocationClass=1
+# CHECK-NEXT: v3: L1|L2 = Check v2 expectedType=L1|L2
+# CHECK-NEXT: v4: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v5: anything = PropGet v4 key="Error" accessSite=12 [isFreeName]
+# CHECK-NEXT: v14: builtin(Error) = AssumeType v5 provenType=builtin(Error)
+# CHECK-NEXT: v6: builtin(Error) = Upcast v14 castType=anything
+# CHECK-NEXT: v15: builtin(Error) = AssumeType v6 provenType=builtin(Error)
+# CHECK-NEXT: v7: "x" = String string="x"
+# CHECK-NEXT: v8: anything ~ object = Construct v15, -, v7 calleeName="Error" accessSite=13 callees=[builtin(Error)]
+# CHECK-NEXT: v16: Error = AssumeType v8 provenType=Error
+# CHECK-NEXT: v9: Error = Upcast v16 castType=anything
+# CHECK-NEXT: v17: Error = AssumeType v9 provenType=Error
+# CHECK-NEXT: v10: anything = PropGet v17 key="stack" accessSite=14
+# CHECK-NEXT: v11: anything ~ undefined|null|string = Upcast v10 castType=anything
+# CHECK-NEXT: PropSet v3, v11 key="s" accessSite=15 receivers=[L1, ..]
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }

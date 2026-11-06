@@ -1,0 +1,147 @@
+# A Map or a Set that a loop over an array fills, as TypeScript's symbol tables are. The arrays have 0 to 300 elements; the keys are strings, whole numbers, fractions, objects, undefined and a mix;
+# some repeat; some loops delete, clear or read while they fill, lengthen or shorten the array, leave early, throw, or fill a collection that already has entries, that an iterator was made over before
+# it had any, that is an instance of a subclass, or whose `set` was replaced. Sizes, orders, lookups and iterators answer as in plain Bun.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="maps-and-sets-filled-by-counted-loops.ts" displayPath="maps-and-sets-filled-by-counted-loops.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Entry" module=m0 position=551 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=3490
+data d0 root=Object{layout=L1} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=anything elements=[Array{contents=anything elements=[String{value="z"}, Number{}]}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = String string="a"
+    v5 = Integer integer=1
+    v6 = Double number=1.5
+    v7 = Double number=-0
+    v8 = Integer
+    v9 = Double number=NaN
+    v10 = Double number=NaN
+    v11 = Undefined
+    v12 = Null
+    v13 = Boolean boolean=true
+    v14 = String string="1"
+    v15 = Integer integer=1099511627776
+    v16 = Data data=d0
+    v17 = Data data=d1
+    v18 = Builtin builtin=SymbolIterator
+    v19 = BigInt digits="10"
+    v20 = String string="a"
+    v21 = Integer integer=1
+    v22 = NewArray v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21 contents=anything
+    v23 = Convert v22 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v24 = Builtin builtin=Map
+    v25 = Data data=d2
+    v26 = Construct v24, -, v25 calleeName="Map"
+    v27 = Convert v26 declared={type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v28 = String string="v"
+    v29 = Call v3, -, v27, v23, v28 calleeName="into"
+    v30 = Integer integer=30
+    v31 = Call v1, -, v30 calleeName="entriesOf"
+    v32 = Integer integer=6
+    v33 = Call v1, -, v32 calleeName="entriesOf"
+    v34 = Integer
+    v35 = Convert v34 declared={type=number}
+    Jump -> next b1(v35)
+  b1(v36: number):
+    LoopHint
+    v38 = Convert v36 declared={type=i32 flags=[IsExpected]}
+    v39 = Convert v38 declared={type=i32 flags=[IsExpected]}
+    v40 = Increment v39
+    v41 = Convert v40 declared={type=number}
+    Jump -> next b1(v41)
+}
+function f1 name="entriesOf" module=m0 position=589 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="into" module=m0 position=1994 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Map, v1: undefined|null|Array, v2: anything):
+    v3 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5 index=1
+    Jump -> next b2()
+  b2() handler=b3():
+    v7 = Convert v6 declared={type=anything} illTypedCause=ContainerWriterUnseen
+    v8 = PropGet v0 key="set"
+    v9 = Call v8, v0, v7, v2 calleeKey="set" calleeName="target.set"
+    Jump -> next b1()
+  b3() role=IterationCleanup subject=v3:
+    v10 = CatchException
+    Rethrow v10
+}
+# -- generated: f0 into
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v2: "a" = String string="a"
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: fractional = Double number=1.5
+# CHECK-NEXT: v5: whole = Double number=-0
+# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v7: whole = Double number=NaN
+# CHECK-NEXT: v8: whole = Double number=NaN
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: null = Null
+# CHECK-NEXT: v11: true = Boolean boolean=true
+# CHECK-NEXT: v12: "1" = String string="1"
+# CHECK-NEXT: v13: 1099511627776 = Integer integer=1099511627776
+# CHECK-NEXT: v14: L1 = Data data=d0 allocationSite=2
+# CHECK-NEXT: v15: Array = Data data=d1 allocationSite=3
+# CHECK-NEXT: v36: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v17: bigint = BigInt digits="10"
+# CHECK-NEXT: v18: "a" = String string="a"
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: Array<undefined|null|true|int[0, 1099511627776]|double|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v36, v16, v17, v18, v19 contents=undefined|null|true|int[0, 1099511627776]|double|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v37: Array<undefined|null|true|int[0, 1099511627776]|double|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<undefined|null|true|int[0, 1099511627776]|double|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v21: builtin(Map) = Builtin builtin=Map
+# CHECK-NEXT: v22: Array = Data data=d2 allocationSite=5
+# CHECK-NEXT: v38: Array<0|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<0|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v23: anything ~ object = Construct v21, -, v38 calleeName="Map" accessSite=0 callees=[builtin(Map)]
+# CHECK-NEXT: v39: Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v23 provenType=Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v24: Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = Check v39 expectedType=undefined|null|Map
+# CHECK-NEXT: v40: Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v24 provenType=Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v25: "v" = String string="v"
+# CHECK-NEXT: v26: undefined|null|Map = Call v1, -, v40, v37, v25 calleeName="into" accessSite=1 callees=[f2]
+# CHECK-NEXT: v27: 30 = Integer integer=30
+# CHECK-NEXT: v28: undefined|null|Array<undefined|null|L0> = Call v0, -, v27 calleeName="entriesOf" accessSite=2 callees=[f1]
+# CHECK-NEXT: v29: 6 = Integer integer=6
+# CHECK-NEXT: v30: undefined|null|Array<undefined|null|L0> = Call v0, -, v29 calleeName="entriesOf" accessSite=3 callees=[f1]
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v31)
+# CHECK-NEXT: b1(v32: int|whole ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v34: int|whole ~ int[0, 2147483647] = Upcast v32 castType=int|whole
+# CHECK-NEXT: v35: int|whole ~ int[1, 2147483648] = Increment v34
+# CHECK-NEXT: Jump -> next b1(v35)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="into"
+# CHECK: module=m0 position=1994 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|null|true|int[0, 1099511627776]|double|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=string}] results=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Map<undefined|null|true|number|string|bigint|@@iterator|L1|Array<0|string, proven, pristine[Storage, Names, Dense]>, undefined|int|string|Array<0|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>, v1: Array<undefined|null|true|int[0, 1099511627776]|double|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, v2: string):
+# CHECK-NEXT: v3: iteratorstate = IteratorOpen v1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: undefined = IteratorResume v3
+# CHECK-NEXT: v6: anything = ResultAt v5 index=1
+# CHECK-NEXT: v10: undefined|null|true|number|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=undefined|null|true|number|bigint|"1"|"a"|@@iterator|L1|Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b3():
+# CHECK-NEXT: v7: anything = PropGet v0 key="set" accessSite=4
+# CHECK-NEXT: v11: builtin(MapPrototypeSet) = AssumeType v7 provenType=builtin(MapPrototypeSet)
+# CHECK-NEXT: v8: anything = Call v11, v0, v10, v2 calleeKey="set" calleeName="target.set" accessSite=5 callees=[builtin(MapPrototypeSet)]
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b3() role=IterationCleanup subject=v3:
+# CHECK-NEXT: v9: exception = CatchException
+# CHECK-NEXT: Rethrow v9
+# CHECK-NEXT: }

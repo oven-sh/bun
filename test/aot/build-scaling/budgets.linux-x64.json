@@ -1,0 +1,383 @@
+{
+  "a program of one line": {
+    "megabytes": 132
+  },
+  "ES modules that import one another in a row": {
+    "millionInstructions": 2452,
+    "megabytes": 218
+  },
+  "CommonJS modules that require one another in a row": {
+    "millionInstructions": 2810,
+    "megabytes": 219
+  },
+  "CommonJS modules that a bundler has wrapped into one file": {
+    "millionInstructions": 2744,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 2.99
+    }
+  },
+  "typed modules that share the types of one module": {
+    "millionInstructions": 3614,
+    "megabytes": 219
+  },
+  "functions that call what nobody knows": {
+    "millionInstructions": 17481,
+    "megabytes": 221,
+    "growth": {
+      "instructions": 5.35
+    }
+  },
+  "functions of the host that are held in variables, beside calls of what nobody knows": {
+    "millionInstructions": 47331,
+    "megabytes": 324
+  },
+  "classes whose methods of one name are called at one place": {
+    "millionInstructions": 9963,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 2.56
+    }
+  },
+  "literals of different layouts that are read at one place": {
+    "millionInstructions": 17639,
+    "megabytes": 429,
+    "growth": {
+      "instructions": 4.5,
+      "peakBytes": 5
+    }
+  },
+  "one function of many statements": {
+    "millionInstructions": 7859,
+    "megabytes": 221
+  },
+  "arrays and objects that one function makes, between calls of what nobody knows": {
+    "millionInstructions": 30583,
+    "megabytes": 416,
+    "growth": {
+      "peakBytes": 4.0
+    }
+  },
+  "objects that one function makes and hands to one array": {
+    "millionInstructions": 11803,
+    "megabytes": 254,
+    "growth": {
+      "instructions": 3.36
+    }
+  },
+  "objects that statements push onto a list without a type": {
+    "millionInstructions": 1731,
+    "megabytes": 140
+  },
+  "one async function of many awaits": {
+    "millionInstructions": 2963,
+    "megabytes": 221,
+    "growth": {
+      "instructions": 2.56
+    }
+  },
+  "a row of branches that hand one new object on": {
+    "millionInstructions": 13394,
+    "megabytes": 215,
+    "growth": {
+      "instructions": 2.69
+    }
+  },
+  "one function that stores numbers into many fields": {
+    "millionInstructions": 2142,
+    "megabytes": 218,
+    "growth": {
+      "instructions": 3.19
+    }
+  },
+  "closures that are handed to one helper": {
+    "millionInstructions": 6787,
+    "megabytes": 216
+  },
+  "functions that call one another at random": {
+    "millionInstructions": 13435,
+    "megabytes": 215
+  },
+  "a union of object types that is told apart by a tag": {
+    "millionInstructions": 5541,
+    "megabytes": 221,
+    "growth": {
+      "instructions": 3.54
+    }
+  },
+  "one literal of many names, each read by name": {
+    "millionInstructions": 2253,
+    "megabytes": 216,
+    "growth": {
+      "instructions": 5.09
+    }
+  },
+  "exports of one module that another imports by name": {
+    "millionInstructions": 2905,
+    "megabytes": 217,
+    "growth": {
+      "instructions": 2.76
+    }
+  },
+  "strings and regular expressions that are written once each": {
+    "millionInstructions": 2145,
+    "megabytes": 221
+  },
+  "loops in a row in one function": {
+    "millionInstructions": 3037,
+    "megabytes": 217,
+    "growth": {
+      "instructions": 2.99
+    }
+  },
+  "a string that grows by one statement after another": {
+    "millionInstructions": 1197,
+    "megabytes": 217,
+    "growth": {
+      "instructions": 2.59
+    }
+  },
+  "one try block of many calls": {
+    "millionInstructions": 1827,
+    "megabytes": 220
+  },
+  "modules that export everything of the one before": {
+    "millionInstructions": 1110,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 2.88
+    }
+  },
+  "classes that extend one another in a row": {
+    "millionInstructions": 2865,
+    "megabytes": 144,
+    "growth": {
+      "instructions": 2.99
+    }
+  },
+  "classes that extend one another in a row, each constructed": {
+    "millionInstructions": 7964,
+    "megabytes": 133,
+    "growth": {
+      "instructions": 2.67
+    }
+  },
+  "classes without fields that extend one another in a row": {
+    "millionInstructions": 15377,
+    "megabytes": 367,
+    "growth": {
+      "instructions": 3.6,
+      "peakBytes": 5
+    }
+  },
+  "functions that each make a class below the one that the function before has made": {
+    "millionInstructions": 16947,
+    "megabytes": 396,
+    "growth": {
+      "instructions": 3.4,
+      "peakBytes": 5.3
+    }
+  },
+  "classes with a field each that extend one another in a row, all constructed at one place": {
+    "millionInstructions": 11807,
+    "megabytes": 156,
+    "growth": {
+      "instructions": 3.2
+    }
+  },
+  "rows of classes that functions make one below the other, by the length of a row": {
+    "millionInstructions": 4681,
+    "megabytes": 139
+  },
+  "classes that each extend what a function of their own makes of one base class": {
+    "millionInstructions": 4320,
+    "megabytes": 140
+  },
+  "functions that are stored one after another under one name of one object and called there": {
+    "millionInstructions": 6848,
+    "megabytes": 132,
+    "growth": {
+      "instructions": 3.23
+    }
+  },
+  "functions that are stored one after another under one name and called there, more than a type lists": {
+    "millionInstructions": 6540,
+    "megabytes": 134,
+    "growth": {
+      "instructions": 3.22
+    }
+  },
+  "functions on one line after non-ASCII text": {
+    "millionInstructions": 7200,
+    "megabytes": 243,
+    "growth": {
+      "peakBytes": 2.7
+    }
+  },
+  "constant objects in one array literal": {
+    "millionInstructions": 4259,
+    "megabytes": 230
+  },
+  "pairs in the array literal that a Map is made of": {
+    "millionInstructions": 8121,
+    "megabytes": 230
+  },
+  "objects in the array of a JSON module": {
+    "millionInstructions": 3731,
+    "megabytes": 230
+  },
+  "objects with a computed member in one array literal": {
+    "millionInstructions": 7294,
+    "megabytes": 230,
+    "growth": {
+      "instructions": 3.2
+    }
+  },
+  "states of one switch in a loop": {
+    "millionInstructions": 3642,
+    "megabytes": 230,
+    "growth": {
+      "instructions": 3.6
+    }
+  },
+  "names that one function reads from an object nobody knows": {
+    "millionInstructions": 2896,
+    "megabytes": 220
+  },
+  "floored divisions that each take the result of the one before": {
+    "millionInstructions": 9680,
+    "megabytes": 230,
+    "growth": {
+      "instructions": 3.9
+    }
+  },
+  "functions in a ring that hand a new object on": {
+    "millionInstructions": 10378,
+    "megabytes": 530,
+    "growth": {
+      "instructions": 3.6,
+      "peakBytes": 6.5
+    }
+  },
+  "steps of a chain of calls that each add a class to one array, whose elements are read under many names": {
+    "millionInstructions": 4128,
+    "megabytes": 233,
+    "growth": {
+      "instructions": 3.5
+    }
+  },
+  "terms of one sum that name a constant": {
+    "millionInstructions": 1291,
+    "megabytes": 220
+  },
+  "functions with a row of constants that are each computed from the one before": {
+    "millionInstructions": 2847,
+    "megabytes": 220
+  },
+  "rows of constants that are each named after the one before, at the top of a file and in a function": {
+    "millionInstructions": 10813,
+    "megabytes": 215
+  },
+  "long rows of constants that are each computed from the one before, each row in a function or a block of its own": {
+    "millionInstructions": 3771,
+    "megabytes": 171
+  },
+  "classes below a function that makes their base, kept in a list and constructed for the classes of another list": {
+    "millionInstructions": 7331,
+    "megabytes": 129
+  },
+  "classes below one function that makes their base, each constructed for a class beside it, that store through this": {
+    "millionInstructions": 4536,
+    "megabytes": 153
+  },
+  "classes that each extend a class of their own, all stored on the global object under computed names": {
+    "millionInstructions": 31773,
+    "megabytes": 475
+  },
+  "classes that are all declared before the first is constructed, in a build that validates": {
+    "millionInstructions": 59505,
+    "megabytes": 720
+  },
+  "a declaration where an expression belongs, nested in itself": {
+    "millionInstructions": 3784,
+    "megabytes": 280
+  },
+  "names that a list pattern takes from a typed array or a list": {
+    "millionInstructions": 14564,
+    "megabytes": 322
+  },
+  "names with defaults that a list pattern takes from a typed array or a list": {
+    "millionInstructions": 15005,
+    "megabytes": 329
+  },
+  "names that a list pattern takes from a typed array or a list, in front of a rest element": {
+    "millionInstructions": 17853,
+    "megabytes": 316
+  },
+  "very many names that a list pattern takes from a typed array or a list": {
+    "millionInstructions": 87524,
+    "megabytes": 1621
+  },
+  "list patterns nested in one another": {
+    "millionInstructions": 9483,
+    "megabytes": 136,
+    "growth": {
+      "instructions": 3.97
+    }
+  },
+  "names that an object pattern takes, all read at the end": {
+    "millionInstructions": 55112,
+    "megabytes": 595
+  },
+  "parameters of one function, all read at the end": {
+    "millionInstructions": 7146,
+    "megabytes": 197,
+    "growth": {
+      "instructions": 3.5
+    }
+  },
+  "arguments of one call, each a sum": {
+    "millionInstructions": 18027,
+    "megabytes": 504
+  },
+  "TypeScript packages that each have a tsconfig.json with different compiler options": {
+    "millionInstructions": 4200,
+    "megabytes": 374
+  },
+  "functions in one array that each call whichever the array answers with, with their own arguments": {
+    "millionInstructions": 17206,
+    "megabytes": 164,
+    "growth": {
+      "instructions": 3.31,
+      "counts": {
+        "HandedOnReferencesRead": 4,
+        "FunctionsBelowEntrancesInCyclesVisited": 4
+      }
+    }
+  },
+  "classes with a method of one name that each call it on an instance of any of them": {
+    "millionInstructions": 29767,
+    "megabytes": 171,
+    "growth": {
+      "instructions": 3.65,
+      "peakBytes": 2.98,
+      "counts": {
+        "HandedOnReferencesRead": 3.98,
+        "FunctionsBelowEntrancesInCyclesVisited": 3.81
+      }
+    }
+  },
+  "instances of classes of their own that statements assign to one variable, a method called on it after each": {
+    "millionInstructions": 12572,
+    "megabytes": 132,
+    "growth": {
+      "instructions": 4.05,
+      "counts": {
+        "UnionMembersCompared": 3.99
+      }
+    }
+  },
+  "all shapes as the entry points of one build, on four threads": {
+    "megabytes": 654
+  }
+}

@@ -1,0 +1,203 @@
+# FORM: AsRead
+# RUN: lower-to-air size f0 f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="counters-from-optional-start.ts" displayPath="counters-from-optional-start.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=1
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=7}, Number{value=9}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=6}, Number{value=3}, Number{value=1}, Number{}, Number{value=-1}, Number{value=2.5}, Number{value=NaN}, Number{value=100}, Number{value=Infinity}, Number{value=-0}]} module=m0
+variable g0 name="find" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="sumFrom" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="sumDownFrom" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="lastEvenFrom" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="firstEvenFrom" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="a" module=m0 declared={type=undefined|null|absent|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f6
+    v1 = Convert v0 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f7
+    v3 = Convert v2 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f8
+    v5 = Convert v4 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f9
+    v7 = Convert v6 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f10
+    v9 = Convert v8 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Data data=d0
+    v11 = Convert v10 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v11 variable=g5
+    v13 = Integer
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v14)
+  b1(v15: number):
+    LoopHint
+    v17 = Data data=d1
+    v18 = PropGet v17 key="map"
+    v19 = NewClosure function=f11
+    v20 = Call v18, v17, v19 calleeKey="map" calleeName="map"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="console" [isFreeName]
+    v23 = Convert v22 declared={type=builtin(Console) flags=[IsExpected]}
+    v24 = PropGet v23 key="log"
+    v25 = Convert v24 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v26 = Call v1, -, v11 calleeName="fromTwo"
+    v27 = Convert v26 declared={type=number}
+    v28 = GetModuleVariable variable=g1
+    v29 = Double number=0.5
+    v30 = Integer
+    v31 = Call v28, -, v11, v29, v30 calleeName="sumFrom"
+    v32 = Convert v31 declared={type=number}
+    v33 = GetModuleVariable variable=g1
+    v34 = Integer integer=-2
+    v35 = Integer
+    v36 = Call v33, -, v11, v34, v35 calleeName="sumFrom"
+    v37 = Convert v36 declared={type=number}
+    v38 = GetModuleVariable variable=g2
+    v39 = Double number=2.5
+    v40 = Call v38, -, v11, v39 calleeName="sumDownFrom"
+    v41 = Convert v40 declared={type=number}
+    v42 = GetModuleVariable variable=g2
+    v43 = Integer integer=1000
+    v44 = Call v42, -, v11, v43 calleeName="sumDownFrom"
+    v45 = Convert v44 declared={type=number}
+    v46 = Call v3, -, v11 calleeName="notTested"
+    v47 = Convert v46 declared={type=number}
+    v48 = Boolean boolean=true
+    v49 = Call v5, -, v11, v48 calleeName="testedElsewhere"
+    v50 = Convert v49 declared={type=number}
+    v51 = Boolean
+    v52 = Call v5, -, v11, v51 calleeName="testedElsewhere"
+    v53 = Convert v52 declared={type=number}
+    v54 = Call v7, -, v11 calleeName="bothWays"
+    v55 = Convert v54 declared={type=number}
+    v56 = Call v9, -, v11 calleeName="steppedInTheOtherArm"
+    v57 = Convert v56 declared={type=number}
+    v58 = Call v25, v23, v27, v32, v37, v41, v45, v47, v50, v53, v55, v57 calleeKey="log" calleeName="console.log"
+    v59 = Increment v15
+    v60 = Convert v59 declared={type=number}
+    Jump -> next b1(v60)
+}
+function f1 name="find" module=m0 position=350 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f12|f13|f14 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: undefined|null|function|f12|f13|f14, v2: undefined|number):
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Convert v6 declared={type=number} illTypedCause=Assertion
+    v8 = Less v4, v7
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v9):
+    v10 = ElemGet v0, v9
+    v11 = Convert v10 declared={type=anything} illTypedCause=ContainerWriterUnseen
+    v12 = Call v1, -, v11, v9 calleeName="predicate"
+    v13 = Convert v12 declared={type=boolean}
+    v14 = Increment v9
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3(v16):
+    v17 = Undefined
+    v18 = Convert v17 declared={type=anything}
+    Return v18
+}
+function f2 name="sumFrom" module=m0 position=631 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="sumDownFrom" module=m0 position=811 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="lastEvenFrom" module=m0 position=1155 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="firstEvenFrom" module=m0 position=1274 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure function=f12
+    v4 = Call v2, -, v0, v3, v1 calleeName="find"
+    ReturnCall v4 casts=[{declared={type=anything}}, {declared={type=undefined|number}}]
+}
+function f6 name="fromTwo" module=m0 position=1593 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="notTested" module=m0 position=1711 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="testedElsewhere" module=m0 position=1847 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: boolean):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = PropGet v0 key="length"
+    v5 = Convert v4 declared={type=number} illTypedCause=Assertion
+    v6 = Integer integer=1
+    v7 = Sub v5, v6
+    v8 = Convert v7 declared={type=number}
+    Jump -> next b1(v3, v8)
+  b1(v9: number, v10: number):
+    LoopHint
+    v12 = Integer
+    v13 = GreaterEq v10, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    Jump -> next b4(v14)
+  b3(v15):
+    Jump -> next b4(v15)
+  b4(v16: number):
+    v17 = Add v9, v16
+    v18 = Convert v17 declared={type=number}
+    v19 = Integer integer=-5
+    v20 = Less v16, v19
+    Branch v20 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v21):
+    v22 = Convert v18 declared={type=number}
+    Return v22
+  b6(v23):
+    v24 = Decrement v23
+    v25 = Convert v24 declared={type=number}
+    Jump -> next b1(v18, v25)
+}
+function f9 name="bothWays" module=m0 position=2013 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="steppedInTheOtherArm" module=m0 position=2142 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=2584 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g3
+    v2 = GetModuleVariable variable=g5
+    v3 = CheckInitialized v2 name="a"
+    v4 = Call v1, -, v3, v0 calleeName="lastEvenFrom"
+    v5 = Convert v4 declared={type=undefined|number}
+    v6 = String string="|"
+    v7 = Add v5, v6
+    v8 = GetModuleVariable variable=g4
+    v9 = GetModuleVariable variable=g5
+    v10 = CheckInitialized v9 name="a"
+    v11 = Call v8, -, v10, v0 calleeName="firstEvenFrom"
+    v12 = Convert v11 declared={type=undefined|number}
+    v13 = Add v7, v12
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v14
+}
+function f12 module=m0 position=1361 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = BitAnd v0, v1
+    v3 = Integer
+    v4 = StrictEq v2, v3
+    v5 = Convert v4 declared={type=boolean}
+    Return v5
+}
+function f13 module=m0 position=1132 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=1537 kind=Arrow flags=[IsChecked] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=false}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 find
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 175, patchpoints: 25, rare instructions: 33, polls: 1
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="find"
+# CHECK: role=EntryChecks
+# CHECK-NEXT: instructions: 2, patchpoints: 2
+# CHECK-NEXT: end of function f1
+# CHECK-LABEL: function {{*}}name="find"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 14, patchpoints: 2, rare instructions: 1, polls: 1
+# CHECK-NEXT: end of function f22
+# CHECK-LABEL: function {{*}}name="find"
+# CHECK: role=GenericVersion
+# CHECK-NEXT: instructions: 24, patchpoints: 3, rare instructions: 6, polls: 1
+# CHECK-NEXT: end of function f23

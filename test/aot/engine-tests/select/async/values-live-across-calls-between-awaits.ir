@@ -1,0 +1,391 @@
+# FORM: AsRead
+# RUN: lower-to-air size f11
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="values-live-across-calls-between-awaits.ts" displayPath="values-live-across-calls-between-awaits.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="mix" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="later" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="twoValues" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="manyValues" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="neverWaits" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="inALoop" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="catches" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="rejects" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="awaitsOthers" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="callerThatKeepsValues" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f12
+    v1 = Convert v0 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Call v1 calleeName="main"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="note" module=m0 position=25 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="mix" module=m0 position=109 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Integer integer=31
+    v3 = Mul v0, v2
+    v4 = Add v3, v1
+    v5 = Integer integer=1000003
+    v6 = Mod v4, v5
+    v7 = Convert v6 declared={type=number}
+    Return v7
+}
+function f3 name="later" module=m0 position=192 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="twoValues" module=m0 position=413 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost]
+function f5 name="manyValues" module=m0 position=737 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number, v2: number, v3: number, v4: number):
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v1, v2 calleeName="mix"
+    v7 = Convert v6 declared={type=number}
+    v8 = GetModuleVariable variable=g1
+    v9 = Call v8, -, v2, v3 calleeName="mix"
+    v10 = Convert v9 declared={type=number}
+    v11 = GetModuleVariable variable=g1
+    v12 = Call v11, -, v3, v4 calleeName="mix"
+    v13 = Convert v12 declared={type=number}
+    v14 = GetModuleVariable variable=g1
+    v15 = Call v14, -, v4, v1 calleeName="mix"
+    v16 = Convert v15 declared={type=number}
+    v17 = GetModuleVariable variable=g1
+    v18 = Call v17, -, v7, v10 calleeName="mix"
+    v19 = Convert v18 declared={type=number}
+    v20 = GetModuleVariable variable=g1
+    v21 = Call v20, -, v13, v16 calleeName="mix"
+    v22 = Convert v21 declared={type=number}
+    v23 = GetModuleVariable variable=g1
+    v24 = Call v23, -, v19, v22 calleeName="mix"
+    v25 = Convert v24 declared={type=number}
+    v26 = GetModuleVariable variable=g1
+    v27 = Call v26, -, v25, v7 calleeName="mix"
+    v28 = Convert v27 declared={type=number}
+    v29 = GetModuleVariable variable=g2
+    v30 = GetModuleVariable variable=g1
+    v31 = Call v30, -, v7, v28 calleeName="mix"
+    v32 = Convert v31 declared={type=number}
+    v33 = Call v29, -, v32 calleeName="later"
+    v34 = Convert v33 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v35 = Await v34, v1, v2, v3, v4
+    v36 = Convert v35 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v37 = GetModuleVariable variable=g1
+    v38 = Call v37, -, v10, v36 calleeName="mix"
+    v39 = Convert v38 declared={type=number}
+    v40 = GetModuleVariable variable=g1
+    v41 = Call v40, -, v13, v39 calleeName="mix"
+    v42 = Convert v41 declared={type=number}
+    v43 = GetModuleVariable variable=g1
+    v44 = Call v43, -, v16, v42 calleeName="mix"
+    v45 = Convert v44 declared={type=number}
+    v46 = GetModuleVariable variable=g1
+    v47 = Call v46, -, v19, v45 calleeName="mix"
+    v48 = Convert v47 declared={type=number}
+    v49 = GetModuleVariable variable=g2
+    v50 = GetModuleVariable variable=g1
+    v51 = Call v50, -, v48, v22 calleeName="mix"
+    v52 = Convert v51 declared={type=number}
+    v53 = Call v49, -, v52 calleeName="later"
+    v54 = Convert v53 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v55 = Await v54, v1, v2, v3, v4
+    v56 = Convert v55 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v57 = GetModuleVariable variable=g1
+    v58 = Call v57, -, v39, v56 calleeName="mix"
+    v59 = Convert v58 declared={type=number}
+    v60 = GetModuleVariable variable=g1
+    v61 = Call v60, -, v42, v59 calleeName="mix"
+    v62 = Convert v61 declared={type=number}
+    v63 = GetModuleVariable variable=g1
+    v64 = Call v63, -, v45, v62 calleeName="mix"
+    v65 = Convert v64 declared={type=number}
+    v66 = GetModuleVariable variable=g1
+    v67 = GetModuleVariable variable=g1
+    v68 = GetModuleVariable variable=g1
+    v69 = Call v68, -, v25, v28 calleeName="mix"
+    v70 = Convert v69 declared={type=number}
+    v71 = GetModuleVariable variable=g1
+    v72 = Call v71, -, v59, v62 calleeName="mix"
+    v73 = Convert v72 declared={type=number}
+    v74 = Call v67, -, v70, v73 calleeName="mix"
+    v75 = Convert v74 declared={type=number}
+    v76 = GetModuleVariable variable=g1
+    v77 = GetModuleVariable variable=g1
+    v78 = Call v77, -, v36, v56 calleeName="mix"
+    v79 = Convert v78 declared={type=number}
+    v80 = Call v76, -, v65, v79 calleeName="mix"
+    v81 = Convert v80 declared={type=number}
+    v82 = Call v66, -, v75, v81 calleeName="mix"
+    v83 = Convert v82 declared={type=number}
+    v84 = Convert v83 declared={type=number|object}
+    Return v84
+}
+function f6 name="neverWaits" module=m0 position=1479 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number, v2: number):
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v1, v2 calleeName="mix"
+    v5 = Convert v4 declared={type=number}
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v5, v1 calleeName="mix"
+    v8 = Convert v7 declared={type=number}
+    v9 = Await v8, v1, v2
+    v10 = Convert v9 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v11 = GetModuleVariable variable=g1
+    v12 = GetModuleVariable variable=g1
+    v13 = Call v12, -, v5, v8 calleeName="mix"
+    v14 = Convert v13 declared={type=number}
+    v15 = GetModuleVariable variable=g1
+    v16 = Call v15, -, v10, v2 calleeName="mix"
+    v17 = Convert v16 declared={type=number}
+    v18 = Call v11, -, v14, v17 calleeName="mix"
+    v19 = Convert v18 declared={type=number}
+    v20 = Convert v19 declared={type=number|object}
+    Return v20
+}
+function f7 name="inALoop" module=m0 position=1695 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost]
+function f8 name="catches" module=m0 position=2077 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost]
+function f9 name="rejects" module=m0 position=2469 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost]
+function f10 name="awaitsOthers" module=m0 position=2713 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = GetModuleVariable variable=g1
+    v3 = Integer integer=5
+    v4 = Call v2, -, v1, v3 calleeName="mix"
+    v5 = Convert v4 declared={type=number}
+    v6 = GetModuleVariable variable=g1
+    v7 = Integer integer=7
+    v8 = Call v6, -, v5, v7 calleeName="mix"
+    v9 = Convert v8 declared={type=number}
+    v10 = GetModuleVariable variable=g3
+    v11 = Call v10, -, v5, v9 calleeName="twoValues"
+    v12 = Convert v11 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v13 = Await v12, v1
+    v14 = Convert v13 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v15 = GetModuleVariable variable=g1
+    v16 = Call v15, -, v14, v5 calleeName="mix"
+    v17 = Convert v16 declared={type=number}
+    v18 = GetModuleVariable variable=g4
+    v19 = Call v18, -, v5, v9, v17, v14 calleeName="manyValues"
+    v20 = Convert v19 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v21 = Await v20, v1
+    v22 = Convert v21 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v23 = GetModuleVariable variable=g1
+    v24 = Call v23, -, v22, v9 calleeName="mix"
+    v25 = Convert v24 declared={type=number}
+    v26 = GetModuleVariable variable=g5
+    v27 = Call v26, -, v17, v25 calleeName="neverWaits"
+    v28 = Convert v27 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v29 = Await v28, v1
+    v30 = Convert v29 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Jump -> next b1()
+  b1() handler=b3():
+    v31 = GetModuleVariable variable=g8
+    v32 = Call v31, -, v25 calleeName="rejects"
+    v33 = Convert v32 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v34 = Await v33, v1
+    v35 = Convert v34 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Jump -> next b2()
+  b2():
+    Jump -> next b4(v35)
+  b3() role=CatchHandler:
+    v36 = CatchValue
+    v37 = GetModuleVariable variable=g0
+    v38 = Convert v36 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v39 = PropGet v38 key="message"
+    v40 = Convert v39 declared={type=undefined|null|string} illTypedCause=Assertion
+    v41 = Call v37, -, v40 calleeName="note"
+    v42 = Convert v41 declared={type=number}
+    Jump -> next b4(v42)
+  b4(v43: number):
+    v44 = GetModuleVariable variable=g1
+    v45 = GetModuleVariable variable=g1
+    v46 = GetModuleVariable variable=g1
+    v47 = Call v46, -, v5, v9 calleeName="mix"
+    v48 = Convert v47 declared={type=number}
+    v49 = GetModuleVariable variable=g1
+    v50 = Call v49, -, v17, v25 calleeName="mix"
+    v51 = Convert v50 declared={type=number}
+    v52 = Call v45, -, v48, v51 calleeName="mix"
+    v53 = Convert v52 declared={type=number}
+    v54 = GetModuleVariable variable=g1
+    v55 = GetModuleVariable variable=g1
+    v56 = Call v55, -, v14, v22 calleeName="mix"
+    v57 = Convert v56 declared={type=number}
+    v58 = GetModuleVariable variable=g1
+    v59 = Call v58, -, v30, v43 calleeName="mix"
+    v60 = Convert v59 declared={type=number}
+    v61 = Call v54, -, v57, v60 calleeName="mix"
+    v62 = Convert v61 declared={type=number}
+    v63 = Call v44, -, v53, v62 calleeName="mix"
+    v64 = Convert v63 declared={type=number}
+    v65 = Convert v64 declared={type=number|object}
+    Return v65
+}
+function f11 name="callerThatKeepsValues" module=m0 position=3288 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|Array<undefined|null|number|Array<undefined|null|Promise<number>>> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v0, v1 calleeName="mix"
+    v4 = Convert v3 declared={type=number}
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v4, v0 calleeName="mix"
+    v7 = Convert v6 declared={type=number}
+    v8 = GetModuleVariable variable=g1
+    v9 = Call v8, -, v7, v1 calleeName="mix"
+    v10 = Convert v9 declared={type=number}
+    v11 = GetModuleVariable variable=g1
+    v12 = Call v11, -, v10, v4 calleeName="mix"
+    v13 = Convert v12 declared={type=number}
+    v14 = GetModuleVariable variable=g1
+    v15 = Call v14, -, v13, v7 calleeName="mix"
+    v16 = Convert v15 declared={type=number}
+    v17 = GetModuleVariable variable=g1
+    v18 = Call v17, -, v16, v10 calleeName="mix"
+    v19 = Convert v18 declared={type=number}
+    v20 = GetModuleVariable variable=g1
+    v21 = Call v20, -, v19, v13 calleeName="mix"
+    v22 = Convert v21 declared={type=number}
+    v23 = GetModuleVariable variable=g1
+    v24 = Call v23, -, v22, v16 calleeName="mix"
+    v25 = Convert v24 declared={type=number}
+    v26 = GetModuleVariable variable=g3
+    v27 = Call v26, -, v4, v7 calleeName="twoValues"
+    v28 = Convert v27 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v29 = GetModuleVariable variable=g4
+    v30 = Call v29, -, v10, v13, v16, v19 calleeName="manyValues"
+    v31 = Convert v30 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v32 = GetModuleVariable variable=g5
+    v33 = Call v32, -, v22, v25 calleeName="neverWaits"
+    v34 = Convert v33 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v35 = GetModuleVariable variable=g6
+    v36 = Integer integer=7
+    v37 = Call v35, -, v36, v4 calleeName="inALoop"
+    v38 = Convert v37 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v39 = GetModuleVariable variable=g7
+    v40 = Call v39, -, v7 calleeName="catches"
+    v41 = Convert v40 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v42 = GetModuleVariable variable=g9
+    v43 = Call v42, -, v10 calleeName="awaitsOthers"
+    v44 = Convert v43 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v45 = NewArray v28, v31, v34, v38, v41, v44 contents=undefined|null|Promise<number>
+    v46 = Convert v45 declared={type=undefined|null|Array<undefined|null|Promise<number>> flags=[OmitsNull, OmitsUndefined]}
+    v47 = GetModuleVariable variable=g1
+    v48 = GetModuleVariable variable=g1
+    v49 = GetModuleVariable variable=g1
+    v50 = Call v49, -, v4, v7 calleeName="mix"
+    v51 = Convert v50 declared={type=number}
+    v52 = GetModuleVariable variable=g1
+    v53 = Call v52, -, v10, v13 calleeName="mix"
+    v54 = Convert v53 declared={type=number}
+    v55 = Call v48, -, v51, v54 calleeName="mix"
+    v56 = Convert v55 declared={type=number}
+    v57 = GetModuleVariable variable=g1
+    v58 = GetModuleVariable variable=g1
+    v59 = Call v58, -, v16, v19 calleeName="mix"
+    v60 = Convert v59 declared={type=number}
+    v61 = GetModuleVariable variable=g1
+    v62 = Call v61, -, v22, v25 calleeName="mix"
+    v63 = Convert v62 declared={type=number}
+    v64 = Call v57, -, v60, v63 calleeName="mix"
+    v65 = Convert v64 declared={type=number}
+    v66 = Call v47, -, v56, v65 calleeName="mix"
+    v67 = Convert v66 declared={type=number}
+    v68 = NewArray v67, v46 contents=undefined|null|number|Array<undefined|null|Promise<number>>
+    v69 = Convert v68 declared={type=undefined|null|Array<undefined|null|number|Array<undefined|null|Promise<number>>> flags=[OmitsNull, OmitsUndefined]}
+    Return v69
+}
+function f12 name="main" module=m0 position=3843 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    v7 = Integer integer=6
+    v8 = Less v6, v7
+    Branch v8 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v9):
+    v10 = GetModuleVariable variable=g10
+    v11 = Integer integer=1
+    v12 = Add v9, v11
+    v13 = Integer integer=3
+    v14 = Mul v9, v13
+    v15 = Integer integer=2
+    v16 = Add v14, v15
+    v17 = Call v10, -, v12, v16 calleeName="callerThatKeepsValues"
+    v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|number|Array<undefined|null|Promise<number>>> flags=[OmitsNull, OmitsUndefined]}
+    v19 = IteratorOpen v18 elementCount=2 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b5():
+    v20 = IteratorResume v19 stepIndex=0
+    v21 = ResultAt v20 index=1
+    v22 = Convert v21 declared={type=number} illTypedCause=Assertion
+    v23 = IteratorResume v19 stepIndex=1
+    v24 = ResultAt v23 index=1
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|Promise<number>>} illTypedCause=Assertion
+    Jump -> next b4()
+  b4():
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="Promise" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(Promise) flags=[IsExpected]}
+    v29 = PropGet v28 key="all"
+    v30 = Convert v29 declared={type=builtin(PromiseAll) flags=[IsExpected]}
+    v31 = Call v30, v28, v25 calleeKey="all" calleeName="Promise.all"
+    v32 = Convert v31 declared={type=undefined|null|Promise<undefined|null|Array<number>> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v33 = Await v32
+    LoopHint
+    v35 = GetModuleVariable variable=g1
+    v36 = Call v35, -, v5, v22 calleeName="mix"
+    v37 = Convert v36 declared={type=number}
+    v38 = Increment v9
+    v39 = Convert v38 declared={type=number}
+    Jump -> next b1(v37, v39)
+  b5() role=IterationCleanup subject=v19:
+    v40 = CatchException
+    Rethrow v40
+  b6(v41):
+    v42 = Builtin builtin=GlobalThis
+    v43 = PropGet v42 key="Promise" [isFreeName]
+    v44 = Convert v43 declared={type=builtin(Promise) flags=[IsExpected]}
+    v45 = PropGet v44 key="all"
+    v46 = Convert v45 declared={type=builtin(PromiseAll) flags=[IsExpected]}
+    v47 = GetModuleVariable variable=g6
+    v48 = Integer integer=20
+    v49 = Integer integer=1
+    v50 = Call v47, -, v48, v49 calleeName="inALoop"
+    v51 = Convert v50 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v52 = GetModuleVariable variable=g6
+    v53 = Integer integer=21
+    v54 = Integer integer=2
+    v55 = Call v52, -, v53, v54 calleeName="inALoop"
+    v56 = Convert v55 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v57 = GetModuleVariable variable=g9
+    v58 = Integer integer=9
+    v59 = Call v57, -, v58 calleeName="awaitsOthers"
+    v60 = Convert v59 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v61 = GetModuleVariable variable=g9
+    v62 = Integer integer=10
+    v63 = Call v61, -, v62 calleeName="awaitsOthers"
+    v64 = Convert v63 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v65 = GetModuleVariable variable=g4
+    v66 = Integer integer=1
+    v67 = Integer integer=2
+    v68 = Integer integer=3
+    v69 = Integer integer=4
+    v70 = Call v65, -, v66, v67, v68, v69 calleeName="manyValues"
+    v71 = Convert v70 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v72 = NewArray v51, v56, v60, v64, v71 contents=undefined|null|Promise<number>
+    v73 = Call v46, v44, v72 calleeKey="all" calleeName="Promise.all"
+    v74 = Convert v73 declared={type=undefined|null|Promise<undefined|null|Array<number>> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v75 = Await v74
+    v76 = Undefined
+    Return v76
+}
+# -- generated: callerThatKeepsValues
+# CHECK-LABEL: function {{*}}name="callerThatKeepsValues"
+# CHECK: role=ResultWrapper
+# CHECK-NEXT: instructions: 13, patchpoints: 3
+# CHECK-NEXT: end of function f11
+# CHECK-LABEL: function {{*}}name="callerThatKeepsValues"
+# CHECK: role=ResultWorker
+# CHECK-NEXT: instructions: 198, patchpoints: 11, rare instructions: 24
+# CHECK-NEXT: end of function f14

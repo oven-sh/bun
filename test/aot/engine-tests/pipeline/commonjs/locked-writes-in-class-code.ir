@@ -1,0 +1,128 @@
+# The mode of a store or a delete is that of the innermost scope. This file is sloppy. A store to a fixed member of a built-in prototype throws there too, and a store to a frozen object of the program's own is ignored. Class code is strict wherever it stands: a method, a static block, the `extends` clause and a computed key throw a TypeError. A frozen object of the program answers the same way, in plain Bun too.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="locked-writes-in-class-code.js" displayPath="locked-writes-in-class-code.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}] ownFieldCount=1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = NewClosure v0 function=f2
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = String string="Array.prototype"
+    v7 = Builtin builtin=ArrayPrototype
+    v8 = String string="push"
+    v9 = Call v5, -, v6, v7, v8 calleeName="cases"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="attempt" module=m0 position=460 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="console" [isFreeName]
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="console" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]}
+    v8 = PropGet v7 key="log"
+    v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v10 = String string=":"
+    v11 = Add v0, v10
+    v12 = PropGet v4 key="name"
+    v13 = Call v9, v7, v11, v12 calleeKey="log" calleeName="console.log"
+    Jump -> next b4()
+  b4():
+    v14 = Undefined
+    Return v14
+}
+function f2 name="cases" module=m0 position=586 flags=[IsSloppy, HasExplicitName] length=3 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: undefined|null|string, v2: undefined|null|object, v3: undefined|null|string):
+    v4 = GetEnvironmentField v0 layout=L0
+    v5 = String string=", a computed key"
+    v6 = Add v1, v5
+    v7 = NewClosure v2, v3 function=f3
+    v8 = Call v4, -, v6, v7 calleeName="attempt"
+    v9 = GetEnvironmentField v0 layout=L0
+    v10 = String string=", a function inside a method"
+    v11 = Add v1, v10
+    v12 = NewClosure v2, v3 function=f4
+    v13 = Call v9, -, v11, v12 calleeName="attempt"
+    v14 = Undefined
+    Return v14
+}
+function f3 module=m0 position=1321 kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=1452 kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 attempt cases
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: env L0 = NewObject layout=L0 allocationSite=0
+# CHECK-NEXT: v1: f1 = NewClosure function=f1 allocationSite=1
+# CHECK-NEXT: PutEnvironmentField v0, v1 layout=L0
+# CHECK-NEXT: v3: f2 = NewClosure v0 function=f2 allocationSite=2
+# CHECK-NEXT: v4: "Array.prototype" = String string="Array.prototype"
+# CHECK-NEXT: v5: builtin(ArrayPrototype) = Builtin builtin=ArrayPrototype
+# CHECK-NEXT: v6: "push" = String string="push"
+# CHECK-NEXT: v7: undefined = Call v3, -, v4, v5, v6 calleeName="cases" accessSite=0 callees=[f2]
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=460 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=f3|f4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: f3|f4):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK-NEXT: v2: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v3: anything = PropGet v2 key="console" accessSite=1 [isFreeName]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: v4: anything = CatchValue
+# CHECK-NEXT: v5: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v6: anything = PropGet v5 key="console" accessSite=2 [isFreeName]
+# CHECK-NEXT: v15: builtin(Console) = AssumeType v6 provenType=builtin(Console)
+# CHECK-NEXT: v7: builtin(Console) = Upcast v15 castType=anything
+# CHECK-NEXT: v16: builtin(Console) = AssumeType v7 provenType=builtin(Console)
+# CHECK-NEXT: v8: anything = PropGet v16 key="log" accessSite=3
+# CHECK-NEXT: v17: builtin(ConsoleLog) = AssumeType v8 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v9: builtin(ConsoleLog) = Upcast v17 castType=anything
+# CHECK-NEXT: v18: builtin(ConsoleLog) = AssumeType v9 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v10: ":" = String string=":"
+# CHECK-NEXT: v11: string = Add v0, v10
+# CHECK-NEXT: v12: anything = PropGet v4 key="name" accessSite=4
+# CHECK-NEXT: v13: anything = Call v18, v16, v11, v12 calleeKey="log" calleeName="console.log" accessSite=5 callees=[builtin(ConsoleLog)]
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="cases"
+# CHECK: module=m0 position=586 flags=[IsSloppy, HasExplicitName] length=3 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=string}, {type=builtin(ArrayPrototype)}, {type="push"}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L0, v1: string, v2: builtin(ArrayPrototype), v3: "push"):
+# CHECK-NEXT: v4: f1 = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: v5: ", a computed key" = String string=", a computed key"
+# CHECK-NEXT: v6: string = Add v1, v5
+# CHECK-NEXT: v7: f3 = NewClosure v2, v3 function=f3 allocationSite=3
+# CHECK-NEXT: v8: undefined = Call v4, -, v6, v7 calleeName="attempt" accessSite=6 callees=[f1]
+# CHECK-NEXT: v9: f1 = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: v10: ", a function inside a method" = String string=", a function inside a method"
+# CHECK-NEXT: v11: string = Add v1, v10
+# CHECK-NEXT: v12: f4 = NewClosure v2, v3 function=f4 allocationSite=4
+# CHECK-NEXT: v13: undefined = Call v9, -, v11, v12 calleeName="attempt" accessSite=7 callees=[f1]
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }

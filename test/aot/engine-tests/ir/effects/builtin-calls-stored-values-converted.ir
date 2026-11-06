@@ -1,0 +1,49 @@
+# An array makes a number of what is stored as its length, and a setter of a host class makes a string or a number of what it takes. A built-in that stores into such an object, or defines on it, runs code that nobody lists. An object that keeps what is stored runs nothing
+# FORM: Prepared
+# RUN: effects summaries f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[ChangeIntegrity, ChangePrototype]}
+layout L1 name="ValueDescriptor" fields=[{key="value" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L2 kind=Instance name="Stack" constructor=f2 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="Registry" constructor=f3 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="BelowSomeClass" constructor=f4 flags=[HasHeritage] flow={impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="Plain" constructor=f5 flow={baseState=None impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="BelowStack" base=L2 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L2 impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="stores" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=RegExp<pristine[Storage, Names]>}, {type=Response<pristine[Storage, Names]>}, {type=string}, {type=L0}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: RegExp<pristine[Storage, Names]>, v2: Response<pristine[Storage, Names]>, v3: string, v4: L0):
+    v5 = CallBuiltin -, v0, v3, v4 overload=ReflectSet/0
+    v6 = CallBuiltin -, v1, v3, v4 overload=ReflectSet/0
+    v7 = CallBuiltin -, v2, v3, v4 overload=ReflectSet/0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v5 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v6 CallBuiltin:
+# CHECK-NOT: callsUnknownCode
+# CHECK: v7 CallBuiltin: {{*}}callsUnknownCode
+function f1 name="defines" parameters=[{type=L0}, {type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=L6}, {type=string}, {type=L1}] results=[{type=undefined}] {
+  b0(v0: L0, v1: L2, v2: L3, v3: L4, v4: L5, v5: L6, v6: string, v7: L1):
+    v8 = CallBuiltin -, v0, v6, v7 overload=ObjectDefineProperty/0
+    v9 = CallBuiltin -, v1, v6, v7 overload=ObjectDefineProperty/0
+    v10 = CallBuiltin -, v2, v6, v7 overload=ObjectDefineProperty/0
+    v11 = CallBuiltin -, v3, v6, v7 overload=ObjectDefineProperty/0
+    v12 = CallBuiltin -, v4, v6, v7 overload=ObjectDefineProperty/0
+    v13 = CallBuiltin -, v5, v6, v7 overload=ObjectDefineProperty/0
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v8 CallBuiltin:
+# CHECK-NOT: callsUnknownCode
+# CHECK: v9 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v10 CallBuiltin:
+# CHECK-NOT: callsUnknownCode
+# CHECK: v11 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v12 CallBuiltin:
+# CHECK-NOT: callsUnknownCode
+# CHECK: v13 CallBuiltin: {{*}}callsUnknownCode
+function f2 name="Stack" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="Registry" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="BelowSomeClass" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f6 name="BelowStack" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6

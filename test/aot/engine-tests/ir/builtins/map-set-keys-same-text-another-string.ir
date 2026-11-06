@@ -1,0 +1,181 @@
+# Map and set keys that are the same text in another string.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="map-set-keys-same-text-another-string.ts" displayPath="map-set-keys-same-text-another-string.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=68 kind=Variable
+typesite w1 module=m0 position=159 kind=Variable
+typesite w2 module=m0 position=1094 kind=Variable
+typesite w3 module=m0 position=1546 kind=Variable
+typesite w4 module=m0 position=1561 kind=Variable
+typesite w5 module=m0 position=282 kind=Parameter
+typesite w6 module=m0 position=298 kind=Parameter
+typesite w7 module=m0 position=266 kind=Result
+typesite w8 module=m0 position=1030 kind=CallResult
+typesite w9 module=m0 position=1069 kind=CallResult
+typesite w10 module=m0 position=1128 kind=Element
+typesite w11 module=m0 position=1160 kind=Variable
+typesite w12 module=m0 position=1207 kind=CallResult
+typesite w13 module=m0 position=1238 kind=CallResult
+typesite w14 module=m0 position=1612 kind=Element
+typesite w15 module=m0 position=1641 kind=Variable
+typesite w16 module=m0 position=2503 kind=CallResult
+typesite w17 module=m0 position=2526 kind=CallResult
+typesite w18 module=m0 position=328 kind=Variable
+typesite w19 module=m0 position=349 kind=Variable
+typesite w20 module=m0 position=411 kind=PropertyRead
+typesite w21 module=m0 position=380 kind=Element
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=15}, Number{value=16}, Number{value=17}, Number{value=23}, Number{value=24}, Number{value=25}, Number{value=31}, Number{value=32}, Number{value=33}, Number{value=40}, Number{value=63}, Number{value=64}, Number{value=65}]} module=m0
+data d1 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="alphabet" module=m0 declared={type=undefined|null|absent|"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.,:;!?" site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.,:;!?"
+    v3 = Convert v2 declared={type=undefined|null|"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.,:;!?" site=w0 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v3 variable=g0
+    v5 = Data data=d0
+    v6 = Convert v5 declared={type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Builtin builtin=Map
+    v8 = Construct v7 calleeName="Map"
+    v9 = Convert v8 declared={type=undefined|null|Map<undefined|null|string, number> site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v10 = Builtin builtin=Set
+    v11 = Construct v10 calleeName="Set"
+    v12 = Convert v11 declared={type=undefined|null|Set<undefined|null|string> site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v13 = Data data=d1
+    v14 = Convert v13 declared={type=undefined|null|Array<undefined|null|string> site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v15 = IteratorOpen v6
+    v16 = IteratorResume v15
+    v17 = ResultAt v16
+    v18 = ResultAt v16 index=1
+    Branch v17 -> taken b1(), notTaken b11()
+  b1():
+    v19 = String string="a\u{e9}"
+    v20 = PropGet v19 key="repeat"
+    v21 = Integer integer=9
+    v22 = Call v20, v19, v21 calleeKey="repeat" calleeName="repeat"
+    v23 = Integer
+    v24 = Convert v23 declared={type=number site=w3}
+    v25 = Integer
+    v26 = Convert v25 declared={type=number site=w4}
+    v27 = IteratorOpen v14
+    Jump -> next b2(v24, v26)
+  b2(v28: number, v29: number):
+    v30 = IteratorResume v27
+    v31 = ResultAt v30 index=1
+    Jump -> next b3()
+  b3() handler=b10():
+    v32 = Convert v31 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v33 = Integer
+    v34 = Convert v33 declared={type=number site=w15}
+    v35 = PropGet v32 key="length"
+    LoopHint
+    v37 = PropGet v9 key="has"
+    v38 = String string="~"
+    v39 = Add v32, v38
+    v40 = Call v37, v9, v39 calleeKey="has" calleeName="map.has"
+    v41 = Convert v40 declared={type=boolean site=w16} illTypedCause=DeclarationWithoutBody
+    v42 = ToBoolean v41
+    Branch v42 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v43) handler=b10():
+    Jump -> next b7()
+  b5(v44) handler=b10():
+    v45 = PropGet v12 key="has"
+    v46 = String string=" "
+    v47 = Add v32, v46
+    v48 = Call v45, v12, v47 calleeKey="has" calleeName="set.has"
+    v49 = Convert v48 declared={type=boolean site=w17} illTypedCause=DeclarationWithoutBody
+    v50 = ToBoolean v49
+    Branch v50 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v51) handler=b10():
+    Jump -> next b7()
+  b7() handler=b10():
+    Jump -> next b9()
+  b8(v52) handler=b10():
+    Jump -> next b9()
+  b9() handler=b10():
+    Jump -> next b2(v28, v29)
+  b10() role=IterationCleanup subject=v27:
+    v53 = CatchException
+    Rethrow v53
+  b11():
+    Jump -> next b12()
+  b12() handler=b17():
+    v54 = Convert v18 declared={type=number site=w10} illTypedCause=ContainerWriterUnseen
+    v55 = Integer
+    v56 = Convert v55 declared={type=number site=w11}
+    Jump -> next b13(v56)
+  b13(v57: number) handler=b17():
+    LoopHint
+    v59 = Call v1, -, v54, v57 calleeName="textOf"
+    v60 = Convert v59 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}
+    v61 = PropGet v9 key="has"
+    v62 = Call v61, v9, v60 calleeKey="has" calleeName="map.has"
+    v63 = Convert v62 declared={type=boolean site=w13} illTypedCause=DeclarationWithoutBody
+    v64 = ToBoolean v63
+    Branch v64 -> taken b14(| 0), notTaken b15(| 0)
+  b14(v65) handler=b17():
+    Jump -> next b16()
+  b15(v66) handler=b17():
+    v67 = PropGet v14 key="push"
+    v68 = Call v67, v14, v60 calleeKey="push" calleeName="stored.push"
+    Jump -> next b16()
+  b16() handler=b17():
+    v69 = Increment v57
+    v70 = Convert v69 declared={type=number site=w11}
+    Jump -> next b13(v70)
+  b17() role=IterationCleanup subject=v15:
+    v71 = CatchException
+    Rethrow v71
+}
+function f1 name="textOf" module=m0 position=266 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w5}, {type=number site=w6}] results=[{type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w19}
+    Jump -> next b1(v3, v5)
+  b1(v6: undefined|null|string, v7: number):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v10, v11):
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="alphabet"
+    v14 = Integer integer=7
+    v15 = Mul v1, v14
+    v16 = Integer integer=13
+    v17 = Mul v10, v16
+    v18 = Add v15, v17
+    v19 = GetModuleVariable variable=g0
+    v20 = CheckInitialized v19 name="alphabet"
+    v21 = PropGet v20 key="length"
+    v22 = Convert v21 declared={type=number site=w20} illTypedCause=Assertion
+    v23 = Mod v18, v22
+    v24 = ElemGet v13, v23
+    v25 = Convert v24 declared={type=undefined|null|string site=w21 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v26 = Add v6, v25
+    v27 = Convert v26 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v28 = Increment v10
+    v29 = Convert v28 declared={type=number site=w19}
+    Jump -> next b1(v27, v29)
+  b3(v30, v31):
+    v32 = Convert v6 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    Return v32
+}
+# -- generated: f0 textOf
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 77, patchpoints: 12, rare instructions: 19, polls: 2
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="textOf"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 105, patchpoints: 10, rare instructions: 23, polls: 1
+# CHECK-NEXT: end of function f3
+# CHECK-LABEL: function {{*}}name="textOf"
+# CHECK: role=GenericVersion
+# CHECK-NEXT: instructions: 89, patchpoints: 10, rare instructions: 20, polls: 1
+# CHECK-NEXT: end of function f4

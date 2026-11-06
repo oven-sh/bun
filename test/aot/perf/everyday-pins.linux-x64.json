@@ -1,0 +1,4654 @@
+{
+  "everyday-a-text-in-place-of-what-a-pattern-finds/a-line-is-trimmed-by-one-pattern": {
+    "typed": 2467.5,
+    "untyped": 2467.6
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/a-word-is-replaced-once": {
+    "typed": 1041.6,
+    "untyped": 1041.5
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/every-address-of-a-line-is-listed": {
+    "typed": 1309.4,
+    "untyped": 1309.4
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/every-dash-becomes-another-sign": {
+    "typed": 2091.4,
+    "untyped": 2091.4
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/every-match-where-the-one-lies-far-behind-the-start": {
+    "typed": 944.7,
+    "untyped": 944.6
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/every-number-is-put-in-brackets": {
+    "typed": 7441.3,
+    "untyped": 7441.2
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/every-run-of-spaces-becomes-one-sign": {
+    "typed": 4846.4,
+    "untyped": 4846.5
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/every-vowel-is-removed": {
+    "typed": 6821.8,
+    "untyped": 6821.9
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/groups-of-the-one-match-change-places": {
+    "typed": 1771.8,
+    "untyped": 1771.9
+  },
+  "everyday-a-text-in-place-of-what-a-pattern-finds/the-end-of-a-line-is-replaced": {
+    "typed": 760,
+    "untyped": 759.9
+  },
+  "everyday-an-interactive-program/a-map-asked-with-a-string-out-of-a-field": {
+    "typed": 80.3,
+    "untyped": 78.3
+  },
+  "everyday-an-interactive-program/cells-of-one-maker-that-hold-many-types": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-an-interactive-program/two-string-fields-compared": {
+    "typed": 58.3,
+    "untyped": 58.3
+  },
+  "everyday-array-methods-in-cold-code/a-callback-that-calls-a-function": {
+    "typed": 61,
+    "untyped": 75
+  },
+  "everyday-array-methods-in-cold-code/a-large-callback": {
+    "typed": 149,
+    "untyped": 160
+  },
+  "everyday-array-methods-in-cold-code/a-list-handed-in-filter": {
+    "typed": 139.7,
+    "untyped": 148.1
+  },
+  "everyday-array-methods-in-cold-code/a-list-handed-in-map": {
+    "typed": 109.9,
+    "untyped": 117.7
+  },
+  "everyday-array-methods-in-cold-code/a-new-list-of-whole-numbers-map": {
+    "typed": 178.9,
+    "untyped": 174
+  },
+  "everyday-array-methods-in-cold-code/empty-list-for-each": {
+    "typed": 7,
+    "untyped": 17
+  },
+  "everyday-array-methods-in-cold-code/entries-of-an-object-map": {
+    "typed": 172.7,
+    "untyped": 147.3
+  },
+  "everyday-array-methods-in-cold-code/keys-of-an-object-for-each": {
+    "typed": 138.6,
+    "untyped": 141.7
+  },
+  "everyday-array-methods-in-cold-code/methods-one-in-another": {
+    "typed": 85,
+    "untyped": 88
+  },
+  "everyday-array-methods-in-cold-code/small-whole-numbers-map": {
+    "typed": 13,
+    "untyped": 21.8
+  },
+  "everyday-array-methods-in-cold-code/texts-map-to-lengths": {
+    "typed": 149.8,
+    "untyped": 151.8
+  },
+  "everyday-array-methods-in-cold-code/three-objects-some": {
+    "typed": 25,
+    "untyped": 27
+  },
+  "everyday-array-methods-in-cold-code/two-objects-filter-by-a-text": {
+    "typed": 66,
+    "untyped": 52
+  },
+  "everyday-array-methods-on-lists-nobody-proves/a-field-of-a-parsed-object-filter": {
+    "typed": 267.8,
+    "untyped": 342.9
+  },
+  "everyday-array-methods-on-lists-nobody-proves/a-field-of-a-parsed-object-for-each": {
+    "typed": 137,
+    "untyped": 275.6
+  },
+  "everyday-array-methods-on-lists-nobody-proves/a-field-of-a-parsed-object-handed-in-map": {
+    "typed": 148.4,
+    "untyped": 241.5
+  },
+  "everyday-array-methods-on-lists-nobody-proves/a-field-of-this-for-each": {
+    "typed": 42,
+    "untyped": 42
+  },
+  "everyday-array-methods-on-lists-nobody-proves/a-list-of-type-any-find-last-index": {
+    "typed": 129,
+    "untyped": 130
+  },
+  "everyday-array-methods-on-lists-nobody-proves/a-list-of-type-any-some": {
+    "typed": 220,
+    "untyped": 218
+  },
+  "everyday-array-methods-on-lists-nobody-proves/an-optional-list-map": {
+    "typed": 62.8,
+    "untyped": 126.9
+  },
+  "everyday-array-methods-on-lists-nobody-proves/sort-by-a-field": {
+    "typed": 1415,
+    "untyped": 1415.1
+  },
+  "everyday-array-methods-on-lists-nobody-proves/split-then-map": {
+    "typed": 93.6,
+    "untyped": 93.8
+  },
+  "everyday-array-methods-on-lists-nobody-proves/what-a-function-nobody-knows-returns-map": {
+    "typed": 121.5,
+    "untyped": 121.3
+  },
+  "everyday-arrays/array-from-a-set": {
+    "typed": 814.1,
+    "untyped": 795.5
+  },
+  "everyday-arrays/array-of-a-length-filled-by-index": {
+    "typed": 171.3,
+    "untyped": 171.5
+  },
+  "everyday-arrays/array-of-arrays-of-pairs-walked": {
+    "typed": 88,
+    "untyped": 94
+  },
+  "everyday-arrays/at-from-the-end": {
+    "typed": 39,
+    "untyped": 39
+  },
+  "everyday-arrays/binary-search": {
+    "typed": 100.4,
+    "untyped": 104.4
+  },
+  "everyday-arrays/concat": {
+    "typed": 737.7,
+    "untyped": 737.3
+  },
+  "everyday-arrays/copy-within-a-ring": {
+    "typed": 23,
+    "untyped": 23
+  },
+  "everyday-arrays/destructuring-a-returned-tuple": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-arrays/destructuring-two": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-arrays/destructuring-with-a-rest": {
+    "typed": 176,
+    "untyped": 178
+  },
+  "everyday-arrays/destructuring-with-defaults": {
+    "typed": 16,
+    "untyped": 16
+  },
+  "everyday-arrays/filter": {
+    "typed": 139,
+    "untyped": 139
+  },
+  "everyday-arrays/filter-boolean": {
+    "typed": 59,
+    "untyped": 59
+  },
+  "everyday-arrays/filter-map-reduce": {
+    "typed": 157,
+    "untyped": 157
+  },
+  "everyday-arrays/find": {
+    "typed": 102,
+    "untyped": 74.9
+  },
+  "everyday-arrays/find-index": {
+    "typed": 71.5,
+    "untyped": 73.5
+  },
+  "everyday-arrays/find-last": {
+    "typed": 91.5,
+    "untyped": 97.5
+  },
+  "everyday-arrays/flat-map": {
+    "typed": 1891.3,
+    "untyped": 1895.7
+  },
+  "everyday-arrays/for-each-sum": {
+    "typed": 104,
+    "untyped": 70
+  },
+  "everyday-arrays/for-of-sum": {
+    "typed": 75,
+    "untyped": 77
+  },
+  "everyday-arrays/group-by": {
+    "typed": 1291.9,
+    "untyped": 1293.5
+  },
+  "everyday-arrays/holes-read": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-arrays/includes-a-number": {
+    "typed": 8.3,
+    "untyped": 8.3
+  },
+  "everyday-arrays/indexed-loop-sum": {
+    "typed": 75,
+    "untyped": 77
+  },
+  "everyday-arrays/is-array": {
+    "typed": 16,
+    "untyped": 14.5
+  },
+  "everyday-arrays/join": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-arrays/keys": {
+    "typed": 43,
+    "untyped": 49
+  },
+  "everyday-arrays/last-by-length": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-arrays/length-set-to-zero": {
+    "typed": 75,
+    "untyped": 75
+  },
+  "everyday-arrays/map": {
+    "typed": 423.7,
+    "untyped": 325.9
+  },
+  "everyday-arrays/map-a-field": {
+    "typed": 184.3,
+    "untyped": 190.6
+  },
+  "everyday-arrays/map-then-read-every-element": {
+    "typed": 341.6,
+    "untyped": 341
+  },
+  "everyday-arrays/matrix-read": {
+    "typed": 24,
+    "untyped": 24
+  },
+  "everyday-arrays/matrix-sum": {
+    "typed": 159,
+    "untyped": 161
+  },
+  "everyday-arrays/max-by-spread": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-arrays/mixed-ints-and-doubles": {
+    "typed": 16,
+    "untyped": 16
+  },
+  "everyday-arrays/mixed-kinds-of-elements": {
+    "typed": 17.9,
+    "untyped": 17.9
+  },
+  "everyday-arrays/push-and-pop-as-a-stack": {
+    "typed": 64,
+    "untyped": 64
+  },
+  "everyday-arrays/push-eight-then-drop": {
+    "typed": 194.5,
+    "untyped": 195.7
+  },
+  "everyday-arrays/push-objects": {
+    "typed": 176,
+    "untyped": 174.4
+  },
+  "everyday-arrays/read-past-the-end": {
+    "typed": 10.5,
+    "untyped": 10.5
+  },
+  "everyday-arrays/reverse": {
+    "typed": 219,
+    "untyped": 230
+  },
+  "everyday-arrays/slice-as-a-copy": {
+    "typed": 157.1,
+    "untyped": 156.8
+  },
+  "everyday-arrays/some-and-every": {
+    "typed": 256.2,
+    "untyped": 232.8
+  },
+  "everyday-arrays/sort-numbers": {
+    "typed": 2461.5,
+    "untyped": 2295.5
+  },
+  "everyday-arrays/sort-objects-by-a-field": {
+    "typed": 1395.5,
+    "untyped": 1396.8
+  },
+  "everyday-arrays/sort-strings": {
+    "typed": 2071.8,
+    "untyped": 2068.3
+  },
+  "everyday-arrays/sort-strings-by-locale-compare": {
+    "typed": 1875.5,
+    "untyped": 1875.9
+  },
+  "everyday-arrays/spread-as-a-copy": {
+    "typed": 330.1,
+    "untyped": 330.4
+  },
+  "everyday-arrays/spread-of-two": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-arrays/spread-to-append": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-arrays/store-past-the-end": {
+    "typed": 102.1,
+    "untyped": 100
+  },
+  "everyday-arrays/sum-of-doubles": {
+    "typed": 75,
+    "untyped": 77
+  },
+  "everyday-arrays/swap-by-destructuring": {
+    "typed": 49,
+    "untyped": 121
+  },
+  "everyday-arrays/swap-of-variables": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-arrays/texts-to-numbers-by-the-built-in": {
+    "typed": 1241,
+    "untyped": 1267
+  },
+  "everyday-arrays/unique-by-a-set": {
+    "typed": 2329.3,
+    "untyped": 2334.2
+  },
+  "everyday-arrays/with": {
+    "typed": 651.3,
+    "untyped": 671.5
+  },
+  "everyday-benchmarks/a-thousand-doubled-kept-by-threes-and-summed": {
+    "typed": 23689.2,
+    "untyped": 23691.6
+  },
+  "everyday-benchmarks/base64-by-hand": {
+    "typed": 2151,
+    "untyped": 2156
+  },
+  "everyday-benchmarks/bigint-factorial": {
+    "typed": 11582.6,
+    "untyped": 11580
+  },
+  "everyday-benchmarks/bubble-sort": {
+    "typed": 1088.8,
+    "untyped": 1905.5
+  },
+  "everyday-benchmarks/deep-clone-by-recursion": {
+    "typed": 1697.5,
+    "untyped": 1524.9
+  },
+  "everyday-benchmarks/destructuring-in-a-loop": {
+    "typed": 1576,
+    "untyped": 1679
+  },
+  "everyday-benchmarks/dijkstra-on-a-small-graph": {
+    "typed": 1969.4,
+    "untyped": 2095.6
+  },
+  "everyday-benchmarks/escape-time-of-a-row-of-points": {
+    "typed": 13936.7,
+    "untyped": 13943.1
+  },
+  "everyday-benchmarks/fannkuch-of-six": {
+    "typed": 348100,
+    "untyped": 368700
+  },
+  "everyday-benchmarks/fizz-buzz": {
+    "typed": 1207,
+    "untyped": 1207.1
+  },
+  "everyday-benchmarks/generator-sum-of-a-thousand": {
+    "typed": 2545,
+    "untyped": 2549
+  },
+  "everyday-benchmarks/heap-push-and-pop": {
+    "typed": 275.6,
+    "untyped": 851.1
+  },
+  "everyday-benchmarks/levenshtein": {
+    "typed": 8270.5,
+    "untyped": 8128.6
+  },
+  "everyday-benchmarks/matrix-multiply-flat": {
+    "typed": 6040,
+    "untyped": 6040.1
+  },
+  "everyday-benchmarks/matrix-multiply-of-arrays": {
+    "typed": 10993.1,
+    "untyped": 11017.3
+  },
+  "everyday-benchmarks/memoized-fibonacci-in-a-map": {
+    "typed": 11645.3,
+    "untyped": 11648.2
+  },
+  "everyday-benchmarks/memoized-fibonacci-in-an-object": {
+    "typed": 15907.4,
+    "untyped": 16634.2
+  },
+  "everyday-benchmarks/monte-carlo-pi": {
+    "typed": 4690.7,
+    "untyped": 4697.5
+  },
+  "everyday-benchmarks/pattern-over-a-long-text": {
+    "typed": 14572.5,
+    "untyped": 14569.3
+  },
+  "everyday-benchmarks/primes-under-a-thousand-in-bytes": {
+    "typed": 28935.5,
+    "untyped": 28948.7
+  },
+  "everyday-benchmarks/quicksort-by-hand": {
+    "typed": 10908.5,
+    "untyped": 15974.3
+  },
+  "everyday-benchmarks/ray-and-sphere": {
+    "typed": 78.4,
+    "untyped": 86.4
+  },
+  "everyday-benchmarks/reduce-with-a-spread-accumulator": {
+    "typed": 1732.9,
+    "untyped": 1272.7
+  },
+  "everyday-benchmarks/reverse-a-string": {
+    "typed": 3308.1,
+    "untyped": 3304.7
+  },
+  "everyday-benchmarks/set-of-a-thousand-then-has": {
+    "typed": 7114.7,
+    "untyped": 7114.7
+  },
+  "everyday-benchmarks/shapes-by-virtual-call": {
+    "typed": 1739,
+    "untyped": 1167
+  },
+  "everyday-benchmarks/sort-a-hundred-random-numbers": {
+    "typed": 65137.5,
+    "untyped": 60742.2
+  },
+  "everyday-benchmarks/spread-to-grow-an-object": {
+    "typed": 3566.6,
+    "untyped": 2913.3
+  },
+  "everyday-benchmarks/stack-machine-interpreter": {
+    "typed": 1346.1,
+    "untyped": 1334.3
+  },
+  "everyday-benchmarks/sum-of-doubles-to-a-constant": {
+    "typed": 7016.8,
+    "untyped": 7019.1
+  },
+  "everyday-benchmarks/template-rendering": {
+    "typed": 3141.1,
+    "untyped": 3150.2
+  },
+  "everyday-benchmarks/tokenizer": {
+    "typed": 1265,
+    "untyped": 1266
+  },
+  "everyday-benchmarks/typed-array-sum-of-a-thousand": {
+    "typed": 1412,
+    "untyped": 1413
+  },
+  "everyday-benchmarks/validate-an-object-by-hand": {
+    "typed": 64.8,
+    "untyped": 55
+  },
+  "everyday-benchmarks/word-frequencies": {
+    "typed": 3496.6,
+    "untyped": 3458.2
+  },
+  "everyday-classes/accessor-keyword": {
+    "typed": 9,
+    "untyped": 146
+  },
+  "everyday-classes/an-instance-of-integers-spread-in-front-of-a-member-into-a-record-of-fractions": {
+    "typed": 270.9,
+    "untyped": 626.8
+  },
+  "everyday-classes/an-instance-spread-under-an-interface-by-one-function-of-many-in-a-table": {
+    "typed": 216.5,
+    "untyped": 603.6
+  },
+  "everyday-classes/arrow-function-field": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-classes/bound-method": {
+    "typed": 11.5,
+    "untyped": 18
+  },
+  "everyday-classes/class-below-array": {
+    "typed": 1503.4,
+    "untyped": 1185.8
+  },
+  "everyday-classes/class-below-error": {
+    "typed": 3679.6,
+    "untyped": 3595.5
+  },
+  "everyday-classes/class-below-map": {
+    "typed": 221.5,
+    "untyped": 222
+  },
+  "everyday-classes/constructor-function-with-a-prototype": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-classes/constructor-name": {
+    "typed": 123,
+    "untyped": 107
+  },
+  "everyday-classes/enum-name-by-value": {
+    "typed": 55,
+    "untyped": 95
+  },
+  "everyday-classes/enum-values": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-classes/event-emitter-by-hand": {
+    "typed": 95,
+    "untyped": 108
+  },
+  "everyday-classes/fields-declared-without-a-value-are-assigned-in-constructors": {
+    "typed": 59.7,
+    "untyped": 57.7
+  },
+  "everyday-classes/fields-with-initializers": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-classes/getter": {
+    "typed": 9,
+    "untyped": 8
+  },
+  "everyday-classes/inherited-method": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-classes/instance-made-and-read": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-classes/instance-with-an-arrow-function-field-made": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-classes/instance-with-private-fields-made": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-classes/instanceof": {
+    "typed": 17.5,
+    "untyped": 17.5
+  },
+  "everyday-classes/instanceof-error": {
+    "typed": 51,
+    "untyped": 53
+  },
+  "everyday-classes/instanceof-up-a-chain": {
+    "typed": 15.2,
+    "untyped": 15.3
+  },
+  "everyday-classes/method-call": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-classes/method-chain": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-classes/mixin": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-classes/mixins-whose-objects-are-kept": {
+    "typed": 106.7,
+    "untyped": 110.9
+  },
+  "everyday-classes/mixins-with-fields-private-names-and-static-fields": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-classes/optional-fields": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-classes/private-field": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-classes/private-field-of-a-class-below-a-class-kept": {
+    "typed": 84.5,
+    "untyped": 86.9
+  },
+  "everyday-classes/private-in-check": {
+    "typed": 20.2,
+    "untyped": 20.3
+  },
+  "everyday-classes/private-method": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-classes/setter": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-classes/singleton": {
+    "typed": 12,
+    "untyped": 9
+  },
+  "everyday-classes/stack-class-over-an-array": {
+    "typed": 69,
+    "untyped": 69
+  },
+  "everyday-classes/static-block-and-table": {
+    "typed": 9,
+    "untyped": 12
+  },
+  "everyday-classes/static-constants": {
+    "typed": 10.4,
+    "untyped": 10.4
+  },
+  "everyday-classes/static-factory": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-classes/static-field": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-classes/static-method": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-classes/string-enum": {
+    "typed": 31.2,
+    "untyped": 20
+  },
+  "everyday-classes/subclass-made": {
+    "typed": 14,
+    "untyped": 13
+  },
+  "everyday-classes/super-method": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-classes/symbol-iterator-on-a-class": {
+    "typed": 48.2,
+    "untyped": 54.3
+  },
+  "everyday-classes/symbol-iterator-that-returns-a-generator": {
+    "typed": 48.2,
+    "untyped": 1320.2
+  },
+  "everyday-classes/to-string-override": {
+    "typed": 1001.9,
+    "untyped": 1001.2
+  },
+  "everyday-classes/virtual-call-of-six-classes": {
+    "typed": 34.8,
+    "untyped": 34.8
+  },
+  "everyday-code-out-of-run-time-text/a-key-parsed-as-a-schema-library-writes-it": {
+    "typed": 2033.2,
+    "untyped": 2071
+  },
+  "everyday-code-out-of-run-time-text/a-path-cut-out-of-a-url-as-a-composed-handler-writes-it": {
+    "typed": 1138.6,
+    "untyped": 1154.4
+  },
+  "everyday-code-out-of-run-time-text/a-prefix-compared-character-by-character": {
+    "typed": 805.5,
+    "untyped": 805.5
+  },
+  "everyday-code-out-of-run-time-text/a-result-asked-for-its-class-as-a-composed-handler-writes-it": {
+    "typed": 560.2,
+    "untyped": 560.3
+  },
+  "everyday-code-out-of-run-time-text/integers-validated-as-a-schema-compiler-writes-it": {
+    "typed": 1624,
+    "untyped": 1624
+  },
+  "everyday-code-out-of-run-time-text/methods-of-the-program-bound-in-the-text": {
+    "typed": 1565.8,
+    "untyped": 1528.1
+  },
+  "everyday-code-out-of-run-time-text/names-stored-on-an-object-of-a-constructor-of-the-program": {
+    "typed": 1104,
+    "untyped": 1090.8
+  },
+  "everyday-code-out-of-run-time-text/the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it": {
+    "typed": 1013,
+    "untyped": 1012
+  },
+  "everyday-collections/map-entries-to-an-object": {
+    "typed": 331.9,
+    "untyped": 332
+  },
+  "everyday-collections/map-for-of": {
+    "typed": 301,
+    "untyped": 269
+  },
+  "everyday-collections/map-get-by-number": {
+    "typed": 66.9,
+    "untyped": 65.9
+  },
+  "everyday-collections/map-get-by-object": {
+    "typed": 75,
+    "untyped": 75
+  },
+  "everyday-collections/map-get-by-string": {
+    "typed": 76,
+    "untyped": 71
+  },
+  "everyday-collections/map-get-missing": {
+    "typed": 69,
+    "untyped": 61.5
+  },
+  "everyday-collections/map-get-or-create": {
+    "typed": 89.4,
+    "untyped": 89.4
+  },
+  "everyday-collections/map-group-by": {
+    "typed": 1396.2,
+    "untyped": 1400.2
+  },
+  "everyday-collections/map-has-then-get": {
+    "typed": 92.3,
+    "untyped": 91.3
+  },
+  "everyday-collections/map-lru": {
+    "typed": 1137,
+    "untyped": 1136.4
+  },
+  "everyday-collections/map-memoize": {
+    "typed": 72,
+    "untyped": 76
+  },
+  "everyday-collections/map-of-maps": {
+    "typed": 120,
+    "untyped": 118
+  },
+  "everyday-collections/map-set-and-delete": {
+    "typed": 384.4,
+    "untyped": 394.3
+  },
+  "everyday-collections/map-size": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-collections/map-values": {
+    "typed": 182,
+    "untyped": 185
+  },
+  "everyday-collections/set-add-and-delete": {
+    "typed": 350.4,
+    "untyped": 360.5
+  },
+  "everyday-collections/set-from-an-array": {
+    "typed": 1683.2,
+    "untyped": 1683.6
+  },
+  "everyday-collections/set-has-a-number": {
+    "typed": 56.1,
+    "untyped": 56.1
+  },
+  "everyday-collections/set-intersection-by-filter": {
+    "typed": 678.4,
+    "untyped": 656.2
+  },
+  "everyday-collections/set-made-and-dropped": {
+    "typed": 191,
+    "untyped": 190.6
+  },
+  "everyday-collections/set-of-objects": {
+    "typed": 56,
+    "untyped": 56
+  },
+  "everyday-collections/set-spread": {
+    "typed": 374.3,
+    "untyped": 374.2
+  },
+  "everyday-collections/set-union-method": {
+    "typed": 1411.9,
+    "untyped": 1411.4
+  },
+  "everyday-collections/weak-map-set-on-new-objects": {
+    "typed": 466.4,
+    "untyped": 467
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.fractions-literal": {
+    "typed": 406.3,
+    "untyped": 406
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.fractions-mapped": {
+    "typed": 477.5,
+    "untyped": 453.6
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.fractions-parsed": {
+    "typed": 445.2,
+    "untyped": 422.3
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.fractions-pushed": {
+    "typed": 406.2,
+    "untyped": 406.3
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.fractions-with-a-hole": {
+    "typed": 498.5,
+    "untyped": 475
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.whole-from": {
+    "typed": 404.4,
+    "untyped": 404.2
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.whole-literal": {
+    "typed": 431.3,
+    "untyped": 428.1
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.whole-mapped": {
+    "typed": 476.6,
+    "untyped": 452.5
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.whole-parsed": {
+    "typed": 434.2,
+    "untyped": 403.5
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.whole-pushed": {
+    "typed": 431.2,
+    "untyped": 428.3
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.whole-with-a-hole": {
+    "typed": 504.1,
+    "untyped": 480.3
+  },
+  "everyday-copies-of-lists-of-every-kind/array-from.with-nan": {
+    "typed": 506.6,
+    "untyped": 481.7
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.fractions-mapped": {
+    "typed": 158.4,
+    "untyped": 156.5
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.fractions-parsed": {
+    "typed": 153.9,
+    "untyped": 244.3
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.fractions-with-a-hole": {
+    "typed": 161.5,
+    "untyped": 159.2
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.whole-from": {
+    "typed": 157.8,
+    "untyped": 156.4
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.whole-literal": {
+    "typed": 173.6,
+    "untyped": 590.1
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.whole-mapped": {
+    "typed": 158.4,
+    "untyped": 156.1
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.whole-parsed": {
+    "typed": 154.9,
+    "untyped": 200.6
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.whole-pushed": {
+    "typed": 173.1,
+    "untyped": 590.6
+  },
+  "everyday-copies-of-lists-of-every-kind/concat-itself.whole-with-a-hole": {
+    "typed": 178.2,
+    "untyped": 588.5
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.fractions-mapped": {
+    "typed": 112.6,
+    "untyped": 109.7
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.fractions-parsed": {
+    "typed": 107.9,
+    "untyped": 200.7
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.fractions-with-a-hole": {
+    "typed": 115.2,
+    "untyped": 112.4
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.whole-from": {
+    "typed": 112.5,
+    "untyped": 109.8
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.whole-mapped": {
+    "typed": 112.4,
+    "untyped": 109.7
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.whole-parsed": {
+    "typed": 107.5,
+    "untyped": 142.6
+  },
+  "everyday-copies-of-lists-of-every-kind/concat.whole-with-a-hole": {
+    "typed": 112.8,
+    "untyped": 113
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.fractions-literal": {
+    "typed": 462.3,
+    "untyped": 456.5
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.fractions-mapped": {
+    "typed": 277.6,
+    "untyped": 287.3
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.fractions-parsed": {
+    "typed": 313.2,
+    "untyped": 825.5
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.fractions-with-a-hole": {
+    "typed": 441.3,
+    "untyped": 443.8
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.whole-from": {
+    "typed": 253.6,
+    "untyped": 261.4
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.whole-mapped": {
+    "typed": 277.2,
+    "untyped": 287.5
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.whole-parsed": {
+    "typed": 302.6,
+    "untyped": 392.6
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.whole-pushed": {
+    "typed": 243.4,
+    "untyped": 246.5
+  },
+  "everyday-copies-of-lists-of-every-kind/filter.whole-with-a-hole": {
+    "typed": 262.6,
+    "untyped": 267.6
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.fractions-mapped": {
+    "typed": 129.2,
+    "untyped": 129.3
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.fractions-parsed": {
+    "typed": 131.4,
+    "untyped": 244.8
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.fractions-with-a-hole": {
+    "typed": 136.6,
+    "untyped": 136.9
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.whole-from": {
+    "typed": 133,
+    "untyped": 132.9
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.whole-mapped": {
+    "typed": 129.3,
+    "untyped": 129.2
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.whole-parsed": {
+    "typed": 131,
+    "untyped": 177.3
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.whole-with-a-hole": {
+    "typed": 124.3,
+    "untyped": 124.8
+  },
+  "everyday-copies-of-lists-of-every-kind/slice-a-part.with-nan": {
+    "typed": 200.4,
+    "untyped": 203.8
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.fractions-mapped": {
+    "typed": 120.6,
+    "untyped": 120.9
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.fractions-parsed": {
+    "typed": 123,
+    "untyped": 237.2
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.fractions-with-a-hole": {
+    "typed": 125.4,
+    "untyped": 125.6
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.whole-from": {
+    "typed": 124.8,
+    "untyped": 124.7
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.whole-mapped": {
+    "typed": 120.6,
+    "untyped": 120.8
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.whole-parsed": {
+    "typed": 123.2,
+    "untyped": 170.1
+  },
+  "everyday-copies-of-lists-of-every-kind/slice.whole-with-a-hole": {
+    "typed": 112.2,
+    "untyped": 112
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.fractions-mapped": {
+    "typed": 264.7,
+    "untyped": 264.4
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.fractions-parsed": {
+    "typed": 279.2,
+    "untyped": 236.5
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.fractions-with-a-hole": {
+    "typed": 987.3,
+    "untyped": 992.1
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.whole-from": {
+    "typed": 202.6,
+    "untyped": 202.5
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.whole-mapped": {
+    "typed": 208.4,
+    "untyped": 208.6
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.whole-parsed": {
+    "typed": 273.8,
+    "untyped": 217.5
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.whole-pushed": {
+    "typed": 227.3,
+    "untyped": 236.7
+  },
+  "everyday-copies-of-lists-of-every-kind/spread.whole-with-a-hole": {
+    "typed": 974.8,
+    "untyped": 974.7
+  },
+  "everyday-copies-of-lists-of-every-kind/to-reversed.fractions-parsed": {
+    "typed": 403.4,
+    "untyped": 524
+  },
+  "everyday-copies-of-lists-of-every-kind/to-reversed.fractions-with-a-hole": {
+    "typed": 481.1,
+    "untyped": 481.2
+  },
+  "everyday-copies-of-lists-of-every-kind/to-reversed.whole-parsed": {
+    "typed": 403.4,
+    "untyped": 463.6
+  },
+  "everyday-copies-of-lists-of-every-kind/to-reversed.whole-with-a-hole": {
+    "typed": 469.1,
+    "untyped": 464.3
+  },
+  "everyday-copies-of-lists-of-every-kind/to-reversed.with-nan": {
+    "typed": 452,
+    "untyped": 452.2
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.fractions-parsed": {
+    "typed": 5965.6,
+    "untyped": 6051.5
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.fractions-with-a-hole": {
+    "typed": 5455.6,
+    "untyped": 5456.3
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.whole-from": {
+    "typed": 3223.8,
+    "untyped": 3222.9
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.whole-mapped": {
+    "typed": 3093,
+    "untyped": 3093.5
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.whole-parsed": {
+    "typed": 3228.3,
+    "untyped": 2997.3
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.whole-with-a-hole": {
+    "typed": 2919.7,
+    "untyped": 2915.7
+  },
+  "everyday-copies-of-lists-of-every-kind/to-sorted.with-nan": {
+    "typed": 6070.5,
+    "untyped": 6071.3
+  },
+  "everyday-copies-of-lists-of-every-kind/to-spliced.fractions-parsed": {
+    "typed": 452,
+    "untyped": 537.7
+  },
+  "everyday-copies-of-lists-of-every-kind/to-spliced.fractions-with-a-hole": {
+    "typed": 1923.5,
+    "untyped": 1923.4
+  },
+  "everyday-copies-of-lists-of-every-kind/to-spliced.whole-parsed": {
+    "typed": 452.3,
+    "untyped": 476.1
+  },
+  "everyday-copies-of-lists-of-every-kind/to-spliced.whole-with-a-hole": {
+    "typed": 1800,
+    "untyped": 1794.7
+  },
+  "everyday-copies-of-lists-of-every-kind/to-spliced.with-nan": {
+    "typed": 527.4,
+    "untyped": 527.2
+  },
+  "everyday-copies-of-lists-of-every-kind/with.fractions-parsed": {
+    "typed": 425.5,
+    "untyped": 540.9
+  },
+  "everyday-copies-of-lists-of-every-kind/with.fractions-with-a-hole": {
+    "typed": 496.3,
+    "untyped": 496.7
+  },
+  "everyday-copies-of-lists-of-every-kind/with.whole-from": {
+    "typed": 424.3,
+    "untyped": 423.6
+  },
+  "everyday-copies-of-lists-of-every-kind/with.whole-mapped": {
+    "typed": 424.5,
+    "untyped": 423.2
+  },
+  "everyday-copies-of-lists-of-every-kind/with.whole-parsed": {
+    "typed": 425.2,
+    "untyped": 479.3
+  },
+  "everyday-copies-of-lists-of-every-kind/with.whole-with-a-hole": {
+    "typed": 478.7,
+    "untyped": 472.8
+  },
+  "everyday-copies-of-lists-of-every-kind/with.with-nan": {
+    "typed": 469.8,
+    "untyped": 469
+  },
+  "everyday-copies-that-nobody-keeps/a-list-with-one-more": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-copies-that-nobody-keeps/a-member-in-front": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/a-new-member-in-front": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-copies-that-nobody-keeps/a-parameter": {
+    "typed": 20,
+    "untyped": 21
+  },
+  "everyday-copies-that-nobody-keeps/a-source-that-may-be-missing": {
+    "typed": 20.5,
+    "untyped": 20.5
+  },
+  "everyday-copies-that-nobody-keeps/kept.nothing-replaced": {
+    "typed": 41.1,
+    "untyped": 41.2
+  },
+  "everyday-copies-that-nobody-keeps/kept.one-member-replaced": {
+    "typed": 47.1,
+    "untyped": 47.2
+  },
+  "everyday-copies-that-nobody-keeps/nothing-replaced": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/one-inside-another": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-copies-that-nobody-keeps/one-of-a-list": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-copies-that-nobody-keeps/texts-and-numbers": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/the-rest-of-a-pattern": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-copies-that-nobody-keeps/the-rest-of-a-pattern-over-one-of-a-list": {
+    "typed": 18,
+    "untyped": 18
+  },
+  "everyday-copies-that-nobody-keeps/two-members-replaced": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-copies-that-nobody-keeps/two-sources-of-one-type": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-data-and-control/abort-controller": {
+    "typed": 7098.9,
+    "untyped": 7318.3
+  },
+  "everyday-data-and-control/atob-btoa": {
+    "typed": 1699.4,
+    "untyped": 1699.5
+  },
+  "everyday-data-and-control/buffer-byte-length": {
+    "typed": 86.7,
+    "untyped": 84.8
+  },
+  "everyday-data-and-control/buffer-equals": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-data-and-control/buffer-read-and-write-integers": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-data-and-control/buffer-to-string": {
+    "typed": 389.1,
+    "untyped": 879.8
+  },
+  "everyday-data-and-control/bun-hash": {
+    "typed": 1236.5,
+    "untyped": 1237.2
+  },
+  "everyday-data-and-control/comma-and-void": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-data-and-control/crypto-random-uuid": {
+    "typed": 706.2,
+    "untyped": 706.3
+  },
+  "everyday-data-and-control/data-view-read": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-data-and-control/data-view-write": {
+    "typed": 20,
+    "untyped": 24
+  },
+  "everyday-data-and-control/date-add-a-day": {
+    "typed": 840.4,
+    "untyped": 840.5
+  },
+  "everyday-data-and-control/date-now": {
+    "typed": 130.2,
+    "untyped": 130.2
+  },
+  "everyday-data-and-control/date-to-iso-string": {
+    "typed": 585.3,
+    "untyped": 585.3
+  },
+  "everyday-data-and-control/date-to-iso-string-or-to-json-under-a-key-found-at-run-time": {
+    "typed": 1082.4,
+    "untyped": 1099.5
+  },
+  "everyday-data-and-control/date-to-json": {
+    "typed": 1721.2,
+    "untyped": 1721.3
+  },
+  "everyday-data-and-control/date-to-locale-date-string": {
+    "typed": 223035.1,
+    "untyped": 222158.3
+  },
+  "everyday-data-and-control/event-emitter": {
+    "typed": 87,
+    "untyped": 79
+  },
+  "everyday-data-and-control/headers": {
+    "typed": 4693.6,
+    "untyped": 4694.2
+  },
+  "everyday-data-and-control/int32-array-store-and-read": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-data-and-control/intl-number-format-kept": {
+    "typed": 3970.3,
+    "untyped": 3974.9
+  },
+  "everyday-data-and-control/json-parse-a-list-by-a-type-that-lists-one-of-three-members": {
+    "typed": 4183.3,
+    "untyped": 6106.4
+  },
+  "everyday-data-and-control/json-parse-a-list-by-a-type-that-lists-one-of-three-members-and-write-it-again": {
+    "typed": 10313.3,
+    "untyped": 10536.2
+  },
+  "everyday-data-and-control/json-parse-a-small-object": {
+    "typed": 436.1,
+    "untyped": 938
+  },
+  "everyday-data-and-control/json-parse-an-array-of-numbers": {
+    "typed": 3245,
+    "untyped": 7114.6
+  },
+  "everyday-data-and-control/json-parse-an-array-of-objects": {
+    "typed": 3018.8,
+    "untyped": 4463.5
+  },
+  "everyday-data-and-control/json-parse-by-a-type-of-63-members": {
+    "typed": 916.1,
+    "untyped": 759.3
+  },
+  "everyday-data-and-control/json-parse-by-a-type-of-66-members": {
+    "typed": 1477.8,
+    "untyped": 774.3
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-fewer-members-and-list-the-keys": {
+    "typed": 753.2,
+    "untyped": 950
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-fewer-members-and-write-it-again": {
+    "typed": 1933.7,
+    "untyped": 1948.3
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-one-of-eleven-members": {
+    "typed": 1646,
+    "untyped": 2072
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-one-of-three-members": {
+    "typed": 706.9,
+    "untyped": 912
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-three-of-nine-members": {
+    "typed": 2364.4,
+    "untyped": 2256.2
+  },
+  "everyday-data-and-control/json-parse-lists-with-other-values-each-time-by-a-type-that-lists-one-of-three-members": {
+    "typed": 10472.9,
+    "untyped": 11624.1
+  },
+  "everyday-data-and-control/json-parse-nested-objects-by-types-that-list-fewer-members": {
+    "typed": 1864.8,
+    "untyped": 1998.7
+  },
+  "everyday-data-and-control/json-parse-texts-with-other-values-each-time-by-a-type-that-lists-one-of-three-members": {
+    "typed": 1012.7,
+    "untyped": 1638.6
+  },
+  "everyday-data-and-control/json-parse-with-a-member-that-the-type-does-not-declare": {
+    "typed": 934,
+    "untyped": 937.4
+  },
+  "everyday-data-and-control/json-parse-with-a-reviver": {
+    "typed": 8078.9,
+    "untyped": 8080.4
+  },
+  "everyday-data-and-control/json-stringify-a-list-parsed-by-a-type-that-lists-one-of-three-members-whose-texts-have-escapes": {
+    "typed": 7803.2,
+    "untyped": 7526.7
+  },
+  "everyday-data-and-control/json-stringify-a-string-with-escapes": {
+    "typed": 623.4,
+    "untyped": 623.6
+  },
+  "everyday-data-and-control/json-stringify-an-array-of-numbers": {
+    "typed": 2690,
+    "untyped": 2517.1
+  },
+  "everyday-data-and-control/json-stringify-with-to-json": {
+    "typed": 2912.7,
+    "untyped": 2912.2
+  },
+  "everyday-data-and-control/labeled-break": {
+    "typed": 101,
+    "untyped": 101
+  },
+  "everyday-data-and-control/logical-operators": {
+    "typed": 25.2,
+    "untyped": 23
+  },
+  "everyday-data-and-control/loop-counting-down": {
+    "typed": 83,
+    "untyped": 73
+  },
+  "everyday-data-and-control/loose-equality-with-null": {
+    "typed": 12.5,
+    "untyped": 12.5
+  },
+  "everyday-data-and-control/path-basename-and-extname": {
+    "typed": 305.7,
+    "untyped": 303.7
+  },
+  "everyday-data-and-control/performance-now": {
+    "typed": 274,
+    "untyped": 274
+  },
+  "everyday-data-and-control/process-env-read": {
+    "typed": 30,
+    "untyped": 34
+  },
+  "everyday-data-and-control/structured-clone-of-a-map": {
+    "typed": 11779.4,
+    "untyped": 11782.8
+  },
+  "everyday-data-and-control/switch-on-small-ints": {
+    "typed": 14.8,
+    "untyped": 14.8
+  },
+  "everyday-data-and-control/switch-on-sparse-ints": {
+    "typed": 16.2,
+    "untyped": 16.3
+  },
+  "everyday-data-and-control/switch-true": {
+    "typed": 11.6,
+    "untyped": 11.6
+  },
+  "everyday-data-and-control/switch-with-fall-through": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-data-and-control/ternary-chain": {
+    "typed": 13.2,
+    "untyped": 13.3
+  },
+  "everyday-data-and-control/truthiness-of-mixed-values": {
+    "typed": 18.1,
+    "untyped": 18.1
+  },
+  "everyday-data-and-control/two-values-are-compared-again-and-again": {
+    "typed": 510.4,
+    "untyped": 517.8
+  },
+  "everyday-data-and-control/typed-array-from-an-array": {
+    "typed": 555.4,
+    "untyped": 555.7
+  },
+  "everyday-data-and-control/typed-array-set": {
+    "typed": 105,
+    "untyped": 105
+  },
+  "everyday-data-and-control/uint8-array-fill-by-index": {
+    "typed": 562,
+    "untyped": 562
+  },
+  "everyday-data-and-control/uint8-array-made": {
+    "typed": 88.7,
+    "untyped": 90.6
+  },
+  "everyday-data-and-control/uint8-array-sum": {
+    "typed": 309,
+    "untyped": 310
+  },
+  "everyday-data-and-control/url-parsed": {
+    "typed": 2054.7,
+    "untyped": 2054.3
+  },
+  "everyday-data-and-control/while-loop": {
+    "typed": 78.1,
+    "untyped": 83.1
+  },
+  "everyday-dictionaries-built-anew/names-seen.every-other-name-twice-48": {
+    "typed": 4164.1,
+    "untyped": 4207.6
+  },
+  "everyday-dictionaries-built-anew/names-seen.hash-of-a-library-48": {
+    "typed": 7685.1,
+    "untyped": 7676.1
+  },
+  "everyday-dictionaries-built-anew/names-seen.in-48": {
+    "typed": 6687.8,
+    "untyped": 6727.6
+  },
+  "everyday-dictionaries-built-anew/names-seen.kept-and-asked-48": {
+    "typed": 2485.1,
+    "untyped": 2467
+  },
+  "everyday-dictionaries-built-anew/names-seen.literal-48": {
+    "typed": 5921.1,
+    "untyped": 5866.2
+  },
+  "everyday-dictionaries-built-anew/names-seen.long-names-48": {
+    "typed": 5827.6,
+    "untyped": 5865.1
+  },
+  "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40": {
+    "typed": 16495,
+    "untyped": 14894.6
+  },
+  "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-and-the-last-dictionary-stays": {
+    "typed": 7579.1,
+    "untyped": 6221.3
+  },
+  "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-by-in": {
+    "typed": 16154.6,
+    "untyped": 14713
+  },
+  "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-in-a-map": {
+    "typed": 11741.4,
+    "untyped": 10350.4
+  },
+  "everyday-dictionaries-built-anew/names-seen.one-of-256-lists-of-40-kept": {
+    "typed": 4189.9,
+    "untyped": 3061.4
+  },
+  "everyday-dictionaries-built-anew/names-seen.read-240": {
+    "typed": 64407.7,
+    "untyped": 64721.7
+  },
+  "everyday-dictionaries-built-anew/names-seen.read-48": {
+    "typed": 5826.1,
+    "untyped": 5861.4
+  },
+  "everyday-dictionaries-built-anew/one-name-by-key.one-of-1024-listed-between-collections": {
+    "typed": 691.2,
+    "untyped": 677.1
+  },
+  "everyday-downleveled/arguments-to-list.array-from": {
+    "typed": 1121.7,
+    "untyped": 1132.1
+  },
+  "everyday-downleveled/arguments-to-list.empty-slice-call": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-downleveled/arguments-to-list.loop": {
+    "typed": 122.8,
+    "untyped": 119.8
+  },
+  "everyday-downleveled/arguments-to-list.slice-call": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-downleveled/arguments-to-list.spread": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-downleveled/async.awaiter-helper": {
+    "typed": 7723.6,
+    "untyped": 7641.4
+  },
+  "everyday-downleveled/bound-method.arrow-field": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-downleveled/bound-method.bind-in-the-constructor": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-downleveled/call-by-value.direct-one-of-four": {
+    "typed": 22,
+    "untyped": 22
+  },
+  "everyday-downleveled/call-by-value.one-of-four-with-a-name-of-their-own": {
+    "typed": 48.5,
+    "untyped": 48.5
+  },
+  "everyday-downleveled/class.babel-create-class": {
+    "typed": 56,
+    "untyped": 51.1
+  },
+  "everyday-downleveled/class.es5-function-in-a-function": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/class.native": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/class.new-or-call": {
+    "typed": 10,
+    "untyped": 7
+  },
+  "everyday-downleveled/derived.es5-extends": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/derived.native": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/derived.object-create-prototype": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/derived.util-inherits": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/dictionary.literal": {
+    "typed": 99,
+    "untyped": 88
+  },
+  "everyday-downleveled/dictionary.object-create-null": {
+    "typed": 93,
+    "untyped": 90
+  },
+  "everyday-downleveled/field.define-property": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/field.native": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/for-of.es5": {
+    "typed": 46,
+    "untyped": 52
+  },
+  "everyday-downleveled/for-of.values-helper": {
+    "typed": 1289,
+    "untyped": 1287.9
+  },
+  "everyday-downleveled/indirect-call.comma-zero": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/indirect-call.member": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/is-nan.global-is-nan": {
+    "typed": 19,
+    "untyped": 19
+  },
+  "everyday-downleveled/is-nan.not-itself": {
+    "typed": 16.5,
+    "untyped": 20.5
+  },
+  "everyday-downleveled/is-nan.number-is-nan": {
+    "typed": 19,
+    "untyped": 19
+  },
+  "everyday-downleveled/is-object.object-call": {
+    "typed": 107.8,
+    "untyped": 107.9
+  },
+  "everyday-downleveled/kept-objects.es5": {
+    "typed": 70.8,
+    "untyped": 66.8
+  },
+  "everyday-downleveled/kept-objects.native": {
+    "typed": 27,
+    "untyped": 24.5
+  },
+  "everyday-downleveled/made-and-kept.es5": {
+    "typed": 49.3,
+    "untyped": 47.1
+  },
+  "everyday-downleveled/made-and-kept.native": {
+    "typed": 46.1,
+    "untyped": 46.2
+  },
+  "everyday-downleveled/memo-cache.optional-props-omitted": {
+    "typed": 126.8,
+    "untyped": 166.8
+  },
+  "everyday-downleveled/optional-chain.downleveled": {
+    "typed": 21,
+    "untyped": 16.7
+  },
+  "everyday-downleveled/optional-chain.native": {
+    "typed": 21,
+    "untyped": 16.8
+  },
+  "everyday-downleveled/pair.es5-index": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/pair.read-helper": {
+    "typed": 581.9,
+    "untyped": 581.2
+  },
+  "everyday-downleveled/parent-call.apply-arguments": {
+    "typed": 7,
+    "untyped": 41.1
+  },
+  "everyday-downleveled/parent-call.apply-arguments-parent-with-a-static": {
+    "typed": 7,
+    "untyped": 41.2
+  },
+  "everyday-downleveled/parent-call.event-emitter": {
+    "typed": 66.4,
+    "untyped": 65.2
+  },
+  "everyday-downleveled/parent-call.event-emitter-class": {
+    "typed": 102.3,
+    "untyped": 99.1
+  },
+  "everyday-downleveled/parent-call.parent-below-another-function": {
+    "typed": 25,
+    "untyped": 25
+  },
+  "everyday-downleveled/parent-call.parent-with-a-method": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/parent-call.parent-with-a-prototype-literal": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/parent-call.parent-with-a-static": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/parent-call.plain-parent": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/private.native": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-downleveled/private.weak-map-helper": {
+    "typed": 13,
+    "untyped": 30
+  },
+  "everyday-downleveled/push-many.loop": {
+    "typed": 131.5,
+    "untyped": 142.2
+  },
+  "everyday-downleveled/push-many.prototype-push-apply": {
+    "typed": 1332.5,
+    "untyped": 1322.5
+  },
+  "everyday-downleveled/push-many.push-apply": {
+    "typed": 1332.2,
+    "untyped": 1322
+  },
+  "everyday-downleveled/push-many.spread": {
+    "typed": 1332.3,
+    "untyped": 1322.1
+  },
+  "everyday-downleveled/rest-object.rest-helper": {
+    "typed": 256.9,
+    "untyped": 273.6
+  },
+  "everyday-downleveled/spread-list.concat-empty": {
+    "typed": 759.4,
+    "untyped": 752.8
+  },
+  "everyday-downleveled/spread-list.native": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/spread-list.spread-array-helper": {
+    "typed": 1229.5,
+    "untyped": 1251.9
+  },
+  "everyday-downleveled/spread-object.assign-helper": {
+    "typed": 1750,
+    "untyped": 1763.9
+  },
+  "everyday-downleveled/super-call.prototype-call-in-a-class": {
+    "typed": 22,
+    "untyped": 22
+  },
+  "everyday-downleveled/super-call.prototype-call-of-a-function-that-nobody-constructs": {
+    "typed": 11,
+    "untyped": 19
+  },
+  "everyday-downleveled/super-call.prototype-call-of-functions": {
+    "typed": 25,
+    "untyped": 24
+  },
+  "everyday-downleveled/super-call.prototype-call-of-functions-object-create": {
+    "typed": 25,
+    "untyped": 24
+  },
+  "everyday-downleveled/template.downleveled": {
+    "typed": 158.6,
+    "untyped": 158.6
+  },
+  "everyday-downleveled/template.native": {
+    "typed": 157.7,
+    "untyped": 157.6
+  },
+  "everyday-downleveled/three-derived.es5-extends": {
+    "typed": 161.8,
+    "untyped": 162.4
+  },
+  "everyday-downleveled/three-derived.inherits-helper-object-create": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-downleveled/three-derived.native": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-downleveled/three-derived.object-create": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-downleveled/three-derived.set-prototype-of": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-downleveled/two-classes.assign-to-prototype": {
+    "typed": 90.3,
+    "untyped": 92.2
+  },
+  "everyday-downleveled/two-classes.babel-create-class": {
+    "typed": 125.4,
+    "untyped": 114.3
+  },
+  "everyday-downleveled/two-classes.define-properties-on-prototype": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-downleveled/two-classes.native": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-downleveled/two-classes.prototype-literal": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.direct-create-with-descriptor": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/variant.direct-plain-create-two-levels": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-plain-create-two-classes": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-plain-create-two-levels": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-emitters/a-class-below-emits-to-itself": {
+    "typed": 72,
+    "untyped": 76
+  },
+  "everyday-emitters/emitter-made-listened-to-and-dropped": {
+    "typed": 500.4,
+    "untyped": 501.4
+  },
+  "everyday-emitters/five-arguments": {
+    "typed": 105,
+    "untyped": 141
+  },
+  "everyday-emitters/four-emitters-by-turn": {
+    "typed": 85,
+    "untyped": 84
+  },
+  "everyday-emitters/four-events-by-turn": {
+    "typed": 79,
+    "untyped": 79
+  },
+  "everyday-emitters/listener-count": {
+    "typed": 34,
+    "untyped": 34
+  },
+  "everyday-emitters/many-emitters-events-and-listeners": {
+    "typed": 217.5,
+    "untyped": 211.3
+  },
+  "everyday-emitters/no-argument": {
+    "typed": 74,
+    "untyped": 74
+  },
+  "everyday-emitters/no-listener": {
+    "typed": 41,
+    "untyped": 43
+  },
+  "everyday-emitters/on-and-off": {
+    "typed": 288.2,
+    "untyped": 289
+  },
+  "everyday-emitters/once-then-emit": {
+    "typed": 677.1,
+    "untyped": 675.4
+  },
+  "everyday-emitters/one-listener-and-two-listeners-in-turns": {
+    "typed": 122,
+    "untyped": 118
+  },
+  "everyday-emitters/one-listener-one-argument": {
+    "typed": 86,
+    "untyped": 83
+  },
+  "everyday-emitters/three-arguments": {
+    "typed": 100,
+    "untyped": 119
+  },
+  "everyday-emitters/two-listeners": {
+    "typed": 151,
+    "untyped": 147
+  },
+  "everyday-functions/a-count-kept-by-a-closure": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-functions/apply-with-an-array": {
+    "typed": 19,
+    "untyped": 29
+  },
+  "everyday-functions/arguments-length": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-functions/arguments-summed": {
+    "typed": 89.8,
+    "untyped": 83.9
+  },
+  "everyday-functions/arguments-to-an-array": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/bind-every-turn": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/call-method": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/call-of-a-small-function": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-functions/callback-parameter": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/closure-returned": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-functions/closure-sum-without-a-mask": {
+    "typed": 10,
+    "untyped": 16
+  },
+  "everyday-functions/compose": {
+    "typed": 70,
+    "untyped": 58
+  },
+  "everyday-functions/currying": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-functions/default-parameter": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-functions/early-returns": {
+    "typed": 14.3,
+    "untyped": 14.3
+  },
+  "everyday-functions/function-length-and-name": {
+    "typed": 139,
+    "untyped": 143
+  },
+  "everyday-functions/function-length-and-name-of-a-function-that-is-called": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-functions/function-taking-number-or-string": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-functions/function-taking-one-or-many": {
+    "typed": 30.5,
+    "untyped": 32.5
+  },
+  "everyday-functions/function-with-members": {
+    "typed": 85,
+    "untyped": 76
+  },
+  "everyday-functions/functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name": {
+    "typed": 206.4,
+    "untyped": 329.1
+  },
+  "everyday-functions/functions-without-captures-written-as-arguments-of-methods-of-a-list-known-by-a-test-where-another-was-given-a-display-name": {
+    "typed": 109.9,
+    "untyped": 103.6
+  },
+  "everyday-functions/generic-identity": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-functions/getter-function-table": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-functions/immediately-invoked": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/memoize-wrapper": {
+    "typed": 73.9,
+    "untyped": 77.9
+  },
+  "everyday-functions/middleware-chain": {
+    "typed": 59,
+    "untyped": 88
+  },
+  "everyday-functions/module-variable-sum": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-functions/mutual-recursion": {
+    "typed": 51.4,
+    "untyped": 51.4
+  },
+  "everyday-functions/name-of-a-new-function-object-over-many-variables-where-another-was-given-a-display-name": {
+    "typed": 164.7,
+    "untyped": 184.3
+  },
+  "everyday-functions/name-of-a-new-function-object-where-another-was-given-a-display-name": {
+    "typed": 112.2,
+    "untyped": 131.2
+  },
+  "everyday-functions/name-of-a-new-generator-function-where-another-function-was-given-a-display-name": {
+    "typed": 124.8,
+    "untyped": 142.7
+  },
+  "everyday-functions/new-function-object-bound-to-an-async-resource-where-another-was-given-a-display-name": {
+    "typed": 623.7,
+    "untyped": 607.1
+  },
+  "everyday-functions/new-function-object-kept": {
+    "typed": 54.3,
+    "untyped": 51.2
+  },
+  "everyday-functions/once-wrapper": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-functions/optional-parameter": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/options-bag": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-functions/partial-application-by-bind": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-functions/rest-handed-on-by-spread": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-functions/rest-length": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-functions/spread-call": {
+    "typed": 19,
+    "untyped": 29
+  },
+  "everyday-functions/this-in-a-nested-arrow": {
+    "typed": 158.4,
+    "untyped": 159.4
+  },
+  "everyday-iteration-and-async/array-iterator-by-hand": {
+    "typed": 503,
+    "untyped": 462.9
+  },
+  "everyday-iteration-and-async/async-arrow-callbacks": {
+    "typed": 574,
+    "untyped": 581.5
+  },
+  "everyday-iteration-and-async/async-function-that-never-awaits": {
+    "typed": 1213.6,
+    "untyped": 1216.4
+  },
+  "everyday-iteration-and-async/async-generator": {
+    "typed": 2142.9,
+    "untyped": 2139.4
+  },
+  "everyday-iteration-and-async/async-local-storage": {
+    "typed": 1804.4,
+    "untyped": 1818.9
+  },
+  "everyday-iteration-and-async/async-method-of-a-class": {
+    "typed": 577,
+    "untyped": 580
+  },
+  "everyday-iteration-and-async/await-a-resolved-promise": {
+    "typed": 549.4,
+    "untyped": 549.5
+  },
+  "everyday-iteration-and-async/await-a-value": {
+    "typed": 519,
+    "untyped": 519
+  },
+  "everyday-iteration-and-async/await-an-async-function": {
+    "typed": 521.2,
+    "untyped": 520.9
+  },
+  "everyday-iteration-and-async/await-an-object-result": {
+    "typed": 548.4,
+    "untyped": 548.3
+  },
+  "everyday-iteration-and-async/await-in-a-loop": {
+    "typed": 532,
+    "untyped": 539.1
+  },
+  "everyday-iteration-and-async/await-then-catch-a-rejection": {
+    "typed": 3892.5,
+    "untyped": 3905.2
+  },
+  "everyday-iteration-and-async/await-three-deep": {
+    "typed": 1046.2,
+    "untyped": 1046.3
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-behind-five-hundred-suspended-functions": {
+    "typed": 146522.2,
+    "untyped": 146224.4
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-behind-ten-suspended-functions": {
+    "typed": 9103.7,
+    "untyped": 9074.9
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-below-a-function-that-is-not-on-the-stack": {
+    "typed": 72155.9,
+    "untyped": 72146.2
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-ten-calls-deep": {
+    "typed": 6007.5,
+    "untyped": 6004.9
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-two-thousand-calls-deep": {
+    "typed": 29688.8,
+    "untyped": 29691.3
+  },
+  "everyday-iteration-and-async/catch-a-kept-error-and-throw-it-again": {
+    "typed": 1313,
+    "untyped": 1342.5
+  },
+  "everyday-iteration-and-async/catch-a-kept-error-and-throw-it-again-below-a-catch-of-the-caller": {
+    "typed": 75,
+    "untyped": 104
+  },
+  "everyday-iteration-and-async/catch-an-error-thrown-below-a-built-in-function": {
+    "typed": 8304.1,
+    "untyped": 8326.8
+  },
+  "everyday-iteration-and-async/catch-and-rethrow": {
+    "typed": 5678.8,
+    "untyped": 5166.1
+  },
+  "everyday-iteration-and-async/catch-the-error-of-a-built-in-function": {
+    "typed": 4161.2,
+    "untyped": 4171
+  },
+  "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-ten-calls-deep": {
+    "typed": 9391.2,
+    "untyped": 9380.6
+  },
+  "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-two-thousand-calls-deep": {
+    "typed": 32250.1,
+    "untyped": 32241.1
+  },
+  "everyday-iteration-and-async/destructuring-from-a-generator": {
+    "typed": 86,
+    "untyped": 87
+  },
+  "everyday-iteration-and-async/error-made-not-thrown": {
+    "typed": 2116.8,
+    "untyped": 2106.7
+  },
+  "everyday-iteration-and-async/error-stack-read": {
+    "typed": 16306.8,
+    "untyped": 16291.7
+  },
+  "everyday-iteration-and-async/error-told-apart-by-instanceof": {
+    "typed": 3031.7,
+    "untyped": 2929.1
+  },
+  "everyday-iteration-and-async/for-await-over-an-array-of-promises": {
+    "typed": 2083.3,
+    "untyped": 2090.9
+  },
+  "everyday-iteration-and-async/for-of-over-a-string": {
+    "typed": 79,
+    "untyped": 84
+  },
+  "everyday-iteration-and-async/generator-delegation": {
+    "typed": 1672.6,
+    "untyped": 1807.7
+  },
+  "everyday-iteration-and-async/generator-given-values": {
+    "typed": 219.1,
+    "untyped": 219.1
+  },
+  "everyday-iteration-and-async/generator-left-early": {
+    "typed": 167.5,
+    "untyped": 155.5
+  },
+  "everyday-iteration-and-async/generator-over-a-tree": {
+    "typed": 2504.9,
+    "untyped": 2651.1
+  },
+  "everyday-iteration-and-async/generator-pipeline": {
+    "typed": 3959.5,
+    "untyped": 3960
+  },
+  "everyday-iteration-and-async/generator-range": {
+    "typed": 50,
+    "untyped": 56
+  },
+  "everyday-iteration-and-async/generator-stepped-by-hand": {
+    "typed": 37,
+    "untyped": 37
+  },
+  "everyday-iteration-and-async/iterator-helpers": {
+    "typed": 12659,
+    "untyped": 12240.1
+  },
+  "everyday-iteration-and-async/iterator-object-by-hand": {
+    "typed": 57.5,
+    "untyped": 48.5
+  },
+  "everyday-iteration-and-async/make-an-error-behind-ten-suspended-functions": {
+    "typed": 6312.5,
+    "untyped": 6319.1
+  },
+  "everyday-iteration-and-async/new-promise-resolved-at-once": {
+    "typed": 1198.5,
+    "untyped": 1197.4
+  },
+  "everyday-iteration-and-async/promise-all": {
+    "typed": 2160.7,
+    "untyped": 2159.4
+  },
+  "everyday-iteration-and-async/promise-all-over-a-map": {
+    "typed": 3022.4,
+    "untyped": 3011.6
+  },
+  "everyday-iteration-and-async/promise-all-settled": {
+    "typed": 5730.7,
+    "untyped": 5428.5
+  },
+  "everyday-iteration-and-async/promise-catch-method": {
+    "typed": 3807.2,
+    "untyped": 3817.9
+  },
+  "everyday-iteration-and-async/promise-race": {
+    "typed": 1987.3,
+    "untyped": 1986.2
+  },
+  "everyday-iteration-and-async/promise-then-chain": {
+    "typed": 1940.9,
+    "untyped": 1941.4
+  },
+  "everyday-iteration-and-async/promise-with-resolvers": {
+    "typed": 1755.8,
+    "untyped": 1754.4
+  },
+  "everyday-iteration-and-async/queue-microtask": {
+    "typed": 821.3,
+    "untyped": 828.8
+  },
+  "everyday-iteration-and-async/thenable": {
+    "typed": 2482.7,
+    "untyped": 2486.6
+  },
+  "everyday-iteration-and-async/throw-a-kept-error-out-of-a-callback-of-a-built-in": {
+    "typed": 1100.3,
+    "untyped": 1135.9
+  },
+  "everyday-iteration-and-async/throw-a-kept-error-through-three-finally-blocks": {
+    "typed": 1823,
+    "untyped": 1832.5
+  },
+  "everyday-iteration-and-async/throw-a-kept-error-through-three-frames": {
+    "typed": 603.5,
+    "untyped": 659
+  },
+  "everyday-iteration-and-async/throw-and-catch-a-plain-value": {
+    "typed": 23,
+    "untyped": 23
+  },
+  "everyday-iteration-and-async/throw-and-catch-an-error": {
+    "typed": 1859.7,
+    "untyped": 1883.5
+  },
+  "everyday-iteration-and-async/throw-and-catch-an-error-two-thousand-calls-deep": {
+    "typed": 42632.5,
+    "untyped": 42644.3
+  },
+  "everyday-iteration-and-async/throw-and-catch-one-time-in-sixteen": {
+    "typed": 8.1,
+    "untyped": 18.1
+  },
+  "everyday-iteration-and-async/throw-through-three-frames": {
+    "typed": 3294.1,
+    "untyped": 3398.9
+  },
+  "everyday-iteration-and-async/try-finally": {
+    "typed": 19,
+    "untyped": 19
+  },
+  "everyday-iteration-and-async/try-finally-around-an-await": {
+    "typed": 515.1,
+    "untyped": 520.1
+  },
+  "everyday-iteration-and-async/try-without-a-throw": {
+    "typed": 14,
+    "untyped": 6
+  },
+  "everyday-kinds-of-types/as-const.list-of-records": {
+    "typed": 26,
+    "untyped": 17
+  },
+  "everyday-kinds-of-types/as-const.list-of-texts": {
+    "typed": 28,
+    "untyped": 28
+  },
+  "everyday-kinds-of-types/cast.parsed": {
+    "typed": 23,
+    "untyped": 69
+  },
+  "everyday-kinds-of-types/conditional.return-type": {
+    "typed": 12,
+    "untyped": 19
+  },
+  "everyday-kinds-of-types/contents.map-for-of": {
+    "typed": 301,
+    "untyped": 269
+  },
+  "everyday-kinds-of-types/contents.map-get": {
+    "typed": 70,
+    "untyped": 70
+  },
+  "everyday-kinds-of-types/contents.map-of-records": {
+    "typed": 70,
+    "untyped": 70
+  },
+  "everyday-kinds-of-types/enum.name-of-a-member": {
+    "typed": 63,
+    "untyped": 107
+  },
+  "everyday-kinds-of-types/enum.text": {
+    "typed": 26,
+    "untyped": 26
+  },
+  "everyday-kinds-of-types/field.definite": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-kinds-of-types/field.optional": {
+    "typed": 20,
+    "untyped": 84.5
+  },
+  "everyday-kinds-of-types/field.static": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-kinds-of-types/generic.box-class-at-two-types": {
+    "typed": 31,
+    "untyped": 32
+  },
+  "everyday-kinds-of-types/generic.default-argument": {
+    "typed": 20,
+    "untyped": 20
+  },
+  "everyday-kinds-of-types/index.by-number": {
+    "typed": 28,
+    "untyped": 65
+  },
+  "everyday-kinds-of-types/index.control-record": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-kinds-of-types/index.record-of-written-names-read-by-name": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-kinds-of-types/index.signature-beside-fields": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-kinds-of-types/index.signature-read-by-name": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-kinds-of-types/interface.call-signature": {
+    "typed": 86,
+    "untyped": 75
+  },
+  "everyday-kinds-of-types/literal.numbers-added": {
+    "typed": 22,
+    "untyped": 22
+  },
+  "everyday-kinds-of-types/literal.texts": {
+    "typed": 27.3,
+    "untyped": 27.3
+  },
+  "everyday-kinds-of-types/literal.texts-control-string": {
+    "typed": 27.2,
+    "untyped": 27.3
+  },
+  "everyday-kinds-of-types/mapped.partial": {
+    "typed": 24.5,
+    "untyped": 18.5
+  },
+  "everyday-kinds-of-types/overload.by-count": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-kinds-of-types/overload.by-type": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-kinds-of-types/overload.by-type-both-used": {
+    "typed": 68.2,
+    "untyped": 67.4
+  },
+  "everyday-kinds-of-types/overload.control": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-kinds-of-types/overload.method": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-kinds-of-types/parameter.default": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-kinds-of-types/parameter.options-with-defaults": {
+    "typed": 38.5,
+    "untyped": 34.5
+  },
+  "everyday-kinds-of-types/predicate.filter": {
+    "typed": 173.5,
+    "untyped": 174.4
+  },
+  "everyday-kinds-of-types/texts.a-field-of-a-record-written-from-a-list": {
+    "typed": 50.3,
+    "untyped": 31.3
+  },
+  "everyday-kinds-of-types/texts.a-field-of-parsed-text": {
+    "typed": 44.8,
+    "untyped": 50.7
+  },
+  "everyday-kinds-of-types/texts.a-field-of-parsed-text-in-a-switch": {
+    "typed": 43,
+    "untyped": 50
+  },
+  "everyday-kinds-of-types/texts.cast-from-a-string": {
+    "typed": 27.3,
+    "untyped": 27.3
+  },
+  "everyday-kinds-of-types/texts.out-of-a-map": {
+    "typed": 87.8,
+    "untyped": 84.8
+  },
+  "everyday-kinds-of-types/texts.two-values-compared": {
+    "typed": 40.1,
+    "untyped": 40.1
+  },
+  "everyday-kinds-of-types/this.returned-below-a-parent": {
+    "typed": 16,
+    "untyped": 16
+  },
+  "everyday-kinds-of-types/tuple.destructured": {
+    "typed": 32,
+    "untyped": 27
+  },
+  "everyday-kinds-of-types/tuple.of-a-record-and-a-number": {
+    "typed": 59,
+    "untyped": 26
+  },
+  "everyday-kinds-of-types/union.one-or-a-list": {
+    "typed": 15,
+    "untyped": 30
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-callback-nobody-knows-reads-a-name-of-each.forEach": {
+    "typed": 1658,
+    "untyped": 1773
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-chain-of-links-nobody-knows.while": {
+    "typed": 726,
+    "untyped": 760
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-function-nobody-knows-called-for-each-object-reads-two-names.for": {
+    "typed": 955,
+    "untyped": 1468
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-list-of-two-objects.for-of": {
+    "typed": 72,
+    "untyped": 72
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-method-of-each-instance-nobody-knows.for-of": {
+    "typed": 704,
+    "untyped": 800
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-name-stored-in-each-object-of-a-list-nobody-knows.for-of": {
+    "typed": 1620,
+    "untyped": 1616
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/a-text-a-fraction-and-a-flag-under-names.for-of": {
+    "typed": 2306,
+    "untyped": 2440.1
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/instances-of-a-class-nobody-knows.for-of": {
+    "typed": 700,
+    "untyped": 924
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/lists-of-three-in-a-list-of-eight.for-of-in-for-of": {
+    "typed": 919,
+    "untyped": 825
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/objects-in-the-order-of-a-number-under-a-name.sort": {
+    "typed": 7244.6,
+    "untyped": 7101.8
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/objects-of-four-kinds-in-turn.for-of": {
+    "typed": 800.1,
+    "untyped": 1873
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/objects-of-two-kinds-in-turn.for-of": {
+    "typed": 732,
+    "untyped": 801
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/objects-out-of-parsed-text.for-of": {
+    "typed": 1116,
+    "untyped": 1118
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/one-key-nobody-knows-of-each-object.for-of": {
+    "typed": 2306,
+    "untyped": 1698
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/one-kind-and-then-another.for-of": {
+    "typed": 732,
+    "untyped": 801
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/one-name-of-each-object-of-a-list-nobody-knows.for-of": {
+    "typed": 635,
+    "untyped": 765
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/one-object-nobody-knows-read-in-every-turn-between-calls.while": {
+    "typed": 1538,
+    "untyped": 1399
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/the-last-object-with-a-text-under-a-name.findLastIndex": {
+    "typed": 1807.8,
+    "untyped": 1740.7
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/the-objects-with-a-number-under-a-name.filter": {
+    "typed": 3455.4,
+    "untyped": 2297.2
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/the-sum-of-a-number-under-a-name.reduce": {
+    "typed": 643,
+    "untyped": 812
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/three-names-of-each-object-of-a-list-nobody-knows.for": {
+    "typed": 2139.1,
+    "untyped": 2043
+  },
+  "everyday-lists-of-objects-read-by-name-in-a-loop/whether-each-object-has-a-name.in": {
+    "typed": 2007.1,
+    "untyped": 1399.1
+  },
+  "everyday-long-lists/a-long-list-searched-from-its-end-by-a-24-character-key": {
+    "typed": 15685.9,
+    "untyped": 17952.6
+  },
+  "everyday-long-lists/a-long-list-searched-from-its-end-by-a-36-character-key": {
+    "typed": 13988.3,
+    "untyped": 16253.1
+  },
+  "everyday-long-lists/a-tag-tested-by-a-small-function-under-some": {
+    "typed": 532,
+    "untyped": 1009
+  },
+  "everyday-long-lists/long-keys-with-one-beginning-compared": {
+    "typed": 3672.2,
+    "untyped": 4126.8
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-entries-summed": {
+    "typed": 7709,
+    "untyped": 7711
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
+    "typed": 641,
+    "untyped": 644
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
+    "typed": 643,
+    "untyped": 648
+  },
+  "everyday-loops-over-lists-and-typed-arrays/data-view-sum-of-floats": {
+    "typed": 874,
+    "untyped": 877
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float32-array-scaled-in-place": {
+    "typed": 736.5,
+    "untyped": 736.5
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-field": {
+    "typed": 1410,
+    "untyped": 1410
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-parameter": {
+    "typed": 1410,
+    "untyped": 1410
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-mean-of-three-neighbors": {
+    "typed": 2101,
+    "untyped": 2081.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-running-sums": {
+    "typed": 2135,
+    "untyped": 2113
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-that-a-closure-captured": {
+    "typed": 1410,
+    "untyped": 1410
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-walked-downward": {
+    "typed": 1414,
+    "untyped": 1414
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-dot-product-of-a-thousand": {
+    "typed": 3549.1,
+    "untyped": 3436
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-matrix-transposed-flat": {
+    "typed": 1573,
+    "untyped": 1315
+  },
+  "everyday-loops-over-lists-and-typed-arrays/int32-array-reversed-in-place": {
+    "typed": 513,
+    "untyped": 519
+  },
+  "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
+    "typed": 1769,
+    "untyped": 1773
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-fractions-sum-of-a-thousand": {
+    "typed": 1406,
+    "untyped": 1408
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-in-a-parameter": {
+    "typed": 1405,
+    "untyped": 1404
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-stored-to-in-place": {
+    "typed": 3998,
+    "untyped": 4000
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-sum-of-a-thousand": {
+    "typed": 1406,
+    "untyped": 1408
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-objects-one-field-summed": {
+    "typed": 2267.1,
+    "untyped": 3996
+  },
+  "everyday-loops-over-lists-and-typed-arrays/rows-of-float64-arrays": {
+    "typed": 1831,
+    "untyped": 1830
+  },
+  "everyday-loops-over-lists-and-typed-arrays/text-sum-of-char-codes": {
+    "typed": 1836,
+    "untyped": 1840
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint16-array-greatest-of-a-thousand": {
+    "typed": 377,
+    "untyped": 378
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": {
+    "typed": 168,
+    "untyped": 159
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-counted-into-bins": {
+    "typed": 4123.9,
+    "untyped": 4122.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-clamped-array-brightened": {
+    "typed": 405,
+    "untyped": 406
+  },
+  "everyday-microtasks-and-promises/async-arrow-that-captures": {
+    "typed": 1293.5,
+    "untyped": 1300.3
+  },
+  "everyday-microtasks-and-promises/async-function-started-and-not-awaited": {
+    "typed": 1113.1,
+    "untyped": 1114.8
+  },
+  "everyday-microtasks-and-promises/async-function-with-eight-live-variables": {
+    "typed": 614,
+    "untyped": 622.9
+  },
+  "everyday-microtasks-and-promises/async-functions-five-deep": {
+    "typed": 1823,
+    "untyped": 1830.8
+  },
+  "everyday-microtasks-and-promises/async-functions-five-deep-that-return-the-promise": {
+    "typed": 3812.9,
+    "untyped": 3814.6
+  },
+  "everyday-microtasks-and-promises/async-functions-two-deep": {
+    "typed": 1023.4,
+    "untyped": 1031
+  },
+  "everyday-microtasks-and-promises/async-generator-left-early": {
+    "typed": 3348.6,
+    "untyped": 3352.5
+  },
+  "everyday-microtasks-and-promises/async-generator-of-ten": {
+    "typed": 3617.9,
+    "untyped": 3613.5
+  },
+  "everyday-microtasks-and-promises/async-generator-that-awaits": {
+    "typed": 2610.7,
+    "untyped": 2605.5
+  },
+  "everyday-microtasks-and-promises/async-generator-through-another": {
+    "typed": 3943.4,
+    "untyped": 3953.6
+  },
+  "everyday-microtasks-and-promises/async-iterator-by-hand": {
+    "typed": 979.4,
+    "untyped": 1014.3
+  },
+  "everyday-microtasks-and-promises/async-local-storage-bind": {
+    "typed": 330.2,
+    "untyped": 336.9
+  },
+  "everyday-microtasks-and-promises/async-local-storage-snapshot": {
+    "typed": 387.8,
+    "untyped": 394.8
+  },
+  "everyday-microtasks-and-promises/async-resource-bind": {
+    "typed": 2662.4,
+    "untyped": 2614.8
+  },
+  "everyday-microtasks-and-promises/await-a-kept-settled-promise": {
+    "typed": 526.1,
+    "untyped": 537.2
+  },
+  "everyday-microtasks-and-promises/await-a-pending-promise": {
+    "typed": 1110.7,
+    "untyped": 1107.2
+  },
+  "everyday-microtasks-and-promises/await-a-promise-that-two-wait-for": {
+    "typed": 2328,
+    "untyped": 2334.2
+  },
+  "everyday-microtasks-and-promises/await-a-thenable-of-a-class": {
+    "typed": 2599.3,
+    "untyped": 2594.7
+  },
+  "everyday-microtasks-and-promises/await-an-heir-of-promise": {
+    "typed": 8271.5,
+    "untyped": 8270.5
+  },
+  "everyday-microtasks-and-promises/await-an-object-that-is-no-promise": {
+    "typed": 527,
+    "untyped": 537.9
+  },
+  "everyday-microtasks-and-promises/await-undefined": {
+    "typed": 496.1,
+    "untyped": 502.9
+  },
+  "everyday-microtasks-and-promises/every-turn-under-a-store-set-once": {
+    "typed": 1271.4,
+    "untyped": 1278.2
+  },
+  "everyday-microtasks-and-promises/finally-method": {
+    "typed": 1966.2,
+    "untyped": 1969.2
+  },
+  "everyday-microtasks-and-promises/next-tick": {
+    "typed": 2079.6,
+    "untyped": 2081.7
+  },
+  "everyday-microtasks-and-promises/promise-all-of-a-hundred": {
+    "typed": 53740.8,
+    "untyped": 50350.4
+  },
+  "everyday-microtasks-and-promises/promise-all-of-ten": {
+    "typed": 5998.7,
+    "untyped": 5994.1
+  },
+  "everyday-microtasks-and-promises/promise-all-of-ten-that-wait": {
+    "typed": 10360.3,
+    "untyped": 10360
+  },
+  "everyday-microtasks-and-promises/promise-all-of-ten-values": {
+    "typed": 3546.2,
+    "untyped": 3554.9
+  },
+  "everyday-microtasks-and-promises/promise-all-settled-of-a-hundred": {
+    "typed": 71603.7,
+    "untyped": 71521
+  },
+  "everyday-microtasks-and-promises/promise-all-settled-of-ten": {
+    "typed": 8432.1,
+    "untyped": 8447.5
+  },
+  "everyday-microtasks-and-promises/promise-any-of-ten": {
+    "typed": 7015.7,
+    "untyped": 7029.9
+  },
+  "everyday-microtasks-and-promises/promise-race-of-a-hundred": {
+    "typed": 46684.1,
+    "untyped": 46566.9
+  },
+  "everyday-microtasks-and-promises/promise-race-of-ten": {
+    "typed": 5745.8,
+    "untyped": 5759.5
+  },
+  "everyday-microtasks-and-promises/queue-microtask-from-a-microtask": {
+    "typed": 1324.9,
+    "untyped": 1330.9
+  },
+  "everyday-microtasks-and-promises/queue-microtask-ten-times": {
+    "typed": 3482.5,
+    "untyped": 3490.1
+  },
+  "everyday-microtasks-and-promises/store-around-a-then-chain": {
+    "typed": 4523.5,
+    "untyped": 4536.2
+  },
+  "everyday-microtasks-and-promises/store-around-an-async-generator": {
+    "typed": 4411.9,
+    "untyped": 4424.2
+  },
+  "everyday-microtasks-and-promises/store-around-an-await-of-a-pending-promise": {
+    "typed": 3681.5,
+    "untyped": 3675.7
+  },
+  "everyday-microtasks-and-promises/store-around-an-await-of-a-value": {
+    "typed": 1777.6,
+    "untyped": 1780
+  },
+  "everyday-microtasks-and-promises/store-around-async-functions-five-deep": {
+    "typed": 3525.9,
+    "untyped": 3540.6
+  },
+  "everyday-microtasks-and-promises/store-around-promise-all-of-ten": {
+    "typed": 6345,
+    "untyped": 6308.7
+  },
+  "everyday-microtasks-and-promises/store-around-queue-microtask": {
+    "typed": 1807.5,
+    "untyped": 1814.6
+  },
+  "everyday-microtasks-and-promises/then-chain-of-closures": {
+    "typed": 2346.5,
+    "untyped": 2352.5
+  },
+  "everyday-microtasks-and-promises/then-chain-of-ten": {
+    "typed": 3317.5,
+    "untyped": 3318.4
+  },
+  "everyday-microtasks-and-promises/then-on-a-pending-promise": {
+    "typed": 1927.4,
+    "untyped": 1926.2
+  },
+  "everyday-microtasks-and-promises/then-that-returns-a-promise": {
+    "typed": 1825.1,
+    "untyped": 1825.4
+  },
+  "everyday-microtasks-and-promises/then-whose-result-nobody-takes": {
+    "typed": 688.1,
+    "untyped": 691.1
+  },
+  "everyday-microtasks-and-promises/then-with-two-handlers": {
+    "typed": 1586.7,
+    "untyped": 1587.4
+  },
+  "everyday-microtasks-and-promises/two-stores-around-an-await": {
+    "typed": 2083.3,
+    "untyped": 2098.7
+  },
+  "everyday-numbers/add-of-values-that-once-held-a-fraction": {
+    "typed": 7,
+    "untyped": 9
+  },
+  "everyday-numbers/bigint-add": {
+    "typed": 638.7,
+    "untyped": 638.5
+  },
+  "everyday-numbers/bigint-as-uint-n": {
+    "typed": 1244.9,
+    "untyped": 1244.6
+  },
+  "everyday-numbers/bigint-from-a-number": {
+    "typed": 644.9,
+    "untyped": 644.8
+  },
+  "everyday-numbers/bigint-large-multiply": {
+    "typed": 656.1,
+    "untyped": 655.8
+  },
+  "everyday-numbers/bit-operations": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-numbers/celsius-to-fahrenheit": {
+    "typed": 17,
+    "untyped": 17
+  },
+  "everyday-numbers/comparison-chain": {
+    "typed": 14.2,
+    "untyped": 14.2
+  },
+  "everyday-numbers/digits-in-arrays-made-with-new-array": {
+    "typed": 4911.7,
+    "untyped": 3668.4
+  },
+  "everyday-numbers/double-arithmetic": {
+    "typed": 18,
+    "untyped": 18
+  },
+  "everyday-numbers/empty-turn": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-numbers/flags": {
+    "typed": 13.5,
+    "untyped": 13.5
+  },
+  "everyday-numbers/greatest-common-divisor": {
+    "typed": 50,
+    "untyped": 52
+  },
+  "everyday-numbers/int-and-double-mixed-in-a-variable": {
+    "typed": 20.5,
+    "untyped": 20.5
+  },
+  "everyday-numbers/int-arithmetic": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-numbers/int-becomes-double": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-numbers/int-sum-without-a-mask": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-numbers/is-finite": {
+    "typed": 21.7,
+    "untyped": 21.7
+  },
+  "everyday-numbers/is-integer": {
+    "typed": 22.3,
+    "untyped": 22.2
+  },
+  "everyday-numbers/is-nan": {
+    "typed": 19.8,
+    "untyped": 19.8
+  },
+  "everyday-numbers/is-prime": {
+    "typed": 95.3,
+    "untyped": 110.3
+  },
+  "everyday-numbers/linear-interpolation": {
+    "typed": 16,
+    "untyped": 16
+  },
+  "everyday-numbers/math-abs": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-numbers/math-clz32": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-numbers/math-imul": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-numbers/math-log-exp": {
+    "typed": 158.9,
+    "untyped": 158.9
+  },
+  "everyday-numbers/math-min-max-clamp": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-numbers/math-pow": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-numbers/math-random": {
+    "typed": 29,
+    "untyped": 29
+  },
+  "everyday-numbers/math-round": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-numbers/math-sign": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-numbers/math-sin-cos": {
+    "typed": 225.8,
+    "untyped": 225.8
+  },
+  "everyday-numbers/math-sqrt": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-numbers/money-in-cents": {
+    "typed": 27,
+    "untyped": 27
+  },
+  "everyday-numbers/number-from-a-boolean": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-numbers/number-or-null-added": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-numbers/number-or-undefined": {
+    "typed": 13.5,
+    "untyped": 13.5
+  },
+  "everyday-numbers/parse-float": {
+    "typed": 294.3,
+    "untyped": 294.2
+  },
+  "everyday-numbers/percent": {
+    "typed": 25.5,
+    "untyped": 25.5
+  },
+  "everyday-numbers/power-of-a-double": {
+    "typed": 101,
+    "untyped": 101
+  },
+  "everyday-numbers/power-operator": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-numbers/remainder": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-numbers/remainder-of-a-variable": {
+    "typed": 37,
+    "untyped": 13
+  },
+  "everyday-numbers/remainder-of-doubles": {
+    "typed": 303.9,
+    "untyped": 303.9
+  },
+  "everyday-numbers/unsigned-shift": {
+    "typed": 12,
+    "untyped": 12
+  },
+  "everyday-numbers/words-in-an-array-made-with-new-array": {
+    "typed": 1416.4,
+    "untyped": 835.6
+  },
+  "everyday-numbers/xorshift": {
+    "typed": 23,
+    "untyped": 23
+  },
+  "everyday-objects/a-key-in-front-of-a-field-created-late-is-deleted": {
+    "typed": 374.2,
+    "untyped": 382.5
+  },
+  "everyday-objects/an-object-made-two-steps-below-a-literal-is-read-and-written-through-the-members-of-the-literal": {
+    "typed": 427.9,
+    "untyped": 436.5
+  },
+  "everyday-objects/assign-into-a-new-object": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/assign-onto-an-instance": {
+    "typed": 1003.8,
+    "untyped": 1004.3
+  },
+  "everyday-objects/computed-key-in-a-literal": {
+    "typed": 170.4,
+    "untyped": 167.1
+  },
+  "everyday-objects/counting-by-string-key": {
+    "typed": 101,
+    "untyped": 91
+  },
+  "everyday-objects/create-from-a-prototype": {
+    "typed": 40,
+    "untyped": 39.3
+  },
+  "everyday-objects/define-property": {
+    "typed": 2097.5,
+    "untyped": 1253.8
+  },
+  "everyday-objects/delete-a-fixed-name": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-objects/delete-by-key": {
+    "typed": 2025.6,
+    "untyped": 2054.7
+  },
+  "everyday-objects/destructuring-a-parameter": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-objects/destructuring-nested": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-objects/destructuring-renamed": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/destructuring-with-a-rest": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/destructuring-with-defaults": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-objects/dictionary-built-and-dropped": {
+    "typed": 397.8,
+    "untyped": 398
+  },
+  "everyday-objects/field-added-on-a-condition": {
+    "typed": 81.3,
+    "untyped": 7
+  },
+  "everyday-objects/fields-added-one-by-one": {
+    "typed": 10,
+    "untyped": 14
+  },
+  "everyday-objects/for-in": {
+    "typed": 91,
+    "untyped": 95
+  },
+  "everyday-objects/for-in-over-a-dictionary": {
+    "typed": 681,
+    "untyped": 651
+  },
+  "everyday-objects/freeze-a-literal": {
+    "typed": 46.1,
+    "untyped": 46.1
+  },
+  "everyday-objects/get-prototype-of": {
+    "typed": 41.5,
+    "untyped": 41.5
+  },
+  "everyday-objects/getter-in-a-literal": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-objects/grouping-by-string-key": {
+    "typed": 827.8,
+    "untyped": 828.7
+  },
+  "everyday-objects/has-own": {
+    "typed": 61.7,
+    "untyped": 61.8
+  },
+  "everyday-objects/has-own-property-method": {
+    "typed": 61.7,
+    "untyped": 61.8
+  },
+  "everyday-objects/in-operator": {
+    "typed": 58,
+    "untyped": 58
+  },
+  "everyday-objects/is-frozen": {
+    "typed": 137,
+    "untyped": 137
+  },
+  "everyday-objects/keys": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/keys-around-a-field-created-late-are-listed": {
+    "typed": 862.2,
+    "untyped": 878
+  },
+  "everyday-objects/keys-then-read": {
+    "typed": 174.7,
+    "untyped": 168.7
+  },
+  "everyday-objects/literal-made-and-read": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-objects/literal-returned": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-objects/many-keys-around-a-field-created-late-are-listed-behind-a-change": {
+    "typed": 68559.8,
+    "untyped": 68746
+  },
+  "everyday-objects/many-keys-in-front-of-a-field-created-late-go-one-by-one-and-come-again": {
+    "typed": 1122,
+    "untyped": 1062.2
+  },
+  "everyday-objects/method-in-a-literal": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-objects/nested-literal": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/nullish-assignment": {
+    "typed": 15,
+    "untyped": 15
+  },
+  "everyday-objects/nullish-default-of-a-field": {
+    "typed": 29.8,
+    "untyped": 26
+  },
+  "everyday-objects/object-without-a-prototype-as-a-dictionary": {
+    "typed": 69.7,
+    "untyped": 69.8
+  },
+  "everyday-objects/objects-of-four-shapes-read-at-one-place": {
+    "typed": 18,
+    "untyped": 10
+  },
+  "everyday-objects/optional-call": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-objects/optional-chaining-absent-half-of-the-time": {
+    "typed": 16.5,
+    "untyped": 14
+  },
+  "everyday-objects/optional-chaining-present": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/or-default-of-a-field": {
+    "typed": 36.5,
+    "untyped": 24.7
+  },
+  "everyday-objects/pick-some-keys": {
+    "typed": 144.3,
+    "untyped": 164
+  },
+  "everyday-objects/read-by-one-of-four-keys": {
+    "typed": 52,
+    "untyped": 58
+  },
+  "everyday-objects/read-of-a-frozen-table": {
+    "typed": 8.5,
+    "untyped": 8.5
+  },
+  "everyday-objects/result-or-error-object": {
+    "typed": 30.3,
+    "untyped": 41.4
+  },
+  "everyday-objects/setter-in-a-literal": {
+    "typed": 11,
+    "untyped": 12
+  },
+  "everyday-objects/shorthand-properties": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-objects/spread-of-a-parameter": {
+    "typed": 33.5,
+    "untyped": 12.5
+  },
+  "everyday-objects/spread-of-two-objects": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/spread-with-an-override": {
+    "typed": 72.7,
+    "untyped": 74.7
+  },
+  "everyday-objects/state-updated-by-spread": {
+    "typed": 69.6,
+    "untyped": 71.5
+  },
+  "everyday-objects/store-by-one-of-four-keys": {
+    "typed": 101,
+    "untyped": 218
+  },
+  "everyday-objects/structured-clone-of-a-small-object": {
+    "typed": 17703.2,
+    "untyped": 17701.7
+  },
+  "everyday-objects/symbol-key": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-objects/symbol-key-stored": {
+    "typed": 5,
+    "untyped": 5
+  },
+  "everyday-objects/to-primitive-by-value-of": {
+    "typed": 890,
+    "untyped": 890
+  },
+  "everyday-objects/two-results-in-an-object": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-objects/typeof-checks": {
+    "typed": 22,
+    "untyped": 21
+  },
+  "everyday-objects/union-told-apart-by-a-tag": {
+    "typed": 25.7,
+    "untyped": 39.3
+  },
+  "everyday-paths-and-files/a-file-is-asked-for-by-a-relative-path": {
+    "typed": 1151,
+    "untyped": 1164.7
+  },
+  "everyday-paths-and-files/a-file-is-asked-for-by-the-bytes-of-its-path": {
+    "typed": 1174.9,
+    "untyped": 1186
+  },
+  "everyday-paths-and-files/a-file-that-is-not-there-is-asked-for": {
+    "typed": 1508,
+    "untyped": 1519
+  },
+  "everyday-paths-and-files/a-file-that-is-there-is-asked-for": {
+    "typed": 1207,
+    "untyped": 1206
+  },
+  "everyday-paths-and-files/a-long-path-is-parsed": {
+    "typed": 583.4,
+    "untyped": 560.1
+  },
+  "everyday-paths-and-files/a-long-path-is-taken-apart": {
+    "typed": 479.8,
+    "untyped": 475.7
+  },
+  "everyday-paths-and-files/a-long-tidy-path-is-normalized": {
+    "typed": 131.3,
+    "untyped": 131.2
+  },
+  "everyday-paths-and-files/a-part-that-goes-up-is-joined": {
+    "typed": 859.7,
+    "untyped": 857.8
+  },
+  "everyday-paths-and-files/a-path-to-a-file-in-a-sibling-folder": {
+    "typed": 610.1,
+    "untyped": 608.1
+  },
+  "everyday-paths-and-files/a-relative-path-is-resolved": {
+    "typed": 536.8,
+    "untyped": 536.8
+  },
+  "everyday-paths-and-files/a-small-file-is-read-as-text": {
+    "typed": 2947.6,
+    "untyped": 2947.3
+  },
+  "everyday-paths-and-files/five-parts-are-joined": {
+    "typed": 660.6,
+    "untyped": 658.6
+  },
+  "everyday-paths-and-files/short-relative-parts-are-joined": {
+    "typed": 482.9,
+    "untyped": 481
+  },
+  "everyday-paths-and-files/the-size-of-a-file-that-may-be-missing": {
+    "typed": 3413.7,
+    "untyped": 3414.6
+  },
+  "everyday-paths-and-files/whether-a-path-is-a-file": {
+    "typed": 2162.9,
+    "untyped": 2118.1
+  },
+  "everyday-patterns-out-of-run-time-text/a-capital-whatever-the-case-in-greek": {
+    "typed": 977,
+    "untyped": 977
+  },
+  "everyday-patterns-out-of-run-time-text/a-flag-behind-a-space-or-the-start": {
+    "typed": 1981.5,
+    "untyped": 1981.5
+  },
+  "everyday-patterns-out-of-run-time-text/a-greedy-run-from-every-bracket-without-a-match": {
+    "typed": 1492617.3,
+    "untyped": 1492616.4
+  },
+  "everyday-patterns-out-of-run-time-text/a-group-that-ignores-case": {
+    "typed": 609.5,
+    "untyped": 609.5
+  },
+  "everyday-patterns-out-of-run-time-text/a-lazy-run-from-every-bracket-without-a-match": {
+    "typed": 1841592.1,
+    "untyped": 1841590.9
+  },
+  "everyday-patterns-out-of-run-time-text/a-level-whatever-the-case": {
+    "typed": 505,
+    "untyped": 505
+  },
+  "everyday-patterns-out-of-run-time-text/a-name-and-its-number-far-behind-the-start-of-a-line": {
+    "typed": 5208.6,
+    "untyped": 5208.5
+  },
+  "everyday-patterns-out-of-run-time-text/a-prefix-a-name-and-a-verb": {
+    "typed": 914.5,
+    "untyped": 914.5
+  },
+  "everyday-patterns-out-of-run-time-text/a-quote-that-no-backslash-precedes": {
+    "typed": 536,
+    "untyped": 536
+  },
+  "everyday-patterns-out-of-run-time-text/a-verb-behind-a-separator": {
+    "typed": 2850,
+    "untyped": 2850.1
+  },
+  "everyday-patterns-out-of-run-time-text/a-version": {
+    "typed": 559,
+    "untyped": 559
+  },
+  "everyday-patterns-out-of-run-time-text/an-address": {
+    "typed": 708.5,
+    "untyped": 708.5
+  },
+  "everyday-patterns-out-of-run-time-text/an-address-far-behind-the-start-of-a-line": {
+    "typed": 1851.1,
+    "untyped": 1851
+  },
+  "everyday-patterns-out-of-run-time-text/as-little-as-possible-twice": {
+    "typed": 1593.4,
+    "untyped": 1593.5
+  },
+  "everyday-patterns-out-of-run-time-text/assignments-before-a-command": {
+    "typed": 872.5,
+    "untyped": 872.5
+  },
+  "everyday-patterns-out-of-run-time-text/four-emulated-atomic-groups-without-a-match": {
+    "typed": 2337802.1,
+    "untyped": 2337800.2
+  },
+  "everyday-patterns-out-of-run-time-text/four-words-in-order-of-which-the-last-is-missing": {
+    "typed": 121532.6,
+    "untyped": 121534.6
+  },
+  "everyday-patterns-out-of-run-time-text/globstar-that-does-not-match": {
+    "typed": 1089,
+    "untyped": 1089
+  },
+  "everyday-patterns-out-of-run-time-text/globstar-that-matches": {
+    "typed": 1317,
+    "untyped": 1317
+  },
+  "everyday-patterns-out-of-run-time-text/globstar-that-skips-dot-files": {
+    "typed": 5016.6,
+    "untyped": 5016.6
+  },
+  "everyday-patterns-out-of-run-time-text/letters-and-digits-of-any-script": {
+    "typed": 359.5,
+    "untyped": 359.5
+  },
+  "everyday-patterns-out-of-run-time-text/letters-and-digits-of-any-script-in-greek": {
+    "typed": 857,
+    "untyped": 857
+  },
+  "everyday-patterns-out-of-run-time-text/one-of-eight-words-in-a-command": {
+    "typed": 2367.6,
+    "untyped": 2367.6
+  },
+  "everyday-patterns-out-of-run-time-text/one-of-four-flags-in-a-command": {
+    "typed": 2060,
+    "untyped": 2060
+  },
+  "everyday-patterns-out-of-run-time-text/one-of-four-words-whatever-the-case": {
+    "typed": 942,
+    "untyped": 942
+  },
+  "everyday-patterns-out-of-run-time-text/one-of-nine-names": {
+    "typed": 265.5,
+    "untyped": 265.5
+  },
+  "everyday-patterns-out-of-run-time-text/segments-of-a-path": {
+    "typed": 1013.5,
+    "untyped": 1013.5
+  },
+  "everyday-patterns-out-of-run-time-text/stars-between-slashes": {
+    "typed": 803,
+    "untyped": 803
+  },
+  "everyday-patterns-out-of-run-time-text/stars-in-four-optional-groups": {
+    "typed": 68165.9,
+    "untyped": 68167.7
+  },
+  "everyday-patterns-out-of-run-time-text/three-words-in-order": {
+    "typed": 3704.4,
+    "untyped": 3704.6
+  },
+  "everyday-patterns-out-of-run-time-text/three-words-in-order-on-a-line": {
+    "typed": 3804.1,
+    "untyped": 3804.2
+  },
+  "everyday-patterns-out-of-run-time-text/words-and-spaces-without-the-end": {
+    "typed": 99207.5,
+    "untyped": 99206.7
+  },
+  "everyday-reads-that-expect-a-layout/a-method-of-a-field-of-a-declared-class-beside-two-literals-with-a-member-of-its-name-stored-under-a-key-nobody-knows": {
+    "typed": 60,
+    "untyped": 332
+  },
+  "everyday-reads-that-expect-a-layout/fields-of-a-parameter-of-a-long-function-anybody-may-call": {
+    "typed": 69,
+    "untyped": 66
+  },
+  "everyday-reads-that-expect-a-layout/four-fields-of-any-type-of-a-local-with-a-declared-object-type": {
+    "typed": 34,
+    "untyped": 34
+  },
+  "everyday-reads-that-expect-a-layout/four-fields-of-this-in-a-long-method-found-by-name": {
+    "typed": 23,
+    "untyped": 21
+  },
+  "everyday-reads-that-expect-a-layout/four-number-fields-of-a-local-with-a-declared-object-type": {
+    "typed": 34,
+    "untyped": 34
+  },
+  "everyday-reads-that-expect-a-layout/rules-whose-one-property-is-defined-after-birth-beside-a-payload-with-a-layout": {
+    "typed": 514,
+    "untyped": 580
+  },
+  "everyday-requests-behind-middlewares/a-constructor-found-in-a-context-keeps-state-under-symbols": {
+    "typed": 7,
+    "untyped": 77.2
+  },
+  "everyday-requests-behind-middlewares/a-constructor-made-by-a-factory-below-another-keeps-state-under-symbols": {
+    "typed": 300.7,
+    "untyped": 329.1
+  },
+  "everyday-small-objects-run-by-a-loop/a-generator-driven-to-its-end-by-a-loop-that-unwraps-small-objects": {
+    "typed": 667.4,
+    "untyped": 668.4
+  },
+  "everyday-small-objects-run-by-a-loop/a-key-joined-from-constants-asked-by-in": {
+    "typed": 31.5,
+    "untyped": 31.5
+  },
+  "everyday-small-objects-run-by-a-loop/a-member-under-a-key-joined-from-constants": {
+    "typed": 31.2,
+    "untyped": 31.1
+  },
+  "everyday-small-objects-run-by-a-loop/a-member-under-a-key-summed-from-constants": {
+    "typed": 31.2,
+    "untyped": 31.1
+  },
+  "everyday-small-objects-run-by-a-loop/a-member-under-a-plain-name-of-an-object-made-under-a-prototype": {
+    "typed": 31.2,
+    "untyped": 31.1
+  },
+  "everyday-small-objects-run-by-a-loop/a-method-under-a-key-joined-from-constants": {
+    "typed": 16,
+    "untyped": 16
+  },
+  "everyday-small-objects-run-by-a-loop/a-record-checked-field-by-field-by-closures-that-answer-with-small-objects": {
+    "typed": 1110.1,
+    "untyped": 1104.8
+  },
+  "everyday-small-objects-run-by-a-loop/a-stack-popped-until-an-entry-has-the-key": {
+    "typed": 90,
+    "untyped": 89
+  },
+  "everyday-small-objects-run-by-a-loop/a-variable-of-the-global-object-under-a-key-set-and-put-back": {
+    "typed": 81,
+    "untyped": 72
+  },
+  "everyday-small-objects-run-by-a-loop/steps-of-four-kinds-run-until-one-is-the-last": {
+    "typed": 1000.5,
+    "untyped": 1008.7
+  },
+  "everyday-small-objects-run-by-a-loop/the-arguments-kept-whole-in-a-new-object": {
+    "typed": 547.1,
+    "untyped": 547.9
+  },
+  "everyday-small-objects-run-by-a-loop/two-callbacks-out-of-an-options-object-over-a-list": {
+    "typed": 71,
+    "untyped": 61
+  },
+  "everyday-small-programs/caesar-cipher": {
+    "typed": 1993.9,
+    "untyped": 1993.9
+  },
+  "everyday-small-programs/count-vowels-by-a-pattern": {
+    "typed": 2334.7,
+    "untyped": 2334.5
+  },
+  "everyday-small-programs/five-classes-deep": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-small-programs/flood-fill-on-a-grid": {
+    "typed": 12789.2,
+    "untyped": 12696.4
+  },
+  "everyday-small-programs/gzip-round-trip": {
+    "typed": 59933.2,
+    "untyped": 53867.2
+  },
+  "everyday-small-programs/json-written-by-hand": {
+    "typed": 497,
+    "untyped": 497
+  },
+  "everyday-small-programs/longest-common-subsequence": {
+    "typed": 10405,
+    "untyped": 10451.2
+  },
+  "everyday-small-programs/matrix-four-by-four-in-float32": {
+    "typed": 793,
+    "untyped": 799
+  },
+  "everyday-small-programs/nested-update-by-spread": {
+    "typed": 137.6,
+    "untyped": 137.4
+  },
+  "everyday-small-programs/number-parsed-by-character-codes": {
+    "typed": 65.5,
+    "untyped": 71.5
+  },
+  "everyday-small-programs/objects-of-twelve-shapes-read-at-one-place": {
+    "typed": 23,
+    "untyped": 17
+  },
+  "everyday-small-programs/path-resolve-and-relative": {
+    "typed": 953.4,
+    "untyped": 954.6
+  },
+  "everyday-small-programs/power-modulo": {
+    "typed": 480,
+    "untyped": 485
+  },
+  "everyday-small-programs/prime-factors": {
+    "typed": 687.9,
+    "untyped": 691.9
+  },
+  "everyday-small-programs/random-bytes": {
+    "typed": 3924.6,
+    "untyped": 3932.7
+  },
+  "everyday-small-programs/range-by-array-keys": {
+    "typed": 610.4,
+    "untyped": 665.5
+  },
+  "everyday-small-programs/readable-stream-read-to-its-end": {
+    "typed": 15664.6,
+    "untyped": 15822.8
+  },
+  "everyday-small-programs/reducer-with-a-switch-on-the-action": {
+    "typed": 178.3,
+    "untyped": 237.1
+  },
+  "everyday-small-programs/response-json": {
+    "typed": 4677.9,
+    "untyped": 4579.1
+  },
+  "everyday-small-programs/ring-buffer-class": {
+    "typed": 49,
+    "untyped": 47
+  },
+  "everyday-small-programs/run-length-encoding": {
+    "typed": 1151.9,
+    "untyped": 1184.9
+  },
+  "everyday-small-programs/set-immediate": {
+    "typed": 5689.6,
+    "untyped": 5782.8
+  },
+  "everyday-small-programs/sha256-of-a-short-text": {
+    "typed": 3253.2,
+    "untyped": 3243.7
+  },
+  "everyday-small-programs/sort-numbers-without-a-comparator": {
+    "typed": 2596,
+    "untyped": 2597.6
+  },
+  "everyday-small-programs/trie-with-map-children": {
+    "typed": 243,
+    "untyped": 251
+  },
+  "everyday-small-programs/trie-with-object-children": {
+    "typed": 235.7,
+    "untyped": 238.5
+  },
+  "everyday-small-programs/union-find": {
+    "typed": 80.8,
+    "untyped": 79.9
+  },
+  "everyday-small-programs/values-of-a-map-to-an-array": {
+    "typed": 1481.6,
+    "untyped": 1481.2
+  },
+  "everyday-small-programs/visitor-over-a-syntax-tree": {
+    "typed": 178,
+    "untyped": 310
+  },
+  "everyday-spellings/accessor.accessor-keyword": {
+    "typed": 9,
+    "untyped": 146.4
+  },
+  "everyday-spellings/accessor.define-property": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/accessor.field": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/accessor.literal-getter-setter": {
+    "typed": 8,
+    "untyped": 10
+  },
+  "everyday-spellings/append.concat": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/append.concat-list": {
+    "typed": 23,
+    "untyped": 7
+  },
+  "everyday-spellings/append.spread": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/arguments.arguments-object": {
+    "typed": 7.2,
+    "untyped": 7
+  },
+  "everyday-spellings/arguments.forwarded-arguments": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/arguments.forwarded-rest": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/arguments.options-literal": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/arguments.rest": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/async.return-an-async-call": {
+    "typed": 1217.7,
+    "untyped": 1222.4
+  },
+  "everyday-spellings/branch-on-an-enum.as-const-literal": {
+    "typed": 30.3,
+    "untyped": 29.3
+  },
+  "everyday-spellings/branch-on-an-enum.frozen-literal": {
+    "typed": 30.3,
+    "untyped": 34.3
+  },
+  "everyday-spellings/branch-on-an-enum.string-enum": {
+    "typed": 31.3,
+    "untyped": 31.3
+  },
+  "everyday-spellings/branch-on-text.ifs": {
+    "typed": 31.3,
+    "untyped": 31.3
+  },
+  "everyday-spellings/branch-on-text.literal-types": {
+    "typed": 30.2,
+    "untyped": 33.3
+  },
+  "everyday-spellings/branch-on-text.record": {
+    "typed": 52,
+    "untyped": 58
+  },
+  "everyday-spellings/branch-on-text.switch": {
+    "typed": 31.2,
+    "untyped": 31.3
+  },
+  "everyday-spellings/branch.conditional": {
+    "typed": 13.2,
+    "untyped": 13.3
+  },
+  "everyday-spellings/branch.ifs": {
+    "typed": 13.3,
+    "untyped": 13.3
+  },
+  "everyday-spellings/branch.switch": {
+    "typed": 13.2,
+    "untyped": 13.3
+  },
+  "everyday-spellings/chain.and": {
+    "typed": 18.5,
+    "untyped": 15.5
+  },
+  "everyday-spellings/chain.ifs": {
+    "typed": 18,
+    "untyped": 15.5
+  },
+  "everyday-spellings/chain.optional": {
+    "typed": 18,
+    "untyped": 15.5
+  },
+  "everyday-spellings/chain.optional-call": {
+    "typed": 18.5,
+    "untyped": 15.5
+  },
+  "everyday-spellings/chain.optional-nullish": {
+    "typed": 18,
+    "untyped": 15.5
+  },
+  "everyday-spellings/character.code-point-at": {
+    "typed": 8.3,
+    "untyped": 8.3
+  },
+  "everyday-spellings/character.index": {
+    "typed": 7.6,
+    "untyped": 7.6
+  },
+  "everyday-spellings/class.class": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/class.class-expression": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/class.function-and-prototype": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/class.function-and-prototype-literal": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/class.object-create": {
+    "typed": 42,
+    "untyped": 42.1
+  },
+  "everyday-spellings/class.parameter-properties": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/class.private-names": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/comma.sequence": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/comma.statements": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/constant.const": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-spellings/constant.enum-member": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-spellings/constant.frozen-literal": {
+    "typed": 6,
+    "untyped": 7
+  },
+  "everyday-spellings/constant.let-never-stored": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-spellings/constant.literal-as-const": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-spellings/constant.namespace": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-spellings/constant.static-readonly": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-spellings/copy-a-list.array-from": {
+    "typed": 396.6,
+    "untyped": 397.2
+  },
+  "everyday-spellings/copy-a-list.array-of-spread": {
+    "typed": 992.8,
+    "untyped": 971.8
+  },
+  "everyday-spellings/copy-a-list.concat": {
+    "typed": 107.4,
+    "untyped": 101.3
+  },
+  "everyday-spellings/copy-a-list.loop-push": {
+    "typed": 224,
+    "untyped": 206.2
+  },
+  "everyday-spellings/copy-a-list.map-identity": {
+    "typed": 170.6,
+    "untyped": 231.1
+  },
+  "everyday-spellings/copy-a-list.slice": {
+    "typed": 108.5,
+    "untyped": 102.2
+  },
+  "everyday-spellings/copy-a-list.slice-0": {
+    "typed": 126.8,
+    "untyped": 121
+  },
+  "everyday-spellings/default-value.compare-not-undefined": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.compare-undefined": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.if": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.loose-null": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.member-nullish": {
+    "typed": 18,
+    "untyped": 13.5
+  },
+  "everyday-spellings/default-value.nullish": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.nullish-assign": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.or": {
+    "typed": 19.5,
+    "untyped": 19.5
+  },
+  "everyday-spellings/default-value.parameter": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.pattern": {
+    "typed": 20,
+    "untyped": 15.5
+  },
+  "everyday-spellings/default-value.typeof": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/default-value.void-0": {
+    "typed": 14.5,
+    "untyped": 14.5
+  },
+  "everyday-spellings/derived.explicit-constructor": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/derived.function-call-parent": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/derived.rest-constructor": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/filled-list.array-from-length": {
+    "typed": 885.3,
+    "untyped": 884.5
+  },
+  "everyday-spellings/filled-list.literal": {
+    "typed": 621,
+    "untyped": 619.8
+  },
+  "everyday-spellings/filled-list.loop-push": {
+    "typed": 317.6,
+    "untyped": 326
+  },
+  "everyday-spellings/filled-list.loop-store": {
+    "typed": 240.8,
+    "untyped": 242.4
+  },
+  "everyday-spellings/filled-list.spread-map": {
+    "typed": 737.4,
+    "untyped": 718.4
+  },
+  "everyday-spellings/generic.concrete": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/generic.generic": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/generic.generic-two-uses": {
+    "typed": 52,
+    "untyped": 8
+  },
+  "everyday-spellings/has-a-name.has-own": {
+    "typed": 60,
+    "untyped": 60
+  },
+  "everyday-spellings/has-a-name.has-own-property": {
+    "typed": 60,
+    "untyped": 60
+  },
+  "everyday-spellings/has-a-name.has-own-property-call": {
+    "typed": 60,
+    "untyped": 60
+  },
+  "everyday-spellings/has-a-name.in": {
+    "typed": 58,
+    "untyped": 58
+  },
+  "everyday-spellings/has-a-name.not-undefined": {
+    "typed": 48,
+    "untyped": 46
+  },
+  "everyday-spellings/includes.find-index": {
+    "typed": 49.5,
+    "untyped": 70
+  },
+  "everyday-spellings/includes.for-of": {
+    "typed": 50,
+    "untyped": 56
+  },
+  "everyday-spellings/includes.loop": {
+    "typed": 49.5,
+    "untyped": 55.5
+  },
+  "everyday-spellings/includes.some": {
+    "typed": 49.5,
+    "untyped": 70
+  },
+  "everyday-spellings/increment.element-postfix": {
+    "typed": 20,
+    "untyped": 20
+  },
+  "everyday-spellings/increment.element-written-out": {
+    "typed": 20,
+    "untyped": 20
+  },
+  "everyday-spellings/increment.plus-assign": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/increment.postfix": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/increment.prefix": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/keys-loop.for-in": {
+    "typed": 109,
+    "untyped": 101
+  },
+  "everyday-spellings/keys-loop.object-keys": {
+    "typed": 174.7,
+    "untyped": 168.6
+  },
+  "everyday-spellings/keys-loop.object-keys-for-each": {
+    "typed": 174.6,
+    "untyped": 177.6
+  },
+  "everyday-spellings/last-element.at": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-spellings/last-element.length-minus-one": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/last-element.slice": {
+    "typed": 74.2,
+    "untyped": 74.3
+  },
+  "everyday-spellings/least.conditional": {
+    "typed": 9.9,
+    "untyped": 9.9
+  },
+  "everyday-spellings/least.loop": {
+    "typed": 71,
+    "untyped": 67
+  },
+  "everyday-spellings/least.math-min": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/literal-copy.listed": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/literal-copy.object-assign": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/literal-copy.spread": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/literal.computed-names": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/literal.listed": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/literal.new-object": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/literal.quoted-names": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/literal.shorthand": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/literal.stores-behind-an-empty-literal": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/loop.do-while": {
+    "typed": 58,
+    "untyped": 64
+  },
+  "everyday-spellings/loop.for-cached-length": {
+    "typed": 75,
+    "untyped": 123
+  },
+  "everyday-spellings/loop.for-down": {
+    "typed": 83,
+    "untyped": 73
+  },
+  "everyday-spellings/loop.for-in": {
+    "typed": 7219.1,
+    "untyped": 7425.5
+  },
+  "everyday-spellings/loop.for-of-entries": {
+    "typed": 74,
+    "untyped": 68
+  },
+  "everyday-spellings/map-get.get-nullish": {
+    "typed": 69.8,
+    "untyped": 62.3
+  },
+  "everyday-spellings/map-get.has-then-get": {
+    "typed": 104,
+    "untyped": 98.5
+  },
+  "everyday-spellings/map-loop.for-each": {
+    "typed": 371,
+    "untyped": 340
+  },
+  "everyday-spellings/map-loop.for-of": {
+    "typed": 360,
+    "untyped": 349
+  },
+  "everyday-spellings/map-loop.for-of-entries": {
+    "typed": 348,
+    "untyped": 370
+  },
+  "everyday-spellings/map-loop.keys-and-get": {
+    "typed": 514,
+    "untyped": 528
+  },
+  "everyday-spellings/number-of-a-text.unary-plus": {
+    "typed": 88,
+    "untyped": 88
+  },
+  "everyday-spellings/object-type.alias": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.as": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.extends": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.inferred": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.inline": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.interface": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.intersection": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.pick": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.readonly": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.record": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/object-type.satisfies": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/power.multiply": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/recursion.loop": {
+    "typed": 68.6,
+    "untyped": 68.6
+  },
+  "everyday-spellings/recursion.tail": {
+    "typed": 70.4,
+    "untyped": 70.4
+  },
+  "everyday-spellings/recursion.tail-conditional": {
+    "typed": 70.4,
+    "untyped": 70.4
+  },
+  "everyday-spellings/return-a-call.direct": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/return-a-call.through-a-constant": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/return-a-literal.direct": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/return-a-literal.through-a-constant": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/return-a-map.direct": {
+    "typed": 187.6,
+    "untyped": 183.2
+  },
+  "everyday-spellings/return-a-map.through-a-constant": {
+    "typed": 187.2,
+    "untyped": 183.4
+  },
+  "everyday-spellings/return-a-new.direct": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/return-a-new.through-a-constant": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/static.function-property": {
+    "typed": 80,
+    "untyped": 73
+  },
+  "everyday-spellings/static.global-this": {
+    "typed": 65,
+    "untyped": 67
+  },
+  "everyday-spellings/static.literal-field": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/static.namespace": {
+    "typed": 11,
+    "untyped": 18
+  },
+  "everyday-spellings/static.static-field": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/swap.pattern": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/swap.temporary": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-spellings/text-of-a-number.plus-empty": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-spellings/text-of-a-number.string-call": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-spellings/text-of-a-number.template": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-spellings/text-of-a-number.to-string": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-spellings/text.concat": {
+    "typed": 158.5,
+    "untyped": 157.4
+  },
+  "everyday-spellings/text.join": {
+    "typed": 1197.2,
+    "untyped": 1197.8
+  },
+  "everyday-spellings/text.plus": {
+    "typed": 159.7,
+    "untyped": 159.7
+  },
+  "everyday-spellings/text.template": {
+    "typed": 157.6,
+    "untyped": 157.5
+  },
+  "everyday-spellings/throw.no-try": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-spellings/throw.try-catch": {
+    "typed": 13,
+    "untyped": 21
+  },
+  "everyday-spellings/throw.try-finally": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-spellings/union.tag-if": {
+    "typed": 13,
+    "untyped": 24
+  },
+  "everyday-spellings/union.tag-switch": {
+    "typed": 15.5,
+    "untyped": 35.5
+  },
+  "everyday-spellings/union.type-predicate": {
+    "typed": 12,
+    "untyped": 24
+  },
+  "everyday-spellings/variable.let": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-spellings/variable.var": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-strings/a-piece-of-a-query-compared-with-the-state-of-every-row": {
+    "typed": 958.9,
+    "untyped": 975.7
+  },
+  "everyday-strings/append-then-read-a-character": {
+    "typed": 1168,
+    "untyped": 1168.1
+  },
+  "everyday-strings/camel-to-kebab": {
+    "typed": 2350.8,
+    "untyped": 2351.6
+  },
+  "everyday-strings/char-at": {
+    "typed": 10.2,
+    "untyped": 10.2
+  },
+  "everyday-strings/char-codes-of-a-text-built-by-appending": {
+    "typed": 1581.6,
+    "untyped": 1581.8
+  },
+  "everyday-strings/code-point-at": {
+    "typed": 26.6,
+    "untyped": 26
+  },
+  "everyday-strings/concat-two": {
+    "typed": 69.3,
+    "untyped": 69.3
+  },
+  "everyday-strings/concat-with-a-number": {
+    "typed": 74.3,
+    "untyped": 74.5
+  },
+  "everyday-strings/double-to-string": {
+    "typed": 548.7,
+    "untyped": 548.7
+  },
+  "everyday-strings/equality": {
+    "typed": 26.5,
+    "untyped": 26.5
+  },
+  "everyday-strings/escape-html": {
+    "typed": 2187.5,
+    "untyped": 2187.3
+  },
+  "everyday-strings/field-that-holds-narrow-and-wide-text": {
+    "typed": 25,
+    "untyped": 25
+  },
+  "everyday-strings/from-char-code": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-strings/last-index-of": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/length": {
+    "typed": 14,
+    "untyped": 14
+  },
+  "everyday-strings/locale-compare": {
+    "typed": 199,
+    "untyped": 199
+  },
+  "everyday-strings/match-all": {
+    "typed": 4630.1,
+    "untyped": 4631.9
+  },
+  "everyday-strings/number-to-hex": {
+    "typed": 332.4,
+    "untyped": 332.5
+  },
+  "everyday-strings/number-to-string": {
+    "typed": 500.1,
+    "untyped": 500.1
+  },
+  "everyday-strings/plus-to-number": {
+    "typed": 85.5,
+    "untyped": 85.5
+  },
+  "everyday-strings/replace-a-text": {
+    "typed": 768.8,
+    "untyped": 768.8
+  },
+  "everyday-strings/replace-by-a-pattern": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/replace-by-a-pattern-with-groups": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/search": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/slice": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-strings/slice-from-the-end": {
+    "typed": 13,
+    "untyped": 13
+  },
+  "everyday-strings/split-a-pair": {
+    "typed": 275.3,
+    "untyped": 275.3
+  },
+  "everyday-strings/split-and-join": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/split-by-a-comma": {
+    "typed": 26.8,
+    "untyped": 26.8
+  },
+  "everyday-strings/split-by-a-pattern": {
+    "typed": 235.5,
+    "untyped": 235.5
+  },
+  "everyday-strings/string-as-a-switch-subject": {
+    "typed": 34.3,
+    "untyped": 34.3
+  },
+  "everyday-strings/string-raw-and-at": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-strings/strip-rare-characters-of-a-unicode-class-from-a-long-text": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-strings/strip-rare-characters-of-a-unicode-class-from-one-of-four-long-texts": {
+    "typed": 17577.5,
+    "untyped": 17577.5
+  },
+  "everyday-strings/strip-what-is-not-ascii-from-a-long-text": {
+    "typed": 6,
+    "untyped": 6
+  },
+  "everyday-strings/strip-what-is-not-ascii-from-one-of-four-long-texts": {
+    "typed": 22680.6,
+    "untyped": 22693
+  },
+  "everyday-strings/strip-what-is-not-ascii-from-one-of-four-long-texts-that-are-all-ascii": {
+    "typed": 13720.4,
+    "untyped": 13720
+  },
+  "everyday-strings/substring": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/tagged-template": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-strings/template": {
+    "typed": 147.6,
+    "untyped": 147.3
+  },
+  "everyday-strings/template-used-as-a-key": {
+    "typed": 166,
+    "untyped": 161
+  },
+  "everyday-strings/trim": {
+    "typed": 204.7,
+    "untyped": 204.7
+  },
+  "everyday-strings/wide-text-concat": {
+    "typed": 86.2,
+    "untyped": 86.3
+  },
+  "everyday-strings/wide-text-length-and-slice": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-texts-of-an-interactive-program/a-few-short-texts-joined": {
+    "typed": 487.5,
+    "untyped": 487.5
+  },
+  "everyday-texts-of-an-interactive-program/a-word-looked-for-in-a-paragraph": {
+    "typed": 287,
+    "untyped": 287
+  },
+  "everyday-texts-of-an-interactive-program/the-flat-lines-of-a-screen-joined": {
+    "typed": 1681.1,
+    "untyped": 1683.9
+  },
+  "everyday-texts-of-an-interactive-program/words-of-a-line-joined-without-anything-between": {
+    "typed": 1050.7,
+    "untyped": 1051.6
+  },
+  "everyday-texts-that-every-match-holds/a-16-bit-line-without-the-character-behind-a-bounded-run": {
+    "typed": 287,
+    "untyped": 287
+  },
+  "everyday-texts-that-every-match-holds/a-line-that-holds-the-text-far-behind-its-start": {
+    "typed": 1156.6,
+    "untyped": 1156.5
+  },
+  "everyday-texts-that-every-match-holds/a-line-with-the-character-and-without-the-long-text": {
+    "typed": 364.5,
+    "untyped": 364.5
+  },
+  "everyday-texts-that-every-match-holds/a-line-without-either-sign-behind-a-key-word": {
+    "typed": 273,
+    "untyped": 273
+  },
+  "everyday-texts-that-every-match-holds/a-line-without-the-character-behind-a-bounded-run": {
+    "typed": 257,
+    "untyped": 257
+  },
+  "everyday-texts-that-every-match-holds/a-line-without-the-text-between-two-runs": {
+    "typed": 307,
+    "untyped": 307
+  },
+  "everyday-texts-that-every-match-holds/a-name-and-its-number-far-behind-the-start-of-a-line": {
+    "typed": 1519.5,
+    "untyped": 1519.5
+  },
+  "everyday-texts-that-every-match-holds/an-alternative-tried-at-the-start-alone-matches-beside-one-that-holds-a-text": {
+    "typed": 1456,
+    "untyped": 1456
+  },
+  "everyday-texts-that-every-match-holds/forty-patterns-out-of-run-time-text-over-a-short-label": {
+    "typed": 15148.6,
+    "untyped": 15148.5
+  },
+  "everyday-texts-that-every-match-holds/forty-patterns-over-a-short-label": {
+    "typed": 5975.6,
+    "untyped": 5980.4
+  },
+  "everyday-texts-that-every-match-holds/forty-patterns-replace-in-a-short-label": {
+    "typed": 8682.8,
+    "untyped": 9904.2
+  },
+  "everyday-texts-that-every-match-holds/slashes-at-the-end-of-a-path": {
+    "typed": 273,
+    "untyped": 272.9
+  },
+  "everyday-texts-that-every-match-holds/trim-a-16-bit-line-by-a-written-out-class": {
+    "typed": 800.5,
+    "untyped": 800.5
+  },
+  "everyday-texts-that-every-match-holds/trim-by-a-written-out-class": {
+    "typed": 756.6,
+    "untyped": 756.5
+  }
+}

@@ -1,0 +1,18 @@
+# publish(Blob.prototype[someName])
+# The read answers every member of Blob.prototype, and the program hands the answer over. Beside the unknown object no call lists a function that has escaped,
+# and of what the unknown object covers nobody applies a function of the host. These the program has taken from their holder itself, so a call of a value nobody knows is a call of each.
+# RUN: valueflow-solve used
+# CHECK: run BlobPrototypeImage
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="someName" [isFreeName]
+    v2 = Builtin builtin=BlobPrototype
+    v3 = ElemGet v2, v1
+    v4 = PropGet v0 key="publish" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}

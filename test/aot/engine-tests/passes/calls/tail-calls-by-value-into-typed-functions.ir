@@ -1,0 +1,146 @@
+# Functions with a written result type call, in tail position, a function value that nobody knows. A chain of such calls of any length runs in constant space, and its result is tested once,
+# by whoever receives it, against the type written on the function that was called from outside. A call that is no tail call is tested like any other, however deep in such a chain it is made.
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: lower-to-air size f7
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="tail-calls-by-value-into-typed-functions.ts" displayPath="tail-calls-by-value-into-typed-functions.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}]} module=m0
+variable g0 name="deep" module=m0 declared={type=400000|absent} flags=[IsImmutable]
+variable g1 name="hidden" module=m0 declared={type=absent|builtin(GlobalThis) flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Integer integer=400000
+    v7 = Convert v6 declared={type=400000}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="globalThis" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    PutModuleVariable v10 variable=g1
+    v12 = NewArray v3, v5 contents=anything
+    PropSet v10, v12 key="pair"
+    v14 = Integer integer=400001
+    v15 = NewArray v7, v14 contents=number
+    v16 = IteratorOpen v15
+    Jump -> next b1()
+  b1():
+    v17 = IteratorResume v16
+    v18 = ResultAt v17 index=1
+    Jump -> next b2()
+  b2() handler=b8():
+    v19 = Convert v18 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v20 = Data data=d0
+    v21 = IteratorOpen v20
+    Jump -> next b3()
+  b3() handler=b8():
+    LoopHint
+    v23 = IteratorResume v21
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b4(), notTaken b5()
+  b4() handler=b8():
+    Jump -> next b1()
+  b5() handler=b8():
+    Jump -> next b6()
+  b6() handler=b7():
+    v26 = Convert v25 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v27 = String string="two written types, "
+    v28 = Add v27, v19
+    v29 = String string=" from "
+    v30 = Add v28, v29
+    v31 = Add v30, v26
+    v32 = NewClosure v19, v26 function=f7
+    v33 = Call v1, -, v31, v32 calleeName="attempt"
+    Jump -> next b3()
+  b7() role=IterationCleanup subject=v21 handler=b8():
+    v34 = CatchException
+    Rethrow v34
+  b8() role=IterationCleanup subject=v16:
+    v35 = CatchException
+    Rethrow v35
+}
+function f1 name="attempt" module=m0 position=405 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="run"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v3 = Undefined
+    Return v3
+}
+function f2 name="numbers" module=m0 position=1049 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="texts" module=m0 position=1175 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=843 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=912 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=975 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="deep"
+    v2 = Integer integer=400001
+    v3 = NewArray v1, v2 contents=number
+    v4 = PropGet v3 key="map"
+    v5 = NewClosure function=f13
+    v6 = Call v4, v3, v5 calleeKey="map" calleeName="map"
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v8 = PropGet v7 key="join"
+    v9 = Call v8, v7 calleeKey="join" calleeName="join"
+    ReturnCall v9 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f7 module=m0 position=1466 kind=Arrow flags=[IsChecked] captures=[{type=number}, {type=number}] thisType={type=anything} results=[{type=anything}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="hidden"
+    v4 = PropGet v3 key="pair"
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|function> flags=[IsExpected]}
+    v6 = ElemGet v5, v1
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = GetModuleVariable variable=g1
+    v9 = CheckInitialized v8 name="hidden"
+    v10 = PropGet v9 key="pair"
+    v11 = Convert v10 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v12 = Integer integer=1
+    v13 = Sub v12, v1
+    v14 = ElemGet v11, v13
+    v15 = GetModuleVariable variable=g1
+    v16 = CheckInitialized v15 name="hidden"
+    v17 = PropGet v16 key="pair"
+    v18 = Convert v17 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v19 = ElemGet v18, v1
+    v20 = Call v7, v5, v0, v14, v19 calleeName="hidden.pair[first]"
+    ReturnCall v20
+}
+function f8 module=m0 position=1755 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1865 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=1963 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=2399 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=2665 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1002 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f7
+# CHECK-LABEL: function f7 role=
+# CHECK: EntryChecks
+# CHECK-NEXT: instructions: 8, patchpoints: 2
+# CHECK-NEXT: end of function f7

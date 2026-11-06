@@ -410,10 +410,7 @@ impl S3HttpSimpleTask {
     ) {
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
-        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
-        // which lives for the task's lifetime — extending to `'static` here is sound for
-        // self-reference.
-        self.result = unsafe { result.detach_lifetime() };
+        self.result = result.without_borrowed_body();
         if self.result.metadata.is_none() {
             self.result.metadata = previous_metadata;
         }
@@ -585,6 +582,7 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
     message: b"The JavaScript VM that owns this request is shutting down",
 };
 
+#[inline(never)]
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -592,6 +590,7 @@ pub(crate) fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping. Nor for a context
     // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the

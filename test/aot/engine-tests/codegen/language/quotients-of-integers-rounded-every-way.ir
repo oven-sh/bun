@@ -1,0 +1,250 @@
+# Quotients of integers that no constant gives away, behind `| 0`, `>>> 0`, `~~`, `>>`, `&`, Math.floor, ceil, trunc and round: divisors of zero, negative operands, -0, quotients past 2 ** 32, dividends near 2 ** 53, halves.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="quotients-of-integers-rounded-every-way.js" displayPath="quotients-of-integers-rounded-every-way.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="positiveDivisor" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="halves" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="out" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Date" [isFreeName]
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v6 variable=g3
+    v8 = Integer integer=-50
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v9)
+  b1(v10):
+    v11 = Integer integer=50
+    v12 = Less v10, v11
+    Branch v12 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v13):
+    v14 = Integer integer=-9
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v15)
+  b3(v16):
+    LoopHint
+    v18 = Integer integer=10
+    v19 = Less v16, v18
+    Branch v19 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v20):
+    v21 = Call v1, -, v13, v20 calleeName="all"
+    v22 = Increment v20
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v23)
+  b5(v24):
+    v25 = Increment v13
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v26)
+  b6(v27):
+    v28 = Integer
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    v30 = IteratorOpen v6
+    v31 = IteratorResume v30
+    v32 = ResultAt v31 index=1
+    Jump -> next b7()
+  b7() handler=b9():
+    v33 = Integer
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v29, v34)
+  b8(v35, v36) handler=b9():
+    LoopHint
+    v38 = Integer integer=31
+    v39 = Mul v35, v38
+    v40 = PropGet v32 key="charCodeAt"
+    v41 = Convert v40 declared={type=undefined|null|function flags=[IsExpected]}
+    v42 = Call v41, v32, v36 calleeKey="charCodeAt" calleeName="s.charCodeAt"
+    v43 = Convert v42 declared={type=number flags=[IsExpected]}
+    v44 = Add v39, v43
+    v45 = Integer
+    v46 = BitOr v44, v45
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    v48 = Increment v36
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v47, v49)
+  b9() role=IterationCleanup subject=v30:
+    v50 = CatchException
+    Rethrow v50
+}
+function f1 name="show" module=m0 position=271 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectIs
+    v3 = Double number=-0
+    v4 = Call v2, v1, v0, v3 calleeName="Object.is"
+    v5 = Convert v4 declared={type=boolean flags=[IsExpected]}
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v7):
+    v8 = String string="-0"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v9
+  b2(v10):
+    v11 = Builtin builtin=String
+    v12 = Call v11, -, v0 calleeName="String"
+    ReturnCall v12 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f2 name="positiveDivisor" module=m0 position=811 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer
+    v6 = BitOr v1, v5
+    v7 = Integer integer=2147483647
+    v8 = BitAnd v6, v7
+    v9 = Integer integer=1
+    v10 = Add v8, v9
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = GetModuleVariable variable=g3
+    v13 = CheckInitialized v12 name="out"
+    v14 = PropGet v13 key="push"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = GetModuleVariable variable=g0
+    v17 = Builtin builtin=Math
+    v18 = Builtin builtin=MathFloor
+    v19 = Div v4, v11
+    v20 = Call v18, v17, v19 calleeName="Math.floor"
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Call v16, -, v21 calleeName="show"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    v24 = GetModuleVariable variable=g0
+    v25 = Builtin builtin=Math
+    v26 = Builtin builtin=MathFloor
+    v27 = Integer integer=4194303
+    v28 = Mul v4, v27
+    v29 = Div v28, v11
+    v30 = Call v26, v25, v29 calleeName="Math.floor"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Call v24, -, v31 calleeName="show"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = GetModuleVariable variable=g0
+    v35 = Integer integer=4194303
+    v36 = Mul v4, v35
+    v37 = Div v36, v11
+    v38 = Integer
+    v39 = BitOr v37, v38
+    v40 = Call v34, -, v39 calleeName="show"
+    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]}
+    v42 = GetModuleVariable variable=g0
+    v43 = Integer integer=4194303
+    v44 = Mul v4, v43
+    v45 = Div v44, v11
+    v46 = Integer
+    v47 = URShift v45, v46
+    v48 = Call v42, -, v47 calleeName="show"
+    v49 = Convert v48 declared={type=undefined|null|string flags=[IsExpected]}
+    v50 = GetModuleVariable variable=g0
+    v51 = Builtin builtin=Math
+    v52 = Builtin builtin=MathFloor
+    v53 = Integer integer=2097152
+    v54 = Mul v4, v53
+    v55 = Integer integer=1
+    v56 = Add v54, v55
+    v57 = Integer integer=3
+    v58 = Mul v11, v57
+    v59 = Div v56, v58
+    v60 = Call v52, v51, v59 calleeName="Math.floor"
+    v61 = Convert v60 declared={type=number flags=[IsExpected]}
+    v62 = Call v50, -, v61 calleeName="show"
+    v63 = Convert v62 declared={type=undefined|null|string flags=[IsExpected]}
+    v64 = Call v15, v13, v23, v33, v41, v49, v63 calleeKey="push" calleeName="out.push"
+    v65 = Undefined
+    Return v65
+}
+function f3 name="halves" module=m0 position=1072 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Integer integer=2147483647
+    v5 = BitAnd v3, v4
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = Integer
+    v8 = BitOr v1, v7
+    v9 = Integer integer=65535
+    v10 = BitAnd v8, v9
+    v11 = Integer integer=1
+    v12 = Add v10, v11
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = GetModuleVariable variable=g3
+    v15 = CheckInitialized v14 name="out"
+    v16 = PropGet v15 key="push"
+    v17 = Convert v16 declared={type=undefined|null|function flags=[IsExpected]}
+    v18 = GetModuleVariable variable=g0
+    v19 = Builtin builtin=Math
+    v20 = Builtin builtin=MathRound
+    v21 = Integer integer=1048576
+    v22 = Mul v6, v21
+    v23 = Div v22, v13
+    v24 = Call v20, v19, v23 calleeName="Math.round"
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    v26 = Call v18, -, v25 calleeName="show"
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]}
+    v28 = GetModuleVariable variable=g0
+    v29 = Builtin builtin=Math
+    v30 = Builtin builtin=MathRound
+    v31 = Integer integer=2
+    v32 = Mul v13, v31
+    v33 = Div v6, v32
+    v34 = Call v30, v29, v33 calleeName="Math.round"
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = Call v28, -, v35 calleeName="show"
+    v37 = Convert v36 declared={type=undefined|null|string flags=[IsExpected]}
+    v38 = GetModuleVariable variable=g0
+    v39 = Builtin builtin=Math
+    v40 = Builtin builtin=MathRound
+    v41 = Integer integer=2
+    v42 = Mul v6, v41
+    v43 = Integer integer=1
+    v44 = Add v42, v43
+    v45 = Integer integer=2
+    v46 = Div v44, v45
+    v47 = Call v40, v39, v46 calleeName="Math.round"
+    v48 = Convert v47 declared={type=number flags=[IsExpected]}
+    v49 = Call v38, -, v48 calleeName="show"
+    v50 = Convert v49 declared={type=undefined|null|string flags=[IsExpected]}
+    v51 = GetModuleVariable variable=g0
+    v52 = Builtin builtin=Math
+    v53 = Builtin builtin=MathRound
+    v54 = Integer integer=2
+    v55 = Mul v6, v54
+    v56 = Integer integer=1
+    v57 = Add v55, v56
+    v58 = Integer integer=2
+    v59 = Mul v13, v58
+    v60 = Div v57, v59
+    v61 = Call v53, v52, v60 calleeName="Math.round"
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = Call v51, -, v62 calleeName="show"
+    v64 = Convert v63 declared={type=undefined|null|string flags=[IsExpected]}
+    v65 = Call v17, v15, v27, v37, v50, v64 calleeKey="push" calleeName="out.push"
+    v66 = Undefined
+    Return v66
+}
+function f4 name="all" module=m0 position=1306 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v0, v1 calleeName="positiveDivisor"
+    v4 = GetModuleVariable variable=g2
+    v5 = Call v4, -, v0, v1 calleeName="halves"
+    v6 = Undefined
+    Return v6
+}
+# -- generated: f0 positiveDivisor
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 337, patchpoints: 16, rare instructions: 74, polls: 3
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="positiveDivisor"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 142, patchpoints: 5, rare instructions: 37
+# CHECK-NEXT: end of function f2

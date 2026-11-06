@@ -906,6 +906,7 @@ impl<'a> Parser<'a, '_> {
 
         if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
+                || cmd == CommandTag::CompileCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
@@ -921,7 +922,7 @@ impl<'a> Parser<'a, '_> {
                 }
             }
 
-            if cmd == CommandTag::BuildCommand {
+            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
                 if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }

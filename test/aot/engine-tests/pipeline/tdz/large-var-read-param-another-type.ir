@@ -1,0 +1,557 @@
+# -- source: large-var-read-param-another-type.ts
+# // A `var` of a module that is stored once with a large object, read only where a parameter holds another type than the written one.
+# class Point { x = 1; y = 2; }
+# function pick(k: number): unknown { if (typeof k === "string") return second; return k; }
+# function brief(v: any): string { return v === undefined ? "undefined" : typeof v === "number" ? "number" : String(v.k7 + v.k149); }
+# const odd = JSON.parse('"text"') as number;
+# console.log(brief(pick(odd)), brief(pick(1)));
+# var second: Point = { ...{ k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15, k16: 16, k17: 17, k18: 18, k19: 19, k20: 20, k21: 21, k22: 22, k23: 23, k24: 24, k25: 25, k26: 26, k27: 27, k28: 28, k29: 29, k30: 30, k31: 31, k32: 32, k33: 33, k34: 34, k35: 35, k36: 36, k37: 37, k38: 38, k39: 39, k40: 40, k41: 41, k42: 42, k43: 43, k44: 44, k45: 45, k46: 46, k47: 47, k48: 48, k49: 49, k50: 50, k51: 51, k52: 52, k53: 53, k54: 54, k55: 55, k56: 56, k57: 57, k58: 58, k59: 59, k60: 60, k61: 61, k62: 62, k63: 63, k64: 64, k65: 65, k66: 66, k67: 67, k68: 68, k69: 69, k70: 70, k71: 71, k72: 72, k73: 73, k74: 74, k75: 75, k76: 76, k77: 77, k78: 78, k79: 79, k80: 80, k81: 81, k82: 82, k83: 83, k84: 84, k85: 85, k86: 86, k87: 87, k88: 88, k89: 89, k90: 90, k91: 91, k92: 92, k93: 93, k94: 94, k95: 95, k96: 96, k97: 97, k98: 98, k99: 99, k100: 100, k101: 101, k102: 102, k103: 103, k104: 104, k105: 105, k106: 106, k107: 107, k108: 108, k109: 109, k110: 110, k111: 111, k112: 112, k113: 113, k114: 114, k115: 115, k116: 116, k117: 117, k118: 118, k119: 119, k120: 120, k121: 121, k122: 122, k123: 123, k124: 124, k125: 125, k126: 126, k127: 127, k128: 128, k129: 129, k130: 130, k131: 131, k132: 132, k133: 133, k134: 134, k135: 135, k136: 136, k137: 137, k138: 138, k139: 139, k140: 140, k141: 141, k142: 142, k143: 143, k144: 144, k145: 145, k146: 146, k147: 147, k148: 148, k149: 149 } } as unknown as Point;
+# console.log(brief(pick(odd)), brief(pick(2)));
+# console.log(pick(odd) === pick(odd));
+# export {};
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="large-var-read-param-another-type.ts" displayPath="large-var-read-param-another-type.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=480 kind=Variable
+typesite w1 module=m0 position=177 kind=Parameter
+typesite w2 module=m0 position=253 kind=Result
+typesite w3 module=m0 position=421 kind=Assertion
+typesite w4 module=m0 position=441 kind=CallResult
+typesite w5 module=m0 position=459 kind=CallResult
+typesite w6 module=m0 position=1950 kind=Assertion
+typesite w7 module=m0 position=1969 kind=CallResult
+typesite w8 module=m0 position=1987 kind=CallResult
+typesite w9 module=m0 position=360 kind=CallResult
+typesite w10 module=m0 position=147 kind=Field
+typesite w11 module=m0 position=154 kind=Field
+layout L0 kind=Instance name="Point" module=m0 position=139 fields=[{key="x" declared={type=number site=w10} flags=[IsRequired]}, {key="y" declared={type=number site=w11} flags=[IsRequired]}] ownFieldCount=2
+layout L1 fields=[{key="k0" declared={type=number} flags=[IsRequired]}, {key="k1" declared={type=number} flags=[IsRequired]}, {key="k10" declared={type=number} flags=[IsRequired]}, {key="k100" declared={type=number} flags=[IsRequired]}, {key="k101" declared={type=number} flags=[IsRequired]}, {key="k102" declared={type=number} flags=[IsRequired]}, {key="k103" declared={type=number} flags=[IsRequired]}, {key="k104" declared={type=number} flags=[IsRequired]}, {key="k105" declared={type=number} flags=[IsRequired]}, {key="k106" declared={type=number} flags=[IsRequired]}, {key="k107" declared={type=number} flags=[IsRequired]}, {key="k108" declared={type=number} flags=[IsRequired]}, {key="k109" declared={type=number} flags=[IsRequired]}, {key="k11" declared={type=number} flags=[IsRequired]}, {key="k110" declared={type=number} flags=[IsRequired]}, {key="k111" declared={type=number} flags=[IsRequired]}, {key="k112" declared={type=number} flags=[IsRequired]}, {key="k113" declared={type=number} flags=[IsRequired]}, {key="k114" declared={type=number} flags=[IsRequired]}, {key="k115" declared={type=number} flags=[IsRequired]}, {key="k116" declared={type=number} flags=[IsRequired]}, {key="k117" declared={type=number} flags=[IsRequired]}, {key="k118" declared={type=number} flags=[IsRequired]}, {key="k119" declared={type=number} flags=[IsRequired]}, {key="k12" declared={type=number} flags=[IsRequired]}, {key="k120" declared={type=number} flags=[IsRequired]}, {key="k121" declared={type=number} flags=[IsRequired]}, {key="k122" declared={type=number} flags=[IsRequired]}, {key="k123" declared={type=number} flags=[IsRequired]}, {key="k124" declared={type=number} flags=[IsRequired]}, {key="k125" declared={type=number} flags=[IsRequired]}, {key="k126" declared={type=number} flags=[IsRequired]}, {key="k127" declared={type=number} flags=[IsRequired]}, {key="k128" declared={type=number} flags=[IsRequired]}, {key="k129" declared={type=number} flags=[IsRequired]}, {key="k13" declared={type=number} flags=[IsRequired]}, {key="k130" declared={type=number} flags=[IsRequired]}, {key="k131" declared={type=number} flags=[IsRequired]}, {key="k132" declared={type=number} flags=[IsRequired]}, {key="k133" declared={type=number} flags=[IsRequired]}, {key="k134" declared={type=number} flags=[IsRequired]}, {key="k135" declared={type=number} flags=[IsRequired]}, {key="k136" declared={type=number} flags=[IsRequired]}, {key="k137" declared={type=number} flags=[IsRequired]}, {key="k138" declared={type=number} flags=[IsRequired]}, {key="k139" declared={type=number} flags=[IsRequired]}, {key="k14" declared={type=number} flags=[IsRequired]}, {key="k140" declared={type=number} flags=[IsRequired]}, {key="k141" declared={type=number} flags=[IsRequired]}, {key="k142" declared={type=number} flags=[IsRequired]}, {key="k143" declared={type=number} flags=[IsRequired]}, {key="k144" declared={type=number} flags=[IsRequired]}, {key="k145" declared={type=number} flags=[IsRequired]}, {key="k146" declared={type=number} flags=[IsRequired]}, {key="k147" declared={type=number} flags=[IsRequired]}, {key="k148" declared={type=number} flags=[IsRequired]}, {key="k149" declared={type=number} flags=[IsRequired]}, {key="k15" declared={type=number} flags=[IsRequired]}, {key="k16" declared={type=number} flags=[IsRequired]}, {key="k17" declared={type=number} flags=[IsRequired]}, {key="k18" declared={type=number} flags=[IsRequired]}, {key="k19" declared={type=number} flags=[IsRequired]}, {key="k2" declared={type=number} flags=[IsRequired]}, {key="k20" declared={type=number} flags=[IsRequired]}, {key="k21" declared={type=number} flags=[IsRequired]}, {key="k22" declared={type=number} flags=[IsRequired]}, {key="k23" declared={type=number} flags=[IsRequired]}, {key="k24" declared={type=number} flags=[IsRequired]}, {key="k25" declared={type=number} flags=[IsRequired]}, {key="k26" declared={type=number} flags=[IsRequired]}, {key="k27" declared={type=number} flags=[IsRequired]}, {key="k28" declared={type=number} flags=[IsRequired]}, {key="k29" declared={type=number} flags=[IsRequired]}, {key="k3" declared={type=number} flags=[IsRequired]}, {key="k30" declared={type=number} flags=[IsRequired]}, {key="k31" declared={type=number} flags=[IsRequired]}, {key="k32" declared={type=number} flags=[IsRequired]}, {key="k33" declared={type=number} flags=[IsRequired]}, {key="k34" declared={type=number} flags=[IsRequired]}, {key="k35" declared={type=number} flags=[IsRequired]}, {key="k36" declared={type=number} flags=[IsRequired]}, {key="k37" declared={type=number} flags=[IsRequired]}, {key="k38" declared={type=number} flags=[IsRequired]}, {key="k39" declared={type=number} flags=[IsRequired]}, {key="k4" declared={type=number} flags=[IsRequired]}, {key="k40" declared={type=number} flags=[IsRequired]}, {key="k41" declared={type=number} flags=[IsRequired]}, {key="k42" declared={type=number} flags=[IsRequired]}, {key="k43" declared={type=number} flags=[IsRequired]}, {key="k44" declared={type=number} flags=[IsRequired]}, {key="k45" declared={type=number} flags=[IsRequired]}, {key="k46" declared={type=number} flags=[IsRequired]}, {key="k47" declared={type=number} flags=[IsRequired]}, {key="k48" declared={type=number} flags=[IsRequired]}, {key="k49" declared={type=number} flags=[IsRequired]}, {key="k5" declared={type=number} flags=[IsRequired]}, {key="k50" declared={type=number} flags=[IsRequired]}, {key="k51" declared={type=number} flags=[IsRequired]}, {key="k52" declared={type=number} flags=[IsRequired]}, {key="k53" declared={type=number} flags=[IsRequired]}, {key="k54" declared={type=number} flags=[IsRequired]}, {key="k55" declared={type=number} flags=[IsRequired]}, {key="k56" declared={type=number} flags=[IsRequired]}, {key="k57" declared={type=number} flags=[IsRequired]}, {key="k58" declared={type=number} flags=[IsRequired]}, {key="k59" declared={type=number} flags=[IsRequired]}, {key="k6" declared={type=number} flags=[IsRequired]}, {key="k60" declared={type=number} flags=[IsRequired]}, {key="k61" declared={type=number} flags=[IsRequired]}, {key="k62" declared={type=number} flags=[IsRequired]}, {key="k63" declared={type=number} flags=[IsRequired]}, {key="k64" declared={type=number} flags=[IsRequired]}, {key="k65" declared={type=number} flags=[IsRequired]}, {key="k66" declared={type=number} flags=[IsRequired]}, {key="k67" declared={type=number} flags=[IsRequired]}, {key="k68" declared={type=number} flags=[IsRequired]}, {key="k69" declared={type=number} flags=[IsRequired]}, {key="k7" declared={type=number} flags=[IsRequired]}, {key="k70" declared={type=number} flags=[IsRequired]}, {key="k71" declared={type=number} flags=[IsRequired]}, {key="k72" declared={type=number} flags=[IsRequired]}, {key="k73" declared={type=number} flags=[IsRequired]}, {key="k74" declared={type=number} flags=[IsRequired]}, {key="k75" declared={type=number} flags=[IsRequired]}, {key="k76" declared={type=number} flags=[IsRequired]}, {key="k77" declared={type=number} flags=[IsRequired]}, {key="k78" declared={type=number} flags=[IsRequired]}, {key="k79" declared={type=number} flags=[IsRequired]}, {key="k8" declared={type=number} flags=[IsRequired]}, {key="k80" declared={type=number} flags=[IsRequired]}, {key="k81" declared={type=number} flags=[IsRequired]}, {key="k82" declared={type=number} flags=[IsRequired]}, {key="k83" declared={type=number} flags=[IsRequired]}, {key="k84" declared={type=number} flags=[IsRequired]}, {key="k85" declared={type=number} flags=[IsRequired]}, {key="k86" declared={type=number} flags=[IsRequired]}, {key="k87" declared={type=number} flags=[IsRequired]}, {key="k88" declared={type=number} flags=[IsRequired]}, {key="k89" declared={type=number} flags=[IsRequired]}, {key="k9" declared={type=number} flags=[IsRequired]}, {key="k90" declared={type=number} flags=[IsRequired]}, {key="k91" declared={type=number} flags=[IsRequired]}, {key="k92" declared={type=number} flags=[IsRequired]}, {key="k93" declared={type=number} flags=[IsRequired]}, {key="k94" declared={type=number} flags=[IsRequired]}, {key="k95" declared={type=number} flags=[IsRequired]}, {key="k96" declared={type=number} flags=[IsRequired]}, {key="k97" declared={type=number} flags=[IsRequired]}, {key="k98" declared={type=number} flags=[IsRequired]}, {key="k99" declared={type=number} flags=[IsRequired]}] declaredOrder=[0, 1, 62, 73, 84, 95, 106, 117, 128, 139, 2, 13, 24, 35, 46, 57, 58, 59, 60, 61, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56] ownFieldCount=150
+variable g0 name="second" module=m0 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull]} initialization=Undefined flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    v1 = NewClosure function=f1
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = NewClosure function=f2
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Builtin builtin=JSON
+    v6 = PropGet v5 key="parse"
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v8 = String string="\"text\""
+    v9 = Call v7, v5, v8 calleeKey="parse" calleeName="JSON.parse"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Convert v10 declared={type=number site=w3} illTypedCause=FromLooseType
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="console" [isFreeName]
+    v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]}
+    v15 = PropGet v14 key="log"
+    v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v17 = Call v2, -, v11 calleeName="pick"
+    v18 = Call v4, -, v17 calleeName="brief"
+    v19 = Convert v18 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Integer integer=1
+    v21 = Call v2, -, v20 calleeName="pick"
+    v22 = Call v4, -, v21 calleeName="brief"
+    v23 = Convert v22 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v24 = Call v16, v14, v19, v23 calleeKey="log" calleeName="console.log"
+    v25 = Integer
+    v26 = Convert v25 declared={type=number}
+    v27 = Integer integer=1
+    v28 = Convert v27 declared={type=number}
+    v29 = Integer integer=2
+    v30 = Convert v29 declared={type=number}
+    v31 = Integer integer=3
+    v32 = Convert v31 declared={type=number}
+    v33 = Integer integer=4
+    v34 = Convert v33 declared={type=number}
+    v35 = Integer integer=5
+    v36 = Convert v35 declared={type=number}
+    v37 = Integer integer=6
+    v38 = Convert v37 declared={type=number}
+    v39 = Integer integer=7
+    v40 = Convert v39 declared={type=number}
+    v41 = Integer integer=8
+    v42 = Convert v41 declared={type=number}
+    v43 = Integer integer=9
+    v44 = Convert v43 declared={type=number}
+    v45 = Integer integer=10
+    v46 = Convert v45 declared={type=number}
+    v47 = Integer integer=11
+    v48 = Convert v47 declared={type=number}
+    v49 = Integer integer=12
+    v50 = Convert v49 declared={type=number}
+    v51 = Integer integer=13
+    v52 = Convert v51 declared={type=number}
+    v53 = Integer integer=14
+    v54 = Convert v53 declared={type=number}
+    v55 = Integer integer=15
+    v56 = Convert v55 declared={type=number}
+    v57 = Integer integer=16
+    v58 = Convert v57 declared={type=number}
+    v59 = Integer integer=17
+    v60 = Convert v59 declared={type=number}
+    v61 = Integer integer=18
+    v62 = Convert v61 declared={type=number}
+    v63 = Integer integer=19
+    v64 = Convert v63 declared={type=number}
+    v65 = Integer integer=20
+    v66 = Convert v65 declared={type=number}
+    v67 = Integer integer=21
+    v68 = Convert v67 declared={type=number}
+    v69 = Integer integer=22
+    v70 = Convert v69 declared={type=number}
+    v71 = Integer integer=23
+    v72 = Convert v71 declared={type=number}
+    v73 = Integer integer=24
+    v74 = Convert v73 declared={type=number}
+    v75 = Integer integer=25
+    v76 = Convert v75 declared={type=number}
+    v77 = Integer integer=26
+    v78 = Convert v77 declared={type=number}
+    v79 = Integer integer=27
+    v80 = Convert v79 declared={type=number}
+    v81 = Integer integer=28
+    v82 = Convert v81 declared={type=number}
+    v83 = Integer integer=29
+    v84 = Convert v83 declared={type=number}
+    v85 = Integer integer=30
+    v86 = Convert v85 declared={type=number}
+    v87 = Integer integer=31
+    v88 = Convert v87 declared={type=number}
+    v89 = Integer integer=32
+    v90 = Convert v89 declared={type=number}
+    v91 = Integer integer=33
+    v92 = Convert v91 declared={type=number}
+    v93 = Integer integer=34
+    v94 = Convert v93 declared={type=number}
+    v95 = Integer integer=35
+    v96 = Convert v95 declared={type=number}
+    v97 = Integer integer=36
+    v98 = Convert v97 declared={type=number}
+    v99 = Integer integer=37
+    v100 = Convert v99 declared={type=number}
+    v101 = Integer integer=38
+    v102 = Convert v101 declared={type=number}
+    v103 = Integer integer=39
+    v104 = Convert v103 declared={type=number}
+    v105 = Integer integer=40
+    v106 = Convert v105 declared={type=number}
+    v107 = Integer integer=41
+    v108 = Convert v107 declared={type=number}
+    v109 = Integer integer=42
+    v110 = Convert v109 declared={type=number}
+    v111 = Integer integer=43
+    v112 = Convert v111 declared={type=number}
+    v113 = Integer integer=44
+    v114 = Convert v113 declared={type=number}
+    v115 = Integer integer=45
+    v116 = Convert v115 declared={type=number}
+    v117 = Integer integer=46
+    v118 = Convert v117 declared={type=number}
+    v119 = Integer integer=47
+    v120 = Convert v119 declared={type=number}
+    v121 = Integer integer=48
+    v122 = Convert v121 declared={type=number}
+    v123 = Integer integer=49
+    v124 = Convert v123 declared={type=number}
+    v125 = Integer integer=50
+    v126 = Convert v125 declared={type=number}
+    v127 = Integer integer=51
+    v128 = Convert v127 declared={type=number}
+    v129 = Integer integer=52
+    v130 = Convert v129 declared={type=number}
+    v131 = Integer integer=53
+    v132 = Convert v131 declared={type=number}
+    v133 = Integer integer=54
+    v134 = Convert v133 declared={type=number}
+    v135 = Integer integer=55
+    v136 = Convert v135 declared={type=number}
+    v137 = Integer integer=56
+    v138 = Convert v137 declared={type=number}
+    v139 = Integer integer=57
+    v140 = Convert v139 declared={type=number}
+    v141 = Integer integer=58
+    v142 = Convert v141 declared={type=number}
+    v143 = Integer integer=59
+    v144 = Convert v143 declared={type=number}
+    v145 = Integer integer=60
+    v146 = Convert v145 declared={type=number}
+    v147 = Integer integer=61
+    v148 = Convert v147 declared={type=number}
+    v149 = Integer integer=62
+    v150 = Convert v149 declared={type=number}
+    v151 = Integer integer=63
+    v152 = Convert v151 declared={type=number}
+    v153 = Integer integer=64
+    v154 = Convert v153 declared={type=number}
+    v155 = Integer integer=65
+    v156 = Convert v155 declared={type=number}
+    v157 = Integer integer=66
+    v158 = Convert v157 declared={type=number}
+    v159 = Integer integer=67
+    v160 = Convert v159 declared={type=number}
+    v161 = Integer integer=68
+    v162 = Convert v161 declared={type=number}
+    v163 = Integer integer=69
+    v164 = Convert v163 declared={type=number}
+    v165 = Integer integer=70
+    v166 = Convert v165 declared={type=number}
+    v167 = Integer integer=71
+    v168 = Convert v167 declared={type=number}
+    v169 = Integer integer=72
+    v170 = Convert v169 declared={type=number}
+    v171 = Integer integer=73
+    v172 = Convert v171 declared={type=number}
+    v173 = Integer integer=74
+    v174 = Convert v173 declared={type=number}
+    v175 = Integer integer=75
+    v176 = Convert v175 declared={type=number}
+    v177 = Integer integer=76
+    v178 = Convert v177 declared={type=number}
+    v179 = Integer integer=77
+    v180 = Convert v179 declared={type=number}
+    v181 = Integer integer=78
+    v182 = Convert v181 declared={type=number}
+    v183 = Integer integer=79
+    v184 = Convert v183 declared={type=number}
+    v185 = Integer integer=80
+    v186 = Convert v185 declared={type=number}
+    v187 = Integer integer=81
+    v188 = Convert v187 declared={type=number}
+    v189 = Integer integer=82
+    v190 = Convert v189 declared={type=number}
+    v191 = Integer integer=83
+    v192 = Convert v191 declared={type=number}
+    v193 = Integer integer=84
+    v194 = Convert v193 declared={type=number}
+    v195 = Integer integer=85
+    v196 = Convert v195 declared={type=number}
+    v197 = Integer integer=86
+    v198 = Convert v197 declared={type=number}
+    v199 = Integer integer=87
+    v200 = Convert v199 declared={type=number}
+    v201 = Integer integer=88
+    v202 = Convert v201 declared={type=number}
+    v203 = Integer integer=89
+    v204 = Convert v203 declared={type=number}
+    v205 = Integer integer=90
+    v206 = Convert v205 declared={type=number}
+    v207 = Integer integer=91
+    v208 = Convert v207 declared={type=number}
+    v209 = Integer integer=92
+    v210 = Convert v209 declared={type=number}
+    v211 = Integer integer=93
+    v212 = Convert v211 declared={type=number}
+    v213 = Integer integer=94
+    v214 = Convert v213 declared={type=number}
+    v215 = Integer integer=95
+    v216 = Convert v215 declared={type=number}
+    v217 = Integer integer=96
+    v218 = Convert v217 declared={type=number}
+    v219 = Integer integer=97
+    v220 = Convert v219 declared={type=number}
+    v221 = Integer integer=98
+    v222 = Convert v221 declared={type=number}
+    v223 = Integer integer=99
+    v224 = Convert v223 declared={type=number}
+    v225 = Integer integer=100
+    v226 = Convert v225 declared={type=number}
+    v227 = Integer integer=101
+    v228 = Convert v227 declared={type=number}
+    v229 = Integer integer=102
+    v230 = Convert v229 declared={type=number}
+    v231 = Integer integer=103
+    v232 = Convert v231 declared={type=number}
+    v233 = Integer integer=104
+    v234 = Convert v233 declared={type=number}
+    v235 = Integer integer=105
+    v236 = Convert v235 declared={type=number}
+    v237 = Integer integer=106
+    v238 = Convert v237 declared={type=number}
+    v239 = Integer integer=107
+    v240 = Convert v239 declared={type=number}
+    v241 = Integer integer=108
+    v242 = Convert v241 declared={type=number}
+    v243 = Integer integer=109
+    v244 = Convert v243 declared={type=number}
+    v245 = Integer integer=110
+    v246 = Convert v245 declared={type=number}
+    v247 = Integer integer=111
+    v248 = Convert v247 declared={type=number}
+    v249 = Integer integer=112
+    v250 = Convert v249 declared={type=number}
+    v251 = Integer integer=113
+    v252 = Convert v251 declared={type=number}
+    v253 = Integer integer=114
+    v254 = Convert v253 declared={type=number}
+    v255 = Integer integer=115
+    v256 = Convert v255 declared={type=number}
+    v257 = Integer integer=116
+    v258 = Convert v257 declared={type=number}
+    v259 = Integer integer=117
+    v260 = Convert v259 declared={type=number}
+    v261 = Integer integer=118
+    v262 = Convert v261 declared={type=number}
+    v263 = Integer integer=119
+    v264 = Convert v263 declared={type=number}
+    v265 = Integer integer=120
+    v266 = Convert v265 declared={type=number}
+    v267 = Integer integer=121
+    v268 = Convert v267 declared={type=number}
+    v269 = Integer integer=122
+    v270 = Convert v269 declared={type=number}
+    v271 = Integer integer=123
+    v272 = Convert v271 declared={type=number}
+    v273 = Integer integer=124
+    v274 = Convert v273 declared={type=number}
+    v275 = Integer integer=125
+    v276 = Convert v275 declared={type=number}
+    v277 = Integer integer=126
+    v278 = Convert v277 declared={type=number}
+    v279 = Integer integer=127
+    v280 = Convert v279 declared={type=number}
+    v281 = Integer integer=128
+    v282 = Convert v281 declared={type=number}
+    v283 = Integer integer=129
+    v284 = Convert v283 declared={type=number}
+    v285 = Integer integer=130
+    v286 = Convert v285 declared={type=number}
+    v287 = Integer integer=131
+    v288 = Convert v287 declared={type=number}
+    v289 = Integer integer=132
+    v290 = Convert v289 declared={type=number}
+    v291 = Integer integer=133
+    v292 = Convert v291 declared={type=number}
+    v293 = Integer integer=134
+    v294 = Convert v293 declared={type=number}
+    v295 = Integer integer=135
+    v296 = Convert v295 declared={type=number}
+    v297 = Integer integer=136
+    v298 = Convert v297 declared={type=number}
+    v299 = Integer integer=137
+    v300 = Convert v299 declared={type=number}
+    v301 = Integer integer=138
+    v302 = Convert v301 declared={type=number}
+    v303 = Integer integer=139
+    v304 = Convert v303 declared={type=number}
+    v305 = Integer integer=140
+    v306 = Convert v305 declared={type=number}
+    v307 = Integer integer=141
+    v308 = Convert v307 declared={type=number}
+    v309 = Integer integer=142
+    v310 = Convert v309 declared={type=number}
+    v311 = Integer integer=143
+    v312 = Convert v311 declared={type=number}
+    v313 = Integer integer=144
+    v314 = Convert v313 declared={type=number}
+    v315 = Integer integer=145
+    v316 = Convert v315 declared={type=number}
+    v317 = Integer integer=146
+    v318 = Convert v317 declared={type=number}
+    v319 = Integer integer=147
+    v320 = Convert v319 declared={type=number}
+    v321 = Integer integer=148
+    v322 = Convert v321 declared={type=number}
+    v323 = Integer integer=149
+    v324 = Convert v323 declared={type=number}
+    v325 = NewObject -, v26, v28, v30, v32, v34, v36, v38, v40, v42, v44, v46, v48, v50, v52, v54, v56, v58, v60, v62, v64, v66, v68, v70, v72, v74, v76, v78, v80, v82, v84, v86, v88, v90, v92, v94, v96, v98, v100, v102, v104, v106, v108, v110, v112, v114, v116, v118, v120, v122, v124, v126, v128, v130, v132, v134, v136, v138, v140, v142, v144, v146, v148, v150, v152, v154, v156, v158, v160, v162, v164, v166, v168, v170, v172, v174, v176, v178, v180, v182, v184, v186, v188, v190, v192, v194, v196, v198, v200, v202, v204, v206, v208, v210, v212, v214, v216, v218, v220, v222, v224, v226, v228, v230, v232, v234, v236, v238, v240, v242, v244, v246, v248, v250, v252, v254, v256, v258, v260, v262, v264, v266, v268, v270, v272, v274, v276, v278, v280, v282, v284, v286, v288, v290, v292, v294, v296, v298, v300, v302, v304, v306, v308, v310, v312, v314, v316, v318, v320, v322, v324 layout=L1 fields=[0, 1, 62, 73, 84, 95, 106, 117, 128, 139, 2, 13, 24, 35, 46, 57, 58, 59, 60, 61, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]
+    v326 = FinishObject v325
+    v327 = Convert v326 declared={type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v327 variable=g0
+    v329 = Builtin builtin=GlobalThis
+    v330 = PropGet v329 key="console" [isFreeName]
+    v331 = Convert v330 declared={type=builtin(Console) flags=[IsExpected]}
+    v332 = PropGet v331 key="log"
+    v333 = Convert v332 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v334 = Call v2, -, v11 calleeName="pick"
+    v335 = Call v4, -, v334 calleeName="brief"
+    v336 = Convert v335 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v337 = Integer integer=2
+    v338 = Call v2, -, v337 calleeName="pick"
+    v339 = Call v4, -, v338 calleeName="brief"
+    v340 = Convert v339 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]}
+    v341 = Call v333, v331, v336, v340 calleeKey="log" calleeName="console.log"
+    v342 = Builtin builtin=GlobalThis
+    v343 = PropGet v342 key="console" [isFreeName]
+    v344 = Convert v343 declared={type=builtin(Console) flags=[IsExpected]}
+    v345 = PropGet v344 key="log"
+    v346 = Convert v345 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v347 = Call v2, -, v11 calleeName="pick"
+    v348 = Call v2, -, v11 calleeName="pick"
+    v349 = StrictEq v347, v348
+    v350 = Call v346, v344, v349 calleeKey="log" calleeName="console.log"
+    v351 = Undefined
+    Return v351
+}
+function f1 name="pick" module=m0 position=163 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = GetModuleVariable variable=g0
+    Return v3
+  b4(v4):
+    Jump -> next b5()
+  b5():
+    Return v4
+}
+function f2 name="brief" module=m0 position=253 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = String string="undefined"
+    Jump -> next b8(v3)
+  b4(v4):
+    Jump -> next b5()
+  b5():
+    v5 = TypeTest v4 testedType=number
+    Branch v5 -> taken b6(| 0), notTaken b9(| 0)
+  b6(v6):
+    Jump -> next b7()
+  b7():
+    v7 = String string="number"
+    Jump -> next b8(v7)
+  b8(v8):
+    v9 = Convert v8 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
+    Return v9
+  b9(v10):
+    Jump -> next b10()
+  b10():
+    v11 = Builtin builtin=String
+    v12 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v13 = PropGet v12 key="k7"
+    v14 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v15 = PropGet v14 key="k149"
+    v16 = Add v13, v15
+    v17 = Call v11, -, v16 calleeName="String"
+    ReturnCall v17 casts=[{declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}}]
+}
+# -- generated: f0 pick brief
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=163 parent=2 isTailCall=true module=m0}, {callee=f4 callPosition=163 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "\"text\"" = String string="\"text\""
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=1
+# CHECK-NEXT: v3: null|boolean|number|string|object ~ number = Upcast v2 castType=anything
+# CHECK-NEXT: v4: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=4
+# CHECK-NEXT: v5: undefined|null|boolean|number|object = AssumeType v4 provenType=undefined|null|boolean|number|object
+# CHECK-NEXT: v6: string = CallDirect v5 function=f2 accessSite=5
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: 1 = Upcast v7 castType=anything
+# CHECK-NEXT: v9: 1 = AssumeType v8 provenType=undefined|null|boolean|number|object
+# CHECK-NEXT: v10: string = CallDirect v9 function=f2 accessSite=7
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v6, v10 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v12: absent = Absent
+# CHECK-NEXT: PutModuleVariable v12 variable=g0
+# CHECK-NEXT: v14: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=11
+# CHECK-NEXT: v15: undefined|null|boolean|number|object = AssumeType v14 provenType=undefined|null|boolean|number|object
+# CHECK-NEXT: v16: string = CallDirect v15 function=f2 accessSite=12
+# CHECK-NEXT: v17: 2 = Integer integer=2
+# CHECK-NEXT: v18: 2 = Upcast v17 castType=anything
+# CHECK-NEXT: v19: 2 = AssumeType v18 provenType=undefined|null|boolean|number|object
+# CHECK-NEXT: v20: string = CallDirect v19 function=f2 accessSite=14
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v16, v20 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: v22: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=18
+# CHECK-NEXT: v23: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=19
+# CHECK-NEXT: v24: boolean = StrictEq v22, v23
+# CHECK-NEXT: v25: undefined = CallBuiltin -, v24 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: Return v26
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="pick"
+# CHECK: module=m0 position=163 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=undefined|null|boolean|number|object flags=[IsExpected]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f4 fallback=f5} {
+# CHECK-NEXT: b0(v0: anything ~ number):
+# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: number):
+# CHECK-NEXT: v3: undefined|null|boolean|number|object = CallDirect v2 function=f4
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v4: anything ~ undefined|null|boolean|number|object = CallDirect v0 function=f5
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="brief"
+# CHECK: module=m0 position=253 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|object}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|boolean|number|object):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=undefined
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: "undefined" = String string="undefined"
+# CHECK-NEXT: Jump -> next b4(v2)
+# CHECK-NEXT: b2(v3: null|boolean|number|object):
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v4 -> taken b3(), notTaken b5(| 0)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v5: "number" = String string="number"
+# CHECK-NEXT: Jump -> next b4(v5)
+# CHECK-NEXT: b4(v6: "number"|"undefined"):
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b5(v7: null|boolean|object):
+# CHECK-NEXT: v8: null|boolean|object ~ L1 = Upcast v7 castType=null|boolean|string|symbol|bigint|object
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v8 testedType=L1
+# CHECK-NEXT: Branch v9 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v10: L1):
+# CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v10 key="k7" receivers=[L1] level=Expected accessSite=21
+# CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v10 key="k149" receivers=[L1] level=Expected accessSite=22
+# CHECK-NEXT: Jump -> next b8(v11, v12)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v13: anything ~ int[-2147483643, 2147483647] = PropGet v8 key="k7" accessSite=21 receivers=[L1, ..]
+# CHECK-NEXT: v14: anything ~ int[-2147483643, 2147483647] = PropGet v8 key="k149" accessSite=22 receivers=[L1, ..]
+# CHECK-NEXT: v15: boolean ~ true = TypeTest v13 testedType=i32
+# CHECK-NEXT: Branch v15 -> taken b10(| 0), notTaken b9()
+# CHECK-NEXT: b8(v16: i32 ~ int[-2147483643, 2147483647], v17: i32 ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v18: int[-4294967296, 4294967294] ~ int[-4294967286, 4294967294] = Add v16, v17
+# CHECK-NEXT: v19: string = CallBuiltin -, v18 overload=String/0 accessSite=23 @0 tail
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v20: number|string|bigint ~ int[-4294967286, 4294967294] = Add v13, v14
+# CHECK-NEXT: v21: string = CallBuiltin -, v20 overload=String/0 accessSite=23 @0 tail
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b10(v22: i32 ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v14 testedType=i32
+# CHECK-NEXT: Branch v23 -> taken b8(v22 | 0), notTaken b9()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="pick"
+# CHECK: module=m0 position=163 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=undefined|null|boolean|number|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="pick"
+# CHECK: module=m0 position=163 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=undefined|null|boolean|number|object flags=[IsExpected]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f4} {
+# CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: TestAndBranch v1 -> taken b1(), notTaken b5(| 0)
+# CHECK-NEXT: b1() frequency=Unlikely:
+# CHECK-NEXT: v2: anything|absent = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=absent
+# CHECK-NEXT: TestAndBranch v3 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v4: anything = CallDirect function=f6
+# CHECK-NEXT: Jump -> next b4(v4)
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v5: fact = Specified
+# CHECK-NEXT: v6: anything = AssumeType v2, v5 provenType=anything
+# CHECK-NEXT: Jump -> next b4(v6)
+# CHECK-NEXT: b4(v7: anything) frequency=Unlikely:
+# CHECK-NEXT: v8: undefined|L1 = AssumeType v7 provenType=undefined|L1
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b5(v9: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }

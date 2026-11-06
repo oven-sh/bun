@@ -18734,5 +18734,145 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "type-created-by-an-instantiation-and-named-by-an-annotation-later": {
+    "files": {
+      "a.ts": "import type { Stream } from \"./types\";\ndeclare function make<T>(): Stream<T>;\nconst none = make<never>();\nlet every = make<unknown>();\nexport declare const named: Stream<never>;\nexport declare const alsoNamed: Stream<unknown>;\nevery = none;\n",
+      "types.ts": "export interface Options<T> {\n  element?: (value: T) => T;\n}\nexport interface Stream<T> {\n  buffer: () => Stream<T[]>;\n  group: (options: Options<T>) => void;\n}\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "a-chain-of-ten-conditional-types-that-gets-shorter": {
+    "files": {
+      "a.ts": "export {};\nfunction take1<R>(value: Exclude<R, 1>): string { return value; }\nfunction take3<R>(value: Exclude<Exclude<Exclude<R, 1>, 2>, 3>): string { return value; }\nfunction take9<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>): string { return value; }\nfunction take10<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>): string { return value; }\nfunction take11<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>, 11>): string { return value; }\nfunction take15<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>, 11>, 12>, 13>, 14>, 15>): string { return value; }\ninterface Needs<out R> { readonly needs: R }\nfunction provided9<R>(value: Needs<\"scope\" | Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>>): Needs<\"scope\"> { return value; }\nfunction provided15<R>(value: Needs<\"scope\" | Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>, 11>, 12>, 13>, 14>, 15>>): Needs<\"scope\"> { return value; }\ninterface Box<T> { readonly inner: T }\ndeclare const boxes: Box<Box<Box<Box<Box<number>>>>>;\nconst other: Box<Box<Box<Box<Box<string>>>>> = boxes;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "ten-calls-in-a-row-that-each-exclude-a-member-of-a-type-parameter": {
+    "files": {
+      "a.ts": "export {};\ninterface Task<out Needs> { readonly needs: Needs }\ninterface Scope { readonly scope: true }\ninterface Service0 { readonly service0: true }\ninterface Service1 { readonly service1: true }\ninterface Service2 { readonly service2: true }\ninterface Service3 { readonly service3: true }\ninterface Service4 { readonly service4: true }\ninterface Service5 { readonly service5: true }\ninterface Service6 { readonly service6: true }\ninterface Service7 { readonly service7: true }\ninterface Service8 { readonly service8: true }\ninterface Service9 { readonly service9: true }\ninterface Service10 { readonly service10: true }\ninterface Service11 { readonly service11: true }\ninterface Service12 { readonly service12: true }\ninterface Service13 { readonly service13: true }\ninterface Service14 { readonly service14: true }\ndeclare function provide<Service>(): <Needs>(task: Task<Needs>) => Task<Exclude<Needs, Service>>;\ndeclare function run(task: Task<Scope>): void;\nfunction provides1<Needs>(input: Task<Needs | Scope>) { run(provide<Service0>()(input)); }\nfunction provides2<Needs>(input: Task<Needs | Scope>) { run(provide<Service1>()(provide<Service0>()(input))); }\nfunction provides10<Needs>(input: Task<Needs | Scope>) { run(provide<Service9>()(provide<Service8>()(provide<Service7>()(provide<Service6>()(provide<Service5>()(provide<Service4>()(provide<Service3>()(provide<Service2>()(provide<Service1>()(provide<Service0>()(input))))))))))); }\nfunction provides15<Needs>(input: Task<Needs | Scope>) { run(provide<Service14>()(provide<Service13>()(provide<Service12>()(provide<Service11>()(provide<Service10>()(provide<Service9>()(provide<Service8>()(provide<Service7>()(provide<Service6>()(provide<Service5>()(provide<Service4>()(provide<Service3>()(provide<Service2>()(provide<Service1>()(provide<Service0>()(input)))))))))))))))); }\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    get [k]() {\n        return f(this as any);\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-named-like-a-property-before-it-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any;\nconst o = {\n    a: 1,\n    get a() {\n        return f(this as any);\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-named-like-a-property-before-it-returns-a-variable-assigned-in-a-try": {
+    "files": {
+      "a.ts": "declare const f: any;\nconst o = {\n    a: 1,\n    // @ts-ignore\n    get a() {\n        let v;\n        try { v = new f(1, this as any); } catch (e) {}\n        return v;\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-named-like-a-property-behind-it-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any;\nconst o = {\n    get a() {\n        return f(this as any);\n    },\n    a: 1,\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-and-setter-under-one-computed-key-pass-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: string;\nconst o = {\n    get [k]() {\n        return f(this);\n    },\n    set [k](value) {\n        f(this, value);\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-in-a-const-literal-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    get [k]() {\n        return f(this as any);\n    },\n} as const;\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-in-a-literal-that-is-an-argument-of-a-generic-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\ndeclare function g<T>(value: T): T;\nconst o = g({\n    get [k]() {\n        return f(this as any);\n    },\n    b: 1,\n});\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-in-a-literal-that-is-spread": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    a: 1,\n    ...{\n        get [k]() {\n            return f(this as any);\n        },\n    },\n};\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-in-a-literal-with-a-declared-type": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o: Record<string, unknown> = {\n    get [k]() {\n        return f(this as any);\n    },\n};\nconst p = {\n    get [k]() {\n        return f(this as any);\n    },\n} satisfies Record<string, unknown>;\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-in-a-loop-assigns-what-a-call-with-this-returns": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    get [k]() {\n        let v;\n        for (let i = 0; i < 3; i++) {\n            v = f(this as any, v);\n        }\n        return v;\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-in-a-nested-literal-passes-the-outer-this": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    get [k]() {\n        const inner = {\n            get [k]() {\n                return f(this as any);\n            },\n        };\n        return f(this as any, inner);\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-of-a-class-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nclass C {\n    get [k]() {\n        return f(this as any);\n    }\n    static get [k]() {\n        return f(this as any);\n    }\n}\nconst sentinel: number = new C();\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-returns-this": {
+    "files": {
+      "a.ts": "declare const k: string;\nconst o = {\n    get [k]() {\n        return this;\n    },\n};\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-key-with-a-return-type-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    get [k](): number {\n        return f(this as any);\n    },\n};\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "getter-under-a-computed-symbol-reads-a-member-of-this": {
+    "files": {
+      "a.ts": "declare const k: symbol;\nconst o = {\n    a: 1,\n    get [k]() {\n        return this.a;\n    },\n};\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "method-under-a-computed-key-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: any;\nconst o = {\n    [k]() {\n        return f(this as any);\n    },\n};\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "setter-under-a-computed-key-passes-this-to-a-call": {
+    "files": {
+      "a.ts": "declare const f: any, k: number;\nconst o = {\n    set [k](value: string) {\n        f(this);\n    },\n    b: 1,\n};\nconst sentinel: number = o;\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "two-getters-under-computed-keys-pass-this-to-calls": {
+    "files": {
+      "a.ts": "declare const f: any, j: string, k: string;\nconst o = {\n    get [j]() {\n        return f(this);\n    },\n    get [k]() {\n        return f(this);\n    },\n};\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "property-without-a-type-is-assigned-a-unique-symbol": {
+    "files": {
+      "a.ts": "declare const own: unique symbol;\nclass InStaticBlocks {\n    static a;\n    static accessor b;\n    static #c;\n    static d;\n    static {\n        this.a = Symbol.iterator;\n        this.b = Symbol.iterator;\n        this.#c = own;\n        this.d = Math.random() ? Symbol.iterator : undefined;\n    }\n    static store(given: symbol) {\n        InStaticBlocks.a = given;\n        InStaticBlocks.b = given;\n        InStaticBlocks.#c = given;\n        InStaticBlocks.d = given;\n    }\n}\nclass InTheConstructor {\n    a;\n    accessor b;\n    #c;\n    constructor() {\n        this.a = Symbol.iterator;\n        this.b = own;\n        this.#c = Symbol.asyncIterator;\n    }\n    store(given: symbol) {\n        this.a = given;\n        this.b = given;\n        this.#c = given;\n    }\n}\nconst a: typeof Symbol.iterator = InStaticBlocks.a;\nconst sentinel: number = \"\";\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
+    }
+  },
+  "names-of-globalthis-beside-a-global-block-and-an-ambient-module-in-a-script": {
+    "files": {
+      "a.ts": "type Names = keyof typeof globalThis;\nconst reserved: Extract<Names, `${string}global`> = 1;\nconst quoted: Extract<Names, `\"${string}\"`> = 1;\nconst declared: Extract<Names, `${string}TheBlock`> = 1;\nexport {};\n",
+      "script.d.ts": "declare global {\n    var insideTheBlock: number;\n}\ndeclare module \"an-ambient-module\" {\n    export const value: number;\n}\ndeclare var besideTheBlock: number;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
+    }
   }
 }

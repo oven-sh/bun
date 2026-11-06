@@ -1,0 +1,125 @@
+# An array literal is made in every turn of a hot loop and kept, in a local that starts as null, in one turn only. The variable of the function that makes it may also hold a Proxy of it, so the loop has a path on which anything may come back.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="array-literal-is-kept-in-local-in-turn.js" displayPath="array-literal-is-kept-in-local-in-turn.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="make" module=m0 declared={type=anything} initialization=Function function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Call v1 calleeName="main"
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    v11 = Increment v7
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v10, v12)
+}
+function f1 name="make" module=m0 position=244 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="main" module=m0 position=354 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Null
+    v3 = Convert v2 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v1, v3, v5)
+  b1(v6, v7, v8):
+    LoopHint
+    v10 = Integer integer=1000
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = GetModuleVariable variable=g0
+    v14 = Convert v13 declared={type=undefined|null|function|f1 flags=[IsExpected]}
+    v15 = Integer integer=777
+    v16 = StrictEq v12, v15
+    v17 = Call v14, -, v12, v16 calleeName="make"
+    v18 = Convert v17 declared={type=undefined|null|Array flags=[IsExpected]}
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    v20 = Convert v19 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v21 = Increment v12
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v6, v20, v22)
+  b3(v23):
+    v24 = Integer
+    v25 = ElemGet v7, v24
+    v26 = Integer integer=1
+    v27 = ElemGet v7, v26
+    v28 = PropGet v7 key="length"
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    v30 = NewArray v6, v25, v27, v29 contents=anything
+    v31 = Convert v30 declared={type=undefined|null|Array flags=[IsExpected]}
+    v32 = PropGet v31 key="join"
+    v33 = Convert v32 declared={type=undefined|null|function flags=[IsExpected]}
+    v34 = String string=" "
+    v35 = Call v33, v31, v34 calleeKey="join" calleeName="join"
+    ReturnCall v35 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 main
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=0
+# CHECK-NEXT: v1: "" = String string=""
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2)
+# CHECK-NEXT: b1(v3: string, v4: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: string = Call v0 calleeName="main" accessSite=0 callees=[f2]
+# CHECK-NEXT: v7: int|whole = Increment v4
+# CHECK-NEXT: Jump -> next b1(v6, v7)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="main"
+# CHECK: module=m0 position=354 flags=[HasExplicitName] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: null = Null
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v0, v1, v2)
+# CHECK-NEXT: b1(v3: 0, v4: anything ~ undefined|null|Array, v5: int[0, 1000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: 1000 = Integer integer=1000
+# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b2(v9: int[0, 999]):
+# CHECK-NEXT: v10: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v11: f1 = Upcast v10 castType=anything
+# CHECK-NEXT: v31: f1 = AssumeType v11 provenType=f1
+# CHECK-NEXT: v12: 777 = Integer integer=777
+# CHECK-NEXT: v13: boolean = StrictEq v9, v12
+# CHECK-NEXT: v14: anything ~ undefined|null|Array = Call v31, -, v9, v13 calleeName="make" accessSite=1 callees=[f1]
+# CHECK-NEXT: v15: anything ~ undefined|null|Array = Upcast v14 castType=anything
+# CHECK-NEXT: v16: anything ~ undefined|null|Array = Upcast v15 castType=anything
+# CHECK-NEXT: v17: anything ~ undefined|null|Array = Upcast v16 castType=anything
+# CHECK-NEXT: v18: int[1, 1000] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v3, v17, v18)
+# CHECK-NEXT: b3(v19: 1000):
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: anything = ElemGet v4, v20 accessSite=2 receivers=[]
+# CHECK-NEXT: v22: 1 = Integer integer=1
+# CHECK-NEXT: v23: anything = ElemGet v4, v22 accessSite=3 receivers=[]
+# CHECK-NEXT: v24: anything = PropGet v4 key="length" accessSite=4 receivers=[]
+# CHECK-NEXT: v25: anything ~ number = Upcast v24 castType=anything
+# CHECK-NEXT: v35: int = AssumeType v21 provenType=int
+# CHECK-NEXT: v36: int = AssumeType v23 provenType=int
+# CHECK-NEXT: v37: int = AssumeType v25 provenType=int
+# CHECK-NEXT: v26: Array<int, Double> = NewArray v3, v35, v36, v37 contents=int allocationSite=1 arrayStorage=Double [contentsAreProven]
+# CHECK-NEXT: v32: Array<int, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<int, proven, Double, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v27: anything = PropGet v32 key="join" accessSite=5
+# CHECK-NEXT: v33: builtin(ArrayPrototypeJoin) = AssumeType v27 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v28: builtin(ArrayPrototypeJoin) = Upcast v33 castType=anything
+# CHECK-NEXT: v34: builtin(ArrayPrototypeJoin) = AssumeType v28 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v29: " " = String string=" "
+# CHECK-NEXT: v30: anything = Call v34, v32, v29 calleeKey="join" calleeName="join" accessSite=6 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: ReturnCall v30 casts=[{declared={type=undefined|null|string flags=[IsExpected]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
+# CHECK-NEXT: }

@@ -1,0 +1,5 @@
+{
+  "skipInVariant": {
+    "no-flow-results": "TODO: without the results of the analysis the build takes over ninety seconds"
+  }
+}

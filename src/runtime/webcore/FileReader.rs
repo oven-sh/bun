@@ -179,7 +179,10 @@ impl Lazy {
                         fd
                     }
                     Err(err) => {
-                        return Err(err.with_path(path.slice()));
+                        return Err(crate::node::fs::error_for_caller(
+                            [Some(path), None],
+                            err.with_path(path.slice()),
+                        ));
                     }
                 }
             }

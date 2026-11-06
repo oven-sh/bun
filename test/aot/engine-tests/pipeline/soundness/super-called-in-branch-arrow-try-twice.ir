@@ -1,0 +1,449 @@
+# Super() in odd places.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f7
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="super-called-in-branch-arrow-try-twice.js" displayPath="super-called-in-branch-arrow-try-twice.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="P" module=m0 position=225 constructor=f3 fields=[{key="pa" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Q1" module=m0 position=276 base=L0 constructor=f4 fields=[{key="qa" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Q2" module=m0 position=409 base=L0 constructor=f5 fields=[{key="qb" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L3 kind=Instance name="Q3" module=m0 position=529 base=L0 constructor=f6 fields=[{key="qc" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L4 kind=Instance name="Q4" module=m0 position=684 base=L0 constructor=f7 fields=[{key="qe" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L5 kind=Instance name="Q5" module=m0 position=844 base=L0 constructor=f9 fields=[{key="qf" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}, {key="qg" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=2
+layout L6 kind=Instance name="Q6" module=m0 position=1147 base=L0 constructor=f14 fields=[{key="qh" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L7 kind=Environment module=m0 fields=[{key=@"this.0" declared={type=absent|L2 flags=[IsFromCompiler]}}] ownFieldCount=1
+layout L8 kind=Environment module=m0 fields=[{key=@"this.0" declared={type=absent|L3 flags=[IsFromCompiler]}}] ownFieldCount=1
+layout L9 kind=Environment module=m0 fields=[{key=@"this.0" declared={type=absent|L4 flags=[IsFromCompiler]}}] ownFieldCount=1
+layout L10 kind=Environment module=m0 fields=[{key=@"this.0" declared={type=absent|L5 flags=[IsFromCompiler]}}] ownFieldCount=1
+layout L11 kind=Environment module=m0 fields=[{key=@"this.0" declared={type=absent|L6 flags=[IsFromCompiler]}}] ownFieldCount=1
+layout L12 module=m0 position=255 fields=[{key="qd" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Object{layout=L12 members=[{key="qd" value=Number{value=1}}]} module=m0
+data d2 root=Object{layout=L12 members=[{key="qd" value=Number{value=2}}]} module=m0
+data d3 root=Object{layout=L12 members=[{key="qd" value=Number{value=4}}]} module=m0
+data d4 root=Object{layout=L12 members=[{key="qd" value=Number{value=5}}]} module=m0
+data d5 root=Object{layout=L12 members=[{key="qd" value=Number{value=6}}]} module=m0
+data d6 root=Object{layout=L12 members=[{key="qd" value=Number{value=7}}]} module=m0
+data d7 root=Object{layout=L12 members=[{key="qd" value=Number{value=8}}]} module=m0
+data d8 root=Object{layout=L12 members=[{key="qd" value=Number{value=3}}]} module=m0
+variable g0 name="attempt" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="mayThrow" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="seen" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g3 name="Q4" module=m0 declared={type=absent|f7 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 name="early" module=m0 declared={type=undefined|null|absent|L5 flags=[IsExpected]}
+variable g5 name="Q5" module=m0 declared={type=absent|f9 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g10 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g11 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g12 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v6 variable=g2
+    v8 = ResolveHeritage v3
+    v9 = NewClosure function=f4
+    v10 = NewClass v9, v3, v8 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = Convert v11 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Integer integer=1
+    v14 = Construct v12, -, v13 calleeName="Q1"
+    v15 = ResolveHeritage v3
+    v16 = NewClosure function=f5
+    v17 = NewClass v16, v3, v15 layout=L2
+    v18 = FinishClass v17 layout=L2
+    v19 = Convert v18 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = Construct v19 calleeName="Q2"
+    v21 = ResolveHeritage v3
+    v22 = NewClosure function=f6
+    v23 = NewClass v22, v3, v21 layout=L3
+    v24 = FinishClass v23 layout=L3
+    v25 = Convert v24 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v26 = Construct v25 calleeName="Q3"
+    v27 = ResolveHeritage v3
+    v28 = NewClosure function=f7
+    v29 = NewClass v28, v3, v27 layout=L4
+    v30 = FinishClass v29 layout=L4
+    v31 = Convert v30 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v31 variable=g3
+    v33 = GetModuleVariable variable=g0
+    v34 = NewClosure function=f8
+    v35 = Call v33, -, v34 calleeName="attempt"
+    v36 = ResolveHeritage v3
+    v37 = NewClosure function=f9
+    v38 = NewClass v37, v3, v36 layout=L5
+    v39 = FinishClass v38 layout=L5
+    v40 = Convert v39 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v40 variable=g5
+    v42 = GetModuleVariable variable=g0
+    v43 = NewClosure function=f10
+    v44 = Call v42, -, v43 calleeName="attempt"
+    v45 = ResolveHeritage v3
+    v46 = NewClosure function=f14
+    v47 = NewClass v46, v3, v45 layout=L6
+    v48 = FinishClass v47 layout=L6
+    v49 = Convert v48 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v50 = Construct v49 calleeName="Q6"
+    v51 = PropGet v6 key="join"
+    v52 = Convert v51 declared={type=undefined|null|function flags=[IsExpected]}
+    v53 = String string="|"
+    v54 = Call v52, v6, v53 calleeKey="join" calleeName="seen.join"
+    v55 = Undefined
+    Return v55
+}
+function f1 name="attempt" module=m0 position=26 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Call v0 calleeName="f"
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = String string="threw "
+    v5 = PropGet v3 key="constructor"
+    v6 = PropGet v5 key="name"
+    v7 = Add v4, v6
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v8
+}
+function f2 name="mayThrow" module=m0 position=122 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="P" module=m0 position=240 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0|L1|L2|L3|L4|L5|L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6 flags=[IsExpected]}
+    v5 = Data data=d1
+    v6 = Convert v5 declared={type=undefined|null|L12 flags=[IsExpected]}
+    PropSet v4, v6 key="pa"
+    v8 = Undefined
+    Return v3
+}
+function f4 name="Q1" module=m0 position=318 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = Absent
+    v4 = ToBoolean v2
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = GetSuperBase v0
+    v7 = SuperConstruct v6, v1 layout=L1
+    v8 = Convert v7 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Jump -> next b3(v8)
+  b2(v9):
+    v10 = GetSuperBase v0
+    v11 = SuperConstruct v10, v1 layout=L1
+    v12 = Convert v11 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Jump -> next b3(v12)
+  b3(v13: absent|L1):
+    Jump -> next b4(v13)
+  b4(v14) frequency=Unlikely:
+    v15 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v15
+}
+function f5 name="Q2" module=m0 position=451 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything):
+    v2 = NewObject layout=L7
+    v3 = GetEnvironmentField v2 layout=L7
+    Jump -> next b1(v3)
+  b1(v4) frequency=Unlikely:
+    v5 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v5
+}
+function f6 name="Q3" module=m0 position=571 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything):
+    v2 = NewObject layout=L8
+    Jump -> next b1()
+  b1() handler=b7():
+    Jump -> next b2()
+  b2() handler=b4():
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1 layout=L3
+    v5 = GetEnvironmentField v2 layout=L8
+    Jump -> next b3()
+  b3() handler=b7():
+    Jump -> next b5()
+  b4() role=CatchHandler handler=b7():
+    Jump -> next b5()
+  b5() handler=b7():
+    Jump -> next b6()
+  b6():
+    v6 = Integer
+    v7 = Undefined
+    Jump -> next b8(v6, v7)
+  b7() role=CleanupHandler:
+    v8 = CatchValue
+    v9 = Integer integer=1
+    Jump -> next b8(v9, v8)
+  b8(v10, v11):
+    Switch v10 cases=[0] -> case b9(), otherwise b10()
+  b9():
+    v12 = Undefined
+    Return v12
+  b10():
+    Throw v11
+}
+function f7 name="Q4" module=m0 position=726 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: function, v1: anything):
+    v2 = NewObject layout=L9
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1 layout=L4
+    v5 = Convert v4 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = GetEnvironmentField v2 layout=L9
+    v7 = TypeTest v6 testedType=absent
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8):
+    PutEnvironmentField v2, v5 layout=L9
+    v10 = CallDirect v5 function=f19
+    v11 = GetModuleVariable variable=g0
+    v12 = NewClosure v2, v1, v0 function=f20
+    v13 = Call v11, -, v12 calleeName="attempt"
+    v14 = GetEnvironmentField v2 layout=L9
+    v15 = Convert v14 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v16 = PropGet v15 key="qe"
+    v17 = Convert v16 declared={type=undefined|null|L12 flags=[IsExpected]}
+    v18 = PropGet v17 key="qd"
+    v19 = Undefined
+    Return v19
+  b2(v20) frequency=Unlikely:
+    v21 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v21
+}
+function f8 module=m0 position=810 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L4 flags=[IsExpected]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = CheckInitialized v0 name="Q4"
+    v2 = Construct v1 calleeName="Q4"
+    v3 = Convert v2 declared={type=undefined|null|L4 flags=[IsExpected]}
+    Return v3
+}
+function f9 name="Q5" module=m0 position=930 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: function, v1: anything):
+    v2 = NewObject layout=L10
+    Jump -> next b1()
+  b1() handler=b5():
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1 layout=L5
+    v5 = Convert v4 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = GetEnvironmentField v2 layout=L10
+    v7 = TypeTest v6 testedType=absent
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v8) handler=b5():
+    v9 = CallDirect v5 function=f21
+    Jump -> next b3()
+  b3():
+    Jump -> next b6()
+  b4(v10) frequency=Unlikely handler=b5():
+    v11 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v11
+  b5() role=CatchHandler:
+    Jump -> next b6()
+  b6():
+    v12 = GetModuleVariable variable=g0
+    v13 = NewClosure v2 function=f22
+    v14 = Call v12, -, v13 calleeName="attempt"
+    v15 = Undefined
+    Return v15
+}
+function f10 module=m0 position=1011 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L5 flags=[IsExpected]}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g5
+    v1 = CheckInitialized v0 name="Q5"
+    v2 = Construct v1 calleeName="Q5"
+    v3 = Convert v2 declared={type=undefined|null|L5 flags=[IsExpected]}
+    Return v3
+}
+function f11 module=m0 position=1064 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=1092 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1120 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="Q6" module=m0 position=1189 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6 {
+  b0(v0: function, v1: anything):
+    v2 = NewObject layout=L11
+    v3 = NewClosure v2 function=f23
+    v4 = Convert v3 declared={type=undefined|null|function|f23 flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g2
+    v6 = CheckInitialized v5 name="seen"
+    v7 = PropGet v6 key="push"
+    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v9, -, v4 calleeName="attempt"
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
+    v12 = Call v8, v6, v11 calleeKey="push" calleeName="seen.push"
+    v13 = GetSuperBase v0
+    v14 = SuperConstruct v13, v1 layout=L6
+    v15 = Convert v14 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = GetEnvironmentField v2 layout=L11
+    v17 = TypeTest v16 testedType=absent
+    Branch v17 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v18):
+    PutEnvironmentField v2, v15 layout=L11
+    v20 = Undefined
+    v21 = GetEnvironmentField v2 layout=L11
+    Return v21
+  b2(v22) frequency=Unlikely:
+    v23 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v23
+}
+function f15 module=m0 position=276 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Undefined
+    Return v1
+}
+function f16 name="s" module=m0 position=466 kind=Arrow captures=[{type=env L7 flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L7, v1: anything, v2: function):
+    v3 = GetSuperBase v2
+    v4 = SuperConstruct v3, v1 layout=L2
+    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = GetEnvironmentField v0 layout=L7
+    v7 = CallDirect v5 function=f25
+    Return v5
+}
+function f17 module=m0 position=529 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L3 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    v1 = Undefined
+    Return v1
+}
+function f18 module=m0 position=642 kind=Arrow captures=[{type=env L8 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 module=m0 position=684 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L4 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L4):
+    v1 = Undefined
+    Return v1
+}
+function f20 module=m0 position=758 kind=Arrow captures=[{type=env L9 flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L9, v1: anything, v2: function):
+    v3 = GetSuperBase v2
+    v4 = SuperConstruct v3, v1 layout=L4
+    v5 = Convert v4 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = GetEnvironmentField v0 layout=L9
+    v7 = TypeTest v6 testedType=absent
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8):
+    v9 = CallDirect v5 function=f19
+    Return v5
+  b2(v10) frequency=Unlikely:
+    v11 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v11
+}
+function f21 module=m0 position=844 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L5 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L5):
+    v1 = Undefined
+    Return v1
+}
+function f22 module=m0 position=979 kind=Arrow captures=[{type=env L10 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 name="f" module=m0 position=1204 kind=Arrow captures=[{type=env L11 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 module=m0 position=1147 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L6 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L6):
+    v1 = Undefined
+    Return v1
+}
+function f25 module=m0 position=409 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = Undefined
+    Return v1
+}
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
+# -- generated: Q4
+# CHECK-LABEL: function {{*}}name="Q4"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@21 = SlotBase(stack0, v4:NewObject)
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Void b@24 = Store($0(b@2), b@21, offset = 8, ControlDependent|Writes:EnvironmentFields.20, v4:NewObject)
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int64 b@25 = Patchpoint(b@19:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, MemberGuards, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v5:CallDirect)
+# CHECK-NEXT: Void b@29 = Store(b@25, b@21, offset = 8, ControlDependent|Writes:EnvironmentFields.20, v10:PutEnvironmentField)
+# CHECK-NEXT: Int64 b@31 = SlotBase(stack1, v11:NewClosure)
+# CHECK-NEXT: Int64 b@30 = Const64(2147483706, v11:NewClosure)
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@33 = Patchpoint($2147483706(b@30):Register(%r10), b@21:Register(%rdx), b@19:Register(%rcx), b@18:Register(%r8), b@31:Register(%rax), runsWithoutFrame, resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v11:NewClosure)
+# CHECK-NEXT: Int64 b@34 = Patchpoint(b@33:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v12:CallDirect)
+# CHECK-NEXT: Int64 b@35 = Const64(10, v13:Undefined)
+# CHECK-NEXT: Int64 b@36 = Patchpoint($10(b@35):SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v14:PropGet)
+# CHECK-NEXT: Void b@37 = Oops(Terminal, v14:PropGet)
+# CHECK-NEXT: Stack slots:
+# CHECK-NEXT: stack0: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: stack1: byteSize = 40, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@25: dereferenceableBytes = 32
+# CHECK-NEXT: b@33: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f7
+# CHECK-LABEL: function {{*}}name="Q4"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@23 = ArgumentReg(%r8)
+# CHECK-NEXT: Int64 b@25 = ArgumentReg(%rdi)
+# CHECK-NEXT: Void b@27 = Patchpoint(b@23:Register(%rdi), b@25:Register(%rsi), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|WritesPinned|ReadsPinned|Fence|Writes:Top|Reads:Top, v3:CallDirect)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@23: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f53
+# CHECK-LABEL: function {{*}}name="Q4"
+# CHECK: role=AllocatedThisVersion
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@22 = SlotBase(stack0, v5:NewObject)
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Void b@25 = Store($0(b@2), b@22, offset = 8, ControlDependent|Writes:EnvironmentFields.20, v5:NewObject)
+# CHECK-NEXT: Int64 b@27 = Const64(7, v7:NewObject)
+# CHECK-NEXT: Int64 b@28 = Patchpoint($7(b@27):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v7:NewObject)
+# CHECK-NEXT: Int32 b@26 = Const32(1, v6:Integer)
+# CHECK-NEXT: Void b@29 = Store($1(b@26), b@28, offset = 16, ControlDependent|Writes:ObjectFields.20, v7:NewObject)
+# CHECK-NEXT: Void b@30 = Fence(Fence|Reads:jscRoot, v7:NewObject)
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Void b@31 = Store(b@28, b@18, offset = 16, ControlDependent|Writes:ObjectFields.0, v8:PutSlot)
+# CHECK-NEXT: Void b@32 = Patchpoint(b@18:SomeRegister, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, v8:PutSlot)
+# CHECK-NEXT: Int64 b@33 = Load(b@22, offset = 8, ControlDependent|Reads:EnvironmentFields.20, v9:GetEnvironmentField)
+# CHECK-NEXT: Void b@35 = Branch(b@33, Terminal, v10:TypeTest)
+# CHECK-NEXT: Successors: Then:Unlikely:#3, Else:#2
+# CHECK-NEXT: BB#2: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@36 = Store(b@18, b@22, offset = 8, ControlDependent|Writes:EnvironmentFields.20, v11:PutEnvironmentField)
+# CHECK-NEXT: Int64 b@38 = SlotBase(stack1, v12:NewClosure)
+# CHECK-NEXT: Int64 b@37 = Const64(2147483706, v12:NewClosure)
+# CHECK-NEXT: Int64 b@20 = ArgumentReg(%rdx)
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int64 b@40 = Patchpoint($2147483706(b@37):Register(%r10), b@22:Register(%rdx), b@20:Register(%rcx), b@19:Register(%r8), b@38:Register(%rax), runsWithoutFrame, resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v12:NewClosure)
+# CHECK-NEXT: Int64 b@41 = Patchpoint(b@40:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v13:CallDirect)
+# CHECK-NEXT: Int64 b@42 = Const64(10, v14:Undefined)
+# CHECK-NEXT: Int64 b@43 = Patchpoint($10(b@42):SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v15:PropGet)
+# CHECK-NEXT: Void b@44 = Oops(Terminal, v15:PropGet)
+# CHECK-NEXT: BB#3: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@45 = Const32(3, v16:NewRuntimeError)
+# CHECK-NEXT: Int64 b@46 = Patchpoint($3(b@45):Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, AllocatorState, RuntimeState}, v16:NewRuntimeError)
+# CHECK-NEXT: Void b@47 = Patchpoint(b@46:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}|Reads:Top)
+# CHECK-NEXT: Void b@48 = Oops(Terminal)
+# CHECK-NEXT: Stack slots:
+# CHECK-NEXT: stack0: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: stack1: byteSize = 40, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 32
+# CHECK-NEXT: b@19: dereferenceableBytes = 8
+# CHECK-NEXT: b@28: dereferenceableBytes = 32
+# CHECK-NEXT: b@40: dereferenceableBytes = 8
+# CHECK-NEXT: b@46: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f54

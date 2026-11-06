@@ -1,0 +1,188 @@
+# A plain function can be constructed, so what `bind` makes of it can be too. The arguments that are bound here are numbers and booleans, which every caller passes as such.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="number-bound-plain-function-constructed.js" displayPath="number-bound-plain-function-constructed.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="multiply" module=m0 position=305 constructor=f1 fields=[{key="product" declared={type=number flags=[IsExpected]}}, {key="target" declared={type=boolean flags=[IsExpected]}}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 kind=Instance name="Point" module=m0 position=1972 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+variable g0 name="multiply" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="bind"
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
+    v7 = Null
+    v8 = Integer integer=3
+    v9 = Call v6, v4, v7, v8 calleeKey="bind" calleeName="multiply.bind"
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]}
+    v11 = Integer
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Integer
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v12, v14)
+  b1(v15, v16):
+    LoopHint
+    v18 = Integer integer=1000
+    v19 = Less v16, v18
+    Branch v19 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v20):
+    v21 = Integer integer=255
+    v22 = BitAnd v20, v21
+    v23 = Call v10, -, v22 calleeName="triple"
+    v24 = Convert v23 declared={type=undefined|number flags=[IsExpected]}
+    v25 = Add v15, v24
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
+    v27 = Increment v20
+    v28 = Convert v27 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v26, v28)
+  b3(v29):
+    v30 = String string="called"
+    v31 = PropGet v10 key="name"
+    v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]}
+    v33 = PropGet v10 key="length"
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    v35 = PropGet v10 key="prototype"
+    v36 = TypeOf v35
+    v37 = Call v3, -, v30, v15, v32, v34, v36 calleeName="say"
+    v38 = GetModuleVariable variable=g0
+    v39 = PropGet v38 key="bind"
+    v40 = Convert v39 declared={type=undefined|null|function flags=[IsExpected]}
+    v41 = Null
+    v42 = Integer integer=6
+    v43 = Integer integer=7
+    v44 = Integer integer=8
+    v45 = Call v40, v38, v41, v42, v43, v44 calleeKey="bind" calleeName="multiply.bind"
+    v46 = Integer
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    v48 = Integer
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    v50 = PropGet v1 key="bind"
+    v51 = Convert v50 declared={type=undefined|null|function flags=[IsExpected]}
+    v52 = Null
+    v53 = Integer integer=3
+    v54 = Call v51, v1, v52, v53 calleeKey="bind" calleeName="Point.bind"
+    v55 = Convert v54 declared={type=undefined|null|function flags=[IsExpected]}
+    v56 = Integer
+    v57 = Convert v56 declared={type=number flags=[IsExpected]}
+    v58 = Integer
+    v59 = Convert v58 declared={type=i32 flags=[IsExpected]}
+    v60 = String string="a constructor function"
+    v61 = Integer integer=4
+    v62 = Construct v55, -, v61 calleeName="OnTheLine"
+    v63 = InstanceOf v62, v1
+    v64 = Builtin builtin=Object
+    v65 = Builtin builtin=ObjectKeys
+    v66 = Integer integer=4
+    v67 = Construct v55, -, v66 calleeName="OnTheLine"
+    v68 = Call v65, v64, v67 calleeName="Object.keys"
+    v69 = Convert v68 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v70 = PropGet v69 key="join"
+    v71 = Convert v70 declared={type=undefined|null|function flags=[IsExpected]}
+    v72 = Call v71, v69 calleeKey="join" calleeName="join"
+    v73 = Convert v72 declared={type=undefined|null|string flags=[IsExpected]}
+    v74 = Call v3, -, v60, v57, v63, v73 calleeName="say"
+    Jump -> next b4()
+  b4() handler=b6():
+    Jump -> next b5()
+  b5():
+    Jump -> next b7()
+  b6() role=CatchHandler:
+    Jump -> next b7()
+  b7():
+    v75 = Undefined
+    Return v75
+}
+function f1 name="multiply" module=m0 position=305 flags=[HasThis, HasNewTarget, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything, v2: anything, v3: anything):
+    v4 = Undefined
+    v5 = Convert v4 declared={type=undefined|number flags=[IsExpected]}
+    Return v5
+}
+function f2 name="Point" module=m0 position=1972 flags=[HasThis, HasExplicitName] length=2 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f3 name="say" module=m0 position=204 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=number flags=[IsExpected]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 multiply
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f9 callPosition=4294967295 calleeIsPredicted=true module=m0}, {callee=f1 callPosition=305 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: null = Null
+# CHECK-NEXT: v2: 3 = Integer integer=3
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v3, v4)
+# CHECK-NEXT: b1(v5: int|whole ~ 0, v6: int[0, 1000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: 1000 = Integer integer=1000
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v10: int[0, 999]):
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: v12: number = Add v5, v11
+# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
+# CHECK-NEXT: v14: int[1, 1000] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v13, v14)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v15: "called" = String string="called"
+# CHECK-NEXT: v16: f9 = NewClosure v1, v2, v0 function=f9
+# CHECK-NEXT: v17: anything = PropGet v16 key="name" accessSite=3
+# CHECK-NEXT: v18: anything ~ undefined|null|string = Upcast v17 castType=anything
+# CHECK-NEXT: v19: anything = PropGet v16 key="length" accessSite=4
+# CHECK-NEXT: v20: undefined|number = AssumeType v19 provenType=undefined|number
+# CHECK-NEXT: v21: undefined|number ~ number = Upcast v20 castType=anything
+# CHECK-NEXT: v22: anything = PropGet v16 key="prototype" accessSite=5
+# CHECK-NEXT: v23: string = TypeOf v22
+# CHECK-NEXT: v24: f3 = NewClosure function=f3 allocationSite=1 storage=Frame
+# CHECK-NEXT: v25: anything ~ number = Call v24, -, v15, v5, v18, v21, v23 calleeName="say" accessSite=6 callees=[f3]
+# CHECK-NEXT: v26: null = Null
+# CHECK-NEXT: v27: 3 = Integer integer=3
+# CHECK-NEXT: v28: f2 = NewClosure function=f2 allocationSite=0
+# CHECK-NEXT: v29: function = CallBuiltin v28, v26, v27 overload=FunctionPrototypeBind/0 accessSite=10
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: "a constructor function" = String string="a constructor function"
+# CHECK-NEXT: v32: 4 = Integer integer=4
+# CHECK-NEXT: v33: anything ~ object = Construct v29, -, v32 calleeName="OnTheLine" accessSite=11
+# CHECK-NEXT: v34: true = Boolean boolean=true
+# CHECK-NEXT: v35: 4 = Integer integer=4
+# CHECK-NEXT: v36: anything ~ object = Construct v29, -, v35 calleeName="OnTheLine" accessSite=12
+# CHECK-NEXT: v37: L1 = AssumeType v36 provenType=L1
+# CHECK-NEXT: v38: Array<string> = CallBuiltin -, v37 overload=ObjectKeys/0 accessSite=13
+# CHECK-NEXT: v39: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v38 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v40: string = CallBuiltin v39 overload=ArrayPrototypeJoin/0 accessSite=15
+# CHECK-NEXT: v41: anything ~ number = Call v24, -, v31, v30, v34, v40 calleeName="say" accessSite=16 callees=[f3]
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: Return v42
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="multiply"
+# CHECK: module=m0 position=305 flags=[HasThis, HasNewTarget, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=undefined|int}, {type=undefined|int}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything, v2: undefined|int, v3: undefined|int):
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="multiply"
+# CHECK: module=m0 position=305 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=2 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1 parameter=1} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f1 callPosition=305 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything, v4: anything):
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="multiply"
+# CHECK: module=m0 position=305 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers constructEntrypoint=f7} inlineFrames=[{}, {callee=f1 callPosition=305 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="multiply"
+# CHECK: module=m0 position=305 role=BoundFunction length=1 captures=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=f1}] thisType={type=anything} parameters=[{type=undefined|int}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=1} creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
+# CHECK-LABEL: function {{*}}name="multiply"
+# CHECK: module=m0 position=305 role=BoundFunction captures=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=anything}, {type=f1}] thisType={type=anything} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=3} creator=BoundFunction{target=f1 numberOfBoundArguments=3 numberOfCapturedArguments=2 capturesTargetClosure=true}
+# CHECK-LABEL: function {{*}}name="multiply"
+# CHECK: module=m0 position=305 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f9}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers} inlineFrames=[{}, {callee=f9 callPosition=305 isTailCall=true module=m0}, {callee=f1 callPosition=305 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f9, v1: anything, v2: anything):
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

@@ -1,0 +1,18 @@
+# A type may list functions beside `function`. What is printed of a program as read holds the list, so that the text reads back as the program that was printed
+# TODO: nobody: the reader takes a named function for its family, and the print of the program as read leaves the list out: a printed build has weaker declared types than the build
+# FORM: AsRead
+# RUN: print
+# CHECK: variable g0 name="held" {{*}} declared={type=undefined|null|function|f1 flags=[IsExpected]}
+# CHECK: function f0 name="a" {{*}} parameters=[{type=undefined|function|f1 flags=[IsExpected]}]
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="held" module=m0 declared={type=undefined|null|function|f1 flags=[IsExpected]} initialization=Undefined
+function f0 name="a" parameters=[{type=undefined|function|f1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    Return v0
+}
+function f1 name="b" parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

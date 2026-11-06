@@ -41,7 +41,7 @@ pub(crate) mod level {
 }
 
 unsafe extern "C" {
-    fn Process__emitMemoryPressureEvent(global: *mut JSGlobalObject, level: i32);
+    safe fn Process__emitMemoryPressureEvent(global: &JSGlobalObject, level: i32);
 }
 
 /// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
@@ -53,8 +53,7 @@ pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     } else {
         level::WARNING
     };
-    // SAFETY: FFI; `global` is the live per-thread global.
-    unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
+    Process__emitMemoryPressureEvent(global, lvl);
 }
 
 /// The queued form of a pressure notification: `Task::ptr` packs the level,
@@ -368,15 +367,17 @@ mod windows {
     const HOLDOFF_MS: DWORD = 30_000;
 
     unsafe extern "system" {
-        fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
+        safe fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
         fn CreateEventW(
             attrs: *mut c_void,
             manual_reset: BOOL,
             initial: BOOL,
             name: *const u16,
         ) -> HANDLE;
-        fn SetEvent(h: HANDLE) -> BOOL;
-        fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
+        /// A bad handle yields `FALSE`.
+        safe fn SetEvent(h: HANDLE) -> BOOL;
+        /// A bad handle yields `WAIT_FAILED`.
+        safe fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
         fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;
         fn CloseHandle(h: HANDLE) -> BOOL;
     }
@@ -419,8 +420,7 @@ mod windows {
                 unsafe { drop(bun_core::heap::take(task.as_ptr())) };
                 break;
             }
-            // SAFETY: `shutdown` is valid for the thread's lifetime.
-            if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
+            if WaitForSingleObject(handles[0], HOLDOFF_MS) == WAIT_OBJECT_0 {
                 break;
             }
         }
@@ -432,8 +432,7 @@ mod windows {
             return;
         }
 
-        // SAFETY: FFI; returns NULL on failure.
-        let notify = unsafe { CreateMemoryResourceNotification(LOW_MEMORY_RESOURCE_NOTIFICATION) };
+        let notify = CreateMemoryResourceNotification(LOW_MEMORY_RESOURCE_NOTIFICATION);
         if notify.is_null() {
             return;
         }
@@ -473,8 +472,7 @@ mod windows {
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
         let mut watcher =
             unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) };
-        // SAFETY: FFI; `shutdown` is a valid event owned by `watcher`.
-        unsafe { SetEvent(watcher.shutdown.0) };
+        SetEvent(watcher.shutdown.0);
         if let Some(thread) = watcher.thread.take() {
             let _ = thread.join();
         }

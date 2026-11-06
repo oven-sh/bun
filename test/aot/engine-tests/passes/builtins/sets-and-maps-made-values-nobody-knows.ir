@@ -1,0 +1,173 @@
+# Sets and maps made of values nobody knows.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="sets-and-maps-made-values-nobody-knows.ts" displayPath="sets-and-maps-made-values-nobody-knows.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1339 fields=[{key="p" declared={type=number} flags=[IsRequired]}, {key="q" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=1358
+layout L2 module=m0 position=1587
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=1}]}, Array{contents=undefined|null|number|string elements=[String{value="b"}, Number{value=2}]}, Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=3}]}]} module=m0
+data d2 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[Number{value=1}, String{value="one"}]}, Array{contents=undefined|null|number|string elements=[Number{value=NaN}, String{value="nan"}]}, Array{contents=undefined|null|number|string elements=[Number{value=NaN}, String{value="again"}]}]} module=m0
+data d3 root=Array{contents=anything elements=[Array{contents=undefined|null|string elements=[String{value="k"}, String{value="v"}]}]} module=m0
+data d4 root=Object{layout=L0 members=[{key="p" value=Number{value=1}}, {key="q" value=Number{value=2}}]} module=m0
+data d5 root=Array{contents=anything elements=[Array{contents=anything elements=[Object{layout=L1}, Number{value=1}]}]} module=m0
+data d6 root=Array{contents=anything elements=[Array{contents=undefined|null|string elements=[String{value="only"}]}]} module=m0
+data d7 root=Array{contents=undefined|null|Array<undefined|null|number|string> elements=[Array{contents=undefined|null|number|string elements=[String{value="x"}, Number{value=1}]}, Array{contents=undefined|null|number|string elements=[String{value="x"}, Number{value=2}]}]} module=m0
+data d8 root=Object{layout=L2} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Undefined
+    v9 = Null
+    v10 = Data data=d0
+    v11 = Data data=d1
+    v12 = Data data=d2
+    v13 = Builtin builtin=Map
+    v14 = Data data=d3
+    v15 = Construct v13, -, v14 calleeName="Map"
+    v16 = Convert v15 declared={type=undefined|null|Map<undefined|null|string, undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v17 = Builtin builtin=Object
+    v18 = Builtin builtin=ObjectEntries
+    v19 = Data data=d4
+    v20 = Call v18, v17, v19 calleeName="Object.entries"
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|number|string>> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v22 = Data data=d5
+    v23 = Data data=d6
+    v24 = NewArray v8, v9, v10, v11, v12, v16, v21, v22, v23 contents=anything
+    v25 = Convert v24 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v26 = IteratorOpen v25
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v28 = IteratorResume v26
+    v29 = ResultAt v28
+    v30 = ResultAt v28 index=1
+    Branch v29 -> taken b2(), notTaken b15()
+  b2():
+    v31 = Data data=d7
+    v32 = Call v5, -, v31 calleeName="optionalMapOf"
+    v33 = Convert v32 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}
+    v34 = Call v7, -, v33 calleeName="show"
+    v35 = Integer integer=1
+    v36 = Boolean boolean=true
+    v37 = Data data=d8
+    v38 = Builtin builtin=Symbol
+    v39 = String string="s"
+    v40 = Call v38, -, v39 calleeName="Symbol" callNumber=33
+    v41 = Convert v40 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v42 = NewClosure function=f5
+    v43 = NewArray v35, v36, v37, v41, v42 contents=anything
+    v44 = IteratorOpen v43
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v46 = IteratorResume v44
+    v47 = ResultAt v46 index=1
+    Jump -> next b4()
+  b4() handler=b14():
+    v48 = NewArray v1, v3 contents=undefined|null|function|f1|f2
+    v49 = IteratorOpen v48
+    Jump -> next b5()
+  b5() handler=b14():
+    LoopHint
+    v51 = IteratorResume v49
+    v52 = ResultAt v51
+    v53 = ResultAt v51 index=1
+    Branch v52 -> taken b6(), notTaken b7()
+  b6() handler=b14():
+    Jump -> next b3()
+  b7() handler=b14():
+    Jump -> next b8()
+  b8() handler=b13():
+    v54 = Convert v53 declared={type=undefined|null|function|f1|f2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    Jump -> next b9()
+  b9() handler=b11():
+    v55 = Call v54, -, v47 calleeName="make"
+    v56 = Convert v55 declared={type=undefined|null|Map|Set flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v57 = Call v7, -, v56 calleeName="show"
+    Jump -> next b10()
+  b10() handler=b13():
+    Jump -> next b12()
+  b11() role=CatchHandler handler=b13():
+    Jump -> next b12()
+  b12() handler=b13():
+    Jump -> next b5()
+  b13() role=IterationCleanup subject=v49 handler=b14():
+    v58 = CatchException
+    Rethrow v58
+  b14() role=IterationCleanup subject=v44:
+    v59 = CatchException
+    Rethrow v59
+  b15():
+    Jump -> next b16()
+  b16() handler=b17():
+    v60 = Call v3, -, v30 calleeName="mapOf"
+    Jump -> next b1()
+  b17() role=IterationCleanup subject=v26:
+    v61 = CatchException
+    Rethrow v61
+}
+function f1 name="setOf" module=m0 position=46 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Set flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="mapOf" module=m0 position=143 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Map
+    v2 = Convert v0 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v3 = Construct v1, -, v2 calleeName="Map"
+    v4 = Convert v3 declared={type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Return v4
+}
+function f3 name="optionalMapOf" module=m0 position=354 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<undefined|null|number|string>>}] results=[{type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<undefined|null|number|string>>):
+    v1 = Builtin builtin=Map
+    v2 = Construct v1, -, v0 calleeName="Map"
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Return v3
+}
+function f4 name="show" module=m0 position=466 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map|Set flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Map|Set):
+    v1 = PropGet v0 key="size"
+    v2 = Convert v1 declared={type=number} illTypedCause=Assertion
+    v3 = ToString v2
+    v4 = String string=":"
+    v5 = Builtin builtin=JSON
+    v6 = PropGet v5 key="stringify"
+    v7 = Convert v6 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v8 = NewArray contents=anything
+    AppendSpread v8, v0
+    v10 = Call v7, v5, v8 calleeKey="stringify" calleeName="JSON.stringify"
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v12 = ToString v11
+    v13 = Strcat v3, v4, v12
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v14
+}
+function f5 module=m0 position=1604 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: mapOf
+# CHECK-LABEL: function {{*}}name="mapOf"
+# CHECK: module=m0 position=143 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|true|int|symbol("s")@m0:33|L2|f5|Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>|Map<undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>}] results=[{type=Map<undefined|int|whole|string|object, undefined|int|whole|string|object, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|true|int|symbol("s")@m0:33|L2|f5|Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>|Map<undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: undefined|null|true|int|symbol("s")@m0:33|L2|f5|Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>|Map<undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> ~ undefined|null|Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = Upcast v0 castType=anything
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=true|int|symbol("s")@m0:33|L2|f5|Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>>|Map<undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>>
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b1(v3: true|int|symbol("s")@m0:33|L2|f5|Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>|Map<undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|string|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> ~ Array<Array<undefined|int|whole|string|L1, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v4: Map = CallBuiltin -, v3 overload=Map/2 accessSite=8
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: Map):
+# CHECK-NEXT: v6: Map<undefined|int|whole|string|object, undefined|int|whole|string|object, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Map<undefined|int|whole|string|object, undefined|int|whole|string|object, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b3(v7: undefined|null) frequency=Rare:
+# CHECK-NEXT: v8: Map<never, never> = CallBuiltin -, v7 overload=Map/1 accessSite=8
+# CHECK-NEXT: Jump -> next b2(v8)
+# CHECK-NEXT: }

@@ -1,0 +1,111 @@
+# An object with a protocol method arrives late where a string or a regular expression was.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="protocol-objects-arrive-where-strings.js" displayPath="protocol-objects-arrive-where-strings.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=400
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Call v1 calleeName="main"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="main" module=m0 position=93 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string=","
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = NewRegExp pattern="a"
+    v5 = Convert v4 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v6 = NewObject layout=L0
+    v7 = FinishObject v6
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v9 = Integer
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v5, v10)
+  b1(v11, v12):
+    LoopHint
+    v14 = Integer integer=2
+    v15 = Less v12, v14
+    Branch v15 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v16):
+    v17 = String string="abc"
+    v18 = PropGet v17 key="match"
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]}
+    v20 = Call v19, v17, v11 calleeKey="match" calleeName="match"
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v22 = PropGet v21 key="matched"
+    v23 = String string="abc"
+    v24 = PropGet v23 key="replace"
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]}
+    v26 = String string="z"
+    v27 = Call v25, v23, v11, v26 calleeKey="replace" calleeName="replace"
+    v28 = Convert v8 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v29 = Increment v16
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v28, v30)
+  b3(v31):
+    v32 = Integer
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v33)
+  b4(v34):
+    LoopHint
+    v36 = Increment v34
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v37)
+}
+# -- generated: main
+# CHECK-LABEL: function {{*}}name="main"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@19 = Load(b@10, offset = -1114112, ControlDependent|Reads:AllocatorState, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Void b@21 = Branch(b@19, Terminal, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Successors: Then:#3, Else:Rare:#4
+# CHECK-NEXT: BB#3: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@22 = Upsilon(b@19, ^29, WritesLocalState, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Void b@23 = Jump(Terminal, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: BB#5: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #4, #3
+# CHECK-NEXT: Int64 b@29 = Phi(ReadsLocalState, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Int64 b@30 = Const64(1, v1:NewObject)
+# CHECK-NEXT: Int64 b@31 = Patchpoint($1(b@30):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewObject)
+# CHECK-NEXT: Void b@32 = Fence(Fence|Reads:jscRoot, v1:NewObject)
+# CHECK-NEXT: Int64 b@33 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x0, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v4:String)
+# CHECK-NEXT: Int64 b@34 = Patchpoint(b@33:Register(%rsi), b@29:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, RegExpState, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v5:CallInline)
+# CHECK-NEXT: Int32 b@35 = Load8Z<Traps>(b@34, offset = 5, range = JSCell_typeInfoType, ExitsSideways|ControlDependent|ReadsImmutable|Reads:Top, v6:RequireObjectCoercible)
+# CHECK-NEXT: Int64 b@36 = Patchpoint(b@34:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v7:PropGet)
+# CHECK-NEXT: Int64 b@38 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000027, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v9:CallBuiltin)
+# CHECK-NEXT: Int64 b@40 = Patchpoint(b@38:Register(%r8), b@33:Register(%rax), b@31:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, RegExpState, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v9:CallBuiltin)
+# CHECK-NEXT: Int64 b@41 = Patchpoint(b@40:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v10:PropGet)
+# CHECK-NEXT: Int64 b@44 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v12:String)
+# CHECK-NEXT: Int64 b@49 = Load(b@44, offset = 976, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v12:String)
+# CHECK-NEXT: Int64 b@50 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000028, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v13:CallBuiltin)
+# CHECK-NEXT: Int64 b@51 = Patchpoint(b@50:Register(%r8), b@33:Register(%rax), b@31:Register(%rdi), b@49:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, RegExpState, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v13:CallBuiltin)
+# CHECK-NEXT: Void b@52 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#2: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #5, #2
+# CHECK-NEXT: Void b@53 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v14:LoopHint)
+# CHECK-NEXT: Void b@54 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#4: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Int64 b@26 = Patchpoint($0(b@2):ColdAny, $0(b@2):ColdAny, $0(b@2):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:AllocatorState, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Void b@27 = Upsilon(b@26, ^29, WritesLocalState, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Void b@28 = Jump(Terminal, v0:SharedRegExpLiteral)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@29: dereferenceableBytes = 8
+# CHECK-NEXT: b@31: dereferenceableBytes = 16
+# CHECK-NEXT: b@33: dereferenceableBytes = 16
+# CHECK-NEXT: end of function f1

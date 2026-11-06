@@ -1,0 +1,110 @@
+# A reader of a `number[]` gives an array with storage for any value the storage of numbers where the array holds numbers and nothing else.
+# FORM: AsRead
+# RUN: lower-to-air size f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="knows-storage-array-reader-numbers-meets.ts" displayPath="knows-storage-array-reader-numbers-meets.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 position=1001 constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="sum" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="first" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Integer integer=3
+    v7 = Construct v5, -, v6 calleeName="Point"
+    v8 = Integer integer=4
+    v9 = Construct v5, -, v8 calleeName="Point"
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b1(v11)
+  b1(v12: number):
+    LoopHint
+    v14 = String string="two"
+    v15 = Call v1, -, v12, v14 calleeName="ofRest"
+    v16 = Double number=1.5
+    v17 = Call v1, -, v16, v12 calleeName="ofRest"
+    v18 = Increment v12
+    v19 = Convert v18 declared={type=number}
+    Jump -> next b1(v19)
+}
+function f1 name="sum" module=m0 position=487 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v16 = Integer
+    v17 = BitOr v15, v16
+    v18 = Add v5, v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Increment v13
+    v21 = Convert v20 declared={type=number}
+    Jump -> next b1(v19, v21)
+  b3(v22):
+    v23 = Convert v5 declared={type=number}
+    Return v23
+}
+function f2 name="first" module=m0 position=633 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    v3 = Convert v2 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Return v3
+}
+function f3 name="ofRest" module=m0 position=2745 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = Convert v0 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v3 = Call v1, -, v2 calleeName="sum"
+    v4 = Convert v3 declared={type=number}
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v2 calleeName="first"
+    v7 = Convert v6 declared={type=number}
+    v8 = Add v4, v7
+    v9 = Convert v8 declared={type=number}
+    v10 = String string=":"
+    v11 = Add v9, v10
+    v12 = Builtin builtin=String
+    v13 = Integer
+    v14 = ElemGet v2, v13
+    v15 = Call v12, -, v14 calleeName="String"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v17 = Add v11, v16
+    v18 = String string=":"
+    v19 = Add v17, v18
+    v20 = Builtin builtin=String
+    v21 = PropGet v2 key="length"
+    v22 = Convert v21 declared={type=number} illTypedCause=Assertion
+    v23 = Integer integer=1
+    v24 = Sub v22, v23
+    v25 = ElemGet v2, v24
+    v26 = Call v20, -, v25 calleeName="String"
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v28 = Add v19, v27
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v29
+}
+function f4 name="Point" module=m0 position=1022 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# -- generated: ofRest
+# CHECK-LABEL: function {{*}}name="ofRest"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 99, patchpoints: 19, rare instructions: 232, polls: 1
+# CHECK-NEXT: end of function f3

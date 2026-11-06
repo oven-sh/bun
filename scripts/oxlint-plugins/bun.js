@@ -4,6 +4,25 @@
 // oxlint's ESTree-compatible AST (see the `oxlint/plugins-dev` type
 // definitions). Run with `bun lint`.
 
+/** What TypeScript writes around an expression and erases: `a!.b` is `a.b`, and `(a.b as F)()` is `a.b()`. */
+function isErasedWrapper(node) {
+  switch (node?.type) {
+    case "TSNonNullExpression":
+    case "TSAsExpression":
+    case "TSSatisfiesExpression":
+    case "ParenthesizedExpression":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** `node`, or the outermost erased wrapper around it. */
+function withErasedWrappers(node) {
+  while (isErasedWrapper(node.parent)) node = node.parent;
+  return node;
+}
+
 /**
  * Return a textual key for a simple static member expression chain made of
  * identifiers and `this`, e.g. `options.foo` or `this.a.b`. Returns `null`
@@ -13,7 +32,9 @@ function memberExpressionKey(node) {
   if (!node || node.type !== "MemberExpression" || node.computed || node.optional) {
     return null;
   }
-  const { object, property } = node;
+  const { property } = node;
+  let { object } = node;
+  while (object.type === "TSNonNullExpression") object = object.expression;
   if (!property || property.type !== "Identifier") {
     return null;
   }
@@ -37,6 +58,7 @@ function memberExpressionKey(node) {
  * of a cached local.
  */
 function isWriteTarget(node) {
+  node = withErasedWrappers(node);
   const parent = node.parent;
   if (!parent) return false;
   if (parent.type === "AssignmentExpression" && parent.left === node) return true;
@@ -51,6 +73,7 @@ function isWriteTarget(node) {
  * something a simple `const fn = obj.fn` can replace.
  */
 function isCallee(node) {
+  node = withErasedWrappers(node);
   const parent = node.parent;
   if (!parent) return false;
   if ((parent.type === "CallExpression" || parent.type === "NewExpression") && parent.callee === node) return true;
@@ -175,7 +198,15 @@ const noDuplicateConditionalPropertyAccess = {
     schema: [],
   },
   create(context) {
+    // A member of a `const enum` is a constant: nothing is read at run time.
+    const constEnums = new Set();
     return {
+      Program(node) {
+        for (const statement of node.body) {
+          const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+          if (declaration?.type === "TSEnumDeclaration" && declaration.const) constEnums.add(declaration.id.name);
+        }
+      },
       IfStatement(node) {
         const members = new Map();
         const cached = new Set();
@@ -183,6 +214,9 @@ const noDuplicateConditionalPropertyAccess = {
         // A property already cached via `(local = obj.prop)` in the
         // condition is the pattern this rule recommends; don't flag it.
         for (const key of cached) members.delete(key);
+        for (const key of members.keys()) {
+          if (constEnums.has(key.slice(0, key.indexOf(".")))) members.delete(key);
+        }
         if (members.size === 0) return;
 
         for (const [key, member] of members) {
@@ -211,11 +245,80 @@ const noDuplicateConditionalPropertyAccess = {
   },
 };
 
+/** Whether evaluating `expression` and dropping its value does nothing that a reader would expect of a statement. */
+function isOnlyAValue(expression) {
+  switch (expression.type) {
+    case "ArrayExpression":
+    case "ArrowFunctionExpression":
+    case "BinaryExpression":
+    case "ClassExpression":
+    case "ConditionalExpression":
+    case "FunctionExpression":
+    case "Identifier":
+    case "Literal":
+    case "LogicalExpression":
+    case "MemberExpression":
+    case "MetaProperty":
+    case "ObjectExpression":
+    case "SequenceExpression":
+    case "TaggedTemplateExpression":
+    case "TemplateLiteral":
+    case "ThisExpression":
+      return true;
+    case "UnaryExpression":
+      return expression.operator !== "void" && expression.operator !== "delete";
+    case "ChainExpression":
+    case "TSInstantiationExpression":
+    case "TSTypeAssertion":
+      return isOnlyAValue(expression.expression);
+    default:
+      return isErasedWrapper(expression) && isOnlyAValue(expression.expression);
+  }
+}
+
+/** `"unlikely";` where `bun build --compile --aot` reads it: the first statement of a block that is an arm of an `if`. */
+function isUnlikelyMark(statement) {
+  let { expression } = statement;
+  if (expression.type === "ParenthesizedExpression") expression = expression.expression;
+  const block = statement.parent;
+  return (
+    expression.type === "Literal" &&
+    expression.value === "unlikely" &&
+    block.type === "BlockStatement" &&
+    block.body[0] === statement &&
+    block.parent.type === "IfStatement"
+  );
+}
+
+const noUnusedExpressions = {
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "ESLint's `no-unused-expressions` with its default options, " +
+        'except that `"unlikely";` may be the first statement of an arm of an `if`.',
+    },
+    messages: {
+      unused: "Expected expression to be used",
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      ExpressionStatement(node) {
+        if (typeof node.directive === "string" || !isOnlyAValue(node.expression) || isUnlikelyMark(node)) return;
+        context.report({ node, messageId: "unused" });
+      },
+    };
+  },
+};
+
 export default {
   meta: {
     name: "bun",
   },
   rules: {
     "no-duplicate-conditional-property-access": noDuplicateConditionalPropertyAccess,
+    "no-unused-expressions": noUnusedExpressions,
   },
 };

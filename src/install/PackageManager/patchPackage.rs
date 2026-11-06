@@ -466,7 +466,7 @@ pub fn do_patch_commit(
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
-    let linker = load_result.node_linker(manager.options.node_linker);
+    let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
@@ -653,7 +653,7 @@ pub fn do_patch_commit(
 
     // package.json is shared with other machines, so an absolute path to a directory inside the
     // project is written relative to the project root.
-    let project = with_slashes(FileSystem::instance().top_level_dir());
+    let project = with_slashes(FileSystem::get().top_level_dir());
     if bun_paths::is_absolute(&patches_dir)
         && resolve_path::is_parent_or_equal(&project, &patches_dir)
             != resolve_path::ParentEqual::Unrelated
@@ -1048,7 +1048,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         resolve_path::join_spill::<platform::Posix>(
             &mut spill,
             &[
-                FileSystem::instance().top_level_dir_without_trailing_slash(),
+                FileSystem::get().top_level_dir_without_trailing_slash(),
                 &target.folder,
             ],
         )

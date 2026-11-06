@@ -1,0 +1,263 @@
+# A weak map and a weak ref of dogs get a cat.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="weak-map-and-weak-ref-of-dogs-get-cat.ts" displayPath="weak-map-and-weak-ref-of-dogs-get-cat.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=48 kind=Result
+typesite w1 module=m0 position=1689 kind=Parameter
+typesite w2 module=m0 position=1717 kind=Parameter
+typesite w3 module=m0 position=1673 kind=Result
+typesite w4 module=m0 position=1836 kind=Parameter
+typesite w5 module=m0 position=1864 kind=Parameter
+typesite w6 module=m0 position=1820 kind=Result
+typesite w7 module=m0 position=1630 kind=Variable
+typesite w8 module=m0 position=1975 kind=Variable
+typesite w9 module=m0 position=2309 kind=Variable
+typesite w10 module=m0 position=1012 kind=Parameter
+typesite w11 module=m0 position=1027 kind=Parameter
+typesite w12 module=m0 position=1304 kind=Parameter
+typesite w13 module=m0 position=1276 kind=Field
+typesite w14 module=m0 position=1378 kind=Field
+typesite w15 module=m0 position=1390 kind=Field
+typesite w16 module=m0 position=1409 kind=Field
+typesite w17 module=m0 position=1532 kind=Field
+typesite w18 module=m0 position=1550 kind=Field
+typesite w19 module=m0 position=1994 kind=Variable
+typesite w20 module=m0 position=2062 kind=Element
+typesite w21 module=m0 position=2071 kind=CallResult
+typesite w22 module=m0 position=2035 kind=CallResult
+typesite w23 module=m0 position=2113 kind=Element
+typesite w24 module=m0 position=2098 kind=CallResult
+typesite w25 module=m0 position=2139 kind=Element
+typesite w26 module=m0 position=2124 kind=CallResult
+typesite w27 module=m0 position=2165 kind=Element
+typesite w28 module=m0 position=2150 kind=CallResult
+typesite w29 module=m0 position=2275 kind=Element
+typesite w30 module=m0 position=2284 kind=CallResult
+typesite w31 module=m0 position=2248 kind=CallResult
+typesite w32 module=m0 position=2400 kind=Variable
+typesite w33 module=m0 position=2400 kind=Element
+typesite w34 module=m0 position=2448 kind=Result
+typesite w35 module=m0 position=2503 kind=Result
+typesite w36 module=m0 position=2557 kind=Result
+typesite w37 module=m0 position=2610 kind=Result
+typesite w38 module=m0 position=2824 kind=Result
+typesite w39 module=m0 position=3164 kind=Result
+typesite w40 module=m0 position=1901 kind=CallResult
+typesite w41 module=m0 position=1061 kind=Variable
+typesite w42 module=m0 position=1094 kind=CallResult
+typesite w43 module=m0 position=1175 kind=PropertyRead
+typesite w44 module=m0 position=3215 kind=Variable
+typesite w45 module=m0 position=3187 kind=CallResult
+typesite w46 module=m0 position=3259 kind=CallResult
+typesite w47 module=m0 position=3301 kind=CallResult
+layout L0 kind=Instance name="Animal" module=m0 position=1265 constructor=f5 fields=[{key="name" declared={type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Dog" module=m0 position=1355 base=L0 constructor=f6 fields=[{key="legs" declared={type=number site=w14} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="owner" declared={type=undefined|null|L3 site=w16 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=3
+layout L2 kind=Instance name="Cat" module=m0 position=1509 base=L0 constructor=f7 fields=[{key="lives" declared={type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="indoor" declared={type=boolean site=w18} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=2
+layout L3 module=m0 position=1638 fields=[{key="id" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|L3 elements=[Object{layout=L3 members=[{key="id" value=Number{}}]}, Object{layout=L3 members=[{key="id" value=Number{value=1}}]}, Object{layout=L3 members=[{key="id" value=Number{value=2}}]}]} module=m0
+variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="legsOf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="barkOf" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="Cat" module=m0 declared={type=absent|f7 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f6
+    v8 = NewClass v7, v5, v6 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Convert v9 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v11 = Data data=d0
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|L3> site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v13 = Integer
+    v14 = Convert v13 declared={type=number site=w8}
+    v15 = Integer
+    v16 = Convert v15 declared={type=number site=w19}
+    Jump -> next b1(v14, v16)
+  b1(v17: number, v18: number):
+    LoopHint
+    v20 = Integer integer=2000
+    v21 = Less v18, v20
+    Branch v21 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v22):
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="WeakMap" [isFreeName]
+    v25 = Convert v24 declared={type=builtin(WeakMap) flags=[IsExpected]}
+    v26 = Integer
+    v27 = ElemGet v12, v26
+    v28 = Convert v27 declared={type=undefined|null|L3 site=w20 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v29 = String string="a"
+    v30 = Construct v10, -, v29 calleeName="Dog"
+    v31 = Convert v30 declared={type=undefined|null|L1 site=w21 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v32 = NewArray v28, v31 contents=undefined|null|object
+    v33 = NewArray v32 contents=anything
+    v34 = Construct v25, -, v33 calleeName="WeakMap"
+    v35 = Convert v34 declared={type=undefined|null|WeakMap<undefined|null|object, undefined|null|L1> site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v36 = GetModuleVariable variable=g1
+    v37 = Integer
+    v38 = ElemGet v12, v37
+    v39 = Convert v38 declared={type=undefined|null|L3 site=w23 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v40 = Call v36, -, v35, v39 calleeName="legsOf"
+    v41 = Convert v40 declared={type=number site=w24}
+    v42 = GetModuleVariable variable=g1
+    v43 = Integer integer=1
+    v44 = ElemGet v12, v43
+    v45 = Convert v44 declared={type=undefined|null|L3 site=w25 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v46 = Call v42, -, v35, v45 calleeName="legsOf"
+    v47 = Convert v46 declared={type=number site=w26}
+    v48 = Add v41, v47
+    v49 = GetModuleVariable variable=g2
+    v50 = Integer
+    v51 = ElemGet v12, v50
+    v52 = Convert v51 declared={type=undefined|null|L3 site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v53 = Call v49, -, v35, v52 calleeName="barkOf"
+    v54 = Convert v53 declared={type=undefined|null|string site=w28 flags=[OmitsNull, OmitsUndefined]}
+    v55 = PropGet v54 key="length"
+    v56 = Add v48, v55
+    v57 = Add v17, v56
+    v58 = Convert v57 declared={type=number site=w8}
+    v59 = Increment v22
+    v60 = Convert v59 declared={type=number site=w19}
+    Jump -> next b1(v58, v60)
+  b3(v61):
+    v62 = Builtin builtin=GlobalThis
+    v63 = PropGet v62 key="WeakMap" [isFreeName]
+    v64 = Convert v63 declared={type=builtin(WeakMap) flags=[IsExpected]}
+    v65 = Integer
+    v66 = ElemGet v12, v65
+    v67 = Convert v66 declared={type=undefined|null|L3 site=w29 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v68 = String string="rex"
+    v69 = Construct v10, -, v68 calleeName="Dog"
+    v70 = Convert v69 declared={type=undefined|null|L1 site=w30 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v71 = NewArray v67, v70 contents=undefined|null|object
+    v72 = NewArray v71 contents=anything
+    v73 = Construct v64, -, v72 calleeName="WeakMap"
+    v74 = Convert v73 declared={type=undefined|null|WeakMap<undefined|null|object, undefined|null|L1> site=w31 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v75 = Convert v74 declared={type=undefined|null|WeakMap<undefined|null|object, undefined|null|L0|L1|L2> site=w9 flags=[OmitsNull, OmitsUndefined]}
+    v76 = PropGet v75 key="set"
+    v77 = IteratorOpen v12
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v79 = IteratorResume v77
+    v80 = ResultAt v79
+    v81 = ResultAt v79 index=1
+    Branch v80 -> taken b5(), notTaken b6()
+  b5():
+    v82 = Undefined
+    Return v82
+  b6():
+    Jump -> next b7()
+  b7() handler=b8():
+    v83 = Convert v81 declared={type=undefined|null|L3 site=w33 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v84 = PropGet v83 key="id"
+    v85 = String string=": legs * 2"
+    v86 = Add v84, v85
+    v87 = NewClosure v83 function=f8
+    v88 = Call v1, -, v86, v87 calleeName="attempt"
+    v89 = PropGet v83 key="id"
+    v90 = String string=": bark"
+    v91 = Add v89, v90
+    v92 = NewClosure v83 function=f9
+    v93 = Call v1, -, v91, v92 calleeName="attempt"
+    v94 = PropGet v83 key="id"
+    v95 = String string=": tag"
+    v96 = Add v94, v95
+    v97 = NewClosure v83 function=f10
+    v98 = Call v1, -, v96, v97 calleeName="attempt"
+    Jump -> next b4()
+  b8() role=IterationCleanup subject=v77:
+    v99 = CatchException
+    Rethrow v99
+}
+function f1 name="show" module=m0 position=48 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="legsOf" module=m0 position=1673 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|WeakMap<undefined|null|object, undefined|null|L1> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="barkOf" module=m0 position=1820 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|WeakMap<undefined|null|object, undefined|null|L1> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|WeakMap<undefined|null|object, undefined|null|L1>, v1: undefined|null|object):
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get" calleeName="dogs.get"
+    v4 = Convert v3 declared={type=undefined|null|L1 site=w40 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v5 = String string="nobody"
+    v6 = Convert v5 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}
+    Return v6
+}
+function f4 name="attempt" module=m0 position=995 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f8|f9|f10|f11|f12|f13 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f8|f9|f10|f11|f12|f13):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1 calleeName="run"
+    v4 = Call v2, -, v3 calleeName="show"
+    v5 = Convert v4 declared={type=undefined|null|string site=w42 flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b2()
+  b2():
+    Jump -> next b5(v5)
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = String string="threw "
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="Error" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(Error) flags=[IsExpected]}
+    v11 = InstanceOf v6, v10 writtenExpression="error instanceof Error"
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = Convert v6 declared={type=undefined|null|Error flags=[IsExpected]}
+    v14 = PropGet v13 key="constructor"
+    v15 = Convert v14 declared={type=undefined|null|function site=w43} illTypedCause=Assertion
+    v16 = PropGet v15 key="name"
+    v17 = Convert v16 declared={type=undefined|null|string site=w43} illTypedCause=Assertion
+    v18 = Add v7, v17
+    v19 = Convert v18 declared={type=undefined|null|string site=w41 flags=[OmitsNull]}
+    Jump -> next b5(v19)
+  b5(v20: undefined|null|string):
+    v21 = String string=" -> "
+    v22 = Add v0, v21
+    v23 = Undefined
+    Return v23
+}
+function f5 name="Animal" module=m0 position=1303 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f6 name="Dog" module=m0 position=1355 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f7 name="Cat" module=m0 position=1509 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2
+function f8 module=m0 position=2448 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L3 site=w32 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w34}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=2503 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L3 site=w32 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|string site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=2557 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L3 site=w32 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|string site=w36 flags=[OmitsNull]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=2610 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|number site=w37}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=2824 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|string> site=w38 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=3164 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w39}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=WeakSet
+    v1 = Construct v0 calleeName="WeakSet"
+    v2 = Convert v1 declared={type=undefined|null|WeakSet<undefined|null|L1> site=w45 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v3 = Convert v2 declared={type=undefined|null|WeakSet<undefined|null|L0|L1|L2> site=w44 flags=[OmitsNull, OmitsUndefined]}
+    v4 = GetModuleVariable variable=g3
+    v5 = CheckInitialized v4 name="Cat"
+    v6 = String string="tom"
+    v7 = Construct v5, -, v6 calleeName="Cat"
+    v8 = Convert v7 declared={type=undefined|null|L2 site=w46 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v9 = PropGet v3 key="has"
+    v10 = Call v9, v3, v8 calleeKey="has" calleeName="wide.has"
+    ReturnCall v10 casts=[{declared={type=boolean site=w47}}, {declared={type=boolean site=w39}}]
+}
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 207, patchpoints: 47, rare instructions: 149, polls: 2
+# CHECK-NEXT: end of function f0

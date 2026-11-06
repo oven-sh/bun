@@ -1,0 +1,177 @@
+# Stores `x.length = n` where x has no type and is an array that a built-in made: empty ones that hold nothing yet, and ones of integers, doubles and anything.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="array-length-named-store-builtin-arrays.js" displayPath="array-length-named-store-builtin-arrays.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=753 fields=[{key="Array(0)" declared={type=undefined|null|function|f5 flags=[IsExpected]} flags=[IsRequired]}, {key="Array.from" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired]}, {key="Array.from of nothing" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="Array.of()" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsRequired]}, {key="a concat" declared={type=undefined|null|function|f15 flags=[IsExpected]} flags=[IsRequired]}, {key="a filter" declared={type=undefined|null|function|f12 flags=[IsExpected]} flags=[IsRequired]}, {key="a map" declared={type=undefined|null|function|f14 flags=[IsExpected]} flags=[IsRequired]}, {key="a slice" declared={type=undefined|null|function|f10 flags=[IsExpected]} flags=[IsRequired]}, {key="a splice" declared={type=undefined|null|function|f21 flags=[IsExpected]} flags=[IsRequired]}, {key="a split" declared={type=undefined|null|function|f16 flags=[IsExpected]} flags=[IsRequired]}, {key="an empty filter" declared={type=undefined|null|function|f11 flags=[IsExpected]} flags=[IsRequired]}, {key="an empty map" declared={type=undefined|null|function|f13 flags=[IsExpected]} flags=[IsRequired]}, {key="an empty slice" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="keys" declared={type=undefined|null|function|f18 flags=[IsExpected]} flags=[IsRequired]}, {key="keys of nothing" declared={type=undefined|null|function|f17 flags=[IsExpected]} flags=[IsRequired]}, {key="new Array()" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired]}, {key="new Array(3)" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsRequired]}, {key="parsed" declared={type=undefined|null|function|f20 flags=[IsExpected]} flags=[IsRequired]}, {key="parsed, empty" declared={type=undefined|null|function|f19 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[15, 16, 0, 3, 2, 1, 12, 7, 10, 5, 11, 6, 4, 9, 14, 13, 18, 17, 8] ownFieldCount=19
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="aotOperationCount" [isFreeName, isForTypeOf]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="aotOperationCount" [isFreeName]
+    v8 = NewObject layout=L0
+    v9 = NewClosure function=f15
+    v10 = Convert v9 declared={type=undefined|null|function|f15 flags=[IsExpected]}
+    PropDefine v8, v10 key="a concat"
+    v12 = NewClosure function=f19
+    v13 = Convert v12 declared={type=undefined|null|function|f19 flags=[IsExpected]}
+    PropDefine v8, v13 key="parsed, empty"
+    v15 = NewClosure function=f20
+    v16 = Convert v15 declared={type=undefined|null|function|f20 flags=[IsExpected]}
+    PropDefine v8, v16 key="parsed"
+    v18 = FinishObject v8
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v20 = Builtin builtin=Object
+    v21 = Builtin builtin=ObjectEntries
+    v22 = Call v21, v20, v19 calleeName="Object.entries"
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21>> flags=[IsExpected]}
+    v24 = IteratorOpen v23
+    Jump -> next b1()
+  b1():
+    v25 = IteratorResume v24
+    v26 = ResultAt v25 index=1
+    Jump -> next b2()
+  b2() handler=b6():
+    v27 = IteratorOpen v26 elementCount=2 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b5():
+    v28 = IteratorResume v27 stepIndex=1
+    v29 = ResultAt v28 index=1
+    v30 = Convert v29 declared={type=undefined|null|function|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21 flags=[IsExpected]}
+    Jump -> next b4()
+  b4() handler=b6():
+    v31 = Integer
+    v32 = Convert v31 declared={type=number flags=[IsExpected]}
+    LoopHint
+    v34 = Call v30 calleeName="make"
+    v35 = Integer integer=2
+    v36 = Call v1, -, v34, v35 calleeName="setLength"
+    v37 = Convert v36 declared={type=undefined|null|string|object flags=[IsExpected]}
+    v38 = Call v30 calleeName="make"
+    v39 = Integer
+    v40 = Call v1, -, v38, v39 calleeName="setLength"
+    v41 = Integer integer=2
+    v42 = Call v1, -, v40, v41 calleeName="setLength"
+    v43 = Convert v42 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v44 = Integer integer=1
+    v45 = String string="written"
+    ElemSet v43, v44, v45
+    v47 = Call v30 calleeName="make"
+    v48 = Integer
+    v49 = Call v1, -, v47, v48 calleeName="setLength"
+    v50 = Convert v49 declared={type=undefined|null|string|object flags=[IsExpected]}
+    v51 = PropGet v50 key="push"
+    v52 = Call v30 calleeName="make"
+    v53 = Integer
+    v54 = Call v1, -, v52, v53 calleeName="setLength"
+    v55 = Call v30 calleeName="make"
+    v56 = Integer integer=1
+    v57 = Call v1, -, v55, v56 calleeName="setLength"
+    v58 = Convert v57 declared={type=undefined|null|string|object flags=[IsExpected]}
+    v59 = Call v3, -, v58 calleeName="describe"
+    v60 = Call v3, -, v37 calleeName="describe"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v27 handler=b6():
+    v61 = CatchException
+    Rethrow v61
+  b6() role=IterationCleanup subject=v24:
+    v62 = CatchException
+    Rethrow v62
+}
+function f1 name="setLength" module=m0 position=444 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    PropSet v0, v2 key="length"
+    Return v0
+}
+function f2 name="describe" module=m0 position=526 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="new Array()" module=m0 position=772 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="new Array(3)" module=m0 position=809 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="Array(0)" module=m0 position=843 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="Array.of()" module=m0 position=875 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="Array.from of nothing" module=m0 position=920 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<never> flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="Array.from" module=m0 position=958 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="an empty slice" module=m0 position=1024 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="a slice" module=m0 position=1063 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="an empty filter" module=m0 position=1113 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="a filter" module=m0 position=1164 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="an empty map" module=m0 position=1224 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<never> flags=[IsExpected]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="a map" module=m0 position=1257 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 name="a concat" module=m0 position=1304 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<never> flags=[IsExpected]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v2 = PropGet v1 key="concat"
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
+    v4 = Data data=d1
+    v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v6 = Data data=d2
+    v7 = Convert v6 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v8 = Call v3, v1, v5, v7 calleeKey="concat" calleeName="concat"
+    ReturnCall v8 casts=[{declared={type=undefined|null|Array<never> flags=[IsExpected]}}]
+}
+function f16 name="a split" module=m0 position=1342 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 name="keys of nothing" module=m0 position=1389 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 name="keys" module=m0 position=1422 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 name="parsed, empty" module=m0 position=1476 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v3 = String string="[]"
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4
+}
+function f20 name="parsed" module=m0 position=1512 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 name="a splice" module=m0 position=1561 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: setLength f15 f19
+# CHECK-LABEL: function {{*}}name="setLength"
+# CHECK: module=m0 position=444 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}, {type=int[0, 2]}] results=[{type=null|boolean|number|string|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: null|boolean|number|string|object, v1: int[0, 2]):
+# CHECK-NEXT: PropSet v0, v1 key="length" accessSite=21
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f15 name=
+# CHECK: "a concat" module=m0 position=1304 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=Array<"written", proven, pristine[Storage, Names]>}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f48} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f48
+# CHECK-NEXT: v1: Array<never> = NewArray contents=never @1304 tail
+# CHECK-NEXT: v2: Array<"written", proven, pristine[Storage, Names]> = AssumeType v1 provenType=Array<"written", proven, pristine[Storage, Names]>
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f19 name=
+# CHECK: "parsed, empty" module=m0 position=1476 kind=Arrow thisType={type=anything} results=[{type=null|boolean|number|string|object}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "[]" = String string="[]"
+# CHECK-NEXT: v1: undefined = Undefined @0 tail
+# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=25 @0 tail
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

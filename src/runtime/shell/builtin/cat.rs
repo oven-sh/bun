@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
@@ -31,7 +31,7 @@ pub(crate) enum CatState {
         /// Current index into the filepath args.
         idx: usize,
         /// Per-file reader.
-        reader: Option<Arc<IOReader>>,
+        reader: Option<Rc<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
         in_done: bool,
@@ -202,12 +202,12 @@ impl Cat {
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Clone the `Arc<IOReader>`
+                // Clone the `Rc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
-                    BuiltinInput::Fd(r) => Arc::clone(r),
+                    BuiltinInput::Fd(r) => Rc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
                 reader.set_interp(interp_ptr);
@@ -271,7 +271,7 @@ impl Cat {
                     *chunks_queued = 0;
                     *in_done = false;
                     *errno = 0;
-                    *slot = Some(Arc::clone(&reader));
+                    *slot = Some(Rc::clone(&reader));
                 }
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,
@@ -300,7 +300,7 @@ impl Cat {
                 fd.writer
                     .cancel_chunks(ChildPtr::new(cmd, WriterTag::Builtin));
             }
-            // Pull the reader `Arc` out of
+            // Pull the reader `Rc` out of
             // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
                 CatState::ExecStdin {
@@ -361,7 +361,7 @@ impl Cat {
         let reader = match &Self::state_mut(interp, cmd).state {
             CatState::ExecFilepathArgs { reader, .. } => reader.clone(),
             _ => match &Builtin::of(interp, cmd).stdin {
-                BuiltinInput::Fd(r) => Some(Arc::clone(r)),
+                BuiltinInput::Fd(r) => Some(Rc::clone(r)),
                 _ => None,
             },
         };

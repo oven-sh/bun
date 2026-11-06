@@ -1,0 +1,905 @@
+# One character of a string against a one-character literal, with every operator, from both sides, at positions inside and outside the string.
+# Outside the string s[i] and s.at(i) are undefined, for which no relation holds, and s.charAt(i) is the empty string, which is less than every character.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="characters-ordered-against-literals.js" displayPath="characters-ordered-against-literals.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=13}, Number{value=30}, Number{value=100}, Number{value=-1}, Number{value=-2}, Number{value=-100}, Number{value=2147483647}, Number{value=-2147483648}, Number{value=4294967296}, Number{value=1.5}, Number{value=-0.5}, Number{value=-0}, Number{value=NaN}, Number{value=Infinity}, Number{value=-Infinity}]} module=m0
+variable g0 name="element_lt" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="element_lt_literalFirst" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="element_le" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="element_le_literalFirst" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="element_gt" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="element_gt_literalFirst" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="element_ge" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="element_ge_literalFirst" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="element_eq" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="element_eq_literalFirst" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="element_ne" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="element_ne_literalFirst" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="element_looseEq" module=m0 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+variable g13 name="element_looseEq_literalFirst" module=m0 declared={type=f14 flags=[IsFromCompiler]} initialization=Function function=f14 flags=[IsImmutable]
+variable g14 name="elementAtInteger_lt" module=m0 declared={type=f15 flags=[IsFromCompiler]} initialization=Function function=f15 flags=[IsImmutable]
+variable g15 name="elementAtInteger_lt_literalFirst" module=m0 declared={type=f16 flags=[IsFromCompiler]} initialization=Function function=f16 flags=[IsImmutable]
+variable g16 name="elementAtInteger_le" module=m0 declared={type=f17 flags=[IsFromCompiler]} initialization=Function function=f17 flags=[IsImmutable]
+variable g17 name="elementAtInteger_le_literalFirst" module=m0 declared={type=f18 flags=[IsFromCompiler]} initialization=Function function=f18 flags=[IsImmutable]
+variable g18 name="elementAtInteger_gt" module=m0 declared={type=f19 flags=[IsFromCompiler]} initialization=Function function=f19 flags=[IsImmutable]
+variable g19 name="elementAtInteger_gt_literalFirst" module=m0 declared={type=f20 flags=[IsFromCompiler]} initialization=Function function=f20 flags=[IsImmutable]
+variable g20 name="elementAtInteger_ge" module=m0 declared={type=f21 flags=[IsFromCompiler]} initialization=Function function=f21 flags=[IsImmutable]
+variable g21 name="elementAtInteger_ge_literalFirst" module=m0 declared={type=f22 flags=[IsFromCompiler]} initialization=Function function=f22 flags=[IsImmutable]
+variable g22 name="elementAtInteger_eq" module=m0 declared={type=f23 flags=[IsFromCompiler]} initialization=Function function=f23 flags=[IsImmutable]
+variable g23 name="elementAtInteger_eq_literalFirst" module=m0 declared={type=f24 flags=[IsFromCompiler]} initialization=Function function=f24 flags=[IsImmutable]
+variable g24 name="elementAtInteger_ne" module=m0 declared={type=f25 flags=[IsFromCompiler]} initialization=Function function=f25 flags=[IsImmutable]
+variable g25 name="elementAtInteger_ne_literalFirst" module=m0 declared={type=f26 flags=[IsFromCompiler]} initialization=Function function=f26 flags=[IsImmutable]
+variable g26 name="elementAtInteger_looseEq" module=m0 declared={type=f27 flags=[IsFromCompiler]} initialization=Function function=f27 flags=[IsImmutable]
+variable g27 name="elementAtInteger_looseEq_literalFirst" module=m0 declared={type=f28 flags=[IsFromCompiler]} initialization=Function function=f28 flags=[IsImmutable]
+variable g28 name="charAt_lt" module=m0 declared={type=f29 flags=[IsFromCompiler]} initialization=Function function=f29 flags=[IsImmutable]
+variable g29 name="charAt_lt_literalFirst" module=m0 declared={type=f30 flags=[IsFromCompiler]} initialization=Function function=f30 flags=[IsImmutable]
+variable g30 name="charAt_le" module=m0 declared={type=f31 flags=[IsFromCompiler]} initialization=Function function=f31 flags=[IsImmutable]
+variable g31 name="charAt_le_literalFirst" module=m0 declared={type=f32 flags=[IsFromCompiler]} initialization=Function function=f32 flags=[IsImmutable]
+variable g32 name="charAt_gt" module=m0 declared={type=f33 flags=[IsFromCompiler]} initialization=Function function=f33 flags=[IsImmutable]
+variable g33 name="charAt_gt_literalFirst" module=m0 declared={type=f34 flags=[IsFromCompiler]} initialization=Function function=f34 flags=[IsImmutable]
+variable g34 name="charAt_ge" module=m0 declared={type=f35 flags=[IsFromCompiler]} initialization=Function function=f35 flags=[IsImmutable]
+variable g35 name="charAt_ge_literalFirst" module=m0 declared={type=f36 flags=[IsFromCompiler]} initialization=Function function=f36 flags=[IsImmutable]
+variable g36 name="charAt_eq" module=m0 declared={type=f37 flags=[IsFromCompiler]} initialization=Function function=f37 flags=[IsImmutable]
+variable g37 name="charAt_eq_literalFirst" module=m0 declared={type=f38 flags=[IsFromCompiler]} initialization=Function function=f38 flags=[IsImmutable]
+variable g38 name="charAt_ne" module=m0 declared={type=f39 flags=[IsFromCompiler]} initialization=Function function=f39 flags=[IsImmutable]
+variable g39 name="charAt_ne_literalFirst" module=m0 declared={type=f40 flags=[IsFromCompiler]} initialization=Function function=f40 flags=[IsImmutable]
+variable g40 name="charAt_looseEq" module=m0 declared={type=f41 flags=[IsFromCompiler]} initialization=Function function=f41 flags=[IsImmutable]
+variable g41 name="charAt_looseEq_literalFirst" module=m0 declared={type=f42 flags=[IsFromCompiler]} initialization=Function function=f42 flags=[IsImmutable]
+variable g42 name="at_lt" module=m0 declared={type=f43 flags=[IsFromCompiler]} initialization=Function function=f43 flags=[IsImmutable]
+variable g43 name="at_lt_literalFirst" module=m0 declared={type=f44 flags=[IsFromCompiler]} initialization=Function function=f44 flags=[IsImmutable]
+variable g44 name="at_le" module=m0 declared={type=f45 flags=[IsFromCompiler]} initialization=Function function=f45 flags=[IsImmutable]
+variable g45 name="at_le_literalFirst" module=m0 declared={type=f46 flags=[IsFromCompiler]} initialization=Function function=f46 flags=[IsImmutable]
+variable g46 name="at_gt" module=m0 declared={type=f47 flags=[IsFromCompiler]} initialization=Function function=f47 flags=[IsImmutable]
+variable g47 name="at_gt_literalFirst" module=m0 declared={type=f48 flags=[IsFromCompiler]} initialization=Function function=f48 flags=[IsImmutable]
+variable g48 name="at_ge" module=m0 declared={type=f49 flags=[IsFromCompiler]} initialization=Function function=f49 flags=[IsImmutable]
+variable g49 name="at_ge_literalFirst" module=m0 declared={type=f50 flags=[IsFromCompiler]} initialization=Function function=f50 flags=[IsImmutable]
+variable g50 name="at_eq" module=m0 declared={type=f51 flags=[IsFromCompiler]} initialization=Function function=f51 flags=[IsImmutable]
+variable g51 name="at_eq_literalFirst" module=m0 declared={type=f52 flags=[IsFromCompiler]} initialization=Function function=f52 flags=[IsImmutable]
+variable g52 name="at_ne" module=m0 declared={type=f53 flags=[IsFromCompiler]} initialization=Function function=f53 flags=[IsImmutable]
+variable g53 name="at_ne_literalFirst" module=m0 declared={type=f54 flags=[IsFromCompiler]} initialization=Function function=f54 flags=[IsImmutable]
+variable g54 name="at_looseEq" module=m0 declared={type=f55 flags=[IsFromCompiler]} initialization=Function function=f55 flags=[IsImmutable]
+variable g55 name="at_looseEq_literalFirst" module=m0 declared={type=f56 flags=[IsFromCompiler]} initialization=Function function=f56 flags=[IsImmutable]
+variable g56 name="isDigit" module=m0 declared={type=f57 flags=[IsFromCompiler]} initialization=Function function=f57 flags=[IsImmutable]
+variable g57 name="isLetter" module=m0 declared={type=f58 flags=[IsFromCompiler]} initialization=Function function=f58 flags=[IsImmutable]
+variable g58 name="isBelowSpaceOrMissing" module=m0 declared={type=f59 flags=[IsFromCompiler]} initialization=Function function=f59 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f60
+    v1 = Convert v0 declared={type=f60 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f61
+    v3 = Convert v2 declared={type=f61 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f62
+    v5 = Convert v4 declared={type=f62 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f63
+    v7 = Convert v6 declared={type=f63 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f64
+    v9 = Convert v8 declared={type=f64 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f65
+    v11 = Convert v10 declared={type=f65 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f66
+    v13 = Convert v12 declared={type=f66 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = String string=""
+    v15 = String string="m"
+    v16 = String string="almz"
+    v17 = String string="a\u{4e2d}m\u{ffff}\u{0}"
+    v18 = String string="0123456789abc"
+    v19 = String string="mnopqrstuvwxyz_AZ ()[]"
+    v20 = Call v13, -, v18, v19 calleeName="rope"
+    v21 = String string="xyzm"
+    v22 = String string="mm"
+    v23 = Call v13, -, v21, v22 calleeName="rope"
+    v24 = PropGet v23 key="slice"
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]}
+    v26 = Integer integer=2
+    v27 = Call v25, v23, v26 calleeKey="slice" calleeName="slice"
+    v28 = String string="\u{1f600}m"
+    v29 = NewArray v14, v15, v16, v17, v20, v27, v28 contents=anything
+    v30 = Convert v29 declared={type=undefined|null|Array flags=[IsExpected]}
+    v31 = Data data=d0
+    v32 = Convert v31 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v33 = IteratorOpen v30
+    Jump -> next b1()
+  b1():
+    v34 = IteratorResume v33
+    v35 = ResultAt v34 index=1
+    Jump -> next b2()
+  b2() handler=b8():
+    v36 = Convert v35 declared={type=undefined|null|string flags=[IsExpected]}
+    v37 = IteratorOpen v32
+    Jump -> next b3()
+  b3() handler=b8():
+    LoopHint
+    v39 = IteratorResume v37
+    v40 = ResultAt v39
+    v41 = ResultAt v39 index=1
+    Branch v40 -> taken b4(), notTaken b5()
+  b4() handler=b8():
+    Jump -> next b1()
+  b5() handler=b8():
+    Jump -> next b6()
+  b6() handler=b7():
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
+    v43 = Builtin builtin=GlobalThis
+    v44 = PropGet v43 key="console" [isFreeName]
+    v45 = Convert v44 declared={type=builtin(Console) flags=[IsExpected]}
+    v46 = PropGet v45 key="log"
+    v47 = Convert v46 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v48 = Builtin builtin=JSON
+    v49 = PropGet v48 key="stringify"
+    v50 = Convert v49 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v51 = Call v50, v48, v36 calleeKey="stringify" calleeName="JSON.stringify"
+    v52 = Convert v51 declared={type=undefined|null|string flags=[IsExpected]}
+    v53 = Call v11, -, v36, v42 calleeName="answers"
+    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]}
+    v55 = Call v1, -, v36, v42 calleeName="kind"
+    v56 = Convert v55 declared={type=int[-1, 4] flags=[IsExpected]}
+    v57 = Call v3, -, v36, v42 calleeName="kindWithoutUndefined"
+    v58 = Convert v57 declared={type=int[0, 4] flags=[IsExpected]}
+    v59 = Call v5, -, v36, v42 calleeName="kindBySwitch"
+    v60 = Convert v59 declared={type=int[0, 4] flags=[IsExpected]}
+    v61 = Call v7, -, v36, v42 calleeName="wideLiteral"
+    v62 = Convert v61 declared={type=undefined|null|string flags=[IsExpected]}
+    v63 = Call v9, -, v36, v42 calleeName="ofSlice"
+    v64 = Convert v63 declared={type=undefined|null|string flags=[IsExpected]}
+    v65 = Call v47, v45, v52, v42, v54, v56, v58, v60, v62, v64 calleeKey="log" calleeName="console.log"
+    Jump -> next b3()
+  b7() role=IterationCleanup subject=v37 handler=b8():
+    v66 = CatchException
+    Rethrow v66
+  b8() role=IterationCleanup subject=v33:
+    v67 = CatchException
+    Rethrow v67
+}
+function f1 name="element_lt" module=m0 position=300 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="element_lt_literalFirst" module=m0 position=351 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="element_le" module=m0 position=415 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="element_le_literalFirst" module=m0 position=467 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="element_gt" module=m0 position=532 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="element_gt_literalFirst" module=m0 position=583 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="element_ge" module=m0 position=647 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="element_ge_literalFirst" module=m0 position=699 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="element_eq" module=m0 position=764 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="element_eq_literalFirst" module=m0 position=817 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="element_ne" module=m0 position=883 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="element_ne_literalFirst" module=m0 position=936 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="element_looseEq" module=m0 position=1002 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="element_looseEq_literalFirst" module=m0 position=1059 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 name="elementAtInteger_lt" module=m0 position=1129 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 name="elementAtInteger_lt_literalFirst" module=m0 position=1193 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 name="elementAtInteger_le" module=m0 position=1270 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 name="elementAtInteger_le_literalFirst" module=m0 position=1335 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 name="elementAtInteger_gt" module=m0 position=1413 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 name="elementAtInteger_gt_literalFirst" module=m0 position=1477 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 name="elementAtInteger_ge" module=m0 position=1554 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 name="elementAtInteger_ge_literalFirst" module=m0 position=1619 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 name="elementAtInteger_eq" module=m0 position=1697 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 name="elementAtInteger_eq_literalFirst" module=m0 position=1763 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f25 name="elementAtInteger_ne" module=m0 position=1842 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 name="elementAtInteger_ne_literalFirst" module=m0 position=1908 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f27 name="elementAtInteger_looseEq" module=m0 position=1987 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 name="elementAtInteger_looseEq_literalFirst" module=m0 position=2057 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = String string="m"
+    v3 = Integer
+    v4 = BitOr v1, v3
+    v5 = ElemGet v0, v4
+    v6 = Eq v2, v5
+    v7 = Convert v6 declared={type=boolean flags=[IsExpected]}
+    Return v7
+}
+function f29 name="charAt_lt" module=m0 position=2140 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f30 name="charAt_lt_literalFirst" module=m0 position=2197 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f31 name="charAt_le" module=m0 position=2267 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f32 name="charAt_le_literalFirst" module=m0 position=2325 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f33 name="charAt_gt" module=m0 position=2396 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f34 name="charAt_gt_literalFirst" module=m0 position=2453 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f35 name="charAt_ge" module=m0 position=2523 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f36 name="charAt_ge_literalFirst" module=m0 position=2581 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f37 name="charAt_eq" module=m0 position=2652 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f38 name="charAt_eq_literalFirst" module=m0 position=2711 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f39 name="charAt_ne" module=m0 position=2783 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f40 name="charAt_ne_literalFirst" module=m0 position=2842 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f41 name="charAt_looseEq" module=m0 position=2914 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f42 name="charAt_looseEq_literalFirst" module=m0 position=2977 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f43 name="at_lt" module=m0 position=3053 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f44 name="at_lt_literalFirst" module=m0 position=3102 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f45 name="at_le" module=m0 position=3164 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f46 name="at_le_literalFirst" module=m0 position=3214 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f47 name="at_gt" module=m0 position=3277 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f48 name="at_gt_literalFirst" module=m0 position=3326 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f49 name="at_ge" module=m0 position=3388 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f50 name="at_ge_literalFirst" module=m0 position=3438 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f51 name="at_eq" module=m0 position=3501 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f52 name="at_eq_literalFirst" module=m0 position=3552 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f53 name="at_ne" module=m0 position=3616 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f54 name="at_ne_literalFirst" module=m0 position=3667 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f55 name="at_looseEq" module=m0 position=3731 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f56 name="at_looseEq_literalFirst" module=m0 position=3786 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f57 name="isDigit" module=m0 position=3854 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f58 name="isLetter" module=m0 position=3934 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f59 name="isBelowSpaceOrMissing" module=m0 position=4059 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f60 name="kind" module=m0 position=4129 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=int[-1, 4] flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f61 name="kindWithoutUndefined" module=m0 position=4329 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=int[0, 4] flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f62 name="kindBySwitch" module=m0 position=4511 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=int[0, 4] flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = PropGet v0 key="charAt"
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
+    v4 = Convert v1 declared={type=number flags=[IsExpected]}
+    v5 = Call v3, v0, v4 calleeKey="charAt" calleeName="s.charAt"
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
+    SwitchString v6 strings=["a", "m", "\u{4e2d}", "z"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1():
+    v7 = Integer integer=1
+    v8 = Convert v7 declared={type=int[0, 4] flags=[IsExpected]}
+    Return v8
+  b2():
+    v9 = Integer integer=2
+    v10 = Convert v9 declared={type=int[0, 4] flags=[IsExpected]}
+    Return v10
+  b3():
+    v11 = Integer integer=3
+    v12 = Convert v11 declared={type=int[0, 4] flags=[IsExpected]}
+    Return v12
+  b4():
+    v13 = Integer integer=4
+    v14 = Convert v13 declared={type=int[0, 4] flags=[IsExpected]}
+    Return v14
+  b5():
+    v15 = Integer
+    v16 = Convert v15 declared={type=int[0, 4] flags=[IsExpected]}
+    Return v16
+}
+function f63 name="wideLiteral" module=m0 position=4726 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f64 name="ofSlice" module=m0 position=4909 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Integer integer=4
+    v6 = Call v3, v0, v4, v5 calleeKey="slice" calleeName="s.slice"
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    v8 = Integer
+    v9 = BitOr v1, v8
+    v10 = ElemGet v7, v9
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
+    v12 = String string="m"
+    v13 = StrictEq v11, v12
+    v14 = PropGet v7 key="charAt"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = Call v15, v7, v1 calleeKey="charAt" calleeName="part.charAt"
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
+    v18 = String string="m"
+    v19 = Less v17, v18
+    v20 = PropGet v7 key="at"
+    v21 = Convert v20 declared={type=undefined|null|function flags=[IsExpected]}
+    v22 = Call v21, v7, v1 calleeKey="at" calleeName="part.at"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    v24 = String string="m"
+    v25 = GreaterEq v23, v24
+    v26 = Integer
+    v27 = BitOr v1, v26
+    v28 = ElemGet v7, v27
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
+    v30 = String string="m"
+    v31 = LessEq v29, v30
+    v32 = NewArray v13, v19, v25, v31 contents=boolean
+    v33 = Convert v32 declared={type=undefined|null|Array<boolean> flags=[IsExpected]}
+    v34 = PropGet v33 key="join"
+    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]}
+    v36 = Call v35, v33 calleeKey="join" calleeName="join"
+    ReturnCall v36 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f65 name="answers" module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: i32):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v0, v1 calleeName="element_lt"
+    v6 = Convert v5 declared={type=boolean flags=[IsExpected]}
+    v7 = String string="1"
+    v8 = Add v3, v7
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    v10 = GetModuleVariable variable=g1
+    v11 = Call v10, -, v0, v1 calleeName="element_lt_literalFirst"
+    v12 = Convert v11 declared={type=boolean flags=[IsExpected]}
+    v13 = String string="1"
+    v14 = Add v9, v13
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
+    v16 = GetModuleVariable variable=g2
+    v17 = Call v16, -, v0, v1 calleeName="element_le"
+    v18 = Convert v17 declared={type=boolean flags=[IsExpected]}
+    v19 = String string="1"
+    v20 = Add v15, v19
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    v22 = GetModuleVariable variable=g3
+    v23 = Call v22, -, v0, v1 calleeName="element_le_literalFirst"
+    v24 = Convert v23 declared={type=boolean flags=[IsExpected]}
+    v25 = String string="1"
+    v26 = Add v21, v25
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]}
+    v28 = GetModuleVariable variable=g4
+    v29 = Call v28, -, v0, v1 calleeName="element_gt"
+    v30 = Convert v29 declared={type=boolean flags=[IsExpected]}
+    v31 = String string="1"
+    v32 = Add v27, v31
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = GetModuleVariable variable=g5
+    v35 = Call v34, -, v0, v1 calleeName="element_gt_literalFirst"
+    v36 = Convert v35 declared={type=boolean flags=[IsExpected]}
+    v37 = String string="1"
+    v38 = Add v33, v37
+    v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]}
+    v40 = GetModuleVariable variable=g6
+    v41 = Call v40, -, v0, v1 calleeName="element_ge"
+    v42 = Convert v41 declared={type=boolean flags=[IsExpected]}
+    v43 = String string="1"
+    v44 = Add v39, v43
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]}
+    v46 = GetModuleVariable variable=g7
+    v47 = Call v46, -, v0, v1 calleeName="element_ge_literalFirst"
+    v48 = Convert v47 declared={type=boolean flags=[IsExpected]}
+    v49 = String string="1"
+    v50 = Add v45, v49
+    v51 = Convert v50 declared={type=undefined|null|string flags=[IsExpected]}
+    v52 = GetModuleVariable variable=g8
+    v53 = Call v52, -, v0, v1 calleeName="element_eq"
+    v54 = Convert v53 declared={type=boolean flags=[IsExpected]}
+    v55 = String string="1"
+    v56 = Add v51, v55
+    v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]}
+    v58 = GetModuleVariable variable=g9
+    v59 = Call v58, -, v0, v1 calleeName="element_eq_literalFirst"
+    v60 = Convert v59 declared={type=boolean flags=[IsExpected]}
+    v61 = String string="1"
+    v62 = Add v57, v61
+    v63 = Convert v62 declared={type=undefined|null|string flags=[IsExpected]}
+    v64 = GetModuleVariable variable=g10
+    v65 = Call v64, -, v0, v1 calleeName="element_ne"
+    v66 = Convert v65 declared={type=boolean flags=[IsExpected]}
+    v67 = String string="1"
+    v68 = Add v63, v67
+    v69 = Convert v68 declared={type=undefined|null|string flags=[IsExpected]}
+    v70 = GetModuleVariable variable=g11
+    v71 = Call v70, -, v0, v1 calleeName="element_ne_literalFirst"
+    v72 = Convert v71 declared={type=boolean flags=[IsExpected]}
+    v73 = String string="1"
+    v74 = Add v69, v73
+    v75 = Convert v74 declared={type=undefined|null|string flags=[IsExpected]}
+    v76 = GetModuleVariable variable=g12
+    v77 = Call v76, -, v0, v1 calleeName="element_looseEq"
+    v78 = Convert v77 declared={type=boolean flags=[IsExpected]}
+    v79 = String string="1"
+    v80 = Add v75, v79
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]}
+    v82 = GetModuleVariable variable=g13
+    v83 = Call v82, -, v0, v1 calleeName="element_looseEq_literalFirst"
+    v84 = Convert v83 declared={type=boolean flags=[IsExpected]}
+    v85 = String string="1"
+    v86 = Add v81, v85
+    v87 = Convert v86 declared={type=undefined|null|string flags=[IsExpected]}
+    v88 = GetModuleVariable variable=g14
+    v89 = Call v88, -, v0, v1 calleeName="elementAtInteger_lt"
+    v90 = Convert v89 declared={type=boolean flags=[IsExpected]}
+    v91 = String string="1"
+    v92 = Add v87, v91
+    v93 = Convert v92 declared={type=undefined|null|string flags=[IsExpected]}
+    v94 = GetModuleVariable variable=g15
+    v95 = Call v94, -, v0, v1 calleeName="elementAtInteger_lt_literalFirst"
+    v96 = Convert v95 declared={type=boolean flags=[IsExpected]}
+    v97 = String string="1"
+    v98 = Add v93, v97
+    v99 = Convert v98 declared={type=undefined|null|string flags=[IsExpected]}
+    v100 = GetModuleVariable variable=g16
+    v101 = Call v100, -, v0, v1 calleeName="elementAtInteger_le"
+    v102 = Convert v101 declared={type=boolean flags=[IsExpected]}
+    v103 = String string="1"
+    v104 = Add v99, v103
+    v105 = Convert v104 declared={type=undefined|null|string flags=[IsExpected]}
+    v106 = GetModuleVariable variable=g17
+    v107 = Call v106, -, v0, v1 calleeName="elementAtInteger_le_literalFirst"
+    v108 = Convert v107 declared={type=boolean flags=[IsExpected]}
+    v109 = String string="1"
+    v110 = Add v105, v109
+    v111 = Convert v110 declared={type=undefined|null|string flags=[IsExpected]}
+    v112 = GetModuleVariable variable=g18
+    v113 = Call v112, -, v0, v1 calleeName="elementAtInteger_gt"
+    v114 = Convert v113 declared={type=boolean flags=[IsExpected]}
+    v115 = String string="1"
+    v116 = Add v111, v115
+    v117 = Convert v116 declared={type=undefined|null|string flags=[IsExpected]}
+    v118 = GetModuleVariable variable=g19
+    v119 = Call v118, -, v0, v1 calleeName="elementAtInteger_gt_literalFirst"
+    v120 = Convert v119 declared={type=boolean flags=[IsExpected]}
+    v121 = String string="1"
+    v122 = Add v117, v121
+    v123 = Convert v122 declared={type=undefined|null|string flags=[IsExpected]}
+    v124 = GetModuleVariable variable=g20
+    v125 = Call v124, -, v0, v1 calleeName="elementAtInteger_ge"
+    v126 = Convert v125 declared={type=boolean flags=[IsExpected]}
+    v127 = String string="1"
+    v128 = Add v123, v127
+    v129 = Convert v128 declared={type=undefined|null|string flags=[IsExpected]}
+    v130 = GetModuleVariable variable=g21
+    v131 = Call v130, -, v0, v1 calleeName="elementAtInteger_ge_literalFirst"
+    v132 = Convert v131 declared={type=boolean flags=[IsExpected]}
+    v133 = String string="1"
+    v134 = Add v129, v133
+    v135 = Convert v134 declared={type=undefined|null|string flags=[IsExpected]}
+    v136 = GetModuleVariable variable=g22
+    v137 = Call v136, -, v0, v1 calleeName="elementAtInteger_eq"
+    v138 = Convert v137 declared={type=boolean flags=[IsExpected]}
+    v139 = String string="1"
+    v140 = Add v135, v139
+    v141 = Convert v140 declared={type=undefined|null|string flags=[IsExpected]}
+    v142 = GetModuleVariable variable=g23
+    v143 = Call v142, -, v0, v1 calleeName="elementAtInteger_eq_literalFirst"
+    v144 = Convert v143 declared={type=boolean flags=[IsExpected]}
+    v145 = String string="1"
+    v146 = Add v141, v145
+    v147 = Convert v146 declared={type=undefined|null|string flags=[IsExpected]}
+    v148 = GetModuleVariable variable=g24
+    v149 = Call v148, -, v0, v1 calleeName="elementAtInteger_ne"
+    v150 = Convert v149 declared={type=boolean flags=[IsExpected]}
+    v151 = String string="1"
+    v152 = Add v147, v151
+    v153 = Convert v152 declared={type=undefined|null|string flags=[IsExpected]}
+    v154 = GetModuleVariable variable=g25
+    v155 = Call v154, -, v0, v1 calleeName="elementAtInteger_ne_literalFirst"
+    v156 = Convert v155 declared={type=boolean flags=[IsExpected]}
+    v157 = String string="1"
+    v158 = Add v153, v157
+    v159 = Convert v158 declared={type=undefined|null|string flags=[IsExpected]}
+    v160 = GetModuleVariable variable=g26
+    v161 = Call v160, -, v0, v1 calleeName="elementAtInteger_looseEq"
+    v162 = Convert v161 declared={type=boolean flags=[IsExpected]}
+    v163 = String string="1"
+    v164 = Add v159, v163
+    v165 = Convert v164 declared={type=undefined|null|string flags=[IsExpected]}
+    v166 = GetModuleVariable variable=g27
+    v167 = Call v166, -, v0, v1 calleeName="elementAtInteger_looseEq_literalFirst"
+    v168 = Convert v167 declared={type=boolean flags=[IsExpected]}
+    v169 = String string="1"
+    v170 = Add v165, v169
+    v171 = Convert v170 declared={type=undefined|null|string flags=[IsExpected]}
+    v172 = GetModuleVariable variable=g28
+    v173 = Call v172, -, v0, v1 calleeName="charAt_lt"
+    v174 = Convert v173 declared={type=boolean flags=[IsExpected]}
+    v175 = String string="1"
+    v176 = Add v171, v175
+    v177 = Convert v176 declared={type=undefined|null|string flags=[IsExpected]}
+    v178 = GetModuleVariable variable=g29
+    v179 = Call v178, -, v0, v1 calleeName="charAt_lt_literalFirst"
+    v180 = Convert v179 declared={type=boolean flags=[IsExpected]}
+    v181 = String string="1"
+    v182 = Add v177, v181
+    v183 = Convert v182 declared={type=undefined|null|string flags=[IsExpected]}
+    v184 = GetModuleVariable variable=g30
+    v185 = Call v184, -, v0, v1 calleeName="charAt_le"
+    v186 = Convert v185 declared={type=boolean flags=[IsExpected]}
+    v187 = String string="1"
+    v188 = Add v183, v187
+    v189 = Convert v188 declared={type=undefined|null|string flags=[IsExpected]}
+    v190 = GetModuleVariable variable=g31
+    v191 = Call v190, -, v0, v1 calleeName="charAt_le_literalFirst"
+    v192 = Convert v191 declared={type=boolean flags=[IsExpected]}
+    v193 = String string="1"
+    v194 = Add v189, v193
+    v195 = Convert v194 declared={type=undefined|null|string flags=[IsExpected]}
+    v196 = GetModuleVariable variable=g32
+    v197 = Call v196, -, v0, v1 calleeName="charAt_gt"
+    v198 = Convert v197 declared={type=boolean flags=[IsExpected]}
+    v199 = String string="1"
+    v200 = Add v195, v199
+    v201 = Convert v200 declared={type=undefined|null|string flags=[IsExpected]}
+    v202 = GetModuleVariable variable=g33
+    v203 = Call v202, -, v0, v1 calleeName="charAt_gt_literalFirst"
+    v204 = Convert v203 declared={type=boolean flags=[IsExpected]}
+    v205 = String string="1"
+    v206 = Add v201, v205
+    v207 = Convert v206 declared={type=undefined|null|string flags=[IsExpected]}
+    v208 = GetModuleVariable variable=g34
+    v209 = Call v208, -, v0, v1 calleeName="charAt_ge"
+    v210 = Convert v209 declared={type=boolean flags=[IsExpected]}
+    v211 = String string="1"
+    v212 = Add v207, v211
+    v213 = Convert v212 declared={type=undefined|null|string flags=[IsExpected]}
+    v214 = GetModuleVariable variable=g35
+    v215 = Call v214, -, v0, v1 calleeName="charAt_ge_literalFirst"
+    v216 = Convert v215 declared={type=boolean flags=[IsExpected]}
+    v217 = String string="1"
+    v218 = Add v213, v217
+    v219 = Convert v218 declared={type=undefined|null|string flags=[IsExpected]}
+    v220 = GetModuleVariable variable=g36
+    v221 = Call v220, -, v0, v1 calleeName="charAt_eq"
+    v222 = Convert v221 declared={type=boolean flags=[IsExpected]}
+    v223 = String string="1"
+    v224 = Add v219, v223
+    v225 = Convert v224 declared={type=undefined|null|string flags=[IsExpected]}
+    v226 = GetModuleVariable variable=g37
+    v227 = Call v226, -, v0, v1 calleeName="charAt_eq_literalFirst"
+    v228 = Convert v227 declared={type=boolean flags=[IsExpected]}
+    v229 = String string="1"
+    v230 = Add v225, v229
+    v231 = Convert v230 declared={type=undefined|null|string flags=[IsExpected]}
+    v232 = GetModuleVariable variable=g38
+    v233 = Call v232, -, v0, v1 calleeName="charAt_ne"
+    v234 = Convert v233 declared={type=boolean flags=[IsExpected]}
+    v235 = String string="1"
+    v236 = Add v231, v235
+    v237 = Convert v236 declared={type=undefined|null|string flags=[IsExpected]}
+    v238 = GetModuleVariable variable=g39
+    v239 = Call v238, -, v0, v1 calleeName="charAt_ne_literalFirst"
+    v240 = Convert v239 declared={type=boolean flags=[IsExpected]}
+    v241 = String string="1"
+    v242 = Add v237, v241
+    v243 = Convert v242 declared={type=undefined|null|string flags=[IsExpected]}
+    v244 = GetModuleVariable variable=g40
+    v245 = Call v244, -, v0, v1 calleeName="charAt_looseEq"
+    v246 = Convert v245 declared={type=boolean flags=[IsExpected]}
+    v247 = String string="1"
+    v248 = Add v243, v247
+    v249 = Convert v248 declared={type=undefined|null|string flags=[IsExpected]}
+    v250 = GetModuleVariable variable=g41
+    v251 = Call v250, -, v0, v1 calleeName="charAt_looseEq_literalFirst"
+    v252 = Convert v251 declared={type=boolean flags=[IsExpected]}
+    v253 = String string="1"
+    v254 = Add v249, v253
+    v255 = Convert v254 declared={type=undefined|null|string flags=[IsExpected]}
+    v256 = GetModuleVariable variable=g42
+    v257 = Call v256, -, v0, v1 calleeName="at_lt"
+    v258 = Convert v257 declared={type=boolean flags=[IsExpected]}
+    v259 = String string="1"
+    v260 = Add v255, v259
+    v261 = Convert v260 declared={type=undefined|null|string flags=[IsExpected]}
+    v262 = GetModuleVariable variable=g43
+    v263 = Call v262, -, v0, v1 calleeName="at_lt_literalFirst"
+    v264 = Convert v263 declared={type=boolean flags=[IsExpected]}
+    v265 = String string="1"
+    v266 = Add v261, v265
+    v267 = Convert v266 declared={type=undefined|null|string flags=[IsExpected]}
+    v268 = GetModuleVariable variable=g44
+    v269 = Call v268, -, v0, v1 calleeName="at_le"
+    v270 = Convert v269 declared={type=boolean flags=[IsExpected]}
+    v271 = String string="1"
+    v272 = Add v267, v271
+    v273 = Convert v272 declared={type=undefined|null|string flags=[IsExpected]}
+    v274 = GetModuleVariable variable=g45
+    v275 = Call v274, -, v0, v1 calleeName="at_le_literalFirst"
+    v276 = Convert v275 declared={type=boolean flags=[IsExpected]}
+    v277 = String string="1"
+    v278 = Add v273, v277
+    v279 = Convert v278 declared={type=undefined|null|string flags=[IsExpected]}
+    v280 = GetModuleVariable variable=g46
+    v281 = Call v280, -, v0, v1 calleeName="at_gt"
+    v282 = Convert v281 declared={type=boolean flags=[IsExpected]}
+    v283 = String string="1"
+    v284 = Add v279, v283
+    v285 = Convert v284 declared={type=undefined|null|string flags=[IsExpected]}
+    v286 = GetModuleVariable variable=g47
+    v287 = Call v286, -, v0, v1 calleeName="at_gt_literalFirst"
+    v288 = Convert v287 declared={type=boolean flags=[IsExpected]}
+    v289 = String string="1"
+    v290 = Add v285, v289
+    v291 = Convert v290 declared={type=undefined|null|string flags=[IsExpected]}
+    v292 = GetModuleVariable variable=g48
+    v293 = Call v292, -, v0, v1 calleeName="at_ge"
+    v294 = Convert v293 declared={type=boolean flags=[IsExpected]}
+    v295 = String string="1"
+    v296 = Add v291, v295
+    v297 = Convert v296 declared={type=undefined|null|string flags=[IsExpected]}
+    v298 = GetModuleVariable variable=g49
+    v299 = Call v298, -, v0, v1 calleeName="at_ge_literalFirst"
+    v300 = Convert v299 declared={type=boolean flags=[IsExpected]}
+    v301 = String string="1"
+    v302 = Add v297, v301
+    v303 = Convert v302 declared={type=undefined|null|string flags=[IsExpected]}
+    v304 = GetModuleVariable variable=g50
+    v305 = Call v304, -, v0, v1 calleeName="at_eq"
+    v306 = Convert v305 declared={type=boolean flags=[IsExpected]}
+    v307 = String string="1"
+    v308 = Add v303, v307
+    v309 = Convert v308 declared={type=undefined|null|string flags=[IsExpected]}
+    v310 = GetModuleVariable variable=g51
+    v311 = Call v310, -, v0, v1 calleeName="at_eq_literalFirst"
+    v312 = Convert v311 declared={type=boolean flags=[IsExpected]}
+    v313 = String string="1"
+    v314 = Add v309, v313
+    v315 = Convert v314 declared={type=undefined|null|string flags=[IsExpected]}
+    v316 = GetModuleVariable variable=g52
+    v317 = Call v316, -, v0, v1 calleeName="at_ne"
+    v318 = Convert v317 declared={type=boolean flags=[IsExpected]}
+    v319 = String string="1"
+    v320 = Add v315, v319
+    v321 = Convert v320 declared={type=undefined|null|string flags=[IsExpected]}
+    v322 = GetModuleVariable variable=g53
+    v323 = Call v322, -, v0, v1 calleeName="at_ne_literalFirst"
+    v324 = Convert v323 declared={type=boolean flags=[IsExpected]}
+    v325 = String string="1"
+    v326 = Add v321, v325
+    v327 = Convert v326 declared={type=undefined|null|string flags=[IsExpected]}
+    v328 = GetModuleVariable variable=g54
+    v329 = Call v328, -, v0, v1 calleeName="at_looseEq"
+    v330 = Convert v329 declared={type=boolean flags=[IsExpected]}
+    v331 = String string="1"
+    v332 = Add v327, v331
+    v333 = Convert v332 declared={type=undefined|null|string flags=[IsExpected]}
+    v334 = GetModuleVariable variable=g55
+    v335 = Call v334, -, v0, v1 calleeName="at_looseEq_literalFirst"
+    v336 = Convert v335 declared={type=boolean flags=[IsExpected]}
+    v337 = String string="1"
+    v338 = Add v333, v337
+    v339 = Convert v338 declared={type=undefined|null|string flags=[IsExpected]}
+    v340 = GetModuleVariable variable=g56
+    v341 = Call v340, -, v0, v1 calleeName="isDigit"
+    v342 = Convert v341 declared={type=boolean flags=[IsExpected]}
+    v343 = String string="1"
+    v344 = Add v339, v343
+    v345 = Convert v344 declared={type=undefined|null|string flags=[IsExpected]}
+    v346 = GetModuleVariable variable=g57
+    v347 = Call v346, -, v0, v1 calleeName="isLetter"
+    v348 = Convert v347 declared={type=boolean flags=[IsExpected]}
+    v349 = String string="1"
+    v350 = Add v345, v349
+    v351 = Convert v350 declared={type=undefined|null|string flags=[IsExpected]}
+    v352 = GetModuleVariable variable=g58
+    v353 = Call v352, -, v0, v1 calleeName="isBelowSpaceOrMissing"
+    v354 = Convert v353 declared={type=boolean flags=[IsExpected]}
+    v355 = String string="1"
+    v356 = Add v351, v355
+    v357 = Convert v356 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v357
+}
+function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: elementAtInteger_looseEq_literalFirst kindBySwitch ofSlice answers
+# CHECK-LABEL: function {{*}}name="elementAtInteger_looseEq_literalFirst"
+# CHECK: module=m0 position=2057 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
+# CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
+# CHECK-NEXT: v3: 0 @Int32 = Integer
+# CHECK-NEXT: v4: boolean @Boolean = TypeTest v2 testedType=i32
+# CHECK-NEXT: TestAndBranch v4 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v5: i32 @Int32):
+# CHECK-NEXT: v6: i32 @Int32 = BitOr v5, v3 form=Integers
+# CHECK-NEXT: Jump -> next b2(v6)
+# CHECK-NEXT: b2(v7: i32 @Int32):
+# CHECK-NEXT: v8: string @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v9: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v8, -, -, v7
+# CHECK-NEXT: v10: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v11: boolean @Boolean = Eq v10, v9 form=Integers
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v12: i32 @Int32 = BitOr v2, v3 form=Numbers
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="kindBySwitch"
+# CHECK: module=m0 position=4511 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=undefined|number}] results=[{type=int[0, 4]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: undefined|number @OptionalDouble):
+# CHECK-NEXT: v2: string @JSValue = RequireObjectCoercible v0 name="charAt"
+# CHECK-NEXT: v3: undefined|number @OptionalDouble = Upcast v1 castType=anything
+# CHECK-NEXT: v4: string @Cell = CallInline v2, v3 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=17
+# CHECK-NEXT: SwitchString v4 strings=["a", "m", "\u{4e2d}", "z"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: 3 @Int32 = Integer integer=3
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v8: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v9: 0 @Int32 = Integer
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ofSlice"
+# CHECK: module=m0 position=4909 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
+# CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
+# CHECK-NEXT: v3: string @JSValue = RequireObjectCoercible v0 name="slice"
+# CHECK-NEXT: v4: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v5: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v6: flatstring @Cell = FlattenString v3
+# CHECK-NEXT: v7: int[0, 2147483647] @Int32 = GetStringLength v6
+# CHECK-NEXT: v8: undefined @Void = StringRange v7, v4, v5
+# CHECK-NEXT: v9: int[0, 2147483647] @Int32 = ResultAt v8
+# CHECK-NEXT: v10: int[0, 2147483647] @Int32 = ResultAt v8 index=1
+# CHECK-NEXT: v11: string @Cell = Substring v6, v9, v10
+# CHECK-NEXT: v12: 0 @Int32 = Integer
+# CHECK-NEXT: v13: boolean @Boolean = TypeTest v2 testedType=i32
+# CHECK-NEXT: TestAndBranch v13 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v14: i32 @Int32):
+# CHECK-NEXT: v15: i32 @Int32 = BitOr v14, v12 form=Integers
+# CHECK-NEXT: v16: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v15
+# CHECK-NEXT: v17: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v18: boolean @Boolean = StrictEq v16, v17 form=Integers
+# CHECK-NEXT: v19: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v14
+# CHECK-NEXT: v20: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v21: boolean @Boolean = Less v19, v20 form=Integers
+# CHECK-NEXT: v22: int[-2147483647, 2147483647] @Int32 = Sub v10, v9 form=Integers
+# CHECK-NEXT: v23: undefined @Void = StringRange v22, v14 method=SingleRelativeIndex
+# CHECK-NEXT: v24: int[0, 2147483647] @Int32 = ResultAt v23
+# CHECK-NEXT: v25: int[0, 2147483647] @Int32 = ResultAt v23 index=1
+# CHECK-NEXT: v26: int[0, 4294967294] @Int64 = Add v9, v24 form=Integers
+# CHECK-NEXT: v27: int[0, 4294967294] @Int64 = Add v9, v25 form=Integers
+# CHECK-NEXT: v28: 0 @Int32 = Integer
+# CHECK-NEXT: v29: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v26, v27, v28
+# CHECK-NEXT: v30: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v31: boolean @Boolean = GreaterEq v29, v30 form=Integers
+# CHECK-NEXT: v32: 0 @Int32 = Integer
+# CHECK-NEXT: v33: i32 @Int32 = BitOr v14, v32 form=Integers
+# CHECK-NEXT: Jump -> next b2(v18, v21, v31, v33)
+# CHECK-NEXT: b2(v34: boolean @Boolean, v35: boolean @Boolean, v36: boolean @Boolean, v37: i32 @Int32):
+# CHECK-NEXT: v38: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v37
+# CHECK-NEXT: v39: 109 @Int64 = Integer integer=109
+# CHECK-NEXT: v40: int[0, 4294967295] @Int64 = ToUint32 v38
+# CHECK-NEXT: v41: boolean @Boolean = LessEq v40, v39 form=Integers
+# CHECK-NEXT: v42: "," @Cell = String string="," @0 tail
+# CHECK-NEXT: v43: "," @Cell = String string="," @0 tail
+# CHECK-NEXT: v44: "," @Cell = String string="," @0 tail
+# CHECK-NEXT: v45: string @Cell = Strcat v34, v42, v35, v43, v36, v44, v41 @0 tail
+# CHECK-NEXT: Return v45
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v46: i32 @Int32 = BitOr v2, v12 form=Numbers
+# CHECK-NEXT: v47: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v46
+# CHECK-NEXT: v48: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v49: boolean @Boolean = StrictEq v47, v48 form=Integers
+# CHECK-NEXT: v50: string @Cell = CallInline v11, v2 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=22
+# CHECK-NEXT: v51: int[-1, 1] @Int32 = StringOrderToCharacter v50 codeUnit=109
+# CHECK-NEXT: v52: 0 @Int32 = Integer
+# CHECK-NEXT: v53: boolean @Boolean = Less v51, v52 form=Integers
+# CHECK-NEXT: v54: undefined|string @JSValue = CallInline v11, v2 inlineBuiltin=StringAt overload=StringPrototypeAt/0 accessSite=24
+# CHECK-NEXT: v55: "m" @JSValue = String string="m"
+# CHECK-NEXT: v56: boolean @Boolean = GreaterEq v54, v55 form=NullableStrings
+# CHECK-NEXT: v57: 0 @Int32 = Integer
+# CHECK-NEXT: v58: i32 @Int32 = BitOr v2, v57 form=Numbers
+# CHECK-NEXT: Jump -> next b2(v49, v53, v56, v58)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="answers"
+# CHECK: module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f28 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
+# CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
+# CHECK-NEXT: v3: f1 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: v4: anything @JSValue = Call v3, -, v0, v2 calleeName="element_lt" accessSite=28 callees=[f1]
+# CHECK-NEXT: v5: f2 @Cell = GetModuleVariable variable=g1
+# CHECK-NEXT: v6: anything @JSValue = Call v5, -, v0, v2 calleeName="element_lt_literalFirst" accessSite=29 callees=[f2]
+# CHECK-NEXT: v7: f3 @Cell = GetModuleVariable variable=g2
+# CHECK-NEXT: v8: anything @JSValue = Call v7, -, v0, v2 calleeName="element_le" accessSite=30 callees=[f3]
+# CHECK-NEXT: v9: f4 @Cell = GetModuleVariable variable=g3
+# CHECK-NEXT: v10: anything @JSValue = Call v9, -, v0, v2 calleeName="element_le_literalFirst" accessSite=31 callees=[f4]
+# CHECK-NEXT: v11: f5 @Cell = GetModuleVariable variable=g4
+# CHECK-NEXT: v12: anything @JSValue = Call v11, -, v0, v2 calleeName="element_gt" accessSite=32 callees=[f5]
+# CHECK-NEXT: v13: f6 @Cell = GetModuleVariable variable=g5
+# CHECK-NEXT: v14: anything @JSValue = Call v13, -, v0, v2 calleeName="element_gt_literalFirst" accessSite=33 callees=[f6]
+# CHECK-NEXT: v15: f7 @Cell = GetModuleVariable variable=g6
+# CHECK-NEXT: v16: anything @JSValue = Call v15, -, v0, v2 calleeName="element_ge" accessSite=34 callees=[f7]
+# CHECK-NEXT: v17: f8 @Cell = GetModuleVariable variable=g7
+# CHECK-NEXT: v18: anything @JSValue = Call v17, -, v0, v2 calleeName="element_ge_literalFirst" accessSite=35 callees=[f8]
+# CHECK-NEXT: v19: f9 @Cell = GetModuleVariable variable=g8
+# CHECK-NEXT: v20: anything @JSValue = Call v19, -, v0, v2 calleeName="element_eq" accessSite=36 callees=[f9]
+# CHECK-NEXT: v21: f10 @Cell = GetModuleVariable variable=g9
+# CHECK-NEXT: v22: anything @JSValue = Call v21, -, v0, v2 calleeName="element_eq_literalFirst" accessSite=37 callees=[f10]
+# CHECK-NEXT: v23: f11 @Cell = GetModuleVariable variable=g10
+# CHECK-NEXT: v24: anything @JSValue = Call v23, -, v0, v2 calleeName="element_ne" accessSite=38 callees=[f11]
+# CHECK-NEXT: v25: f12 @Cell = GetModuleVariable variable=g11
+# CHECK-NEXT: v26: anything @JSValue = Call v25, -, v0, v2 calleeName="element_ne_literalFirst" accessSite=39 callees=[f12]
+# CHECK-NEXT: v27: f13 @Cell = GetModuleVariable variable=g12
+# CHECK-NEXT: v28: anything @JSValue = Call v27, -, v0, v2 calleeName="element_looseEq" accessSite=40 callees=[f13]
+# CHECK-NEXT: v29: f14 @Cell = GetModuleVariable variable=g13
+# CHECK-NEXT: v30: anything @JSValue = Call v29, -, v0, v2 calleeName="element_looseEq_literalFirst" accessSite=41 callees=[f14]
+# CHECK-NEXT: v31: f15 @Cell = GetModuleVariable variable=g14
+# CHECK-NEXT: v32: anything @JSValue = Call v31, -, v0, v2 calleeName="elementAtInteger_lt" accessSite=42 callees=[f15]
+# CHECK-NEXT: v33: f16 @Cell = GetModuleVariable variable=g15
+# CHECK-NEXT: v34: anything @JSValue = Call v33, -, v0, v2 calleeName="elementAtInteger_lt_literalFirst" accessSite=43 callees=[f16]
+# CHECK-NEXT: v35: f17 @Cell = GetModuleVariable variable=g16
+# CHECK-NEXT: v36: anything @JSValue = Call v35, -, v0, v2 calleeName="elementAtInteger_le" accessSite=44 callees=[f17]
+# CHECK-NEXT: v37: f18 @Cell = GetModuleVariable variable=g17
+# CHECK-NEXT: v38: anything @JSValue = Call v37, -, v0, v2 calleeName="elementAtInteger_le_literalFirst" accessSite=45 callees=[f18]
+# CHECK-NEXT: v39: f19 @Cell = GetModuleVariable variable=g18
+# CHECK-NEXT: v40: anything @JSValue = Call v39, -, v0, v2 calleeName="elementAtInteger_gt" accessSite=46 callees=[f19]
+# CHECK-NEXT: v41: f20 @Cell = GetModuleVariable variable=g19
+# CHECK-NEXT: v42: anything @JSValue = Call v41, -, v0, v2 calleeName="elementAtInteger_gt_literalFirst" accessSite=47 callees=[f20]
+# CHECK-NEXT: v43: f21 @Cell = GetModuleVariable variable=g20
+# CHECK-NEXT: v44: anything @JSValue = Call v43, -, v0, v2 calleeName="elementAtInteger_ge" accessSite=48 callees=[f21]
+# CHECK-NEXT: v45: f22 @Cell = GetModuleVariable variable=g21
+# CHECK-NEXT: v46: anything @JSValue = Call v45, -, v0, v2 calleeName="elementAtInteger_ge_literalFirst" accessSite=49 callees=[f22]
+# CHECK-NEXT: v47: f23 @Cell = GetModuleVariable variable=g22
+# CHECK-NEXT: v48: anything @JSValue = Call v47, -, v0, v2 calleeName="elementAtInteger_eq" accessSite=50 callees=[f23]
+# CHECK-NEXT: v49: f24 @Cell = GetModuleVariable variable=g23
+# CHECK-NEXT: v50: anything @JSValue = Call v49, -, v0, v2 calleeName="elementAtInteger_eq_literalFirst" accessSite=51 callees=[f24]
+# CHECK-NEXT: v51: f25 @Cell = GetModuleVariable variable=g24
+# CHECK-NEXT: v52: anything @JSValue = Call v51, -, v0, v2 calleeName="elementAtInteger_ne" accessSite=52 callees=[f25]
+# CHECK-NEXT: v53: f26 @Cell = GetModuleVariable variable=g25
+# CHECK-NEXT: v54: anything @JSValue = Call v53, -, v0, v2 calleeName="elementAtInteger_ne_literalFirst" accessSite=53 callees=[f26]
+# CHECK-NEXT: v55: f27 @Cell = GetModuleVariable variable=g26
+# CHECK-NEXT: v56: anything @JSValue = Call v55, -, v0, v2 calleeName="elementAtInteger_looseEq" accessSite=54 callees=[f27]
+# CHECK-NEXT: v57: 0 @Int32 = Integer
+# CHECK-NEXT: v58: boolean @Boolean = TypeTest v2 testedType=i32
+# CHECK-NEXT: TestAndBranch v58 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v59: i32 @JSValue):
+# CHECK-NEXT: v60: i32 @Int32 = BitOr v59, v57 form=Integers
+# CHECK-NEXT: v61: string @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v62: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v61, -, -, v60
+# CHECK-NEXT: v63: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v64: boolean @Boolean = Eq v63, v62 form=Integers
+# CHECK-NEXT: v65: f29 @Cell = GetModuleVariable variable=g28
+# CHECK-NEXT: v66: anything @JSValue = Call v65, -, v61, v59 calleeName="charAt_lt" accessSite=56 callees=[f29]
+# CHECK-NEXT: Jump -> next b2(v61)
+# CHECK-NEXT: b2(v67: string @JSValue):
+# CHECK-NEXT: v68: f30 @Cell = GetModuleVariable variable=g29
+# CHECK-NEXT: v69: anything @JSValue = Call v68, -, v67, v2 calleeName="charAt_lt_literalFirst" accessSite=57 callees=[f30]
+# CHECK-NEXT: v70: f31 @Cell = GetModuleVariable variable=g30
+# CHECK-NEXT: v71: anything @JSValue = Call v70, -, v67, v2 calleeName="charAt_le" accessSite=58 callees=[f31]
+# CHECK-NEXT: v72: f32 @Cell = GetModuleVariable variable=g31
+# CHECK-NEXT: v73: anything @JSValue = Call v72, -, v67, v2 calleeName="charAt_le_literalFirst" accessSite=59 callees=[f32]
+# CHECK-NEXT: v74: f33 @Cell = GetModuleVariable variable=g32
+# CHECK-NEXT: v75: anything @JSValue = Call v74, -, v67, v2 calleeName="charAt_gt" accessSite=60 callees=[f33]
+# CHECK-NEXT: v76: f34 @Cell = GetModuleVariable variable=g33
+# CHECK-NEXT: v77: anything @JSValue = Call v76, -, v67, v2 calleeName="charAt_gt_literalFirst" accessSite=61 callees=[f34]
+# CHECK-NEXT: v78: f35 @Cell = GetModuleVariable variable=g34
+# CHECK-NEXT: v79: anything @JSValue = Call v78, -, v67, v2 calleeName="charAt_ge" accessSite=62 callees=[f35]
+# CHECK-NEXT: v80: f36 @Cell = GetModuleVariable variable=g35
+# CHECK-NEXT: v81: anything @JSValue = Call v80, -, v67, v2 calleeName="charAt_ge_literalFirst" accessSite=63 callees=[f36]
+# CHECK-NEXT: v82: f37 @Cell = GetModuleVariable variable=g36
+# CHECK-NEXT: v83: anything @JSValue = Call v82, -, v67, v2 calleeName="charAt_eq" accessSite=64 callees=[f37]
+# CHECK-NEXT: v84: f38 @Cell = GetModuleVariable variable=g37
+# CHECK-NEXT: v85: anything @JSValue = Call v84, -, v67, v2 calleeName="charAt_eq_literalFirst" accessSite=65 callees=[f38]
+# CHECK-NEXT: v86: f39 @Cell = GetModuleVariable variable=g38
+# CHECK-NEXT: v87: anything @JSValue = Call v86, -, v67, v2 calleeName="charAt_ne" accessSite=66 callees=[f39]
+# CHECK-NEXT: v88: f40 @Cell = GetModuleVariable variable=g39
+# CHECK-NEXT: v89: anything @JSValue = Call v88, -, v67, v2 calleeName="charAt_ne_literalFirst" accessSite=67 callees=[f40]
+# CHECK-NEXT: v90: f41 @Cell = GetModuleVariable variable=g40
+# CHECK-NEXT: v91: anything @JSValue = Call v90, -, v67, v2 calleeName="charAt_looseEq" accessSite=68 callees=[f41]
+# CHECK-NEXT: v92: f42 @Cell = GetModuleVariable variable=g41
+# CHECK-NEXT: v93: anything @JSValue = Call v92, -, v67, v2 calleeName="charAt_looseEq_literalFirst" accessSite=69 callees=[f42]
+# CHECK-NEXT: v94: f43 @Cell = GetModuleVariable variable=g42
+# CHECK-NEXT: v95: anything @JSValue = Call v94, -, v67, v2 calleeName="at_lt" accessSite=70 callees=[f43]
+# CHECK-NEXT: v96: f44 @Cell = GetModuleVariable variable=g43
+# CHECK-NEXT: v97: anything @JSValue = Call v96, -, v67, v2 calleeName="at_lt_literalFirst" accessSite=71 callees=[f44]
+# CHECK-NEXT: v98: f45 @Cell = GetModuleVariable variable=g44
+# CHECK-NEXT: v99: anything @JSValue = Call v98, -, v67, v2 calleeName="at_le" accessSite=72 callees=[f45]
+# CHECK-NEXT: v100: f46 @Cell = GetModuleVariable variable=g45
+# CHECK-NEXT: v101: anything @JSValue = Call v100, -, v67, v2 calleeName="at_le_literalFirst" accessSite=73 callees=[f46]
+# CHECK-NEXT: v102: f47 @Cell = GetModuleVariable variable=g46
+# CHECK-NEXT: v103: anything @JSValue = Call v102, -, v67, v2 calleeName="at_gt" accessSite=74 callees=[f47]
+# CHECK-NEXT: v104: f48 @Cell = GetModuleVariable variable=g47
+# CHECK-NEXT: v105: anything @JSValue = Call v104, -, v67, v2 calleeName="at_gt_literalFirst" accessSite=75 callees=[f48]
+# CHECK-NEXT: v106: f49 @Cell = GetModuleVariable variable=g48
+# CHECK-NEXT: v107: anything @JSValue = Call v106, -, v67, v2 calleeName="at_ge" accessSite=76 callees=[f49]
+# CHECK-NEXT: v108: f50 @Cell = GetModuleVariable variable=g49
+# CHECK-NEXT: v109: anything @JSValue = Call v108, -, v67, v2 calleeName="at_ge_literalFirst" accessSite=77 callees=[f50]
+# CHECK-NEXT: v110: f51 @Cell = GetModuleVariable variable=g50
+# CHECK-NEXT: v111: anything @JSValue = Call v110, -, v67, v2 calleeName="at_eq" accessSite=78 callees=[f51]
+# CHECK-NEXT: v112: f52 @Cell = GetModuleVariable variable=g51
+# CHECK-NEXT: v113: anything @JSValue = Call v112, -, v67, v2 calleeName="at_eq_literalFirst" accessSite=79 callees=[f52]
+# CHECK-NEXT: v114: f53 @Cell = GetModuleVariable variable=g52
+# CHECK-NEXT: v115: anything @JSValue = Call v114, -, v67, v2 calleeName="at_ne" accessSite=80 callees=[f53]
+# CHECK-NEXT: v116: f54 @Cell = GetModuleVariable variable=g53
+# CHECK-NEXT: v117: anything @JSValue = Call v116, -, v67, v2 calleeName="at_ne_literalFirst" accessSite=81 callees=[f54]
+# CHECK-NEXT: v118: f55 @Cell = GetModuleVariable variable=g54
+# CHECK-NEXT: v119: anything @JSValue = Call v118, -, v67, v2 calleeName="at_looseEq" accessSite=82 callees=[f55]
+# CHECK-NEXT: v120: f56 @Cell = GetModuleVariable variable=g55
+# CHECK-NEXT: v121: anything @JSValue = Call v120, -, v67, v2 calleeName="at_looseEq_literalFirst" accessSite=83 callees=[f56]
+# CHECK-NEXT: v122: f57 @Cell = GetModuleVariable variable=g56
+# CHECK-NEXT: v123: anything @JSValue = Call v122, -, v67, v2 calleeName="isDigit" accessSite=84 callees=[f57]
+# CHECK-NEXT: v124: f58 @Cell = GetModuleVariable variable=g57
+# CHECK-NEXT: v125: anything @JSValue = Call v124, -, v67, v2 calleeName="isLetter" accessSite=85 callees=[f58]
+# CHECK-NEXT: v126: f59 @Cell = GetModuleVariable variable=g58
+# CHECK-NEXT: v127: anything @JSValue = Call v126, -, v67, v2 calleeName="isBelowSpaceOrMissing" accessSite=86 callees=[f59]
+# CHECK-NEXT: v128: "11111111111111111111111111111111111111111111111111111111111" @Cell = String string="11111111111111111111111111111111111111111111111111111111111"
+# CHECK-NEXT: Return v128
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v129: i32 @Int32 = BitOr v2, v57 form=Numbers
+# CHECK-NEXT: v130: string @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v131: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v130, -, -, v129
+# CHECK-NEXT: v132: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v133: boolean @Boolean = Eq v132, v131 form=Integers
+# CHECK-NEXT: v134: f29 @Cell = GetModuleVariable variable=g28
+# CHECK-NEXT: v135: anything @JSValue = Call v134, -, v130, v2 calleeName="charAt_lt" accessSite=56 callees=[f29]
+# CHECK-NEXT: Jump -> next b2(v130)
+# CHECK-NEXT: }

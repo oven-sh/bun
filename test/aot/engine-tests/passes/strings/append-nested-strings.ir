@@ -1,0 +1,445 @@
+# A string that is built only to become a part of a longer string: the arms of a conditional, the string of an inner loop, a conditional inside an arm.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="append-nested-strings.ts" displayPath="append-nested-strings.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|string elements=[String{value="alpha"}, String{value="beta"}, String{value="gamma"}, String{value="delta"}, String{value="\u{e9}psilon"}, String{value="\u{3b6}\u{3ae}\u{3c4}\u{3b1}"}, String{value="eta"}]} module=m0
+variable g0 name="fail" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number}
+    Jump -> next b1(v9)
+  b1(v10: number):
+    LoopHint
+    v12 = Call v1, -, v7 calleeName="conditionalInsideArm"
+    v13 = Call v3, -, v7 calleeName="laterPartReadsLongerString"
+    v14 = Call v5, -, v7 calleeName="armThrows"
+    v15 = Increment v10
+    v16 = Convert v15 declared={type=number}
+    Jump -> next b1(v16)
+}
+function f1 name="fail" module=m0 position=2675 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="conditionalInsideArm" module=m0 position=1233 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    v1 = String string=""
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b9(| 0)
+  b2(v12):
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = Integer integer=3
+    v15 = Mod v13, v14
+    v16 = ToBoolean v15
+    Branch v16 -> taken b3(| 0), notTaken b7(| 0)
+  b3(v17):
+    v18 = String string="["
+    v19 = Integer integer=2
+    v20 = Mod v13, v19
+    v21 = ToBoolean v20
+    Branch v21 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v22):
+    v23 = String string="odd "
+    v24 = ElemGet v0, v13
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v26 = Add v23, v25
+    Jump -> next b6(v26)
+  b5(v27):
+    v28 = String string="even"
+    Jump -> next b6(v28)
+  b6(v29):
+    v30 = Add v18, v29
+    v31 = String string="]"
+    v32 = Add v30, v31
+    Jump -> next b8(v32)
+  b7(v33):
+    v34 = String string="third"
+    Jump -> next b8(v34)
+  b8(v35):
+    v36 = Add v5, v35
+    v37 = Convert v36 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v38 = Increment v13
+    v39 = Convert v38 declared={type=number}
+    Jump -> next b1(v37, v39)
+  b9(v40):
+    v41 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v41
+}
+function f3 name="laterPartReadsLongerString" module=m0 position=1871 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    v1 = String string=""
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = String string="<"
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Integer integer=1
+    v12 = BitAnd v10, v11
+    v13 = ToBoolean v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = String string="a "
+    v16 = ElemGet v0, v10
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v18 = Add v15, v17
+    Jump -> next b4(v18)
+  b3(v19):
+    v20 = String string="off"
+    Jump -> next b4(v20)
+  b4(v21):
+    v22 = Add v9, v21
+    v23 = String string="|"
+    v24 = Add v22, v23
+    v25 = PropGet v5 key="length"
+    v26 = Convert v25 declared={type=number} illTypedCause=Assertion
+    v27 = Add v24, v26
+    v28 = String string=">"
+    v29 = Add v27, v28
+    v30 = Add v5, v29
+    v31 = Convert v30 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v32 = Increment v10
+    v33 = Convert v32 declared={type=number}
+    Jump -> next b1(v31, v33)
+}
+function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    v1 = String string=""
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b12(| 0)
+  b2(v12):
+    Jump -> next b3()
+  b3() handler=b10(v5, v12):
+    v13 = String string="<"
+    v14 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4()
+  b4() handler=b10(v5, v14):
+    v15 = Integer integer=3
+    v16 = Mod v14, v15
+    v17 = Integer integer=2
+    v18 = StrictEq v16, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5() handler=b10(v5, v14):
+    v19 = String string="bad "
+    v20 = GetModuleVariable variable=g0
+    v21 = ElemGet v0, v14
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v23 = Call v20, -, v22 calleeName="fail"
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v25 = Add v19, v24
+    Jump -> next b7(v25)
+  b6() handler=b10(v5, v14):
+    v26 = String string="ok "
+    v27 = ElemGet v0, v14
+    v28 = Convert v27 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v29 = Add v26, v28
+    Jump -> next b7(v29)
+  b7(v30) handler=b10(v5, v14):
+    v31 = Add v13, v30
+    v32 = String string=">"
+    v33 = Add v31, v32
+    v34 = Add v5, v33
+    v35 = Convert v34 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b8()
+  b8() handler=b10(v35, v14):
+    Jump -> next b9()
+  b9():
+    Jump -> next b11(v14, v35)
+  b10(v36: undefined|null|string, v37: number) role=CatchHandler:
+    v38 = CatchValue
+    v39 = String string="("
+    v40 = Convert v38 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v41 = PropGet v40 key="message"
+    v42 = Convert v41 declared={type=undefined|null|string} illTypedCause=Assertion
+    v43 = Add v39, v42
+    v44 = String string=")"
+    v45 = Add v43, v44
+    v46 = Add v36, v45
+    v47 = Convert v46 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b11(v37, v47)
+  b11(v48: number, v49: undefined|null|string):
+    v50 = Increment v48
+    v51 = Convert v50 declared={type=number}
+    Jump -> next b1(v49, v51)
+  b12(v52):
+    v53 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v53
+}
+# -- generated: f0 conditionalInsideArm laterPartReadsLongerString armThrows
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "alpha" = String string="alpha"
+# CHECK-NEXT: v1: "beta" = String string="beta"
+# CHECK-NEXT: v2: "gamma" = String string="gamma"
+# CHECK-NEXT: v3: "delta" = String string="delta"
+# CHECK-NEXT: v4: "\u{e9}psilon" = String string="\u{e9}psilon"
+# CHECK-NEXT: v5: "\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = String string="\u{3b6}\u{3ae}\u{3c4}\u{3b1}"
+# CHECK-NEXT: v6: "eta" = String string="eta"
+# CHECK-NEXT: v7: Array<string, Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v10: string = CallDirect v8 function=f2 accessSite=0
+# CHECK-NEXT: v11: undefined|null|string = CallDirect v8 function=f3 accessSite=1
+# CHECK-NEXT: v12: string = CallDirect v8 function=f4 accessSite=2
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="conditionalInsideArm"
+# CHECK: module=m0 position=1233 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v3: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v3)
+# CHECK-NEXT: b2(v4: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v4 castType=int|whole
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=3
+# CHECK-NEXT: v8: boolean = Less v6, v7
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b12()
+# CHECK-NEXT: b3(v9: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v10: 3 = Integer integer=3
+# CHECK-NEXT: v11: int[0, 2] = Mod v9, v10
+# CHECK-NEXT: v12: boolean = ToBoolean v11
+# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b10()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: 2 = Integer integer=2
+# CHECK-NEXT: v14: int[0, 1] = Mod v9, v13
+# CHECK-NEXT: v15: boolean = ToBoolean v14
+# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b8()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v16: "odd " = String string="odd "
+# CHECK-NEXT: v17: boolean = IsInBounds v0, v9
+# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v18: guard):
+# CHECK-NEXT: v19: string = GetArrayElement v0, v9, v18 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v20: "[" = String string="["
+# CHECK-NEXT: StringBuilderAppend v2, v20, v16, v19
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v22: undefined|string = GetArrayElement v0, v9 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v23: "]" = String string="]"
+# CHECK-NEXT: v24: "[" = String string="["
+# CHECK-NEXT: StringBuilderAppend v2, v24, v16, v22, v23
+# CHECK-NEXT: v26: int[1, 4294967295] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v26)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v27: "even" = String string="even"
+# CHECK-NEXT: v28: "[" = String string="["
+# CHECK-NEXT: StringBuilderAppend v2, v28, v27
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v30: "]" = String string="]"
+# CHECK-NEXT: StringBuilderAppend v2, v30
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v32: "third" = String string="third"
+# CHECK-NEXT: StringBuilderAppend v2, v32
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v34: int[1, 4294967295] ~ int[1, 2147483648] = Increment v9
+# CHECK-NEXT: Jump -> next b2(v34)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v35: string = StringBuilderFinish v2
+# CHECK-NEXT: Return v35
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="laterPartReadsLongerString"
+# CHECK: module=m0 position=1871 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v3: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v3)
+# CHECK-NEXT: b2(v4: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v4 castType=int|whole
+# CHECK-NEXT: v7: "<" = String string="<"
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v6 testedType=i32
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b8(v6)
+# CHECK-NEXT: b3(v10: int[0, 2147483647]):
+# CHECK-NEXT: v11: int[0, 1] = BitAnd v10, v8
+# CHECK-NEXT: v12: boolean = ToBoolean v11
+# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b6()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: boolean = IsElementPresent v0, v10 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b10(v10)
+# CHECK-NEXT: b5(v14: guard):
+# CHECK-NEXT: v15: string = GetArrayElement v0, v10, v14 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v16: "a " = String string="a "
+# CHECK-NEXT: v17: string = Add v16, v15
+# CHECK-NEXT: Jump -> next b7(v17)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v18: "off" = String string="off"
+# CHECK-NEXT: Jump -> next b7(v18)
+# CHECK-NEXT: b7(v19: string):
+# CHECK-NEXT: v20: "|" = String string="|"
+# CHECK-NEXT: v21: int[0, 2147483647] = StringBuilderLength v2
+# CHECK-NEXT: v22: ">" = String string=">"
+# CHECK-NEXT: StringBuilderAppend v2, v7, v19, v20, v21, v22
+# CHECK-NEXT: v24: int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v24)
+# CHECK-NEXT: b8(v25: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v26: int[0, 1] = BitAnd v25, v8
+# CHECK-NEXT: v27: boolean = ToBoolean v26
+# CHECK-NEXT: Branch v27 -> taken b9(), notTaken b11()
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b10(v28: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v29: undefined|string = GetArrayElement v0, v28 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v30: "a " = String string="a "
+# CHECK-NEXT: v31: string = Add v30, v29
+# CHECK-NEXT: Jump -> next b12(v31, v28)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v32: "off" = String string="off"
+# CHECK-NEXT: Jump -> next b12(v32, v25)
+# CHECK-NEXT: b12(v33: string, v34: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v35: "|" = String string="|"
+# CHECK-NEXT: v36: int[0, 2147483647] = StringBuilderLength v2
+# CHECK-NEXT: v37: ">" = String string=">"
+# CHECK-NEXT: StringBuilderAppend v2, v7, v33, v35, v36, v37
+# CHECK-NEXT: v39: int|whole ~ int[1, 2147483648] = Increment v34
+# CHECK-NEXT: v40: boolean ~ true = TypeTest v39 testedType=int[0, 2147483648]
+# CHECK-NEXT: Branch v40 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v41: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v41)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v43: int|whole ~ int[1, 2147483647] = Upcast v39 castType=int|whole
+# CHECK-NEXT: Jump -> next b8(v43)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="armThrows"
+# CHECK: module=m0 position=2375 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v4: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v5 castType=int|whole
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=7
+# CHECK-NEXT: v9: boolean = Less v7, v8
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b24()
+# CHECK-NEXT: b3(v10: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v11: "<" = String string="<"
+# CHECK-NEXT: v12: 3 = Integer integer=3
+# CHECK-NEXT: v13: int[0, 2] = Mod v10, v12
+# CHECK-NEXT: v14: 2 = Integer integer=2
+# CHECK-NEXT: v15: boolean = StrictEq v13, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b8()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v16: boolean = IsInBounds v0, v10
+# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v17: guard) handler=b14():
+# CHECK-NEXT: v18: string = GetArrayElement v0, v10, v17 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v19: undefined|null|string = Call v2, -, v18 calleeName="fail" accessSite=9 callees=[f1]
+# CHECK-NEXT: Jump -> next b7(v19)
+# CHECK-NEXT: b6() frequency=Rare handler=b20():
+# CHECK-NEXT: v20: undefined|string = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v21: undefined|null|string = Call v2, -, v20 calleeName="fail" accessSite=9 callees=[f1]
+# CHECK-NEXT: Jump -> next b7(v21)
+# CHECK-NEXT: b7(v22: undefined|null|string) handler=b14():
+# CHECK-NEXT: v23: "bad " = String string="bad "
+# CHECK-NEXT: v24: string = Add v23, v22
+# CHECK-NEXT: Jump -> next b10(v24)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v25: "ok " = String string="ok "
+# CHECK-NEXT: v26: boolean = IsInBounds v0, v10
+# CHECK-NEXT: Branch v26 -> taken b9(| 0), notTaken b16()
+# CHECK-NEXT: b9(v27: guard) handler=b14():
+# CHECK-NEXT: v28: string = GetArrayElement v0, v10, v27 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v29: string = Add v25, v28
+# CHECK-NEXT: Jump -> next b10(v29)
+# CHECK-NEXT: b10(v30: string) handler=b14():
+# CHECK-NEXT: v31: i32 = StringBuilderCheckpoint v3
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11() handler=b13():
+# CHECK-NEXT: v32: ">" = String string=">"
+# CHECK-NEXT: StringBuilderAppend v3, v11, v30, v32
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b14():
+# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: b13() role=CleanupHandler frequency=Rare handler=b14():
+# CHECK-NEXT: v34: exception = CatchException
+# CHECK-NEXT: StringBuilderRollBack v3, v31
+# CHECK-NEXT: Rethrow v34
+# CHECK-NEXT: b14() role=CatchHandler:
+# CHECK-NEXT: v36: anything = CatchValue
+# CHECK-NEXT: v37: anything ~ undefined|null|Error = Upcast v36 castType=anything
+# CHECK-NEXT: v38: boolean = TypeTest v37 testedType=Error
+# CHECK-NEXT: Branch v38 -> taken b15(| 0), notTaken b21(v37)
+# CHECK-NEXT: b15(v39: Error):
+# CHECK-NEXT: v40: anything = CallBuiltin v39 overload=ErrorPrototypeMessage/0 accessSite=11
+# CHECK-NEXT: Jump -> next b22(v40)
+# CHECK-NEXT: b16() frequency=Rare handler=b20():
+# CHECK-NEXT: v41: undefined|string = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v42: i32 = StringBuilderCheckpoint v3
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b17() frequency=Rare handler=b19():
+# CHECK-NEXT: v43: ">" = String string=">"
+# CHECK-NEXT: StringBuilderAppend v3, v11, v25, v41, v43
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b18() frequency=Rare handler=b20():
+# CHECK-NEXT: v45: int[1, 4294967295] ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v45)
+# CHECK-NEXT: b19() role=CleanupHandler frequency=Rare handler=b20():
+# CHECK-NEXT: v46: exception = CatchException
+# CHECK-NEXT: StringBuilderRollBack v3, v42
+# CHECK-NEXT: Rethrow v46
+# CHECK-NEXT: b20() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: v48: anything = CatchValue
+# CHECK-NEXT: v49: anything ~ undefined|null|Error = Upcast v48 castType=anything
+# CHECK-NEXT: Jump -> next b21(v49)
+# CHECK-NEXT: b21(v50: anything ~ undefined|null|Error) frequency=Rare:
+# CHECK-NEXT: v51: anything = PropGet v50 key="message" accessSite=11
+# CHECK-NEXT: Jump -> next b22(v51)
+# CHECK-NEXT: b22(v52: anything):
+# CHECK-NEXT: v53: anything ~ undefined|null|string = Expect v52 expectedType=undefined|null|string
+# CHECK-NEXT: v54: "(" = String string="("
+# CHECK-NEXT: v55: string = Add v54, v53
+# CHECK-NEXT: v56: ")" = String string=")"
+# CHECK-NEXT: StringBuilderAppend v3, v55, v56
+# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v58: int[1, 4294967295] ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v58)
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v59: string = StringBuilderFinish v3
+# CHECK-NEXT: Return v59
+# CHECK-NEXT: }

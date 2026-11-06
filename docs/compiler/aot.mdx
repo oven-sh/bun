@@ -1,0 +1,107 @@
+---
+title: "Ahead-of-time compilation"
+description: "Compile TypeScript and JavaScript to machine code at build time, with bun compile"
+---
+
+import Compile from "/snippets/cli/compile.mdx";
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+`bun compile` compiles your program to machine code at build time and writes one executable. It runs on machines that don't have Bun installed.
+
+```bash terminal icon="terminal"
+bun compile ./server.ts
+./server
+```
+
+There's no new syntax and nothing to annotate. TypeScript, JavaScript and npm packages all compile. Where your code has types, the compiler [uses them](/compiler/types) to generate faster code.
+
+## What to expect
+
+Under `bun run`, and in an executable from [`bun build --compile`](/compiler/executables), your code starts in an interpreter and a JIT compiles the hot functions while the program runs. `bun compile` does that work at build time, and the executable has no JIT.
+
+What you get:
+
+- Your program starts faster. There's no source to parse and nothing to warm up.
+- It uses less memory. The process has no bytecode, no JIT-compiled code and no profiling data.
+- Typed code runs faster. A property access is one load from a fixed offset, like a struct field in Go or Rust.
+- A small program's file is smaller, because it leaves out the `bun` command line and the JIT. In a large program, the machine code can outweigh that. [`--trim`](/compiler/size) removes the Bun APIs you don't use.
+
+What it costs:
+
+- The build takes longer. Bun type checks the whole program and compiles every function it can reach, and nothing is cached between builds.
+- Untyped code can run slower than under the JIT. A JIT watches the program run and learns which objects show up at each property access. The compiler has to prove that at build time. Where it can't, the code looks the property up at run time.
+- [A few things differ from `bun run`](/compiler/compatibility). Built-in objects such as `Array.prototype` are read-only, and code from a string (`eval`, `new Function`) runs in an interpreter.
+
+[`bun compile --explain`](/compiler/explain) lists the code that compiled to a slow path, worst first, with a fix for each.
+
+## When to stay with the JIT
+
+- Peak throughput matters most, and your hot code is untyped JavaScript from npm.
+- You build on one platform and deploy to another. `bun compile` only builds for the platform it runs on, so run it in CI or in a container.
+- A library generates its hot code with `new Function`, as some validators and serializers do. [That code is interpreted](/compiler/compatibility#code-from-strings).
+- A dependency changes [built-in objects](/compiler/compatibility#built-in-objects-are-read-only). Assigning to `Array.prototype.push` throws a `TypeError`.
+- Your program spends its time in [WebAssembly](/compiler/compatibility#webassembly) that it downloads or decodes at run time. Only a `.wasm` file that you import is compiled.
+- You need breakpoints in the executable. [The inspector](/compiler/debugging#the-inspector) connects, but it can't pause compiled code.
+
+If you aren't sure, build the same entry point both ways and measure. With `--no-aot`, the executable holds your JavaScript and runs it with the JIT.
+
+```bash terminal icon="terminal"
+bun compile --no-aot ./server.ts --outfile server-jit
+bun compile ./server.ts --outfile server-aot
+```
+
+Put both under the same load, on routes that do what your application does in production. Run the load twice and keep the second result, so the JIT has warmed up. [Benchmarking](/project/benchmarking) covers the tools.
+
+## Build an executable
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun compile ./server.ts --outfile server
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./server.ts"],
+      compile: { outfile: "./server", aot: true },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+`bun compile` is short for `bun build --compile --aot` and takes the same flags. Without an entry point, it builds the file that `"bin"` in `package.json` points to, then `"module"`, then `"main"`, then `index.ts`.
+
+### Type errors stop the build
+
+```ts wrong.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./wrong.ts
+```
+
+```txt
+1 | const port: number = "3000";
+          ^
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/wrong.ts:1:7
+```
+
+`bun run` removes your types and never checks them. `bun compile` relies on them, so it type checks the whole program first. If there's a type error, it writes no executable and exits with code `1`.
+
+[`bun check --aot`](/runtime/check) reports the same errors and builds nothing. Bun checks each file with the nearest `tsconfig.json`. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
+
+During development, [`bun run --aot` and `bun test --aot`](/compiler/debugging#run-under-the-compilers-rules) run the same checks and then run your program from its source.
+
+## Read next
+
+- [Types](/compiler/types): how your types change the compiled program.
+- [Compatibility](/compiler/compatibility): what differs from `bun run`.
+- [Testing and debugging](/compiler/debugging): stack traces, source maps and profilers.
+- [Troubleshooting](/compiler/troubleshooting): the errors you're most likely to hit first.
+
+<Compile />

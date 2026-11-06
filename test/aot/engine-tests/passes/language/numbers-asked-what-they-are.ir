@@ -1,0 +1,534 @@
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="/$bun/text/numbers-asked-what-they-are.ts/0.cjs" displayPath="/$bun/text/numbers-asked-what-they-are.ts/0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="numbers-asked-what-they-are.ts" displayPath="numbers-asked-what-they-are.ts" body=f2 namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Instance name="Measured" module=m1 position=697 constructor=f6 fields=[{key="size" declared={type=number} flags=[IsRequired]}, {key="count" declared={type=number} flags=[IsRequired]}, {key="maybe" declared={type=undefined|number} flags=[IsRequired]}, {key="anything" declared={type=anything} flags=[IsRequired]}] supertypes=[L3] ownFieldCount=4
+layout L1 module=m1 position=667 fields=[{key="valueOf" declared={type=undefined|null|function|f8 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m1 position=605
+layout L3 flags=[HasMembersWithoutLayout, IsTypeParameter, IsNeverAllocated] flow={allocation=NeverAllocated}
+data d0 root=Array{contents=anything} module=m1
+data d1 root=Array{contents=anything elements=[Number{value=1}]} module=m1
+data d2 root=Object{layout=L2} module=m1
+variable g0 name="flags" module=m1 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 name="anonymous" module=m0 position=1 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f6
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f1
+    v9 = Convert v8 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v10 = Integer
+    v11 = Double number=-0
+    v12 = Integer integer=1
+    v13 = Integer integer=-1
+    v14 = Double number=0.5
+    v15 = Double number=-0.5
+    v16 = Double number=1.5
+    v17 = Integer integer=2147483648
+    v18 = Integer integer=-2147483648
+    v19 = Integer integer=2147483647
+    v20 = Integer integer=4294967296
+    v21 = Integer integer=4503599627370496
+    v22 = Integer integer=9007199254740991
+    v23 = Integer integer=9007199254740992
+    v24 = Integer integer=9007199254740994
+    v25 = Integer integer=-9007199254740991
+    v26 = Integer integer=-9007199254740992
+    v27 = Integer integer=2
+    v28 = Integer integer=63
+    v29 = Pow v27, v28
+    v30 = Integer integer=2
+    v31 = Integer integer=63
+    v32 = Pow v30, v31
+    v33 = Negate v32
+    v34 = Integer integer=2
+    v35 = Integer integer=64
+    v36 = Pow v34, v35
+    v37 = Double number=1e+21
+    v38 = Double number=1e+300
+    v39 = Double number=-1e+300
+    v40 = Builtin builtin=Number
+    v41 = PropGet v40 key="MAX_VALUE"
+    v42 = Builtin builtin=Number
+    v43 = PropGet v42 key="MAX_VALUE"
+    v44 = Negate v43
+    v45 = Builtin builtin=Number
+    v46 = PropGet v45 key="MIN_VALUE"
+    v47 = Builtin builtin=Number
+    v48 = PropGet v47 key="MIN_VALUE"
+    v49 = Negate v48
+    v50 = Builtin builtin=Number
+    v51 = PropGet v50 key="EPSILON"
+    v52 = Double number=4503599627370495.5
+    v53 = Integer integer=4503599627370496
+    v54 = Double number=0.30000000000000004
+    v55 = Double number=NaN
+    v56 = Double number=NaN
+    v57 = Double number=Infinity
+    v58 = Double number=-Infinity
+    v59 = Double number=0.3333333333333333
+    v60 = Double number=123456789.000001
+    v61 = NewArray v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v29, v33, v36, v37, v38, v39, v41, v44, v46, v49, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60 contents=number
+    v62 = Convert v61 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v63 = Undefined
+    v64 = Null
+    v65 = Boolean boolean=true
+    v66 = Boolean
+    v67 = String string=""
+    v68 = String string="1"
+    v69 = String string="NaN"
+    v70 = String string="Infinity"
+    v71 = BigInt digits="1"
+    v72 = Data data=d0
+    v73 = Data data=d1
+    v74 = Data data=d2
+    v75 = Builtin builtin=Number
+    v76 = Integer integer=1
+    v77 = Construct v75, -, v76 calleeName="Number"
+    v78 = Convert v77 declared={type=undefined|null|number|Number flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v79 = Builtin builtin=Number
+    v80 = Double number=NaN
+    v81 = Construct v79, -, v80 calleeName="Number"
+    v82 = Convert v81 declared={type=undefined|null|number|Number flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v83 = Builtin builtin=SymbolIterator
+    v84 = NewClosure function=f7
+    v85 = NewClosure function=f8
+    v86 = Convert v85 declared={type=undefined|null|function|f8 flags=[OmitsNull, OmitsUndefined]}
+    v87 = NewObject -, v86 layout=L1 fields=[0]
+    v88 = FinishObject v87
+    v89 = NewArray v63, v64, v65, v66, v67, v68, v69, v70, v71, v72, v73, v74, v78, v82, v83, v84, v88 contents=anything
+    v90 = Convert v89 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v91 = Integer
+    v92 = Convert v91 declared={type=number}
+    Jump -> next b1(v92)
+  b1(v93: number):
+    v94 = Integer
+    v95 = Convert v94 declared={type=number}
+    Jump -> next b2(v95)
+  b2(v96: number):
+    LoopHint
+    v98 = Convert v96 declared={type=i32 flags=[IsExpected]}
+    v99 = PropGet v62 key="length"
+    v100 = Convert v99 declared={type=number} illTypedCause=Assertion
+    v101 = Less v98, v100
+    Branch v101 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v102):
+    v103 = Convert v102 declared={type=i32 flags=[IsExpected]}
+    v104 = ElemGet v62, v103
+    v105 = Convert v104 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v106 = Call v9, -, v105 calleeName="launder"
+    v107 = Convert v106 declared={type=number} illTypedCause=FromLooseType
+    v108 = Undefined
+    v109 = Call v1, -, v107 calleeName="ofNumber"
+    v110 = Increment v103
+    v111 = Convert v110 declared={type=number}
+    Jump -> next b2(v111)
+  b4(v112):
+    v113 = Integer
+    v114 = Convert v113 declared={type=number}
+    Jump -> next b5(v114)
+  b5(v115: number):
+    LoopHint
+    v117 = Convert v115 declared={type=i32 flags=[IsExpected]}
+    v118 = PropGet v90 key="length"
+    v119 = Convert v118 declared={type=number} illTypedCause=Assertion
+    v120 = Less v117, v119
+    Branch v120 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v121):
+    v122 = Convert v121 declared={type=i32 flags=[IsExpected]}
+    v123 = Double number=0.5
+    v124 = Add v122, v123
+    v125 = Undefined
+    v126 = ElemGet v90, v122
+    v127 = Call v9, -, v126 calleeName="launder"
+    v128 = Construct v7, -, v124, v122, v125, v127 calleeName="Measured"
+    v129 = Increment v122
+    v130 = Convert v129 declared={type=number}
+    Jump -> next b5(v130)
+  b7(v131):
+    v132 = Call v9, -, v62 calleeName="launder"
+    v133 = Convert v132 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v134 = Call v3, -, v133 calleeName="ofElements"
+    v135 = Increment v93
+    v136 = Convert v135 declared={type=number}
+    Jump -> next b1(v136)
+}
+function f3 name="flags" module=m1 position=989 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<boolean> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="ofNumber" module=m1 position=1132 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0
+    v2 = Builtin builtin=Number
+    v3 = Builtin builtin=NumberIsNaN
+    v4 = Call v3, v2, v0 calleeName="Number.isNaN"
+    v5 = Convert v4 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v6 = Builtin builtin=Number
+    v7 = Builtin builtin=NumberIsFinite
+    v8 = Call v7, v6, v0 calleeName="Number.isFinite"
+    v9 = Convert v8 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v10 = Builtin builtin=Number
+    v11 = Builtin builtin=NumberIsInteger
+    v12 = Call v11, v10, v0 calleeName="Number.isInteger"
+    v13 = Convert v12 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v14 = Builtin builtin=Number
+    v15 = Builtin builtin=NumberIsSafeInteger
+    v16 = Call v15, v14, v0 calleeName="Number.isSafeInteger"
+    v17 = Convert v16 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="isNaN" [isFreeName]
+    v20 = Convert v19 declared={type=builtin(IsNaN) flags=[IsExpected]}
+    v21 = Call v20, -, v0 calleeName="isNaN"
+    v22 = Convert v21 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="isFinite" [isFreeName]
+    v25 = Convert v24 declared={type=builtin(IsFinite) flags=[IsExpected]}
+    v26 = Call v25, -, v0 calleeName="isFinite"
+    v27 = Convert v26 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v28 = Call v1, -, v5, v9, v13, v17, v22, v27 calleeName="flags"
+    ReturnCall v28 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f5 name="ofElements" module=m1 position=2060 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number}
+    v9 = Integer
+    v10 = Convert v9 declared={type=number}
+    Jump -> next b1(v2, v4, v6, v8, v10)
+  b1(v11: number, v12: number, v13: number, v14: number, v15: number):
+    LoopHint
+    v17 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    v18 = PropGet v0 key="length"
+    v19 = Convert v18 declared={type=number} illTypedCause=Assertion
+    v20 = Less v17, v19
+    Branch v20 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v21):
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    v23 = ElemGet v0, v22
+    v24 = Convert v23 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v25 = Builtin builtin=NumberIsInteger [isNotReadFromHolder]
+    v26 = Call v25, -, v24
+    v27 = Convert v26 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v28 = Increment v11
+    v29 = Convert v28 declared={type=number}
+    v30 = ElemGet v0, v22
+    v31 = Convert v30 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v32 = Builtin builtin=NumberIsFinite [isNotReadFromHolder]
+    v33 = Call v32, -, v31
+    v34 = Convert v33 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v35 = Increment v12
+    v36 = Convert v35 declared={type=number}
+    v37 = ElemGet v0, v22
+    v38 = Convert v37 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v39 = Builtin builtin=NumberIsSafeInteger [isNotReadFromHolder]
+    v40 = Call v39, -, v38
+    v41 = Convert v40 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v42 = ToBoolean v41
+    Branch v42 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v43):
+    v44 = Increment v13
+    v45 = Convert v44 declared={type=number}
+    Jump -> next b5(v45)
+  b4(v46):
+    Jump -> next b5(v13)
+  b5(v47: number):
+    v48 = ElemGet v0, v22
+    v49 = Convert v48 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v50 = Builtin builtin=NumberIsNaN [isNotReadFromHolder]
+    v51 = Call v50, -, v49
+    v52 = Convert v51 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v53 = Increment v14
+    v54 = Convert v53 declared={type=number}
+    v55 = Increment v22
+    v56 = Convert v55 declared={type=number}
+    Jump -> next b1(v29, v36, v47, v54, v56)
+  b6(v57):
+    v58 = NewArray v11, v12, v13, v14 contents=number
+    v59 = PropGet v58 key="join"
+    v60 = String string=","
+    v61 = Call v59, v58, v60 calleeKey="join" calleeName="join"
+    ReturnCall v61 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f6 name="Measured" module=m1 position=804 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=undefined|number}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f7 module=m1 position=658 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="valueOf" module=m1 position=678 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: anonymous f2 ofNumber
+# CHECK-LABEL: function {{*}}name="anonymous"
+# CHECK: module=m0 position=1 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number}] results=[{type=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m1}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m1}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f6 = NewClosure function=f6 allocationSite=2
+# CHECK-NEXT: v1: f6 = NewClass v0 layout=L0
+# CHECK-NEXT: v2: f6 = FinishClass v1 layout=L0
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: whole = Double number=-0
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: -1 = Integer integer=-1
+# CHECK-NEXT: v7: fractional = Double number=0.5
+# CHECK-NEXT: v8: fractional = Double number=-0.5
+# CHECK-NEXT: v9: fractional = Double number=1.5
+# CHECK-NEXT: v10: 2147483648 = Integer integer=2147483648
+# CHECK-NEXT: v11: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: v12: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: v13: 4294967296 = Integer integer=4294967296
+# CHECK-NEXT: v14: 4503599627370496 = Integer integer=4503599627370496
+# CHECK-NEXT: v15: 9007199254740991 = Integer integer=9007199254740991
+# CHECK-NEXT: v16: 9007199254740992 = Integer integer=9007199254740992
+# CHECK-NEXT: v17: 9007199254740994 = Integer integer=9007199254740994
+# CHECK-NEXT: v18: -9007199254740991 = Integer integer=-9007199254740991
+# CHECK-NEXT: v19: -9007199254740992 = Integer integer=-9007199254740992
+# CHECK-NEXT: v20: 2 = Integer integer=2
+# CHECK-NEXT: v21: 63 = Integer integer=63
+# CHECK-NEXT: v22: number = Pow v20, v21
+# CHECK-NEXT: v23: 2 = Integer integer=2
+# CHECK-NEXT: v24: 63 = Integer integer=63
+# CHECK-NEXT: v25: number = Pow v23, v24
+# CHECK-NEXT: v26: number = Negate v25
+# CHECK-NEXT: v27: 2 = Integer integer=2
+# CHECK-NEXT: v28: 64 = Integer integer=64
+# CHECK-NEXT: v29: number = Pow v27, v28
+# CHECK-NEXT: v30: whole = Double number=1e+21
+# CHECK-NEXT: v31: whole = Double number=1e+300
+# CHECK-NEXT: v32: whole = Double number=-1e+300
+# CHECK-NEXT: v33: whole = Double number=1.7976931348623157e+308
+# CHECK-NEXT: v34: whole = Double number=1.7976931348623157e+308
+# CHECK-NEXT: v35: int|whole = Negate v34
+# CHECK-NEXT: v36: fractional = Double number=5e-324
+# CHECK-NEXT: v37: fractional = Double number=5e-324
+# CHECK-NEXT: v38: number = Negate v37
+# CHECK-NEXT: v39: fractional = Double number=2.220446049250313e-16
+# CHECK-NEXT: v40: fractional = Double number=4503599627370495.5
+# CHECK-NEXT: v41: 4503599627370496 = Integer integer=4503599627370496
+# CHECK-NEXT: v42: fractional = Double number=0.30000000000000004
+# CHECK-NEXT: v43: whole = Double number=NaN
+# CHECK-NEXT: v44: whole = Double number=NaN
+# CHECK-NEXT: v45: whole = Double number=Infinity
+# CHECK-NEXT: v46: whole = Double number=-Infinity
+# CHECK-NEXT: v47: fractional = Double number=0.3333333333333333
+# CHECK-NEXT: v48: fractional = Double number=123456789.000001
+# CHECK-NEXT: v49: Array<undefined|null|boolean|number|string|symbol|bigint> = NewArray v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v22, v26, v29, v30, v31, v32, v33, v35, v36, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48 contents=undefined|null|boolean|number|string|symbol|bigint allocationSite=4 [contentsAreProven]
+# CHECK-NEXT: v50: Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]> = AssumeType v49 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v51: undefined = Undefined
+# CHECK-NEXT: v52: null = Null
+# CHECK-NEXT: v53: true = Boolean boolean=true
+# CHECK-NEXT: v54: false = Boolean
+# CHECK-NEXT: v55: "" = String string=""
+# CHECK-NEXT: v56: "1" = String string="1"
+# CHECK-NEXT: v57: "NaN" = String string="NaN"
+# CHECK-NEXT: v58: "Infinity" = String string="Infinity"
+# CHECK-NEXT: v59: bigint = BigInt digits="1"
+# CHECK-NEXT: v60: Array = NewArray contents=anything allocationSite=5
+# CHECK-NEXT: v61: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v60 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v62: 1 = Integer integer=1
+# CHECK-NEXT: v63: Array<1> = NewArray v62 contents=1 allocationSite=6
+# CHECK-NEXT: v64: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v63 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v65: L2 = NewObject layout=L2 allocationSite=7 allocationClass=2
+# CHECK-NEXT: v66: 1 = Integer integer=1
+# CHECK-NEXT: v67: Number = CallBuiltin -, v66 overload=Number/2 accessSite=5
+# CHECK-NEXT: v68: whole = Double number=NaN
+# CHECK-NEXT: v69: Number = CallBuiltin -, v68 overload=Number/2 accessSite=6
+# CHECK-NEXT: v70: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v71: f7 = NewClosure function=f7 allocationSite=8
+# CHECK-NEXT: v72: L1 = NewObject layout=L1 allocationSite=10 allocationClass=1
+# CHECK-NEXT: v73: L1 = FinishObject v72
+# CHECK-NEXT: v74: Array<undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, Contiguous> = NewArray v51, v52, v53, v54, v55, v56, v57, v58, v59, v61, v64, v65, v67, v69, v70, v71, v73 contents=undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v75: Array<undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v76: f3 = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v77: 0 = Integer
+# CHECK-NEXT: Jump -> next b3(v77)
+# CHECK-NEXT: b3(v78: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v80: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v78 castType=int|whole
+# CHECK-NEXT: v81: int[0, 4294967295] = CallBuiltin v50 overload=ArrayPrototypeLength/0 accessSite=7
+# CHECK-NEXT: v82: boolean = Less v80, v81
+# CHECK-NEXT: Branch v82 -> taken b4(| 0), notTaken b13()
+# CHECK-NEXT: b4(v83: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v84: boolean = HasArrayStorage v50 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v84 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v85: guard):
+# CHECK-NEXT: v86: boolean = IsInBounds v50, v83
+# CHECK-NEXT: Branch v86 -> taken b6(| 0), notTaken b11()
+# CHECK-NEXT: b6(v87: guard):
+# CHECK-NEXT: v88: guard = AllGuards v85, v87
+# CHECK-NEXT: v89: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = GetArrayElement v50, v83, v88 arrayStorage=Contiguous level=Expected accessSite=8 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b10(v89)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v90: boolean = HasArrayStorage v50 arrayStorage=Double
+# CHECK-NEXT: Branch v90 -> taken b8(| 0), notTaken b11()
+# CHECK-NEXT: b8(v91: guard) frequency=Unlikely:
+# CHECK-NEXT: v92: boolean = IsInBounds v50, v83
+# CHECK-NEXT: Branch v92 -> taken b9(| 0), notTaken b11()
+# CHECK-NEXT: b9(v93: guard) frequency=Unlikely:
+# CHECK-NEXT: v94: guard = AllGuards v91, v93
+# CHECK-NEXT: v95: number = GetArrayElement v50, v83, v94 arrayStorage=Double level=Expected accessSite=8 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v96: number = Upcast v95 castType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: Jump -> next b10(v96)
+# CHECK-NEXT: b10(v97: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number):
+# CHECK-NEXT: v98: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v97 expectedType=number
+# CHECK-NEXT: v99: number = AssumeType v98 provenType=number
+# CHECK-NEXT: v100: boolean = CallBuiltin -, v99 overload=NumberIsNaN/0 accessSite=17
+# CHECK-NEXT: v101: boolean = CallBuiltin -, v99 overload=NumberIsFinite/0 accessSite=18
+# CHECK-NEXT: v102: boolean = CallBuiltin -, v99 overload=NumberIsInteger/0 accessSite=19
+# CHECK-NEXT: v103: boolean = CallBuiltin -, v99 overload=NumberIsSafeInteger/0 accessSite=20
+# CHECK-NEXT: v104: boolean = CallBuiltin -, v99 overload=IsNaN/0 accessSite=22
+# CHECK-NEXT: v105: boolean = CallBuiltin -, v99 overload=IsFinite/0 accessSite=24
+# CHECK-NEXT: v106: undefined|null|string = Call v76, -, v100, v101, v102, v103, v104, v105 calleeName="flags" accessSite=25 callees=[f3] @0:1 tail
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v107: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = ElemGet v50, v83 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v108: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v107 expectedType=number
+# CHECK-NEXT: v109: undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = CallDirect v108 function=f1 accessSite=9
+# CHECK-NEXT: v110: undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number ~ number = Expect v109 expectedType=number
+# CHECK-NEXT: v111: number = AssumeType v110 provenType=number
+# CHECK-NEXT: v112: undefined|null|string = CallDirect v111 function=f4 accessSite=10
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v113: int[1, 4294967295] ~ int[1, 2147483648] = Increment v83
+# CHECK-NEXT: Jump -> next b3(v113)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v114: 0 = Integer
+# CHECK-NEXT: Jump -> next b14(v114)
+# CHECK-NEXT: b14(v115: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v117: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v115 castType=int|whole
+# CHECK-NEXT: v118: int[0, 4294967295] = CallBuiltin v75 overload=ArrayPrototypeLength/0 accessSite=11
+# CHECK-NEXT: v119: boolean = Less v117, v118
+# CHECK-NEXT: Branch v119 -> taken b15(| 0), notTaken b16()
+# CHECK-NEXT: b15(v120: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v121: fractional = Double number=0.5
+# CHECK-NEXT: v122: number = Add v120, v121
+# CHECK-NEXT: v123: undefined = Undefined
+# CHECK-NEXT: v124: undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = GetArrayElement v75, v120 arrayStorage=Contiguous level=Proven accessSite=12 [keyIsIntegral]
+# CHECK-NEXT: v125: undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = Upcast v124 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
+# CHECK-NEXT: v126: undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = AssumeType v125 provenType=undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number
+# CHECK-NEXT: v127: anything ~ object = Construct v2, -, v122, v120, v123, v126 calleeName="Measured" accessSite=14 callees=[f6]
+# CHECK-NEXT: v128: int[1, 4294967295] ~ int[1, 2147483648] = Increment v120
+# CHECK-NEXT: Jump -> next b14(v128)
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v129: Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = Upcast v50 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
+# CHECK-NEXT: v130: fact = Specified
+# CHECK-NEXT: v131: Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]> = AssumeType v129, v130 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v132: 0 = Integer
+# CHECK-NEXT: Jump -> next b17(v132)
+# CHECK-NEXT: b17(v133: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: v134: boolean = HasArrayStorage v131 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v134 -> taken b18(| 0), notTaken b25()
+# CHECK-NEXT: b18(v135: guard):
+# CHECK-NEXT: Jump -> next b19(v133)
+# CHECK-NEXT: b19(v136: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v138: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v136 castType=int|whole
+# CHECK-NEXT: v139: int[0, 4294967295] = CallBuiltin v131 overload=ArrayPrototypeLength/0 accessSite=26
+# CHECK-NEXT: v140: boolean = Less v138, v139
+# CHECK-NEXT: Branch v140 -> taken b20(| 0), notTaken b33()
+# CHECK-NEXT: b20(v141: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v142: boolean = IsInBounds v131, v141
+# CHECK-NEXT: Branch v142 -> taken b21(| 0), notTaken b36(v141)
+# CHECK-NEXT: b21(v143: guard):
+# CHECK-NEXT: v144: guard = AllGuards v135, v143
+# CHECK-NEXT: v145: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = GetArrayElement v131, v141, v144 arrayStorage=Contiguous level=Expected accessSite=31 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v146: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v145 expectedType=number
+# CHECK-NEXT: v147: boolean = CallBuiltin -, v146 overload=NumberIsSafeInteger/0 accessSite=32
+# CHECK-NEXT: Branch v147 -> taken b22(), notTaken b23()
+# CHECK-NEXT: b22():
+# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b23():
+# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v148: int[1, 4294967295] ~ int[1, 2147483648] = Increment v141
+# CHECK-NEXT: Jump -> next b19(v148)
+# CHECK-NEXT: b25() frequency=Unlikely:
+# CHECK-NEXT: v149: boolean = HasArrayStorage v131 arrayStorage=Double
+# CHECK-NEXT: Branch v149 -> taken b26(| 0), notTaken b34()
+# CHECK-NEXT: b26(v150: guard) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b27(v133)
+# CHECK-NEXT: b27(v151: int[0, 4294967295] ~ int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v153: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v151 castType=int|whole
+# CHECK-NEXT: v154: int[0, 4294967295] = CallBuiltin v131 overload=ArrayPrototypeLength/0 accessSite=26
+# CHECK-NEXT: v155: boolean = Less v153, v154
+# CHECK-NEXT: Branch v155 -> taken b28(| 0), notTaken b33()
+# CHECK-NEXT: b28(v156: int[0, 4294967294] ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v157: boolean = IsInBounds v131, v156
+# CHECK-NEXT: Branch v157 -> taken b29(| 0), notTaken b36(v156)
+# CHECK-NEXT: b29(v158: guard) frequency=Unlikely:
+# CHECK-NEXT: v159: guard = AllGuards v150, v158
+# CHECK-NEXT: v160: number = GetArrayElement v131, v156, v159 arrayStorage=Double level=Expected accessSite=31 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v161: number = Upcast v160 castType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: v162: number = Expect v161 expectedType=number
+# CHECK-NEXT: v163: boolean = CallBuiltin -, v162 overload=NumberIsSafeInteger/0 accessSite=32
+# CHECK-NEXT: Branch v163 -> taken b30(), notTaken b31()
+# CHECK-NEXT: b30() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b32()
+# CHECK-NEXT: b31() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b32()
+# CHECK-NEXT: b32() frequency=Unlikely:
+# CHECK-NEXT: v164: int[1, 4294967295] ~ int[1, 2147483648] = Increment v156
+# CHECK-NEXT: Jump -> next b27(v164)
+# CHECK-NEXT: b33():
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b34() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v166: int[0, 4294967295] ~ 0 = Upcast v133 castType=int|whole
+# CHECK-NEXT: v167: int[0, 4294967295] = CallBuiltin v131 overload=ArrayPrototypeLength/0 accessSite=26
+# CHECK-NEXT: v168: boolean = Less v166, v167
+# CHECK-NEXT: Branch v168 -> taken b35(| 0), notTaken b40()
+# CHECK-NEXT: b35(v169: int[0, 4294967294] ~ 0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b36(v169)
+# CHECK-NEXT: b36(v170: int[0, 4294967294] ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v171: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = ElemGet v131, v170 accessSite=27 [keyIsIntegral]
+# CHECK-NEXT: v172: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = ElemGet v131, v170 accessSite=29 [keyIsIntegral]
+# CHECK-NEXT: v173: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = ElemGet v131, v170 accessSite=31 [keyIsIntegral]
+# CHECK-NEXT: v174: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v173 expectedType=number
+# CHECK-NEXT: v175: boolean = CallBuiltin -, v174 overload=NumberIsSafeInteger/0 accessSite=32
+# CHECK-NEXT: Branch v175 -> taken b37(), notTaken b38()
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: Jump -> next b39()
+# CHECK-NEXT: b38() frequency=Rare:
+# CHECK-NEXT: Jump -> next b39()
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: v176: undefined|null|boolean|number|string|symbol|bigint ~ undefined|number = ElemGet v131, v170 accessSite=33 [keyIsIntegral]
+# CHECK-NEXT: v177: int[1, 4294967295] ~ int[1, 2147483648] = Increment v170
+# CHECK-NEXT: Jump -> next b17(v177)
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ofNumber"
+# CHECK: module=m1 position=1132 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: f3 = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: boolean = CallBuiltin -, v0 overload=NumberIsNaN/0 accessSite=17
+# CHECK-NEXT: v3: boolean = CallBuiltin -, v0 overload=NumberIsFinite/0 accessSite=18
+# CHECK-NEXT: v4: boolean = CallBuiltin -, v0 overload=NumberIsInteger/0 accessSite=19
+# CHECK-NEXT: v5: boolean = CallBuiltin -, v0 overload=NumberIsSafeInteger/0 accessSite=20
+# CHECK-NEXT: v6: boolean = CallBuiltin -, v0 overload=IsNaN/0 accessSite=22
+# CHECK-NEXT: v7: boolean = CallBuiltin -, v0 overload=IsFinite/0 accessSite=24
+# CHECK-NEXT: v8: undefined|null|string = Call v1, -, v2, v3, v4, v5, v6, v7 calleeName="flags" accessSite=25 callees=[f3]
+# CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: }

@@ -1,0 +1,80 @@
+// Removing an API removes its code, never its name: what a program can ask about an API without calling it answers as under `bun run`.
+//// typeof
+//@ removes WebSocket
+//@ removes HTMLRewriter
+//@ removes Bun.color
+console.log(typeof WebSocket, typeof HTMLRewriter, typeof Bun.color);
+//// constants-of-a-class
+//@ alone
+//@ removes WebSocket
+console.log(WebSocket.CONNECTING, WebSocket.OPEN, WebSocket.CLOSING, WebSocket.CLOSED);
+//// in-the-prototype
+//@ alone
+//@ removes WebSocket
+console.log("send" in WebSocket.prototype, "close" in WebSocket.prototype, "nothing" in WebSocket.prototype);
+//// name-and-length
+//@ removes WebSocket
+//@ removes HTMLRewriter
+//@ removes Bun.color
+console.log(WebSocket.name, WebSocket.length, HTMLRewriter.name, HTMLRewriter.length, Bun.color.name, Bun.color.length);
+//// names-of-the-prototype
+//@ removes WebSocket
+console.log(Object.getOwnPropertyNames(WebSocket.prototype).sort().join());
+//// in-Bun
+//@ removes Bun.color
+console.log("color" in Bun, Object.hasOwn(Bun, "color"), "nothing" in Bun);
+//// in-globalThis
+//@ removes WebSocket
+console.log("WebSocket" in globalThis, Object.hasOwn(globalThis, "WebSocket"));
+//// instanceof
+//@ alone
+//@ removes WebSocket
+console.log({} instanceof WebSocket, Object.create(WebSocket.prototype) instanceof WebSocket);
+//// a-property-that-holds-an-instance
+//@ removes Bun.redis
+console.log("redis" in Bun, Object.hasOwn(Bun, "redis"), Object.keys(Bun).includes("redis"));
+//// has-instance
+//@ removes WebSocket
+console.log(WebSocket[Symbol.hasInstance]({}), Function.prototype[Symbol.hasInstance].call(WebSocket, Object.create(WebSocket.prototype)));
+//// constants-of-other-classes
+//@ removes Event
+console.log(Event.NONE, Event.CAPTURING_PHASE, Event.AT_TARGET, Event.BUBBLING_PHASE, Event.prototype.BUBBLING_PHASE, DOMException.ABORT_ERR, DOMException.DATA_CLONE_ERR, DataView.BYTES_PER_ELEMENT);
+//// a-constant-of-a-global-that-the-program-replaces
+//@ removes WebSocket
+globalThis.WebSocket = { OPEN: 7 };
+console.log(WebSocket.OPEN);
+//// a-constant-that-a-store-does-not-change
+//@ removes WebSocket
+console.log(Reflect.set(WebSocket, "OPEN", 9), Reflect.defineProperty(WebSocket, "OPEN", { value: 9 }), WebSocket.OPEN);
+//// in-the-prototypes-of-other-classes
+//@ removes Worker
+//@ removes URLPattern
+//@ removes BroadcastChannel
+//@ removes Bun.Cookie
+console.log("terminate" in Worker.prototype, "test" in URLPattern.prototype, "postMessage" in BroadcastChannel.prototype, "serialize" in Bun.Cookie.prototype);
+//// names-of-the-prototypes-of-other-classes
+//@ removes Worker
+//@ removes URLPattern
+//@ removes BroadcastChannel
+//@ removes Bun.Cookie
+for (const each of [Worker, URLPattern, BroadcastChannel, Bun.Cookie]) console.log(Object.getOwnPropertyNames(each.prototype).sort().join());
+//// a-method-taken-from-the-prototype
+for (const each of [WebSocket.prototype.send, Worker.prototype.terminate, URLPattern.prototype.test, Bun.Cookie.prototype.serialize]) {
+  try {
+    each.call({});
+  } catch (error) {
+    console.log(error.name, error.code, error.message);
+  }
+}
+//// a-getter-of-the-prototype-found-from-below
+try {
+  console.log(Object.create(WebSocket.prototype).readyState);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+//// a-setter-of-the-prototype-found-from-below
+try {
+  Object.create(WebSocket.prototype).onmessage = () => {};
+} catch (error) {
+  console.log(error.name, error.message);
+}

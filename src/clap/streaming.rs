@@ -10,7 +10,7 @@ use crate::args::ArgIter;
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
-pub(crate) struct Arg<'p, 'a, Id> {
+pub struct Arg<'p, 'a, Id> {
     pub param: &'p clap::Param<Id>,
     pub value: Option<&'a [u8]>,
 }
@@ -28,7 +28,7 @@ pub enum State<'a> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ArgError {
+pub enum ArgError {
     #[error("DoesntTakeValue")]
     DoesntTakeValue,
     #[error("MissingValue")]
@@ -66,6 +66,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) unknown_long_flags_are_positional: bool,
     pub(crate) unknown_long_flags_are_errors: bool,
     pub(crate) ignored_long_flags: clap::IgnoredLongFlags,
+    pub(crate) unknown_long_flags: Option<&'p mut Vec<clap::UnknownLongFlag<'a>>>,
 }
 
 // ArgIterator is the
@@ -75,7 +76,7 @@ where
     ArgIterator: ArgIter<'a>,
 {
     /// Get the next Arg that matches a Param.
-    pub(crate) fn next(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
+    pub fn next(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
         match self.state {
             State::Normal => self.normal(),
             State::Chaining(state) => self.chainging(state),
@@ -122,6 +123,7 @@ where
 
                     if param.takes_value == clap::Values::None
                         || param.takes_value == clap::Values::OneOptional
+                        || param.takes_value == clap::Values::ManyOptional
                     {
                         if param.takes_value == clap::Values::None && maybe_value.is_some() {
                             return Err(self.err(arg, None, Some(name), ArgError::DoesntTakeValue));
@@ -170,6 +172,13 @@ where
                         let _ = self.iter.next();
                     }
                     return self.next();
+                }
+
+                if let Some(unknown) = self.unknown_long_flags.as_deref_mut() {
+                    unknown.push(clap::UnknownLongFlag {
+                        name,
+                        is_from_bun_options: self.iter.last_is_from_bun_options(),
+                    });
                 }
 
                 // unrecognized command
@@ -262,6 +271,7 @@ where
             };
             if param.takes_value == clap::Values::None
                 || param.takes_value == clap::Values::OneOptional
+                || param.takes_value == clap::Values::ManyOptional
             {
                 if next_is_eql && param.takes_value == clap::Values::None {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));
@@ -395,6 +405,27 @@ where
     }
 }
 
+impl<'p, 'a, Id> StreamingClap<'p, 'a, Id, crate::args::SliceIterator<'a>> {
+    pub fn over_words(
+        params: &'p [clap::Param<Id>],
+        words: &'p mut crate::args::SliceIterator<'a>,
+        short_aliases: &'static [(&'static [u8], &'static [u8])],
+    ) -> Self {
+        Self {
+            params,
+            iter: words,
+            state: State::Normal,
+            positional: None,
+            diagnostic: None,
+            short_aliases,
+            unknown_long_flags_are_positional: false,
+            unknown_long_flags_are_errors: false,
+            ignored_long_flags: Default::default(),
+            unknown_long_flags: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +449,7 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: None,
+            unknown_long_flags: None,
         };
 
         for res in results {
@@ -454,6 +486,7 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: Some(&mut diag),
+            unknown_long_flags: None,
         };
         loop {
             match c.next() {
@@ -929,6 +962,7 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: None,
+            unknown_long_flags: None,
         };
         let mut seen: Vec<(u8, Option<&[u8]>)> = Vec::new();
         while let Some(arg) = c.next().expect("unreachable") {
@@ -981,6 +1015,7 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: None,
+            unknown_long_flags: None,
         };
         let mut seen: Vec<(u8, Option<&[u8]>)> = Vec::new();
         while let Some(arg) = c.next().expect("unreachable") {
@@ -1028,6 +1063,7 @@ mod tests {
                 state: State::Normal,
                 positional: None,
                 diagnostic: Some(&mut diag),
+                unknown_long_flags: None,
             };
             loop {
                 match c.next() {
@@ -1044,5 +1080,182 @@ mod tests {
         assert_eq!(parse(&[b"--aa", b"x", b"--", b"--q"]), None);
         assert_eq!(parse(&[b"x", b"--q", b"y"]), Some(b"q".to_vec()));
         assert_eq!(parse(&[b"--q=1"]), Some(b"q".to_vec()));
+    }
+
+    #[test]
+    fn many_optional() {
+        let params: [clap::Param<u8>; 2] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names {
+                    long: Some(b"explain"),
+                    ..Default::default()
+                },
+                takes_value: clap::Values::ManyOptional,
+            },
+            clap::Param {
+                id: 1,
+                takes_value: clap::Values::One,
+                ..Default::default()
+            },
+        ];
+
+        test_no_err(
+            &params,
+            &[b"--explain", b"x", b"--explain=a", b"--explain="],
+            &[
+                Arg {
+                    param: &params[0],
+                    value: None,
+                },
+                Arg {
+                    param: &params[1],
+                    value: Some(b"x"),
+                },
+                Arg {
+                    param: &params[0],
+                    value: Some(b"a"),
+                },
+                Arg {
+                    param: &params[0],
+                    value: Some(b""),
+                },
+            ],
+        );
+    }
+
+    fn collect_args<'a, I: ArgIter<'a>>(
+        params: &[clap::Param<u8>],
+        iter: &mut I,
+        unknown_long_flags: Option<&mut Vec<clap::UnknownLongFlag<'a>>>,
+    ) -> Vec<(u8, Option<&'a [u8]>)> {
+        let mut c = StreamingClap::<u8, I> {
+            short_aliases: &[],
+            unknown_long_flags_are_positional: false,
+            unknown_long_flags_are_errors: false,
+            ignored_long_flags: Default::default(),
+            params,
+            iter,
+            state: State::Normal,
+            positional: None,
+            diagnostic: None,
+            unknown_long_flags,
+        };
+        let mut seen = Vec::new();
+        while let Some(arg) = c.next().expect("unreachable") {
+            seen.push((arg.param.id, arg.value));
+        }
+        seen
+    }
+
+    #[test]
+    fn unknown_long_flags_are_recorded() {
+        let params: [clap::Param<u8>; 2] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names {
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                takes_value: clap::Values::Many,
+                ..Default::default()
+            },
+        ];
+        let args: &[&[u8]] = &[b"--q", b"--aa", b"x", b"--r=1", b"--", b"--s"];
+        let mut unknown = Vec::new();
+        let seen = collect_args(
+            &params,
+            &mut args::SliceIterator { remain: args },
+            Some(&mut unknown),
+        );
+        let expected: &[(u8, Option<&[u8]>)] = &[(0, None), (1, Some(b"x")), (1, Some(b"--s"))];
+        assert_eq!(expected, &seen[..]);
+        assert_eq!(
+            seen,
+            collect_args(&params, &mut args::SliceIterator { remain: args }, None),
+        );
+        assert_eq!(
+            unknown,
+            [
+                clap::UnknownLongFlag {
+                    name: b"q",
+                    is_from_bun_options: false,
+                },
+                clap::UnknownLongFlag {
+                    name: b"r",
+                    is_from_bun_options: false,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn option_value_is_not_recorded() {
+        let params: [clap::Param<u8>; 1] = [clap::Param {
+            id: 0,
+            names: clap::Names {
+                long: Some(b"out"),
+                ..Default::default()
+            },
+            takes_value: clap::Values::One,
+        }];
+        let args: &[&[u8]] = &[b"--out", b"--q"];
+        let mut unknown = Vec::new();
+        let seen = collect_args(
+            &params,
+            &mut args::SliceIterator { remain: args },
+            Some(&mut unknown),
+        );
+        let expected: &[(u8, Option<&[u8]>)] = &[(0, Some(b"--q"))];
+        assert_eq!(expected, &seen[..]);
+        assert!(unknown.is_empty());
+    }
+
+    struct BunOptionsIterator<'a> {
+        args: args::SliceIterator<'a>,
+        typed_count: usize,
+    }
+
+    impl<'a> ArgIter<'a> for BunOptionsIterator<'a> {
+        fn next(&mut self) -> Option<&'a [u8]> {
+            self.args.next()
+        }
+
+        fn remain(&self) -> &[&'a [u8]] {
+            self.args.remain
+        }
+
+        fn last_is_from_bun_options(&self) -> bool {
+            self.args.remain.len() >= self.typed_count
+        }
+    }
+
+    #[test]
+    fn unknown_long_flags_from_bun_options() {
+        let args: &[&[u8]] = &[b"--q", b"--r"];
+        let mut iter = BunOptionsIterator {
+            args: args::SliceIterator { remain: args },
+            typed_count: 1,
+        };
+        let mut unknown = Vec::new();
+        let seen = collect_args(&[], &mut iter, Some(&mut unknown));
+        assert!(seen.is_empty());
+        assert_eq!(
+            unknown,
+            [
+                clap::UnknownLongFlag {
+                    name: b"q",
+                    is_from_bun_options: true,
+                },
+                clap::UnknownLongFlag {
+                    name: b"r",
+                    is_from_bun_options: false,
+                },
+            ],
+        );
     }
 }

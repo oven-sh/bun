@@ -2348,6 +2348,13 @@ impl JSValue {
         }
         Ok(Some(v))
     }
+    /// True for what a generator function compiled ahead of time has made. The engine's own generator objects have `JSType::JSGenerator`.
+    pub fn is_compiled_generator(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isCompiledGenerator(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isCompiledGenerator(self)
+    }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {

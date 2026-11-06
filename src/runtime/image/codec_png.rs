@@ -11,7 +11,7 @@ use crate::encoded_wrap_free;
 bun_opaque::opaque_ffi! { pub struct spng_ctx; }
 
 unsafe extern "C" {
-    fn spng_ctx_new(flags: c_int) -> *mut spng_ctx;
+    safe fn spng_ctx_new(flags: c_int) -> *mut spng_ctx;
     fn spng_ctx_free(ctx: *mut spng_ctx);
     fn spng_set_png_buffer(ctx: *mut spng_ctx, buf: *const u8, len: usize) -> c_int;
     fn spng_decoded_image_size(ctx: *mut spng_ctx, fmt: c_int, out: *mut usize) -> c_int;
@@ -103,8 +103,7 @@ struct Trns {
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // Skip adler32 and chunk-CRC verification (as libvips and stb_image do); they only cost decode time.
-    // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_IGNORE_ADLER32) };
+    let ctx = spng_ctx_new(SPNG_CTX_IGNORE_ADLER32);
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
@@ -160,8 +159,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // than silently degrading colour fidelity — the pixels may be Display
     // P3 / Adobe RGB / XYB, and a "no profile" result there is a visible
     // colour shift, which is the exact bug #30197 is about.
-    // SAFETY: all-zero is a valid Iccp (POD; null profile ptr is the "no profile" state).
-    let mut iccp: Iccp = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut iccp = Iccp {
+        profile_name: [0; 80],
+        profile_len: 0,
+        profile: core::ptr::null_mut(),
+    };
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
     let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
         && iccp.profile_len > 0
@@ -217,8 +219,7 @@ pub(crate) fn encode(
     level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    // SAFETY: spng_ctx_new is safe to call; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
+    let ctx = spng_ctx_new(SPNG_CTX_ENCODER);
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
@@ -302,8 +303,7 @@ pub(crate) fn encode_indexed(
     )
     .map_err(|_| codecs::Error::OutOfMemory)?;
 
-    // SAFETY: spng_ctx_new is safe to call; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
+    let ctx = spng_ctx_new(SPNG_CTX_ENCODER);
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }

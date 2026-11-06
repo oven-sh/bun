@@ -1,0 +1,454 @@
+# Closures that are created in loops and carried over to the next iteration or kept in an array.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="closures-carried-across-loop-iterations.ts" displayPath="closures-carried-across-loop-iterations.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = String string=""
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v16 = Integer
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b1(v18: undefined|null|string, v19: number):
+    LoopHint
+    v21 = Integer integer=6
+    v22 = Mod v19, v21
+    v23 = Integer integer=2
+    v24 = Add v22, v23
+    v25 = Call v1, -, v24 calleeName="carried"
+    v26 = Convert v25 declared={type=number}
+    v27 = Integer integer=1000
+    v28 = Mul v26, v27
+    v29 = Integer integer=4
+    v30 = Mod v19, v29
+    v31 = Integer integer=3
+    v32 = Add v30, v31
+    v33 = Call v5, -, v32 calleeName="calledAheadOfItsNextBirth"
+    v34 = Convert v33 declared={type=number}
+    v35 = Add v28, v34
+    v36 = Convert v35 declared={type=number}
+    v37 = Integer integer=7
+    v38 = Mod v19, v37
+    v39 = Integer integer=3
+    v40 = Add v38, v39
+    v41 = Call v3, -, v40 calleeName="carriedTwoTurns"
+    v42 = Convert v41 declared={type=number}
+    v43 = Integer integer=2
+    v44 = Mod v19, v43
+    v45 = Integer
+    v46 = StrictEq v44, v45
+    v47 = Call v7, -, v46, v19 calleeName="keptLater"
+    v48 = Convert v47 declared={type=number}
+    v49 = Integer integer=3
+    v50 = Mod v19, v49
+    v51 = Integer
+    v52 = StrictEq v50, v51
+    v53 = Call v9, -, v52, v19 calleeName="returnedLater"
+    v54 = Convert v53 declared={type=undefined|null|function|f10|f11 flags=[OmitsNull, OmitsUndefined]}
+    v55 = Call v54
+    v56 = Convert v55 declared={type=number}
+    v57 = Integer integer=3
+    v58 = Mod v19, v57
+    v59 = Integer integer=1
+    v60 = StrictEq v58, v59
+    v61 = Integer integer=1
+    v62 = Add v19, v61
+    v63 = Call v9, -, v60, v62 calleeName="returnedLater"
+    v64 = Convert v63 declared={type=undefined|null|function|f10|f11 flags=[OmitsNull, OmitsUndefined]}
+    v65 = Call v64
+    v66 = Convert v65 declared={type=number}
+    v67 = Add v56, v66
+    v68 = Boolean boolean=true
+    v69 = Call v9, -, v68, v19 calleeName="returnedLater"
+    v70 = Convert v69 declared={type=undefined|null|function|f10|f11 flags=[OmitsNull, OmitsUndefined]}
+    v71 = Call v70
+    v72 = Convert v71 declared={type=number}
+    v73 = Add v67, v72
+    v74 = Boolean
+    v75 = Integer integer=2
+    v76 = Call v9, -, v74, v75 calleeName="returnedLater"
+    v77 = Convert v76 declared={type=undefined|null|function|f10|f11 flags=[OmitsNull, OmitsUndefined]}
+    v78 = Call v77
+    v79 = Convert v78 declared={type=number}
+    v80 = Add v73, v79
+    v81 = Convert v80 declared={type=number}
+    v82 = Call v11, -, v19 calleeName="identity"
+    v83 = Convert v82 declared={type=boolean}
+    v84 = Call v13, -, v19 calleeName="readsArguments"
+    v85 = Convert v84 declared={type=number}
+    v86 = String string="|"
+    v87 = Add v36, v86
+    v88 = Add v87, v42
+    v89 = String string="|"
+    v90 = Add v88, v89
+    v91 = Add v90, v48
+    v92 = String string="|"
+    v93 = Add v91, v92
+    v94 = Add v93, v81
+    v95 = String string="|"
+    v96 = Add v94, v95
+    v97 = Add v96, v83
+    v98 = String string="|"
+    v99 = Add v97, v98
+    v100 = Add v99, v85
+    v101 = String string="\n"
+    v102 = Add v100, v101
+    v103 = Add v18, v102
+    v104 = Convert v103 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v105 = Increment v19
+    v106 = Convert v105 declared={type=number}
+    Jump -> next b1(v104, v106)
+}
+function f1 name="carried" module=m0 position=133 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="carriedTwoTurns" module=m0 position=444 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = Convert v1 declared={type=undefined|null|function|f8 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v3 = Undefined
+    v4 = Convert v3 declared={type=undefined|null|function|f8 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number}
+    Jump -> next b1(v2, v4, v6, v8)
+  b1(v9: undefined|null|function|f8, v10: undefined|null|function|f8, v11: number, v12: number):
+    LoopHint
+    v14 = Integer integer=3
+    v15 = Mul v12, v14
+    v16 = Integer integer=1
+    v17 = Add v15, v16
+    v18 = Convert v17 declared={type=number}
+    v19 = NewClosure v18 function=f8
+    v20 = Convert v19 declared={type=undefined|null|function|f8 flags=[OmitsNull, OmitsUndefined]}
+    v21 = ToBoolean v10
+    Branch v21 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v22):
+    v23 = Call v22 calleeName="beforeLast"
+    v24 = Convert v23 declared={type=number}
+    v25 = Integer integer=100
+    v26 = Mul v24, v25
+    v27 = Call v9 calleeName="last"
+    v28 = Convert v27 declared={type=number}
+    v29 = Add v26, v28
+    v30 = Add v11, v29
+    v31 = Convert v30 declared={type=number}
+    Jump -> next b4(v9, v31)
+  b3(v32):
+    Jump -> next b4(v9, v11)
+  b4(v33: undefined|null|function|f8, v34: number):
+    v35 = Convert v33 declared={type=undefined|null|function|f8 flags=[OmitsNull]}
+    v36 = Convert v20 declared={type=undefined|null|function|f8 flags=[OmitsNull]}
+    v37 = Increment v12
+    v38 = Convert v37 declared={type=number}
+    Jump -> next b1(v36, v35, v34, v38)
+}
+function f3 name="calledAheadOfItsNextBirth" module=m0 position=815 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = Convert v1 declared={type=undefined|null|function|f9 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v2, v4, v6)
+  b1(v7: undefined|null|function|f9, v8: number, v9: number):
+    LoopHint
+    v11 = NewObject layout=L0
+    v12 = ToBoolean v7
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v13):
+    v14 = Call v13 calleeName="previous"
+    v15 = Convert v14 declared={type=number}
+    v16 = Integer integer=1
+    v17 = Add v9, v16
+    v18 = Mul v15, v17
+    v19 = Add v8, v18
+    v20 = Convert v19 declared={type=number}
+    Jump -> next b4(v20)
+  b3(v21):
+    Jump -> next b4(v8)
+  b4(v22: number):
+    v23 = NewClosure v11 function=f9
+    v24 = Convert v23 declared={type=undefined|null|function|f9 flags=[OmitsNull, OmitsUndefined]}
+    v25 = Convert v24 declared={type=undefined|null|function|f9 flags=[OmitsNull]}
+    v26 = Increment v9
+    v27 = Convert v26 declared={type=number}
+    Jump -> next b1(v25, v22, v27)
+}
+function f4 name="keptLater" module=m0 position=1161 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="returnedLater" module=m0 position=1353 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}, {type=number}] results=[{type=undefined|null|function|f10|f11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="identity" module=m0 position=2725 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="readsArguments" module=m0 position=2994 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="f" module=m0 position=667 kind=Arrow flags=[IsChecked] captures=[{type=number}] thisType={type=anything} results=[{type=number}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="f" module=m0 position=1052 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="a" module=m0 position=2515 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="b" module=m0 position=2546 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f13]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f17]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+# -- generated: f0 carriedTwoTurns calledAheadOfItsNextBirth
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0 storage=Frame
+# CHECK-NEXT: v1: f4 = NewClosure function=f4 allocationSite=3 storage=Frame
+# CHECK-NEXT: v2: f5 = NewClosure function=f5 allocationSite=4 storage=Frame
+# CHECK-NEXT: v3: f6 = NewClosure function=f6 allocationSite=5 storage=Frame
+# CHECK-NEXT: v4: f7 = NewClosure function=f7 allocationSite=6 storage=Frame
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v5)
+# CHECK-NEXT: b1(v7: int|whole) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v9: 6 = Integer integer=6
+# CHECK-NEXT: v10: int|whole = Mod v7, v9
+# CHECK-NEXT: v11: 2 = Integer integer=2
+# CHECK-NEXT: v12: int|whole = Add v10, v11
+# CHECK-NEXT: v13: number = Call v0, -, v12 calleeName="carried" accessSite=0 callees=[f1]
+# CHECK-NEXT: v14: 1000 = Integer integer=1000
+# CHECK-NEXT: v15: number = Mul v13, v14
+# CHECK-NEXT: v16: number = CallDirect function=f30 accessSite=1
+# CHECK-NEXT: v17: number = Add v15, v16
+# CHECK-NEXT: v18: number = CallDirect function=f29 accessSite=2
+# CHECK-NEXT: v19: 2 = Integer integer=2
+# CHECK-NEXT: v20: int|whole = Mod v7, v19
+# CHECK-NEXT: v21: 0 = Integer
+# CHECK-NEXT: v22: boolean = StrictEq v20, v21
+# CHECK-NEXT: v23: number = Call v1, -, v22, v7 calleeName="keptLater" accessSite=3 callees=[f4]
+# CHECK-NEXT: v24: 3 = Integer integer=3
+# CHECK-NEXT: v25: int|whole = Mod v7, v24
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: boolean = StrictEq v25, v26
+# CHECK-NEXT: v28: undefined|null|function = Call v2, -, v27, v7 calleeName="returnedLater" accessSite=4 callees=[f5]
+# CHECK-NEXT: v29: anything = Call v28 accessSite=5 callees=[]
+# CHECK-NEXT: v30: anything ~ number = Expect v29 expectedType=number
+# CHECK-NEXT: v31: 3 = Integer integer=3
+# CHECK-NEXT: v32: int|whole = Mod v7, v31
+# CHECK-NEXT: v33: 1 = Integer integer=1
+# CHECK-NEXT: v34: boolean = StrictEq v32, v33
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int|whole = Add v7, v35
+# CHECK-NEXT: v37: undefined|null|function = Call v2, -, v34, v36 calleeName="returnedLater" accessSite=6 callees=[f5]
+# CHECK-NEXT: v38: anything = Call v37 accessSite=7 callees=[]
+# CHECK-NEXT: v39: anything ~ number = Expect v38 expectedType=number
+# CHECK-NEXT: v40: boolean ~ true = TypeTest v30 testedType=number
+# CHECK-NEXT: Branch v40 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: b2(v41: number):
+# CHECK-NEXT: v42: boolean ~ true = TypeTest v39 testedType=number
+# CHECK-NEXT: Branch v42 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v43: number):
+# CHECK-NEXT: v44: number = Add v41, v43
+# CHECK-NEXT: v45: true = Boolean boolean=true
+# CHECK-NEXT: v46: undefined|null|function = Call v2, -, v45, v7 calleeName="returnedLater" accessSite=8 callees=[f5]
+# CHECK-NEXT: Jump -> next b6(v44, v46)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v47: number|string|bigint ~ number = Add v30, v39
+# CHECK-NEXT: v48: true = Boolean boolean=true
+# CHECK-NEXT: v49: undefined|null|function = Call v2, -, v48, v7 calleeName="returnedLater" accessSite=8 callees=[f5]
+# CHECK-NEXT: v50: boolean ~ true = TypeTest v47 testedType=number
+# CHECK-NEXT: Branch v50 -> taken b5(| 0), notTaken b9()
+# CHECK-NEXT: b5(v51: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b6(v51, v49)
+# CHECK-NEXT: b6(v52: number, v53: undefined|null|function):
+# CHECK-NEXT: v54: anything = Call v53 accessSite=9 callees=[]
+# CHECK-NEXT: v55: anything ~ number = Expect v54 expectedType=number
+# CHECK-NEXT: v56: boolean ~ true = TypeTest v55 testedType=number
+# CHECK-NEXT: Branch v56 -> taken b7(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b7(v57: number):
+# CHECK-NEXT: v58: number = Add v52, v57
+# CHECK-NEXT: v59: false = Boolean
+# CHECK-NEXT: v60: 2 = Integer integer=2
+# CHECK-NEXT: v61: undefined|null|function = Call v2, -, v59, v60 calleeName="returnedLater" accessSite=10 callees=[f5]
+# CHECK-NEXT: Jump -> next b12(v58, v61)
+# CHECK-NEXT: b8(v62: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10(v52, v62)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v63: anything = Call v49 accessSite=9 callees=[]
+# CHECK-NEXT: v64: anything ~ number = Expect v63 expectedType=number
+# CHECK-NEXT: Jump -> next b10(v47, v64)
+# CHECK-NEXT: b10(v65: number|string|bigint ~ number, v66: anything ~ number) frequency=Rare:
+# CHECK-NEXT: v67: number|string|bigint ~ number = Add v65, v66
+# CHECK-NEXT: v68: false = Boolean
+# CHECK-NEXT: v69: 2 = Integer integer=2
+# CHECK-NEXT: v70: undefined|null|function = Call v2, -, v68, v69 calleeName="returnedLater" accessSite=10 callees=[f5]
+# CHECK-NEXT: v71: boolean ~ true = TypeTest v67 testedType=number
+# CHECK-NEXT: Branch v71 -> taken b11(| 0), notTaken b15()
+# CHECK-NEXT: b11(v72: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b12(v72, v70)
+# CHECK-NEXT: b12(v73: number, v74: undefined|null|function):
+# CHECK-NEXT: v75: anything = Call v74 accessSite=11 callees=[]
+# CHECK-NEXT: v76: anything ~ number = Expect v75 expectedType=number
+# CHECK-NEXT: v77: boolean ~ true = TypeTest v76 testedType=number
+# CHECK-NEXT: Branch v77 -> taken b13(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b13(v78: number):
+# CHECK-NEXT: v79: number = Add v73, v78
+# CHECK-NEXT: v80: boolean = Call v3, -, v7 calleeName="identity" accessSite=12 callees=[f6]
+# CHECK-NEXT: Jump -> next b18(v79, v80)
+# CHECK-NEXT: b14(v81: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v73, v81)
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v82: anything = Call v70 accessSite=11 callees=[]
+# CHECK-NEXT: v83: anything ~ number = Expect v82 expectedType=number
+# CHECK-NEXT: Jump -> next b16(v67, v83)
+# CHECK-NEXT: b16(v84: number|string|bigint ~ number, v85: anything ~ number) frequency=Rare:
+# CHECK-NEXT: v86: number|string|bigint ~ number = Add v84, v85
+# CHECK-NEXT: v87: boolean = Call v3, -, v7 calleeName="identity" accessSite=12 callees=[f6]
+# CHECK-NEXT: v88: boolean ~ true = TypeTest v86 testedType=number
+# CHECK-NEXT: Branch v88 -> taken b17(| 0), notTaken b19()
+# CHECK-NEXT: b17(v89: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b18(v89, v87)
+# CHECK-NEXT: b18(v90: number, v91: boolean):
+# CHECK-NEXT: v92: number = Call v4, -, v7 calleeName="readsArguments" accessSite=13 callees=[f7]
+# CHECK-NEXT: v93: "|" = String string="|"
+# CHECK-NEXT: v94: "|" = String string="|"
+# CHECK-NEXT: v95: "|" = String string="|"
+# CHECK-NEXT: StringBuilderAppend v6, v17, v93, v18, v94, v23, v95, v90
+# CHECK-NEXT: Jump -> next b20(v91, v92)
+# CHECK-NEXT: b19() frequency=Rare:
+# CHECK-NEXT: v97: number = Call v4, -, v7 calleeName="readsArguments" accessSite=13 callees=[f7]
+# CHECK-NEXT: v98: "|" = String string="|"
+# CHECK-NEXT: v99: "|" = String string="|"
+# CHECK-NEXT: v100: "|" = String string="|"
+# CHECK-NEXT: StringBuilderAppend v6, v17, v98, v18, v99, v23, v100, v86
+# CHECK-NEXT: Jump -> next b20(v87, v97)
+# CHECK-NEXT: b20(v102: boolean, v103: number):
+# CHECK-NEXT: v104: "|" = String string="|"
+# CHECK-NEXT: v105: "|" = String string="|"
+# CHECK-NEXT: v106: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v104, v102, v105, v103, v106
+# CHECK-NEXT: v108: int|whole = Increment v7
+# CHECK-NEXT: Jump -> next b1(v108)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="carriedTwoTurns"
+# CHECK: module=m0 position=444 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="calledAheadOfItsNextBirth"
+# CHECK: module=m0 position=815 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="carriedTwoTurns"
+# CHECK: module=m0 position=444 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2, v3, v4)
+# CHECK-NEXT: b1(v5: undefined|f8 ~ undefined, v6: undefined|f8 ~ undefined, v7: number ~ 0, v8: int|whole ~ 0):
+# CHECK-NEXT: Jump -> next b2(v5, v6, v7, v8)
+# CHECK-NEXT: b2(v9: undefined|f8 ~ undefined, v10: undefined|f8 ~ undefined, v11: number ~ 0, v12: int|whole ~ 0):
+# CHECK-NEXT: Jump -> next b3(v9, v10, v11, v12)
+# CHECK-NEXT: b3(v13: undefined|f8, v14: undefined|f8, v15: number, v16: int|whole):
+# CHECK-NEXT: v17: int = AssumeType v15 provenType=int
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v19: 3 = Integer integer=3
+# CHECK-NEXT: v20: int|whole = Mul v16, v19
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: int|whole = Add v20, v21
+# CHECK-NEXT: v23: f8 = NewClosure v22 function=f8 allocationSite=7
+# CHECK-NEXT: v24: boolean = ToBoolean v14
+# CHECK-NEXT: Branch v24 -> taken b4(| 0), notTaken b12()
+# CHECK-NEXT: b4(v25: f8):
+# CHECK-NEXT: v26: number = Call v25 calleeName="beforeLast" accessSite=14 callees=[f8]
+# CHECK-NEXT: v27: 100 = Integer integer=100
+# CHECK-NEXT: v28: number = Mul v26, v27
+# CHECK-NEXT: v29: anything = Call v13 calleeName="last" accessSite=15 callees=[f8]
+# CHECK-NEXT: v30: anything ~ number = Expect v29 expectedType=number
+# CHECK-NEXT: v31: boolean ~ true = TypeTest v30 testedType=number
+# CHECK-NEXT: Branch v31 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v32: number):
+# CHECK-NEXT: v33: number = Add v28, v32
+# CHECK-NEXT: v34: number = Add v17, v33
+# CHECK-NEXT: Jump -> next b13(v34)
+# CHECK-NEXT: b6(v35: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v36: number|string|bigint = Add v28, v35
+# CHECK-NEXT: v37: number|string|bigint = Add v17, v36
+# CHECK-NEXT: Jump -> next b7(v13, v16, v23)
+# CHECK-NEXT: b7(v38: undefined|f8 ~ f8, v39: int|whole, v40: f8) frequency=Rare:
+# CHECK-NEXT: v41: int|whole = Increment v39
+# CHECK-NEXT: v42: boolean = TypeTest v37 testedType=number
+# CHECK-NEXT: Branch v42 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v43: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v40, v38, v43, v41)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v44: fact = Specified
+# CHECK-NEXT: v45: int = AssumeType v37, v44 provenType=int
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v47: 3 = Integer integer=3
+# CHECK-NEXT: v48: int|whole = Mul v41, v47
+# CHECK-NEXT: v49: 1 = Integer integer=1
+# CHECK-NEXT: v50: int|whole = Add v48, v49
+# CHECK-NEXT: v51: f8 = NewClosure v50 function=f8 allocationSite=7
+# CHECK-NEXT: v52: boolean ~ true = ToBoolean v38
+# CHECK-NEXT: Branch v52 -> taken b10(| 0), notTaken b11()
+# CHECK-NEXT: b10(v53: f8) frequency=Rare:
+# CHECK-NEXT: v54: number = Call v53 calleeName="beforeLast" accessSite=14 callees=[f8]
+# CHECK-NEXT: v55: 100 = Integer integer=100
+# CHECK-NEXT: v56: number = Mul v54, v55
+# CHECK-NEXT: v57: number = Call v40 calleeName="last" accessSite=15 callees=[f8]
+# CHECK-NEXT: v58: number = Add v56, v57
+# CHECK-NEXT: v59: number = Add v45, v58
+# CHECK-NEXT: v60: int|whole = Increment v41
+# CHECK-NEXT: Jump -> next b2(v51, v40, v59, v60)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: Jump -> next b7(v40, v41, v51)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: Jump -> next b13(v17)
+# CHECK-NEXT: b13(v61: number):
+# CHECK-NEXT: v62: int|whole = Increment v16
+# CHECK-NEXT: Jump -> next b3(v23, v13, v61, v62)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="calledAheadOfItsNextBirth"
+# CHECK: module=m0 position=815 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: unspecified|env L0 = Unspecified valueType=env L0
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b1(v1, v3, v2)
+# CHECK-NEXT: b1(v4: int[1, 2], v5: int[1, 2], v6: unspecified|env L0):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: 2 = Integer integer=2
+# CHECK-NEXT: v9: int[0, 2] = BitAnd v4, v8
+# CHECK-NEXT: v10: boolean = ToBoolean v9
+# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b6()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: fact = Specified
+# CHECK-NEXT: Switch v5 cases=[1] -> case b3(), otherwise b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: env L0 = NewObject layout=L0 allocationSite=8
+# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: b5(v13: unspecified|env L0):
+# CHECK-NEXT: v14: env L0 = AssumeType v13, v11 provenType=env L0
+# CHECK-NEXT: v15: f9 = NewClosure v14 function=f9 allocationSite=9 storage=Frame
+# CHECK-NEXT: v16: number = Call v15 calleeName="previous" accessSite=16 callees=[f9]
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v17: 2 = Integer integer=2
+# CHECK-NEXT: v18: 2 = Integer integer=2
+# CHECK-NEXT: v19: unspecified|env L0 = Unspecified valueType=unspecified|env L0
+# CHECK-NEXT: Jump -> next b1(v17, v18, v19)
+# CHECK-NEXT: }

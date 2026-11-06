@@ -1,0 +1,91 @@
+# Functions of another file stored as exports, a name stored late by a callback, and two modules that share a third.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="other.js" displayPath="other.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="foreign.js" displayPath="foreign.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="late.js" displayPath="late.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2
+module m3 path="shared.js" displayPath="shared.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+module m4 path="first.js" displayPath="first.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f4 requests=[{target=m3 kind=Require completes=true}]
+module m5 path="second.js" displayPath="second.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f5 requests=[{target=m3 kind=Require completes=true}]
+module m6 path="blocks.js" displayPath="blocks.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f6
+module m7 path="tested.js" displayPath="tested.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f7 exportsVariable=g2
+module m8 path="main.js" displayPath="main.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f8 exportsVariable=g3 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}, {target=m5 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m6 kind=Require completes=true}, {target=m7 kind=Require completes=true}]
+entry module=m8
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m7 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m8 declared={type=anything} initialization=Undefined
+variable g4 name="late" module=m2 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m3 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m4 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m5 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m6 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m7 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m8 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f9
+    v1 = Convert v0 declared={type=undefined|null|function|f9 flags=[IsExpected]}
+    v2 = String string="late"
+    v3 = NewClosure function=f10
+    v4 = Call v1, -, v2, v3 calleeName="show"
+    v5 = Undefined
+    Return v5
+}
+function f9 name="show" module=m8 position=131 kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="f"
+    Jump -> next b2()
+  b2():
+    Jump -> next b5()
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Jump -> next b4(v3)
+  b4(v4):
+    v5 = PropGet v4 key="constructor"
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
+    v7 = PropGet v4 key="constructor"
+    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = PropGet v8 key="name"
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v11 = Undefined
+    Return v11
+}
+function f10 module=m8 position=418 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|"late"> flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    EvaluateModule module=m2 referrer=m8 [isCallOfRequire]
+    v1 = GetModuleVariable variable=g4
+    v2 = Convert v1 declared={type=undefined|null|"late" flags=[IsExpected]}
+    v3 = GetModuleVariable variable=g4
+    v4 = Convert v3 declared={type=undefined|null|"late" flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g4
+    v6 = Convert v5 declared={type=undefined|null|"late" flags=[IsExpected]}
+    v7 = NewArray v2, v4, v6 contents=undefined|null|"late"
+    v8 = Convert v7 declared={type=undefined|null|Array<undefined|null|"late"> flags=[IsExpected]}
+    Return v8
+}
+function f11 module=m8 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m8 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f8 show
+# CHECK-LABEL: function f8 module=
+# CHECK: m8 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f16 accessSite=0
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m8 position=131 kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type="late"}, {type=f10}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m8 position=131 kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} results=[{type=undefined}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f9} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

@@ -1,0 +1,79 @@
+# Species: proxy programs  entries of arrays strings proxies and instances. It prints what plain Bun prints.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="proxy-programs-m06-entries-arrays.js" displayPath="proxy-programs-m06-entries-arrays.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="p" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="ProxyHandler<{ p: number; }>" fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="get" declared={type=undefined|null|function|f1 flags=[IsExpected]} flags=[IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
+data d0 root=Object{layout=L0 members=[{key="p" value=Number{value=1}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Proxy
+    v1 = Data data=d0
+    v2 = NewObject layout=L1
+    v3 = FinishObject v2
+    v4 = Construct v0, -, v1, v3 calleeName="Proxy"
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v6 = Builtin builtin=Map
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectEntries
+    v9 = Call v8, v7, v5 calleeName="Object.entries"
+    v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|number|string>> flags=[IsExpected]}
+    v11 = Construct v6, -, v10 calleeName="Map"
+    v12 = NewArray contents=anything
+    v13 = Builtin builtin=Map
+    v14 = Builtin builtin=Object
+    v15 = Builtin builtin=ObjectEntries
+    v16 = Integer integer=7
+    v17 = Call v15, v14, v16 calleeName="Object.entries"
+    v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}
+    v19 = Construct v13, -, v18 calleeName="Map"
+    v20 = Convert v19 declared={type=undefined|null|Map<undefined|null|string, anything> flags=[IsExpected]}
+    AppendSpread v12, v20
+    Jump -> next b1()
+  b1() handler=b3():
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v22 = Undefined
+    Return v22
+}
+function f1 name="get" module=m0 position=427 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="ownKeys" module=m0 position=495 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=0 allocationClass=0
+# CHECK-NEXT: v2: L1 = NewObject layout=L1 allocationSite=1 allocationClass=1
+# CHECK-NEXT: v3: L1 = FinishObject v2
+# CHECK-NEXT: v4: Proxy = CallBuiltin -, v1, v3 overload=Proxy/1 accessSite=0
+# CHECK-NEXT: v5: Array<Array> = CallBuiltin -, v4 overload=ObjectEntries/0 accessSite=1
+# CHECK-NEXT: v6: Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: Map = CallBuiltin -, v6 overload=Map/2 accessSite=2
+# CHECK-NEXT: v8: 7 = Integer integer=7
+# CHECK-NEXT: v9: object = ToObject v8 calledBuiltin=ObjectEntries
+# CHECK-NEXT: v10: Array<Array> = CallBuiltin -, v9 overload=ObjectEntries/0 accessSite=3
+# CHECK-NEXT: v11: Array<Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Map = CallBuiltin -, v11 overload=Map/2 accessSite=4
+# CHECK-NEXT: v13: Map<string, never, proven, pristine[Storage, Names]> = AssumeType v12 provenType=Map<string, never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v14: anything = CollectionTable v13
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: undefined = MapNext v13, v14, v15
+# CHECK-NEXT: v17: boolean = ResultAt v16
+# CHECK-NEXT: Branch v17 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: }

@@ -1,0 +1,397 @@
+# A position that is not an integer slices a string.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="position-that-not-integer-slices-string.js" displayPath="position-that-not-integer-slices-string.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1912 fields=[{key="toString" declared={type=undefined|null|function|f37|f39 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="valueOf" declared={type=undefined|null|function|f36|f38 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=2314 fields=[{key="valueOf" declared={type=undefined|null|function|f40|f41|f42 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L2 module=m0 position=2748
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="3"
+    v1 = NewClosure function=f1
+    v2 = NewArray v0, v1 contents=undefined|null|string|function|f1
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string|function|f1> flags=[IsExpected]}
+    v4 = String string="'2'"
+    v5 = NewClosure function=f2
+    v6 = NewArray v4, v5 contents=undefined|null|string|function|f2
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string|function|f2> flags=[IsExpected]}
+    v8 = String string="''"
+    v9 = NewClosure function=f3
+    v10 = NewArray v8, v9 contents=undefined|null|string|function|f3
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string|function|f3> flags=[IsExpected]}
+    v12 = String string="' 2 '"
+    v13 = NewClosure function=f4
+    v14 = NewArray v12, v13 contents=undefined|null|string|function|f4
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|string|function|f4> flags=[IsExpected]}
+    v16 = String string="'0x2'"
+    v17 = NewClosure function=f5
+    v18 = NewArray v16, v17 contents=undefined|null|string|function|f5
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string|function|f5> flags=[IsExpected]}
+    v20 = String string="'abc'"
+    v21 = NewClosure function=f6
+    v22 = NewArray v20, v21 contents=undefined|null|string|function|f6
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string|function|f6> flags=[IsExpected]}
+    v24 = String string="null"
+    v25 = NewClosure function=f7
+    v26 = NewArray v24, v25 contents=undefined|null|string|function|f7
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|string|function|f7> flags=[IsExpected]}
+    v28 = String string="undefined"
+    v29 = NewClosure function=f8
+    v30 = NewArray v28, v29 contents=undefined|null|string|function|f8
+    v31 = Convert v30 declared={type=undefined|null|Array<undefined|null|string|function|f8> flags=[IsExpected]}
+    v32 = String string="true"
+    v33 = NewClosure function=f9
+    v34 = NewArray v32, v33 contents=undefined|null|string|function|f9
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string|function|f9> flags=[IsExpected]}
+    v36 = String string="false"
+    v37 = NewClosure function=f10
+    v38 = NewArray v36, v37 contents=undefined|null|string|function|f10
+    v39 = Convert v38 declared={type=undefined|null|Array<undefined|null|string|function|f10> flags=[IsExpected]}
+    v40 = String string="NaN"
+    v41 = NewClosure function=f11
+    v42 = NewArray v40, v41 contents=undefined|null|string|function|f11
+    v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|string|function|f11> flags=[IsExpected]}
+    v44 = String string="-0"
+    v45 = NewClosure function=f12
+    v46 = NewArray v44, v45 contents=undefined|null|string|function|f12
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|string|function|f12> flags=[IsExpected]}
+    v48 = String string="0.5"
+    v49 = NewClosure function=f13
+    v50 = NewArray v48, v49 contents=undefined|null|string|function|f13
+    v51 = Convert v50 declared={type=undefined|null|Array<undefined|null|string|function|f13> flags=[IsExpected]}
+    v52 = String string="2.9"
+    v53 = NewClosure function=f14
+    v54 = NewArray v52, v53 contents=undefined|null|string|function|f14
+    v55 = Convert v54 declared={type=undefined|null|Array<undefined|null|string|function|f14> flags=[IsExpected]}
+    v56 = String string="-1"
+    v57 = NewClosure function=f15
+    v58 = NewArray v56, v57 contents=undefined|null|string|function|f15
+    v59 = Convert v58 declared={type=undefined|null|Array<undefined|null|string|function|f15> flags=[IsExpected]}
+    v60 = String string="-1.5"
+    v61 = NewClosure function=f16
+    v62 = NewArray v60, v61 contents=undefined|null|string|function|f16
+    v63 = Convert v62 declared={type=undefined|null|Array<undefined|null|string|function|f16> flags=[IsExpected]}
+    v64 = String string="-Infinity"
+    v65 = NewClosure function=f17
+    v66 = NewArray v64, v65 contents=undefined|null|string|function|f17
+    v67 = Convert v66 declared={type=undefined|null|Array<undefined|null|string|function|f17> flags=[IsExpected]}
+    v68 = String string="2n"
+    v69 = NewClosure function=f18
+    v70 = NewArray v68, v69 contents=undefined|null|string|function|f18
+    v71 = Convert v70 declared={type=undefined|null|Array<undefined|null|string|function|f18> flags=[IsExpected]}
+    v72 = String string="[]"
+    v73 = NewClosure function=f19
+    v74 = NewArray v72, v73 contents=undefined|null|string|function|f19
+    v75 = Convert v74 declared={type=undefined|null|Array<undefined|null|string|function|f19> flags=[IsExpected]}
+    v76 = String string="[2]"
+    v77 = NewClosure function=f20
+    v78 = NewArray v76, v77 contents=undefined|null|string|function|f20
+    v79 = Convert v78 declared={type=undefined|null|Array<undefined|null|string|function|f20> flags=[IsExpected]}
+    v80 = String string="[1, 2]"
+    v81 = NewClosure function=f21
+    v82 = NewArray v80, v81 contents=undefined|null|string|function|f21
+    v83 = Convert v82 declared={type=undefined|null|Array<undefined|null|string|function|f21> flags=[IsExpected]}
+    v84 = String string="({})"
+    v85 = NewClosure function=f22
+    v86 = NewArray v84, v85 contents=undefined|null|string|function|f22
+    v87 = Convert v86 declared={type=undefined|null|Array<undefined|null|string|function|f22> flags=[IsExpected]}
+    v88 = String string="Object.create(null)"
+    v89 = NewClosure function=f23
+    v90 = NewArray v88, v89 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35
+    v91 = Convert v90 declared={type=undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35> flags=[IsExpected]}
+    v92 = String string="new Number(2)"
+    v93 = NewClosure function=f24
+    v94 = NewArray v92, v93 contents=undefined|null|string|function|f24
+    v95 = Convert v94 declared={type=undefined|null|Array<undefined|null|string|function|f24> flags=[IsExpected]}
+    v96 = String string="new String('2')"
+    v97 = NewClosure function=f25
+    v98 = NewArray v96, v97 contents=undefined|null|string|function|f25
+    v99 = Convert v98 declared={type=undefined|null|Array<undefined|null|string|function|f25> flags=[IsExpected]}
+    v100 = String string="Symbol('s')"
+    v101 = NewClosure function=f26
+    v102 = NewArray v100, v101 contents=undefined|null|string|function|f26
+    v103 = Convert v102 declared={type=undefined|null|Array<undefined|null|string|function|f26> flags=[IsExpected]}
+    v104 = String string="({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"
+    v105 = NewClosure function=f27
+    v106 = NewArray v104, v105 contents=undefined|null|string|function|f27
+    v107 = Convert v106 declared={type=undefined|null|Array<undefined|null|string|function|f27> flags=[IsExpected]}
+    v108 = String string="({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"
+    v109 = NewClosure function=f28
+    v110 = NewArray v108, v109 contents=undefined|null|string|function|f28
+    v111 = Convert v110 declared={type=undefined|null|Array<undefined|null|string|function|f28> flags=[IsExpected]}
+    v112 = String string="({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"
+    v113 = NewClosure function=f29
+    v114 = NewArray v112, v113 contents=undefined|null|string|function|f29
+    v115 = Convert v114 declared={type=undefined|null|Array<undefined|null|string|function|f29> flags=[IsExpected]}
+    v116 = String string="({ valueOf() { log.push('valueOf'); return 2n; } })"
+    v117 = NewClosure function=f30
+    v118 = NewArray v116, v117 contents=undefined|null|string|function|f30
+    v119 = Convert v118 declared={type=undefined|null|Array<undefined|null|string|function|f30> flags=[IsExpected]}
+    v120 = String string="({ valueOf() { log.push('valueOf'); return '2'; } })"
+    v121 = NewClosure function=f31
+    v122 = NewArray v120, v121 contents=undefined|null|string|function|f31
+    v123 = Convert v122 declared={type=undefined|null|Array<undefined|null|string|function|f31> flags=[IsExpected]}
+    v124 = String string="({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"
+    v125 = NewClosure function=f32
+    v126 = NewArray v124, v125 contents=undefined|null|string|function|f32
+    v127 = Convert v126 declared={type=undefined|null|Array<undefined|null|string|function|f32> flags=[IsExpected]}
+    v128 = NewArray v3, v7, v11, v15, v19, v23, v27, v31, v35, v39, v43, v47, v51, v55, v59, v63, v67, v71, v75, v79, v83, v87, v91, v95, v99, v103, v107, v111, v115, v119, v123, v127 contents=undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35>
+    v129 = Convert v128 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35>> flags=[IsExpected]}
+    v130 = PropGet v129 key="concat"
+    v131 = Convert v130 declared={type=undefined|null|function flags=[IsExpected]}
+    v132 = String string="Infinity"
+    v133 = NewClosure function=f33
+    v134 = NewArray v132, v133 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35
+    v135 = Convert v134 declared={type=undefined|null|Array<undefined|null|string|function|f33|f34|f35> flags=[IsExpected]}
+    v136 = String string="4294967297"
+    v137 = NewClosure function=f34
+    v138 = NewArray v136, v137 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35
+    v139 = Convert v138 declared={type=undefined|null|Array<undefined|null|string|function|f34> flags=[IsExpected]}
+    v140 = String string="-4294967295"
+    v141 = NewClosure function=f35
+    v142 = NewArray v140, v141 contents=undefined|null|string|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35
+    v143 = Convert v142 declared={type=undefined|null|Array<undefined|null|string|function|f35> flags=[IsExpected]}
+    v144 = NewArray v135, v139, v143 contents=anything
+    v145 = Convert v144 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f33|f34|f35>> flags=[IsExpected]}
+    v146 = Call v131, v129, v145 calleeKey="concat" calleeName="counts.concat"
+    v147 = Undefined
+    Return v147
+}
+function f1 module=m0 position=1102 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m0 position=1122 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 position=1143 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=1166 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=1192 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=1218 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 position=1243 kind=Arrow thisType={type=anything} results=[{type=null flags=[IsExpected]}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=1272 kind=Arrow thisType={type=anything} results=[{type=undefined flags=[IsExpected]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1301 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=1326 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f52] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=1350 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=1371 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1392 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=1414 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f56] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=1435 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m0 position=1457 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f58] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=1486 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 position=1513 kind=Arrow thisType={type=anything} results=[{type=undefined|null|bigint flags=[IsExpected]}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 module=m0 position=1533 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<never> flags=[IsExpected]}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 module=m0 position=1554 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f62] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 module=m0 position=1579 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 module=m0 position=1605 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 module=m0 position=1644 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f65] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 module=m0 position=1692 kind=Arrow thisType={type=anything} results=[{type=undefined|null|number|Number flags=[IsExpected]}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f25 module=m0 position=1736 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string|String flags=[IsExpected]}] functionTypes=[f67] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 module=m0 position=1778 kind=Arrow thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] functionTypes=[f68] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f27 module=m0 position=1905 kind=Arrow thisType={type=anything} results=[{type=undefined|null|number|L0 flags=[IsExpected]}] functionTypes=[f71] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 module=m0 position=2122 kind=Arrow thisType={type=anything} results=[{type=undefined|null|boolean|number|string|symbol|bigint|L0 flags=[IsExpected]}] functionTypes=[f74] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f29 module=m0 position=2307 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L0|L1 flags=[IsExpected]}] functionTypes=[f76] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f30 module=m0 position=2442 kind=Arrow thisType={type=anything} results=[{type=undefined|null|bigint|L0|L1 flags=[IsExpected]}] functionTypes=[f78] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f31 module=m0 position=2561 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string|L0|L1 flags=[IsExpected]}] functionTypes=[f80] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f32 module=m0 position=2741 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L2 flags=[IsExpected]}] functionTypes=[f81] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f33 module=m0 position=4301 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f82] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f34 module=m0 position=4333 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f83] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f35 module=m0 position=4368 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f84] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f36 name="valueOf" module=m0 position=1914 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f69] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f37 name="toString" module=m0 position=1960 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f70] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f38 name="valueOf" module=m0 position=2131 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f72] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f39 name="toString" module=m0 position=2178 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f73] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f40 name="valueOf" module=m0 position=2316 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f75] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f41 name="valueOf" module=m0 position=2451 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|bigint flags=[IsExpected]}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f42 name="valueOf" module=m0 position=2570 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f79] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f49 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f50 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f51 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f52 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f55 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f57 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f58 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f59 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f61 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f62 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f63 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f64 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f65 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f66 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f67 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f68 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f69 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f70 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f71 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f72 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f73 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f74 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f75 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f76 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f77 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f78 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f79 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f80 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f81 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f82 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65]
+function f83 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65, f82]
+function f84 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f65, f82]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "3" = String string="3"
+# CHECK-NEXT: v1: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v2: Array<string|f1, Contiguous> = NewArray v0, v1 contents=string|f1 allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v3: Array<string|f1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<string|f1, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: "'2'" = String string="'2'"
+# CHECK-NEXT: v5: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: v6: Array<string|f2, Contiguous> = NewArray v4, v5 contents=string|f2 allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v7: Array<string|f2, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string|f2, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: "''" = String string="''"
+# CHECK-NEXT: v9: f3 = NewClosure function=f3 allocationSite=4
+# CHECK-NEXT: v10: Array<string|f3, Contiguous> = NewArray v8, v9 contents=string|f3 allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<string|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: "' 2 '" = String string="' 2 '"
+# CHECK-NEXT: v13: f4 = NewClosure function=f4 allocationSite=6
+# CHECK-NEXT: v14: Array<string|f4, Contiguous> = NewArray v12, v13 contents=string|f4 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v15: Array<string|f4, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<string|f4, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: "'0x2'" = String string="'0x2'"
+# CHECK-NEXT: v17: f5 = NewClosure function=f5 allocationSite=8
+# CHECK-NEXT: v18: Array<string|f5, Contiguous> = NewArray v16, v17 contents=string|f5 allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v19: Array<string|f5, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<string|f5, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: "'abc'" = String string="'abc'"
+# CHECK-NEXT: v21: f6 = NewClosure function=f6 allocationSite=10
+# CHECK-NEXT: v22: Array<string|f6, Contiguous> = NewArray v20, v21 contents=string|f6 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v23: Array<string|f6, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<string|f6, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v24: "null" = String string="null"
+# CHECK-NEXT: v25: f7 = NewClosure function=f7 allocationSite=12
+# CHECK-NEXT: v26: Array<"null"|f7, Contiguous> = NewArray v24, v25 contents="null"|f7 allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v27: Array<"null"|f7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<"null"|f7, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v28: "undefined" = String string="undefined"
+# CHECK-NEXT: v29: f8 = NewClosure function=f8 allocationSite=14
+# CHECK-NEXT: v30: Array<"undefined"|f8, Contiguous> = NewArray v28, v29 contents="undefined"|f8 allocationSite=15 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v31: Array<"undefined"|f8, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<"undefined"|f8, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: "true" = String string="true"
+# CHECK-NEXT: v33: f9 = NewClosure function=f9 allocationSite=16
+# CHECK-NEXT: v34: Array<"true"|f9, Contiguous> = NewArray v32, v33 contents="true"|f9 allocationSite=17 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v35: Array<"true"|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<"true"|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v36: "false" = String string="false"
+# CHECK-NEXT: v37: f10 = NewClosure function=f10 allocationSite=18
+# CHECK-NEXT: v38: Array<"false"|f10, Contiguous> = NewArray v36, v37 contents="false"|f10 allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v39: Array<"false"|f10, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v38 provenType=Array<"false"|f10, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v40: "NaN" = String string="NaN"
+# CHECK-NEXT: v41: f11 = NewClosure function=f11 allocationSite=20
+# CHECK-NEXT: v42: Array<"NaN"|f11, Contiguous> = NewArray v40, v41 contents="NaN"|f11 allocationSite=21 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v43: Array<"NaN"|f11, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<"NaN"|f11, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v44: "-0" = String string="-0"
+# CHECK-NEXT: v45: f12 = NewClosure function=f12 allocationSite=22
+# CHECK-NEXT: v46: Array<string|f12, Contiguous> = NewArray v44, v45 contents=string|f12 allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v47: Array<string|f12, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v46 provenType=Array<string|f12, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v48: "0.5" = String string="0.5"
+# CHECK-NEXT: v49: f13 = NewClosure function=f13 allocationSite=24
+# CHECK-NEXT: v50: Array<string|f13, Contiguous> = NewArray v48, v49 contents=string|f13 allocationSite=25 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v51: Array<string|f13, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<string|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v52: "2.9" = String string="2.9"
+# CHECK-NEXT: v53: f14 = NewClosure function=f14 allocationSite=26
+# CHECK-NEXT: v54: Array<string|f14, Contiguous> = NewArray v52, v53 contents=string|f14 allocationSite=27 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v55: Array<string|f14, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v54 provenType=Array<string|f14, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v56: "-1" = String string="-1"
+# CHECK-NEXT: v57: f15 = NewClosure function=f15 allocationSite=28
+# CHECK-NEXT: v58: Array<string|f15, Contiguous> = NewArray v56, v57 contents=string|f15 allocationSite=29 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v59: Array<string|f15, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v58 provenType=Array<string|f15, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v60: "-1.5" = String string="-1.5"
+# CHECK-NEXT: v61: f16 = NewClosure function=f16 allocationSite=30
+# CHECK-NEXT: v62: Array<string|f16, Contiguous> = NewArray v60, v61 contents=string|f16 allocationSite=31 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v63: Array<string|f16, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v62 provenType=Array<string|f16, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v64: "-Infinity" = String string="-Infinity"
+# CHECK-NEXT: v65: f17 = NewClosure function=f17 allocationSite=32
+# CHECK-NEXT: v66: Array<string|f17, Contiguous> = NewArray v64, v65 contents=string|f17 allocationSite=33 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v67: Array<string|f17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v66 provenType=Array<string|f17, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v68: "2n" = String string="2n"
+# CHECK-NEXT: v69: f18 = NewClosure function=f18 allocationSite=34
+# CHECK-NEXT: v70: Array<string|f18, Contiguous> = NewArray v68, v69 contents=string|f18 allocationSite=35 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v71: Array<string|f18, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v70 provenType=Array<string|f18, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v72: "[]" = String string="[]"
+# CHECK-NEXT: v73: f19 = NewClosure function=f19 allocationSite=36
+# CHECK-NEXT: v74: Array<string|f19, Contiguous> = NewArray v72, v73 contents=string|f19 allocationSite=37 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v75: Array<string|f19, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<string|f19, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v76: "[2]" = String string="[2]"
+# CHECK-NEXT: v77: f20 = NewClosure function=f20 allocationSite=38
+# CHECK-NEXT: v78: Array<string|f20, Contiguous> = NewArray v76, v77 contents=string|f20 allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v79: Array<string|f20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v78 provenType=Array<string|f20, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v80: "[1, 2]" = String string="[1, 2]"
+# CHECK-NEXT: v81: f21 = NewClosure function=f21 allocationSite=40
+# CHECK-NEXT: v82: Array<string|f21, Contiguous> = NewArray v80, v81 contents=string|f21 allocationSite=41 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v83: Array<string|f21, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v82 provenType=Array<string|f21, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v84: "({})" = String string="({})"
+# CHECK-NEXT: v85: f22 = NewClosure function=f22 allocationSite=42
+# CHECK-NEXT: v86: Array<string|f22, Contiguous> = NewArray v84, v85 contents=string|f22 allocationSite=43 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v87: Array<string|f22, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v86 provenType=Array<string|f22, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v88: "Object.create(null)" = String string="Object.create(null)"
+# CHECK-NEXT: v89: f23 = NewClosure function=f23 allocationSite=44
+# CHECK-NEXT: v90: Array<string|f23, Contiguous> = NewArray v88, v89 contents=string|f23 allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v91: Array<string|f23, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v90 provenType=Array<string|f23, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v92: "new Number(2)" = String string="new Number(2)"
+# CHECK-NEXT: v93: f24 = NewClosure function=f24 allocationSite=46
+# CHECK-NEXT: v94: Array<string|f24, Contiguous> = NewArray v92, v93 contents=string|f24 allocationSite=47 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v95: Array<string|f24, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v94 provenType=Array<string|f24, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v96: "new String('2')" = String string="new String('2')"
+# CHECK-NEXT: v97: f25 = NewClosure function=f25 allocationSite=48
+# CHECK-NEXT: v98: Array<string|f25, Contiguous> = NewArray v96, v97 contents=string|f25 allocationSite=49 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v99: Array<string|f25, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v98 provenType=Array<string|f25, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v100: "Symbol('s')" = String string="Symbol('s')"
+# CHECK-NEXT: v101: f26 = NewClosure function=f26 allocationSite=50
+# CHECK-NEXT: v102: Array<string|f26, Contiguous> = NewArray v100, v101 contents=string|f26 allocationSite=51 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v103: Array<string|f26, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v102 provenType=Array<string|f26, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v104: "({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })" = String string="({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })"
+# CHECK-NEXT: v105: f27 = NewClosure function=f27 allocationSite=52
+# CHECK-NEXT: v106: Array<string|f27, Contiguous> = NewArray v104, v105 contents=string|f27 allocationSite=53 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v107: Array<string|f27, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v106 provenType=Array<string|f27, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v108: "({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })" = String string="({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })"
+# CHECK-NEXT: v109: f28 = NewClosure function=f28 allocationSite=54
+# CHECK-NEXT: v110: Array<string|f28, Contiguous> = NewArray v108, v109 contents=string|f28 allocationSite=55 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v111: Array<string|f28, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v110 provenType=Array<string|f28, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v112: "({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })" = String string="({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })"
+# CHECK-NEXT: v113: f29 = NewClosure function=f29 allocationSite=56
+# CHECK-NEXT: v114: Array<string|f29, Contiguous> = NewArray v112, v113 contents=string|f29 allocationSite=57 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v115: Array<string|f29, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v114 provenType=Array<string|f29, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v116: "({ valueOf() { log.push('valueOf'); return 2n; } })" = String string="({ valueOf() { log.push('valueOf'); return 2n; } })"
+# CHECK-NEXT: v117: f30 = NewClosure function=f30 allocationSite=58
+# CHECK-NEXT: v118: Array<string|f30, Contiguous> = NewArray v116, v117 contents=string|f30 allocationSite=59 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v119: Array<string|f30, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v118 provenType=Array<string|f30, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v120: "({ valueOf() { log.push('valueOf'); return '2'; } })" = String string="({ valueOf() { log.push('valueOf'); return '2'; } })"
+# CHECK-NEXT: v121: f31 = NewClosure function=f31 allocationSite=60
+# CHECK-NEXT: v122: Array<string|f31, Contiguous> = NewArray v120, v121 contents=string|f31 allocationSite=61 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v123: Array<string|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v122 provenType=Array<string|f31, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v124: "({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })" = String string="({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })"
+# CHECK-NEXT: v125: f32 = NewClosure function=f32 allocationSite=62
+# CHECK-NEXT: v126: Array<string|f32, Contiguous> = NewArray v124, v125 contents=string|f32 allocationSite=63 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v127: Array<string|f32, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v126 provenType=Array<string|f32, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v128: Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3, v7, v11, v15, v19, v23, v27, v31, v35, v39, v43, v47, v51, v55, v59, v63, v67, v71, v75, v79, v83, v87, v91, v95, v99, v103, v107, v111, v115, v119, v123, v127 contents=Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=64 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v129: Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v128 provenType=Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v130: "Infinity" = String string="Infinity"
+# CHECK-NEXT: v131: f33 = NewClosure function=f33 allocationSite=65
+# CHECK-NEXT: v132: Array<"Infinity"|f33, Contiguous> = NewArray v130, v131 contents="Infinity"|f33 allocationSite=66 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v133: Array<"Infinity"|f33, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v132 provenType=Array<"Infinity"|f33, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v134: "4294967297" = String string="4294967297"
+# CHECK-NEXT: v135: f34 = NewClosure function=f34 allocationSite=67
+# CHECK-NEXT: v136: Array<string|f34, Contiguous> = NewArray v134, v135 contents=string|f34 allocationSite=68 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v137: Array<string|f34, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v136 provenType=Array<string|f34, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v138: "-4294967295" = String string="-4294967295"
+# CHECK-NEXT: v139: f35 = NewClosure function=f35 allocationSite=69
+# CHECK-NEXT: v140: Array<string|f35, Contiguous> = NewArray v138, v139 contents=string|f35 allocationSite=70 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v141: Array<string|f35, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v140 provenType=Array<string|f35, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v142: Array<Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v133, v137, v141 contents=Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=71 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v143: Array<Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v142 provenType=Array<Array<string|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v144: Array<Array<string|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31|f32|f33|f34|f35, proven, Contiguous, pristine[Storage, Names, Dense]>> = CallBuiltin v129, v143 overload=ArrayPrototypeConcat/2 accessSite=1
+# CHECK-NEXT: v145: undefined = Undefined
+# CHECK-NEXT: Return v145
+# CHECK-NEXT: }

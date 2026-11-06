@@ -1,0 +1,267 @@
+# -- source: field-read-behind-recursive-call-store.js
+# // A field is read behind a recursive call and a store.
+# const kept = [];
+# function h1(p0, p1, d) {
+#   const c6 = p1.n % 2 === 0 ? p1 : p1;
+#   const r7 = d > 0 ? h1(p1, { tag: "s4." + p1.n, n: p1.n + 5, a: null, b: null }, d - 1) : null;
+#   if (r7 !== null) {
+#     c6.b = p1;
+#   }
+#   if (c6.n % 53 === 8) kept.push(p1);
+#   return c6;
+# }
+# let sum = 0;
+# for (let i = 0; i < 60; i++) sum += h1({ tag: "a", n: i, a: null, b: null }, { tag: "b", n: i + 1, a: null, b: null }, 2).n;
+# console.log(sum, kept.length);
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="field-read-behind-recursive-call-store.js" displayPath="field-read-behind-recursive-call-store.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=379 fields=[{key="a" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[3, 2, 0, 1] ownFieldCount=4
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="h1" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="kept" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v2 = Convert v1 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v2 variable=g1
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v5, v7)
+  b2(v8, v9):
+    LoopHint
+    v11 = Integer integer=60
+    v12 = Less v9, v11
+    Branch v12 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v13):
+    Jump -> next b4()
+  b4():
+    v14 = GetModuleVariable variable=g0
+    v15 = String string="a"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    v17 = NewObject layout=L0
+    PropDefine v17, v16 key="tag"
+    v19 = Convert v13 declared={type=number flags=[IsExpected]}
+    PropDefine v17, v19 key="n"
+    v21 = Null
+    v22 = Convert v21 declared={type=null flags=[IsExpected]}
+    PropDefine v17, v22 key="a"
+    v24 = Null
+    v25 = Convert v24 declared={type=null flags=[IsExpected]}
+    PropDefine v17, v25 key="b"
+    v27 = FinishObject v17
+    v28 = String string="b"
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
+    v30 = NewObject layout=L0
+    PropDefine v30, v29 key="tag"
+    v32 = Integer integer=1
+    v33 = Add v13, v32
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    PropDefine v30, v34 key="n"
+    v36 = Null
+    v37 = Convert v36 declared={type=null flags=[IsExpected]}
+    PropDefine v30, v37 key="a"
+    v39 = Null
+    v40 = Convert v39 declared={type=null flags=[IsExpected]}
+    PropDefine v30, v40 key="b"
+    v42 = FinishObject v30
+    v43 = Integer integer=2
+    v44 = Call v14, -, v27, v42, v43 calleeName="h1"
+    v45 = Convert v44 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v46 = PropGet v45 key="n"
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    v48 = Add v8, v47
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v50 = Increment v13
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v49, v51)
+  b6(v52):
+    Jump -> next b7()
+  b7():
+    v53 = Builtin builtin=GlobalThis
+    v54 = PropGet v53 key="console" [isFreeName]
+    v55 = Convert v54 declared={type=builtin(Console) flags=[IsExpected]}
+    v56 = PropGet v55 key="log"
+    v57 = Convert v56 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v58 = PropGet v2 key="length"
+    v59 = Convert v58 declared={type=number flags=[IsExpected]}
+    v60 = Call v57, v55, v8, v59 calleeKey="log" calleeName="console.log"
+    v61 = Undefined
+    Return v61
+}
+function f1 name="h1" module=m0 position=73 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|number|string|symbol|bigint|object, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = PropGet v1 key="n"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer integer=2
+    v6 = Mod v4, v5
+    v7 = Integer
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v9 = Convert v1 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v10 = Convert v2 declared={type=number flags=[IsExpected]}
+    v11 = Integer
+    v12 = Greater v10, v11
+    Branch v12 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v13):
+    Jump -> next b6()
+  b6():
+    v14 = GetModuleVariable variable=g0
+    v15 = String string="s4."
+    v16 = PropGet v1 key="n"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Add v15, v17
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
+    v20 = NewObject layout=L0
+    PropDefine v20, v19 key="tag"
+    v22 = PropGet v1 key="n"
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Integer integer=5
+    v25 = Add v23, v24
+    PropDefine v20, v25 key="n"
+    v27 = Null
+    v28 = Convert v27 declared={type=null flags=[IsExpected]}
+    PropDefine v20, v28 key="a"
+    v30 = Null
+    v31 = Convert v30 declared={type=null flags=[IsExpected]}
+    PropDefine v20, v31 key="b"
+    v33 = FinishObject v20
+    v34 = Convert v13 declared={type=number flags=[IsExpected]}
+    v35 = Integer integer=1
+    v36 = Sub v34, v35
+    v37 = Call v14, -, v1, v33, v36 calleeName="h1"
+    v38 = Convert v37 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    Jump -> next b9(v38)
+  b7(v39):
+    Jump -> next b8()
+  b8():
+    v40 = Null
+    Jump -> next b9(v40)
+  b9(v41):
+    v42 = TypeTest v41 testedType=null
+    Branch v42 -> taken b10(| 0), notTaken b11(| 0)
+  b10(v43):
+    Jump -> next b13()
+  b11(v44):
+    Jump -> next b12()
+  b12():
+    PropSet v9, v1 key="b"
+    Jump -> next b13()
+  b13():
+    v46 = PropGet v9 key="n"
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    v48 = Integer integer=53
+    v49 = Mod v47, v48
+    v50 = Integer integer=8
+    v51 = StrictEq v49, v50
+    Branch v51 -> taken b14(), notTaken b15()
+  b14():
+    v52 = GetModuleVariable variable=g1
+    v53 = CheckInitialized v52 name="kept"
+    v54 = PropGet v53 key="push"
+    v55 = Convert v54 declared={type=undefined|null|function flags=[IsExpected]}
+    v56 = Call v55, v53, v1 calleeKey="push" calleeName="kept.push"
+    Jump -> next b15()
+  b15():
+    Return v9
+}
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 h1
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: Array<L0, Contiguous> = NewArray contents=L0 allocationSite=0 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v1: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v1 variable=g1
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v3, v4)
+# CHECK-NEXT: b1(v5: int|whole, v6: int[0, 60]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: 60 = Integer integer=60
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v10: int[0, 59]):
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: int[1, 60] = Add v10, v11
+# CHECK-NEXT: v13: L0 = NewObject -, v12 layout=L0 fields=[2] allocationSite=2 allocationClass=0
+# CHECK-NEXT: v14: L0 = FinishObject v13
+# CHECK-NEXT: v15: 5 = Integer integer=5
+# CHECK-NEXT: v16: int[6, 65] = Add v12, v15
+# CHECK-NEXT: v17: L0 = NewObject -, v16 layout=L0 fields=[2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v18: L0 = FinishObject v17
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: L0 = CallDirect v18, v19 function=f5 accessSite=21 [isNeverInlined]
+# CHECK-NEXT: v21: 53 = Integer integer=53
+# CHECK-NEXT: v22: int[0, 52] = Mod v12, v21
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = StrictEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v25: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=12
+# CHECK-NEXT: v26: undefined = CallBuiltin -, v5, v25 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: Return v27
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1, v14 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v29: int|whole = Add v5, v12
+# CHECK-NEXT: v30: int[1, 60] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v29, v30)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="h1"
+# CHECK: module=m0 position=73 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L0}, {type=L0}, {type=int|whole}] results=[{type=L0}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0, v1: L0, v2: int|whole):
+# CHECK-NEXT: v3: L0 = CallDirect v1, v2 function=f5
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="h1"
+# CHECK: module=m0 position=73 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L0}, {type=int|whole}] results=[{type=L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=1}, {original=2}]} {
+# CHECK-NEXT: b0(v0: L0, v1: int|whole):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean = Greater v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: int|whole = GetSlot v0 key="n" receivers=[L0] level=Proven accessSite=15
+# CHECK-NEXT: v5: 5 = Integer integer=5
+# CHECK-NEXT: v6: int|whole = Add v4, v5
+# CHECK-NEXT: v7: L0 = NewObject -, v6 layout=L0 fields=[2] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v8: L0 = FinishObject v7
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: int|whole = Sub v1, v9
+# CHECK-NEXT: v11: L0 = CallDirect v8, v10 function=f5 accessSite=21 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v12: int|whole = GetSlot v0 key="n" receivers=[L0] level=Proven accessSite=23
+# CHECK-NEXT: v13: 53 = Integer integer=53
+# CHECK-NEXT: v14: int|whole = Mod v12, v13
+# CHECK-NEXT: v15: 8 = Integer integer=8
+# CHECK-NEXT: v16: boolean = StrictEq v14, v15
+# CHECK-NEXT: Branch v16 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v17: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g1
+# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v17, v0 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }

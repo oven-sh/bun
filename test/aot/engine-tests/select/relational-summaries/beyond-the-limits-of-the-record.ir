@@ -1,0 +1,336 @@
+# A record has limits: masks of 32 bits for parameters and results, 64 subjects a function, eight keys a list, paths of four reads. Whatever lies past a limit must count as "anything", never as "nothing": here the one thing that matters always lies just past it.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="beyond-the-limits-of-the-record.js" displayPath="beyond-the-limits-of-the-record.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=544 fields=[{key="held" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}] supertypes=[L1, L2] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 fields=[{key="held" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+layout L2 module=m0 position=6468 fields=[{key="tag" declared={type=anything}}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Object{layout=L2 members=[{key="tag" value=String{value="fresh"}}]} module=m0
+variable g0 name="edgesFixed" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="kept" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v6 variable=g1
+    v8 = NewClosure function=f4
+    v9 = Convert v8 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v10 = String string=""
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Integer
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15)
+  b1(v16):
+    v17 = Integer integer=3
+    v18 = Less v16, v17
+    Branch v18 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v19):
+    v20 = Data data=d1
+    v21 = Convert v20 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v22 = Convert v21 declared={type=undefined|null|Array flags=[IsExpected]}
+    v23 = Integer
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v24)
+  b3(v25):
+    LoopHint
+    v27 = Integer integer=66
+    v28 = Less v25, v27
+    Branch v28 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v29):
+    v30 = PropGet v22 key="push"
+    v31 = Convert v30 declared={type=undefined|null|function flags=[IsExpected]}
+    v32 = String string="."
+    v33 = Add v19, v32
+    v34 = Add v33, v29
+    v35 = Call v9, -, v34 calleeName="o"
+    v36 = Convert v35 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v37 = Call v31, v22, v36 calleeKey="push" calleeName="all.push"
+    v38 = Increment v29
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v39)
+  b5(v40):
+    v41 = NewArray contents=anything
+    v42 = Convert v22 declared={type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}
+    AppendSpread v41, v42
+    v44 = CallList v1, -, v41 calleeName="edges"
+    v45 = Increment v19
+    v46 = Convert v45 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v46)
+  b6(v47):
+    v48 = Integer
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    v50 = Integer
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    v52 = Integer
+    v53 = Convert v52 declared={type=number flags=[IsExpected]}
+    v54 = Integer
+    v55 = Convert v54 declared={type=number flags=[IsExpected]}
+    v56 = Integer
+    v57 = Convert v56 declared={type=number flags=[IsExpected]}
+    v58 = Integer
+    v59 = Convert v58 declared={type=number flags=[IsExpected]}
+    v60 = NewClosure function=f5
+    v61 = Convert v60 declared={type=undefined|null|function|f5|f6 flags=[IsExpected]}
+    v62 = Integer
+    v63 = Convert v62 declared={type=number flags=[IsExpected]}
+    v64 = Integer
+    v65 = Convert v64 declared={type=number flags=[IsExpected]}
+    v66 = Integer
+    v67 = Convert v66 declared={type=number flags=[IsExpected]}
+    v68 = Integer
+    v69 = Convert v68 declared={type=number flags=[IsExpected]}
+    v70 = Integer
+    v71 = Convert v70 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v69, v71)
+  b7(v72, v73):
+    LoopHint
+    v75 = String string="mine"
+    v76 = Add v75, v73
+    v77 = Call v9, -, v76 calleeName="o"
+    v78 = Convert v77 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v79 = Call v3, -, v78 calleeName="manyResults"
+    v80 = Convert v79 declared={type=undefined|null|Array flags=[IsExpected]}
+    v81 = Integer
+    v82 = ElemGet v80, v81
+    v83 = Integer
+    v84 = StrictEq v82, v83
+    Branch v84 -> taken b8(), notTaken b9(v72)
+  b8():
+    v85 = Increment v72
+    v86 = Convert v85 declared={type=number flags=[IsExpected]}
+    Jump -> next b9(v86)
+  b9(v87):
+    v88 = Increment v73
+    v89 = Convert v88 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v87, v89)
+}
+function f1 name="edgesFixed" module=m0 position=1808 flags=[HasExplicitName] length=66 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything, v14: anything, v15: anything, v16: anything, v17: anything, v18: anything, v19: anything, v20: anything, v21: anything, v22: anything, v23: anything, v24: anything, v25: anything, v26: anything, v27: anything, v28: anything, v29: anything, v30: anything, v31: anything, v32: anything, v33: anything, v34: anything, v35: anything, v36: anything, v37: anything, v38: anything, v39: anything, v40: anything, v41: anything, v42: anything, v43: anything, v44: anything, v45: anything, v46: anything, v47: anything, v48: anything, v49: anything, v50: anything, v51: anything, v52: anything, v53: anything, v54: anything, v55: anything, v56: anything, v57: anything, v58: anything, v59: anything, v60: anything, v61: anything, v62: anything, v63: anything, v64: undefined|null|number|string|symbol|bigint|L0, v65: anything):
+    v66 = GetModuleVariable variable=g1
+    v67 = CheckInitialized v66 name="kept"
+    v68 = PropGet v67 key="push"
+    v69 = Convert v68 declared={type=undefined|null|function flags=[IsExpected]}
+    v70 = Call v69, v67, v31, v32, v63, v64 calleeKey="push" calleeName="kept.push"
+    Return v65
+}
+function f2 name="edges" module=m0 position=1743 flags=[HasRestParameter, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="apply"
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
+    v4 = Null
+    v5 = Call v3, v1, v4, v0 calleeKey="apply" calleeName="edgesFixed.apply"
+    ReturnCall v5
+}
+function f3 name="manyResults" module=m0 position=6311 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    v4 = Integer integer=3
+    v5 = Integer integer=4
+    v6 = Integer integer=5
+    v7 = Integer integer=6
+    v8 = Integer integer=7
+    v9 = Integer integer=8
+    v10 = Integer integer=9
+    v11 = Integer integer=10
+    v12 = Integer integer=11
+    v13 = Integer integer=12
+    v14 = Integer integer=13
+    v15 = Integer integer=14
+    v16 = Integer integer=15
+    v17 = Integer integer=16
+    v18 = Integer integer=17
+    v19 = Integer integer=18
+    v20 = Integer integer=19
+    v21 = Integer integer=20
+    v22 = Integer integer=21
+    v23 = Integer integer=22
+    v24 = Integer integer=23
+    v25 = Integer integer=24
+    v26 = Integer integer=25
+    v27 = Integer integer=26
+    v28 = Integer integer=27
+    v29 = Integer integer=28
+    v30 = Integer integer=29
+    v31 = Integer integer=30
+    v32 = Integer integer=31
+    v33 = Data data=d2
+    v34 = NewArray v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v0, v33 contents=anything
+    v35 = Convert v34 declared={type=undefined|null|Array flags=[IsExpected]}
+    Return v35
+}
+function f4 name="o" module=m0 position=536 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = FinishObject v1
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v3
+}
+function f5 name="bottom" module=m0 position=5928 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=5867 length=2 captures=[{type=undefined|null|function flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 edgesFixed edges
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f11 callPosition=536 parent=3 module=m0}, {callee=f11 callPosition=536 parent=2 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 @Cell = NewClosure function=f2 allocationSite=0 closureForm=Slim
+# CHECK-NEXT: v1: Array<undefined|L0, Contiguous> @Cell = NewArray contents=undefined|L0 allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v2: Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v1 provenType=Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v2 variable=g1
+# CHECK-NEXT: v4: 0 @Int32 = Integer
+# CHECK-NEXT: Jump -> next b1(v4)
+# CHECK-NEXT: b1(v5: int[0, 3] @Int32):
+# CHECK-NEXT: v6: 3 @Int32 = Integer integer=3
+# CHECK-NEXT: v7: boolean @Boolean = Less v5, v6 form=Integers
+# CHECK-NEXT: TestAndBranch v7 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: b2(v8: int[0, 2] @Int32):
+# CHECK-NEXT: v9: 66 @Int32 = Integer integer=66
+# CHECK-NEXT: v10: Array<L0, Contiguous> @Cell = NewArray contents=L0 capacity=v9 allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v10 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: 0 @Int32 = Integer
+# CHECK-NEXT: Jump -> next b3(v12)
+# CHECK-NEXT: b3(v13: int[0, 66] @Int32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v15: 66 @Int32 = Integer integer=66
+# CHECK-NEXT: v16: boolean @Boolean = Less v13, v15 form=Integers
+# CHECK-NEXT: TestAndBranch v16 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v17: int[0, 65] @Int32):
+# CHECK-NEXT: v18: "." @Cell = String string="."
+# CHECK-NEXT: v19: string @Cell = Strcat v8, v18, v17
+# CHECK-NEXT: v20: L0 @Cell = NewObject -, v19 layout=L0 fields=[1] allocationSite=9 allocation=1 allocationClass=0
+# CHECK-NEXT: v21: int[0, 4294967295] @Int64 = CallInline v11, v20 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=2
+# CHECK-NEXT: v22: int[1, 66] @Int32 = Increment v17 form=Integers
+# CHECK-NEXT: Jump -> next b3(v22)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v23: anything @JSValue = CallList v0, -, v11 calleeName="edges" accessSite=3 callees=[f2]
+# CHECK-NEXT: v24: int[1, 3] @Int32 = Increment v8 form=Integers
+# CHECK-NEXT: Jump -> next b1(v24)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v25: 0 @Double = Integer
+# CHECK-NEXT: Jump -> next b7(v25)
+# CHECK-NEXT: b7(v26: int|whole @Double):
+# CHECK-NEXT: Jump -> next b8(v26)
+# CHECK-NEXT: b8(v27: int|whole @Double):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v29: "mine" @Cell = String string="mine"
+# CHECK-NEXT: v30: string @Cell = Add v29, v27 form=StringAndPrimitive
+# CHECK-NEXT: v31: L0 @Cell = NewObject -, v30 layout=L0 fields=[1] allocationSite=9 allocation=1 allocationClass=0
+# CHECK-NEXT: v32: 0 @Int32 = Integer
+# CHECK-NEXT: v33: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v34: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: v35: 3 @Int32 = Integer integer=3
+# CHECK-NEXT: v36: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v37: 5 @Int32 = Integer integer=5
+# CHECK-NEXT: v38: 6 @Int32 = Integer integer=6
+# CHECK-NEXT: v39: 7 @Int32 = Integer integer=7
+# CHECK-NEXT: v40: 8 @Int32 = Integer integer=8
+# CHECK-NEXT: v41: 9 @Int32 = Integer integer=9
+# CHECK-NEXT: v42: 10 @Int32 = Integer integer=10
+# CHECK-NEXT: v43: 11 @Int32 = Integer integer=11
+# CHECK-NEXT: v44: 12 @Int32 = Integer integer=12
+# CHECK-NEXT: v45: 13 @Int32 = Integer integer=13
+# CHECK-NEXT: v46: 14 @Int32 = Integer integer=14
+# CHECK-NEXT: v47: 15 @Int32 = Integer integer=15
+# CHECK-NEXT: v48: 16 @Int32 = Integer integer=16
+# CHECK-NEXT: v49: 17 @Int32 = Integer integer=17
+# CHECK-NEXT: v50: 18 @Int32 = Integer integer=18
+# CHECK-NEXT: v51: 19 @Int32 = Integer integer=19
+# CHECK-NEXT: v52: 20 @Int32 = Integer integer=20
+# CHECK-NEXT: v53: 21 @Int32 = Integer integer=21
+# CHECK-NEXT: v54: 22 @Int32 = Integer integer=22
+# CHECK-NEXT: v55: 23 @Int32 = Integer integer=23
+# CHECK-NEXT: v56: 24 @Int32 = Integer integer=24
+# CHECK-NEXT: v57: 25 @Int32 = Integer integer=25
+# CHECK-NEXT: v58: 26 @Int32 = Integer integer=26
+# CHECK-NEXT: v59: 27 @Int32 = Integer integer=27
+# CHECK-NEXT: v60: 28 @Int32 = Integer integer=28
+# CHECK-NEXT: v61: 29 @Int32 = Integer integer=29
+# CHECK-NEXT: v62: 30 @Int32 = Integer integer=30
+# CHECK-NEXT: v63: 31 @Int32 = Integer integer=31
+# CHECK-NEXT: v64: "fresh" @Cell = String string="fresh"
+# CHECK-NEXT: v65: L2 @Cell = NewObject -, v64 layout=L2 fields=[0] allocationSite=7 allocation=2 allocationClass=1
+# CHECK-NEXT: v66: Array<int|L0|L2, Contiguous> @Cell = NewArray v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v31, v65 contents=int|L0|L2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v67: Array<int|L0|L2, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v66 provenType=Array<int|L0|L2, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v68: 0 @Int32 = Integer
+# CHECK-NEXT: v69: boolean @Boolean = IsInBounds v67, v68
+# CHECK-NEXT: TestAndBranch v69 -> taken b9(| 0), notTaken b12()
+# CHECK-NEXT: b9(v70: guard @Void):
+# CHECK-NEXT: v71: int|L0|L2 @JSValue = GetArrayElement v67, v68, v70 arrayStorage=Contiguous level=Proven accessSite=6 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v72: 0 @Int32 = Integer
+# CHECK-NEXT: v73: boolean @Boolean = StrictEq v71, v72 form=Int32AndValue
+# CHECK-NEXT: TestAndBranch v73 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v74: int|whole @Double = Increment v27 form=Numbers
+# CHECK-NEXT: Jump -> next b8(v74)
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v75: undefined|int|L0|L2 @JSValue = GetArrayElement v67, v68 arrayStorage=Contiguous level=Proven accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v76: undefined|int|L0|L2 @JSValue = Upcast v75 castType=undefined|int|L0|L2
+# CHECK-NEXT: v77: 0 @JSValue = Integer
+# CHECK-NEXT: v78: boolean @Boolean = StrictEq v76, v77 form=Generic
+# CHECK-NEXT: TestAndBranch v78 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v79: int|whole @Double = Increment v27 form=Numbers
+# CHECK-NEXT: Jump -> next b7(v79)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="edgesFixed"
+# CHECK: module=m0 position=1808 flags=[HasExplicitName] length=66 thisType={type=anything} parameters=[{type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}, {type=undefined|L0}] results=[{type=undefined|L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|L0 @JSValue, v1: undefined|L0 @JSValue, v2: undefined|L0 @JSValue, v3: undefined|L0 @JSValue, v4: undefined|L0 @JSValue, v5: undefined|L0 @JSValue, v6: undefined|L0 @JSValue, v7: undefined|L0 @JSValue, v8: undefined|L0 @JSValue, v9: undefined|L0 @JSValue, v10: undefined|L0 @JSValue, v11: undefined|L0 @JSValue, v12: undefined|L0 @JSValue, v13: undefined|L0 @JSValue, v14: undefined|L0 @JSValue, v15: undefined|L0 @JSValue, v16: undefined|L0 @JSValue, v17: undefined|L0 @JSValue, v18: undefined|L0 @JSValue, v19: undefined|L0 @JSValue, v20: undefined|L0 @JSValue, v21: undefined|L0 @JSValue, v22: undefined|L0 @JSValue, v23: undefined|L0 @JSValue, v24: undefined|L0 @JSValue, v25: undefined|L0 @JSValue, v26: undefined|L0 @JSValue, v27: undefined|L0 @JSValue, v28: undefined|L0 @JSValue, v29: undefined|L0 @JSValue, v30: undefined|L0 @JSValue, v31: undefined|L0 @JSValue, v32: undefined|L0 @JSValue, v33: undefined|L0 @JSValue, v34: undefined|L0 @JSValue, v35: undefined|L0 @JSValue, v36: undefined|L0 @JSValue, v37: undefined|L0 @JSValue, v38: undefined|L0 @JSValue, v39: undefined|L0 @JSValue, v40: undefined|L0 @JSValue, v41: undefined|L0 @JSValue, v42: undefined|L0 @JSValue, v43: undefined|L0 @JSValue, v44: undefined|L0 @JSValue, v45: undefined|L0 @JSValue, v46: undefined|L0 @JSValue, v47: undefined|L0 @JSValue, v48: undefined|L0 @JSValue, v49: undefined|L0 @JSValue, v50: undefined|L0 @JSValue, v51: undefined|L0 @JSValue, v52: undefined|L0 @JSValue, v53: undefined|L0 @JSValue, v54: undefined|L0 @JSValue, v55: undefined|L0 @JSValue, v56: undefined|L0 @JSValue, v57: undefined|L0 @JSValue, v58: undefined|L0 @JSValue, v59: undefined|L0 @JSValue, v60: undefined|L0 @JSValue, v61: undefined|L0 @JSValue, v62: undefined|L0 @JSValue, v63: undefined|L0 @JSValue, v64: undefined|L0 @JSValue, v65: undefined|L0 @JSValue):
+# CHECK-NEXT: v66: Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g1
+# CHECK-NEXT: TryCallInline v66, v31, v32, v63, v64 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=8 -> done b1(), miss b2()
+# CHECK-NEXT: b1(v67: int[0, 4294967295] @Int64):
+# CHECK-NEXT: Return v65
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v68: int[0, 4294967295] @JSValue = CallBuiltin v66, v31, v32, v63, v64 overload=ArrayPrototypePush/0 accessSite=8
+# CHECK-NEXT: Jump -> next b1(v68)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="edges"
+# CHECK: module=m0 position=1743 flags=[HasRestParameter, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|L0, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=undefined|L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|L0, proven, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: null @JSValue = Null
+# CHECK-NEXT: v3: anything @JSValue = CallList v1, v2, v0 accessSite=10
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|L0} resolution=Assume}]
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="edgesFixed"
+# CHECK: module=m0 position=1808 role=GenericEntrypoint flags=[HasThis] length=66 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=1808 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f1 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue, v4: anything @JSValue, v5: anything @JSValue, v6: anything @JSValue, v7: anything @JSValue, v8: anything @JSValue, v9: anything @JSValue, v10: anything @JSValue, v11: anything @JSValue, v12: anything @JSValue, v13: anything @JSValue, v14: anything @JSValue, v15: anything @JSValue, v16: anything @JSValue, v17: anything @JSValue, v18: anything @JSValue, v19: anything @JSValue, v20: anything @JSValue, v21: anything @JSValue, v22: anything @JSValue, v23: anything @JSValue, v24: anything @JSValue, v25: anything @JSValue, v26: anything @JSValue, v27: anything @JSValue, v28: anything @JSValue, v29: anything @JSValue, v30: anything @JSValue, v31: anything @JSValue, v32: anything @JSValue, v33: anything @JSValue, v34: anything @JSValue, v35: anything @JSValue, v36: anything @JSValue, v37: anything @JSValue, v38: anything @JSValue, v39: anything @JSValue, v40: anything @JSValue, v41: anything @JSValue, v42: anything @JSValue, v43: anything @JSValue, v44: anything @JSValue, v45: anything @JSValue, v46: anything @JSValue, v47: anything @JSValue, v48: anything @JSValue, v49: anything @JSValue, v50: anything @JSValue, v51: anything @JSValue, v52: anything @JSValue, v53: anything @JSValue, v54: anything @JSValue, v55: anything @JSValue, v56: anything @JSValue, v57: anything @JSValue, v58: anything @JSValue, v59: anything @JSValue, v60: anything @JSValue, v61: anything @JSValue, v62: anything @JSValue, v63: anything @JSValue, v64: anything @JSValue, v65: anything @JSValue, v66: anything @JSValue, v67: anything @JSValue):
+# CHECK-NEXT: v68: undefined|L0 @JSValue = AssumeType v33 provenType=undefined|L0
+# CHECK-NEXT: v69: undefined|L0 @JSValue = AssumeType v34 provenType=undefined|L0
+# CHECK-NEXT: v70: undefined|L0 @JSValue = AssumeType v65 provenType=undefined|L0
+# CHECK-NEXT: v71: undefined|L0 @JSValue = AssumeType v66 provenType=undefined|L0
+# CHECK-NEXT: v72: undefined|L0 @JSValue = AssumeType v67 provenType=undefined|L0
+# CHECK-NEXT: v73: Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g1
+# CHECK-NEXT: TryCallInline v73, v68, v69, v70, v71 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=8 -> done b1(), miss b2()
+# CHECK-NEXT: b1(v74: int[0, 4294967295] @Int64):
+# CHECK-NEXT: Return v72
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v75: int[0, 4294967295] @JSValue = CallBuiltin v73, v68, v69, v70, v71 overload=ArrayPrototypePush/0 accessSite=8
+# CHECK-NEXT: Jump -> next b1(v75)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="edges"
+# CHECK: module=m0 position=1743 role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2} inlineFrames=[{}, {callee=f2 callPosition=1743 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f2 @Cell, v1: anything @JSValue):
+# CHECK-NEXT: v2: f1 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: null @JSValue = Null
+# CHECK-NEXT: v4: anything @JSValue = CallForwardVarargs v2, v3 accessSite=10
+# CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|L0} resolution=Assume}]
+# CHECK-NEXT: }

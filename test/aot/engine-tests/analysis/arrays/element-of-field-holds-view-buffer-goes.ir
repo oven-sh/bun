@@ -1,0 +1,262 @@
+# A field holds a Uint8Array or a Buffer, and the first element of what it holds goes up by one: it is read and stored to under one test of the position in each of the two cases.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="element-of-field-holds-view-buffer-goes.mjs" displayPath="element-of-field-holds-view-buffer-goes.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Holder" module=m0 position=186 constructor=f4 fields=[{key="held" declared={type=undefined|null|Uint8Array flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+variable g0 name="use" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="ask" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="Holder" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v5 variable=g2
+    v7 = String string=""
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Integer
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v8, v10)
+  b1(v11, v12):
+    LoopHint
+    v14 = Integer
+    v15 = Call v1, -, v14 calleeName="attempt"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    v17 = Increment v12
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v16, v18)
+}
+function f1 name="use" module=m0 position=274 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=undefined|null|Array<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    v3 = Increment v2
+    ElemSet v0, v1, v3
+    v5 = Convert v0 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    Return v5
+}
+function f2 name="ask" module=m0 position=312 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=undefined|null|Array<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v0 key="held"
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v4 = Call v1, -, v3 calleeName="use"
+    ReturnCall v4 casts=[{declared={type=undefined|null|Array<number> flags=[IsExpected]}}]
+}
+function f3 name="attempt" module=m0 position=362 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Builtin builtin=String
+    v2 = GetModuleVariable variable=g1
+    v3 = Convert v0 declared={type=number flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g2
+    v5 = CheckInitialized v4 name="Holder"
+    v6 = Construct v5 calleeName="Holder"
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v8 = Call v2, -, v7 calleeName="ask"
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v10 = Call v1, -, v9 calleeName="String"
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v11
+  b2() role=CatchHandler:
+    v12 = CatchValue
+    v13 = String string="threw "
+    v14 = PropGet v12 key="name"
+    v15 = Add v13, v14
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v16
+}
+function f4 name="Holder" module=m0 position=186 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f5
+    Return v3
+}
+function f5 module=m0 position=186 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Builtin builtin=Uint8Array
+    v3 = Data data=d0
+    v4 = Convert v3 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v5 = Construct v2, -, v4 calleeName="Uint8Array"
+    v6 = Convert v5 declared={type=undefined|null|Uint8Array flags=[IsExpected]}
+    PropDefine v1, v6 key="held"
+    v8 = Undefined
+    Return v8
+}
+# -- generated: ask
+# CHECK-LABEL: function {{*}}name="ask"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@20 = Load(b@18, offset = 16, ControlDependent|Reads:ObjectFields.0, v1:GetSlot)
+# CHECK-NEXT: Int32 b@23 = Load8Z(b@20, offset = 40, ControlDependent|Reads:JSArrayBufferView_mode, v3:IsInsideView)
+# CHECK-NEXT: Int32 b@24 = Const32(7, v3:IsInsideView)
+# CHECK-NEXT: Int32 b@25 = BitAnd(b@23, $7(b@24), v3:IsInsideView)
+# CHECK-NEXT: Int64 b@120 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@27 = Branch(b@25, Terminal, v3:IsInsideView)
+# CHECK-NEXT: Successors: Then:Rare:#7, Else:#5
+# CHECK-NEXT: BB#5: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@28 = Load(b@20, offset = 24, ControlDependent|Reads:JSArrayBufferView_length, v3:IsInsideView)
+# CHECK-NEXT: Void b@31 = Branch(b@28, Terminal, v3:IsInsideView)
+# CHECK-NEXT: Successors: Then:#1, Else:Unlikely:#9
+# CHECK-NEXT: BB#1: ; frequency = 0.799219
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int64 b@34 = Load(b@20, offset = 16, ControlDependent|Reads:JSArrayBufferView_vector, v5:GetTypedArrayElement)
+# CHECK-NEXT: Int32 b@36 = Load8Z(b@34, ControlDependent|Reads:TypedArrayElements, v5:GetTypedArrayElement)
+# CHECK-NEXT: Void b@37 = Patchpoint(b@20:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v5:GetTypedArrayElement)
+# CHECK-NEXT: Int32 b@38 = Const32(1, v6:Increment)
+# CHECK-NEXT: Int32 b@39 = Add(b@36, $1(b@38), v6:Increment)
+# CHECK-NEXT: Void b@44 = Store8(b@39, b@34, ControlDependent|Writes:TypedArrayElements, v7:PutTypedArrayElement)
+# CHECK-NEXT: Void b@45 = Patchpoint(b@20:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v7:PutTypedArrayElement)
+# CHECK-NEXT: Void b@46 = Return(b@20, Terminal)
+# CHECK-NEXT: BB#9: ; frequency = 0.199805
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int64 b@17 = Load(b@120, offset = -104, ReadsImmutable, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@63 = Upsilon(b@17, ^90, WritesLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@64 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #8
+# CHECK-NEXT: BB#8: ; frequency = 0.200781
+# CHECK-NEXT: Predecessors: #9, #13
+# CHECK-NEXT: Int64 b@90 = Phi(ReadsLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int32 b@91 = Trunc(b@90, v9:Increment)
+# CHECK-NEXT: Double b@92 = IToD(b@91, v9:Increment)
+# CHECK-NEXT: Int64 b@116 = Load(b@120, offset = -104, ReadsImmutable, v9:Increment)
+# CHECK-NEXT: Int32 b@95 = Equal(b@90, b@116, v9:Increment)
+# CHECK-NEXT: Double b@53 = Load(b@120, offset = -80, ReadsImmutable, v9:Increment)
+# CHECK-NEXT: Double b@96 = Select(b@95, b@53, b@92, v9:Increment)
+# CHECK-NEXT: Double b@52 = Load(b@120, offset = -56, ReadsImmutable, v9:Increment)
+# CHECK-NEXT: Double b@98 = Add(b@96, b@52, v9:Increment)
+# CHECK-NEXT: Int32 b@99 = Equal(b@98, b@98, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@100 = Branch(b@99, Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: Then:#17, Else:Rare:#18
+# CHECK-NEXT: BB#17: ; frequency = 0.200585
+# CHECK-NEXT: Predecessors: #8
+# CHECK-NEXT: Void b@101 = Upsilon(b@98, ^112, WritesLocalState, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@102 = Jump(Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: #19
+# CHECK-NEXT: BB#19: ; frequency = 0.200781
+# CHECK-NEXT: Predecessors: #18, #17
+# CHECK-NEXT: Double b@112 = Phi(ReadsLocalState, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@117 = Branch(b@25, Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: Then:Rare:#22, Else:#23
+# CHECK-NEXT: BB#23: ; frequency = 0.200585
+# CHECK-NEXT: Predecessors: #19
+# CHECK-NEXT: Int64 b@118 = Load(b@20, offset = 24, ControlDependent|Reads:JSArrayBufferView_length, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@119 = Load(b@20, offset = 16, ControlDependent|Reads:JSArrayBufferView_vector, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@121 = Branch(b@118, Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: Then:#24, Else:Rare:#21
+# CHECK-NEXT: BB#24: ; frequency = 0.200389
+# CHECK-NEXT: Predecessors: #23
+# CHECK-NEXT: Int64 b@122 = Patchpoint(b@112:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@0 = Load(b@120, offset = -200, ReadsImmutable, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int32 b@124 = NotEqual(b@122, b@0, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@125 = Branch(b@124, Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: Then:#25, Else:Rare:#26
+# CHECK-NEXT: BB#25: ; frequency = 0.200194
+# CHECK-NEXT: Predecessors: #24
+# CHECK-NEXT: Int32 b@126 = Trunc(b@122, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@127 = Upsilon(b@126, ^133, WritesLocalState, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@128 = Jump(Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: #27
+# CHECK-NEXT: BB#27: ; frequency = 0.200389
+# CHECK-NEXT: Predecessors: #26, #25
+# CHECK-NEXT: Int32 b@133 = Phi(ReadsLocalState, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@135 = Store8(b@133, b@119, ControlDependent|Writes:TypedArrayElements, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@136 = Patchpoint(b@20:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@137 = Jump(Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#21: ; frequency = 0.200781
+# CHECK-NEXT: Predecessors: #23, #27, #22
+# CHECK-NEXT: Void b@140 = Return(b@20, Terminal)
+# CHECK-NEXT: BB#26: ; frequency = 0.000196
+# CHECK-NEXT: Predecessors: #24
+# CHECK-NEXT: Int64 b@129 = Patchpoint(b@112:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000091(children), ControlDependent, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int32 b@130 = Trunc(b@129, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@131 = Upsilon(b@130, ^133, WritesLocalState, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@132 = Jump(Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: #27
+# CHECK-NEXT: BB#22: ; frequency = 0.000196
+# CHECK-NEXT: Predecessors: #19
+# CHECK-NEXT: Int64 b@114 = Const64(0, v3:IsInsideView)
+# CHECK-NEXT: Int64 b@138 = Patchpoint(b@20:ColdAny, $0(b@114):ColdAny, b@112:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, TypedArrayElements}|Reads:TypedArrayStorage, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@139 = Jump(Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#18: ; frequency = 0.000196
+# CHECK-NEXT: Predecessors: #8
+# CHECK-NEXT: Int64 b@103 = BitwiseCast(b@98, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int32 b@104 = Const32(51, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@105 = ZShr(b@103, $51(b@104), v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@106 = Const64(1, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@107 = BitOr(b@105, $1(b@106), v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@108 = Shl(b@107, $51(b@104), v10:PutTypedArrayElement)
+# CHECK-NEXT: Double b@109 = BitwiseCast(b@108, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@110 = Upsilon(b@109, ^112, WritesLocalState, v10:PutTypedArrayElement)
+# CHECK-NEXT: Void b@111 = Jump(Terminal, v10:PutTypedArrayElement)
+# CHECK-NEXT: Successors: #19
+# CHECK-NEXT: BB#7: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@113 = Load(b@120, offset = 96, ReadsImmutable, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int64 b@67 = Patchpoint(b@20:Register(%rax), b@113:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, TypedArrayStorage, TypedArrayElements, AllocatorState}, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@134 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #11
+# CHECK-NEXT: BB#11: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Int64 b@29 = Load(b@120, offset = 96, ReadsImmutable, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int32 b@71 = AboveEqual(b@67, b@29, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@72 = Branch(b@71, Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: Then:#14, Else:Rare:#28
+# CHECK-NEXT: BB#14: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Int32 b@73 = Trunc(b@67, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int64 b@74 = SExt32(b@73, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@75 = Upsilon(b@74, ^82, WritesLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@76 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #16
+# CHECK-NEXT: BB#16: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #15, #14
+# CHECK-NEXT: Int64 b@82 = Phi(ReadsLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@83 = Upsilon(b@82, ^87, WritesLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@84 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#13: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #12, #16
+# CHECK-NEXT: Int64 b@87 = Phi(ReadsLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@88 = Upsilon(b@87, ^90, WritesLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@89 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #8
+# CHECK-NEXT: BB#28: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Int64 b@33 = Load(b@120, offset = 96, ReadsImmutable, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int64 b@68 = BitAnd(b@67, b@33, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@70 = Branch(b@68, Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: Then:Rare:#15, Else:Unlikely:#12
+# CHECK-NEXT: BB#12: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #28
+# CHECK-NEXT: Int64 b@115 = Load(b@120, offset = -104, ReadsImmutable, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@85 = Upsilon(b@115, ^87, WritesLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@86 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#15: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #28
+# CHECK-NEXT: Int64 b@65 = Load(b@120, offset = 96, ReadsImmutable, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int64 b@77 = Add(b@67, b@65, v8:GetTypedArrayElement)
+# CHECK-NEXT: Double b@78 = BitwiseCast(b@77, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int64 b@79 = Patchpoint(b@78:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@80 = Upsilon(b@79, ^82, WritesLocalState, v8:GetTypedArrayElement)
+# CHECK-NEXT: Void b@81 = Jump(Terminal, v8:GetTypedArrayElement)
+# CHECK-NEXT: Successors: #16
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 32
+# CHECK-NEXT: end of function f2

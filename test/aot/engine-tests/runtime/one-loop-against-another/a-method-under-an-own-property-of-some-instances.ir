@@ -1,0 +1,844 @@
+# What a turn of each loop of the program takes: calls into the run time, and instructions by the counter of the hardware, where that can be read.
+# The shell hands in the name of the loop. It reads the counts where the program reads `turns`, in front of the loop, and where it reports, behind it.
+# -- source: a-method-under-an-own-property-of-some-instances.ts
+# declare const loop: string, turns: string, isLoud: boolean, report: (...values: unknown[]) => void;
+# declare const apply: (callee: Function, receiver: unknown, list: unknown[]) => number;
+# // `target.add(..)` on instances of a class whose constructor stores an own `add` on one road, beside the same call on a class that never does.
+# // An instance without the own property calls the method of its class. The loops "handed in" are called by a function that is not of the program.
+# class Plain {
+#   heard = 0;
+#   constructor(loud: boolean) {
+#     if (loud) this.heard = 1;
+#   }
+#   add(step: number): number {
+#     this.heard = (this.heard + step) | 0;
+#     return this.heard & 1;
+#   }
+# }
+# function addTwice(this: Hidden, step: number): number {
+#   this.heard = (this.heard + step + step) | 0;
+#   return this.heard & 1;
+# }
+# class Hidden {
+#   heard = 0;
+#   constructor(loud: boolean) {
+#     if (loud) this.add = addTwice;
+#   }
+#   add(step: number): number {
+#     this.heard = (this.heard + step) | 0;
+#     return this.heard & 1;
+#   }
+# }
+# class PlainGuest {
+#   heard = 0;
+#   constructor(loud: boolean) {
+#     if (loud) this.heard = 1;
+#   }
+#   add(step: number): number {
+#     this.heard = (this.heard + step) | 0;
+#     return this.heard & 1;
+#   }
+# }
+# function addThrice(this: HiddenGuest, step: number): number {
+#   this.heard = (this.heard + step * 3) | 0;
+#   return this.heard & 1;
+# }
+# class HiddenGuest {
+#   heard = 0;
+#   constructor(loud: boolean) {
+#     if (loud) this.add = addThrice;
+#   }
+#   add(step: number): number {
+#     this.heard = (this.heard + step) | 0;
+#     return this.heard & 1;
+#   }
+# }
+# function overPlain(target: Plain, rounds: number): number {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + target.add(round)) | 0;
+#   return sum;
+# }
+# function overHidden(target: Hidden, rounds: number): number {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + target.add(round)) | 0;
+#   return sum;
+# }
+# function overPlainGuest(target: PlainGuest, rounds: number): number {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + target.add(round)) | 0;
+#   return sum;
+# }
+# function overHiddenGuest(target: HiddenGuest, rounds: number): number {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + target.add(round)) | 0;
+#   return sum;
+# }
+# report(
+#   overPlain(new Plain(isLoud), 5000),
+#   overHidden(new Hidden(isLoud), 5000),
+#   overHidden(new Hidden(!isLoud), 5000),
+# );
+# report(
+#   apply(overPlainGuest, undefined, [new PlainGuest(isLoud), 5000]),
+#   apply(overHiddenGuest, undefined, [new HiddenGuest(isLoud), 5000]),
+#   apply(overHiddenGuest, undefined, [new HiddenGuest(!isLoud), 5000]),
+# );
+# const rounds = Number(turns);
+# if (loop === "a class that never stores") report(overPlain(new Plain(isLoud), rounds));
+# if (loop === "an instance without the own property") report(overHidden(new Hidden(isLoud), rounds));
+# if (loop === "an instance with the own property") report(overHidden(new Hidden(!isLoud), rounds));
+# if (loop === "a class that never stores, handed in")
+#   report(apply(overPlainGuest, undefined, [new PlainGuest(isLoud), rounds]));
+# if (loop === "an instance without the own property, handed in")
+#   report(apply(overHiddenGuest, undefined, [new HiddenGuest(isLoud), rounds]));
+# export {};
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0 L1 L2 L3; loop = a_class_that_never_stores an_instance_without_the_own_property a_class_that_never_stores,_handed_in an_instance_without_the_own_property,_handed_in; most = 8.9 9.9 12 32
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows
+# END REPEAT
+# a class that never stores
+# L0: 2500 2500 0
+# L0-NEXT: 2500 2500 2500
+# L0-NEXT: 50000
+# L0-NEXT: a turn: 0 calls into the run time, at most 8.9 instructions
+# L0-NEXT: exited with 0
+# an instance without the own property
+# L1: 2500 2500 0
+# L1-NEXT: 2500 2500 2500
+# L1-NEXT: 50000
+# L1-NEXT: a turn: 0 calls into the run time, at most 9.9 instructions
+# L1-NEXT: exited with 0
+# a class that never stores, handed in
+# L2: 2500 2500 0
+# L2-NEXT: 2500 2500 2500
+# L2-NEXT: 50000
+# L2-NEXT: a turn: 0 calls into the run time, at most 12 instructions
+# L2-NEXT: exited with 0
+# an instance without the own property, handed in
+# L3: 2500 2500 0
+# L3-NEXT: 2500 2500 2500
+# L3-NEXT: 50000
+# L3-NEXT: a turn: 0 calls into the run time, at most 32 instructions
+# L3-NEXT: exited with 0
+
+module m0 path="a-method-under-an-own-property-of-some-instances.ts" displayPath="a-method-under-an-own-property-of-some-instances.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=706 kind=Parameter
+typesite w1 module=m0 position=692 kind=This
+typesite w2 module=m0 position=674 kind=Result
+typesite w3 module=m0 position=1247 kind=Parameter
+typesite w4 module=m0 position=1228 kind=This
+typesite w5 module=m0 position=1209 kind=Result
+typesite w6 module=m0 position=1570 kind=Parameter
+typesite w7 module=m0 position=1585 kind=Parameter
+typesite w8 module=m0 position=1551 kind=Result
+typesite w9 module=m0 position=1746 kind=Parameter
+typesite w10 module=m0 position=1762 kind=Parameter
+typesite w11 module=m0 position=1726 kind=Result
+typesite w12 module=m0 position=1927 kind=Parameter
+typesite w13 module=m0 position=1947 kind=Parameter
+typesite w14 module=m0 position=1903 kind=Result
+typesite w15 module=m0 position=2113 kind=Parameter
+typesite w16 module=m0 position=2134 kind=Parameter
+typesite w17 module=m0 position=2088 kind=Result
+typesite w18 module=m0 position=518 kind=Parameter
+typesite w19 module=m0 position=493 kind=Field
+typesite w20 module=m0 position=575 kind=Parameter
+typesite w21 module=m0 position=571 kind=This
+typesite w22 module=m0 position=571 kind=Result
+typesite w23 module=m0 position=846 kind=Parameter
+typesite w24 module=m0 position=821 kind=Field
+typesite w25 module=m0 position=908 kind=Parameter
+typesite w26 module=m0 position=904 kind=This
+typesite w27 module=m0 position=904 kind=Result
+typesite w28 module=m0 position=1053 kind=Parameter
+typesite w29 module=m0 position=1028 kind=Field
+typesite w30 module=m0 position=1110 kind=Parameter
+typesite w31 module=m0 position=1106 kind=This
+typesite w32 module=m0 position=1106 kind=Result
+typesite w33 module=m0 position=1389 kind=Parameter
+typesite w34 module=m0 position=1364 kind=Field
+typesite w35 module=m0 position=1452 kind=Parameter
+typesite w36 module=m0 position=1448 kind=This
+typesite w37 module=m0 position=1448 kind=Result
+typesite w38 module=m0 position=2295 kind=CallResult
+typesite w39 module=m0 position=2285 kind=CallResult
+typesite w40 module=m0 position=2334 kind=CallResult
+typesite w41 module=m0 position=2323 kind=CallResult
+typesite w42 module=m0 position=2374 kind=CallResult
+typesite w43 module=m0 position=2363 kind=CallResult
+typesite w44 module=m0 position=2449 kind=CallResult
+typesite w45 module=m0 position=2415 kind=CallResult
+typesite w46 module=m0 position=2518 kind=CallResult
+typesite w47 module=m0 position=2483 kind=CallResult
+typesite w48 module=m0 position=2588 kind=CallResult
+typesite w49 module=m0 position=2553 kind=CallResult
+typesite w50 module=m0 position=2640 kind=CallResult
+typesite w51 module=m0 position=2714 kind=CallResult
+typesite w52 module=m0 position=2704 kind=CallResult
+typesite w53 module=m0 position=2814 kind=CallResult
+typesite w54 module=m0 position=2803 kind=CallResult
+typesite w55 module=m0 position=2912 kind=CallResult
+typesite w56 module=m0 position=2901 kind=CallResult
+typesite w57 module=m0 position=3039 kind=CallResult
+typesite w58 module=m0 position=3005 kind=CallResult
+typesite w59 module=m0 position=3182 kind=CallResult
+typesite w60 module=m0 position=3147 kind=CallResult
+typesite w61 module=m0 position=732 kind=Field
+typesite w62 module=m0 position=1273 kind=Field
+typesite w63 module=m0 position=1617 kind=Variable
+typesite w64 module=m0 position=1637 kind=Variable
+typesite w65 module=m0 position=1686 kind=CallResult
+typesite w66 module=m0 position=1794 kind=Variable
+typesite w67 module=m0 position=1814 kind=Variable
+typesite w68 module=m0 position=1863 kind=CallResult
+typesite w69 module=m0 position=1979 kind=Variable
+typesite w70 module=m0 position=1999 kind=Variable
+typesite w71 module=m0 position=2048 kind=CallResult
+typesite w72 module=m0 position=2166 kind=Variable
+typesite w73 module=m0 position=2186 kind=Variable
+typesite w74 module=m0 position=2235 kind=CallResult
+typesite w75 module=m0 position=549 kind=Field
+typesite w76 module=m0 position=603 kind=Field
+typesite w77 module=m0 position=877 kind=Field
+typesite w78 module=m0 position=936 kind=Field
+typesite w79 module=m0 position=1084 kind=Field
+typesite w80 module=m0 position=1138 kind=Field
+typesite w81 module=m0 position=1420 kind=Field
+typesite w82 module=m0 position=1480 kind=Field
+layout L0 kind=Instance name="Plain" module=m0 position=483 constructor=f7 fields=[{key="heard" declared={type=number site=w19} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Hidden" module=m0 position=810 constructor=f9 fields=[{key="heard" declared={type=number site=w24} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="PlainGuest" module=m0 position=1013 constructor=f11 fields=[{key="heard" declared={type=number site=w29} flags=[IsRequired]}] ownFieldCount=1
+layout L3 kind=Instance name="HiddenGuest" module=m0 position=1348 constructor=f13 fields=[{key="heard" declared={type=number site=w34} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="addTwice" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="addThrice" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f5
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f6
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f7
+    v9 = NewClass v8 layout=L0
+    PutModuleVariable v9 variable=g2
+    v11 = NewClosure function=f8
+    DefineMethod v9, v11 layout=L0 key="add"
+    v13 = FinishClass v9 layout=L0
+    v14 = Convert v13 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v15 = Convert v13 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f9
+    v17 = NewClass v16 layout=L1
+    PutModuleVariable v17 variable=g3
+    v19 = NewClosure function=f10
+    DefineMethod v17, v19 layout=L1 key="add"
+    v21 = FinishClass v17 layout=L1
+    v22 = Convert v21 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v23 = Convert v21 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v24 = NewClosure function=f11
+    v25 = NewClass v24 layout=L2
+    PutModuleVariable v25 variable=g4
+    v27 = NewClosure function=f12
+    DefineMethod v25, v27 layout=L2 key="add"
+    v29 = FinishClass v25 layout=L2
+    v30 = Convert v29 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v31 = Convert v29 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v32 = NewClosure function=f13
+    v33 = NewClass v32 layout=L3
+    PutModuleVariable v33 variable=g5
+    v35 = NewClosure function=f14
+    DefineMethod v33, v35 layout=L3 key="add"
+    v37 = FinishClass v33 layout=L3
+    v38 = Convert v37 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v39 = Convert v37 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v40 = Builtin builtin=GlobalThis
+    v41 = PropGet v40 key="report" [isFreeName]
+    v42 = Builtin builtin=GlobalThis
+    v43 = PropGet v42 key="isLoud" [isFreeName]
+    v44 = Construct v15, -, v43 calleeName="Plain"
+    v45 = Convert v44 declared={type=undefined|null|L0 site=w38 flags=[OmitsNull, OmitsUndefined]}
+    v46 = Integer integer=5000
+    v47 = Call v1, -, v45, v46 calleeName="overPlain"
+    v48 = Convert v47 declared={type=number site=w39}
+    v49 = Builtin builtin=GlobalThis
+    v50 = PropGet v49 key="isLoud" [isFreeName]
+    v51 = Construct v23, -, v50 calleeName="Hidden"
+    v52 = Convert v51 declared={type=undefined|null|L1 site=w40 flags=[OmitsNull, OmitsUndefined]}
+    v53 = Integer integer=5000
+    v54 = Call v3, -, v52, v53 calleeName="overHidden"
+    v55 = Convert v54 declared={type=number site=w41}
+    v56 = Builtin builtin=GlobalThis
+    v57 = PropGet v56 key="isLoud" [isFreeName]
+    v58 = ToBoolean v57
+    v59 = LogicalNot v58
+    v60 = Construct v23, -, v59 calleeName="Hidden"
+    v61 = Convert v60 declared={type=undefined|null|L1 site=w42 flags=[OmitsNull, OmitsUndefined]}
+    v62 = Integer integer=5000
+    v63 = Call v3, -, v61, v62 calleeName="overHidden"
+    v64 = Convert v63 declared={type=number site=w43}
+    v65 = Call v41, -, v48, v55, v64 calleeName="report"
+    v66 = Builtin builtin=GlobalThis
+    v67 = PropGet v66 key="report" [isFreeName]
+    v68 = Builtin builtin=GlobalThis
+    v69 = PropGet v68 key="apply" [isFreeName]
+    v70 = Undefined
+    v71 = Builtin builtin=GlobalThis
+    v72 = PropGet v71 key="isLoud" [isFreeName]
+    v73 = Construct v31, -, v72 calleeName="PlainGuest"
+    v74 = Convert v73 declared={type=undefined|null|L2 site=w44 flags=[OmitsNull, OmitsUndefined]}
+    v75 = Integer integer=5000
+    v76 = NewArray v74, v75 contents=anything
+    v77 = Call v69, -, v5, v70, v76 calleeName="apply"
+    v78 = Convert v77 declared={type=number site=w45}
+    v79 = Builtin builtin=GlobalThis
+    v80 = PropGet v79 key="apply" [isFreeName]
+    v81 = Undefined
+    v82 = Builtin builtin=GlobalThis
+    v83 = PropGet v82 key="isLoud" [isFreeName]
+    v84 = Construct v39, -, v83 calleeName="HiddenGuest"
+    v85 = Convert v84 declared={type=undefined|null|L3 site=w46 flags=[OmitsNull, OmitsUndefined]}
+    v86 = Integer integer=5000
+    v87 = NewArray v85, v86 contents=anything
+    v88 = Call v80, -, v7, v81, v87 calleeName="apply"
+    v89 = Convert v88 declared={type=number site=w47}
+    v90 = Builtin builtin=GlobalThis
+    v91 = PropGet v90 key="apply" [isFreeName]
+    v92 = Undefined
+    v93 = Builtin builtin=GlobalThis
+    v94 = PropGet v93 key="isLoud" [isFreeName]
+    v95 = ToBoolean v94
+    v96 = LogicalNot v95
+    v97 = Construct v39, -, v96 calleeName="HiddenGuest"
+    v98 = Convert v97 declared={type=undefined|null|L3 site=w48 flags=[OmitsNull, OmitsUndefined]}
+    v99 = Integer integer=5000
+    v100 = NewArray v98, v99 contents=anything
+    v101 = Call v91, -, v7, v92, v100 calleeName="apply"
+    v102 = Convert v101 declared={type=number site=w49}
+    v103 = Call v67, -, v78, v89, v102 calleeName="report"
+    v104 = Builtin builtin=Number
+    v105 = Builtin builtin=GlobalThis
+    v106 = PropGet v105 key="turns" [isFreeName]
+    v107 = Call v104, -, v106 calleeName="Number"
+    v108 = Convert v107 declared={type=number site=w50} illTypedCause=DeclarationWithoutBody
+    v109 = Builtin builtin=GlobalThis
+    v110 = PropGet v109 key="loop" [isFreeName]
+    v111 = String string="a class that never stores"
+    v112 = StrictEq v110, v111
+    Branch v112 -> taken b2(), notTaken b3()
+  b2():
+    v113 = Builtin builtin=GlobalThis
+    v114 = PropGet v113 key="report" [isFreeName]
+    v115 = Builtin builtin=GlobalThis
+    v116 = PropGet v115 key="isLoud" [isFreeName]
+    v117 = Construct v15, -, v116 calleeName="Plain"
+    v118 = Convert v117 declared={type=undefined|null|L0 site=w51 flags=[OmitsNull, OmitsUndefined]}
+    v119 = Call v1, -, v118, v108 calleeName="overPlain"
+    v120 = Convert v119 declared={type=number site=w52}
+    v121 = Call v114, -, v120 calleeName="report"
+    Jump -> next b3()
+  b3():
+    v122 = Builtin builtin=GlobalThis
+    v123 = PropGet v122 key="loop" [isFreeName]
+    v124 = String string="an instance without the own property"
+    v125 = StrictEq v123, v124
+    Branch v125 -> taken b4(), notTaken b5()
+  b4():
+    v126 = Builtin builtin=GlobalThis
+    v127 = PropGet v126 key="report" [isFreeName]
+    v128 = Builtin builtin=GlobalThis
+    v129 = PropGet v128 key="isLoud" [isFreeName]
+    v130 = Construct v23, -, v129 calleeName="Hidden"
+    v131 = Convert v130 declared={type=undefined|null|L1 site=w53 flags=[OmitsNull, OmitsUndefined]}
+    v132 = Call v3, -, v131, v108 calleeName="overHidden"
+    v133 = Convert v132 declared={type=number site=w54}
+    v134 = Call v127, -, v133 calleeName="report"
+    Jump -> next b5()
+  b5():
+    v135 = Builtin builtin=GlobalThis
+    v136 = PropGet v135 key="loop" [isFreeName]
+    v137 = String string="an instance with the own property"
+    v138 = StrictEq v136, v137
+    Branch v138 -> taken b6(), notTaken b7()
+  b6():
+    v139 = Builtin builtin=GlobalThis
+    v140 = PropGet v139 key="report" [isFreeName]
+    v141 = Builtin builtin=GlobalThis
+    v142 = PropGet v141 key="isLoud" [isFreeName]
+    v143 = ToBoolean v142
+    v144 = LogicalNot v143
+    v145 = Construct v23, -, v144 calleeName="Hidden"
+    v146 = Convert v145 declared={type=undefined|null|L1 site=w55 flags=[OmitsNull, OmitsUndefined]}
+    v147 = Call v3, -, v146, v108 calleeName="overHidden"
+    v148 = Convert v147 declared={type=number site=w56}
+    v149 = Call v140, -, v148 calleeName="report"
+    Jump -> next b7()
+  b7():
+    v150 = Builtin builtin=GlobalThis
+    v151 = PropGet v150 key="loop" [isFreeName]
+    v152 = String string="a class that never stores, handed in"
+    v153 = StrictEq v151, v152
+    Branch v153 -> taken b8(), notTaken b9()
+  b8():
+    v154 = Builtin builtin=GlobalThis
+    v155 = PropGet v154 key="report" [isFreeName]
+    v156 = Builtin builtin=GlobalThis
+    v157 = PropGet v156 key="apply" [isFreeName]
+    v158 = Undefined
+    v159 = Builtin builtin=GlobalThis
+    v160 = PropGet v159 key="isLoud" [isFreeName]
+    v161 = Construct v31, -, v160 calleeName="PlainGuest"
+    v162 = Convert v161 declared={type=undefined|null|L2 site=w57 flags=[OmitsNull, OmitsUndefined]}
+    v163 = NewArray v162, v108 contents=anything
+    v164 = Call v157, -, v5, v158, v163 calleeName="apply"
+    v165 = Convert v164 declared={type=number site=w58}
+    v166 = Call v155, -, v165 calleeName="report"
+    Jump -> next b9()
+  b9():
+    v167 = Builtin builtin=GlobalThis
+    v168 = PropGet v167 key="loop" [isFreeName]
+    v169 = String string="an instance without the own property, handed in"
+    v170 = StrictEq v168, v169
+    Branch v170 -> taken b10(), notTaken b11()
+  b10():
+    v171 = Builtin builtin=GlobalThis
+    v172 = PropGet v171 key="report" [isFreeName]
+    v173 = Builtin builtin=GlobalThis
+    v174 = PropGet v173 key="apply" [isFreeName]
+    v175 = Undefined
+    v176 = Builtin builtin=GlobalThis
+    v177 = PropGet v176 key="isLoud" [isFreeName]
+    v178 = Construct v39, -, v177 calleeName="HiddenGuest"
+    v179 = Convert v178 declared={type=undefined|null|L3 site=w59 flags=[OmitsNull, OmitsUndefined]}
+    v180 = NewArray v179, v108 contents=anything
+    v181 = Call v174, -, v7, v175, v180 calleeName="apply"
+    v182 = Convert v181 declared={type=number site=w60}
+    v183 = Call v172, -, v182 calleeName="report"
+    Jump -> next b11()
+  b11():
+    v184 = Undefined
+    Return v184
+}
+function f1 name="addTwice" module=m0 position=674 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number site=w0}] results=[{type=number site=w2}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="heard"
+    v3 = Add v2, v1
+    v4 = Add v3, v1
+    v5 = Integer
+    v6 = BitOr v4, v5
+    v7 = Convert v6 declared={type=number site=w61}
+    PropSet v0, v7 key="heard"
+    v9 = PropGet v0 key="heard"
+    v10 = Integer integer=1
+    v11 = BitAnd v9, v10
+    v12 = Convert v11 declared={type=number site=w2}
+    Return v12
+}
+function f2 name="addThrice" module=m0 position=1209 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L3 site=w4 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number site=w3}] results=[{type=number site=w5}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L3, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="heard"
+    v3 = Integer integer=3
+    v4 = Mul v1, v3
+    v5 = Add v2, v4
+    v6 = Integer
+    v7 = BitOr v5, v6
+    v8 = Convert v7 declared={type=number site=w62}
+    PropSet v0, v8 key="heard"
+    v10 = PropGet v0 key="heard"
+    v11 = Integer integer=1
+    v12 = BitAnd v10, v11
+    v13 = Convert v12 declared={type=number site=w5}
+    Return v13
+}
+function f3 name="overPlain" module=m0 position=1551 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w63}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w64}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v13 = PropGet v0 key="add"
+    v14 = Call v13, v0, v10 calleeKey="add" calleeName="target.add"
+    v15 = Convert v14 declared={type=number site=w65}
+    v16 = Add v12, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=number site=w63}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v10
+    v21 = Convert v20 declared={type=number site=w64}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v25 = Convert v24 declared={type=number site=w8}
+    Return v25
+}
+function f4 name="overHidden" module=m0 position=1726 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 site=w9 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w10}] results=[{type=number site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w66}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w67}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v13 = PropGet v0 key="add"
+    v14 = Call v13, v0, v10 calleeKey="add" calleeName="target.add"
+    v15 = Convert v14 declared={type=number site=w68}
+    v16 = Add v12, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=number site=w66}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v10
+    v21 = Convert v20 declared={type=number site=w67}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v25 = Convert v24 declared={type=number site=w11}
+    Return v25
+}
+function f5 name="overPlainGuest" module=m0 position=1903 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L2 site=w12 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w13}] results=[{type=number site=w14}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w69}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w70}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v13 = PropGet v0 key="add"
+    v14 = Call v13, v0, v10 calleeKey="add" calleeName="target.add"
+    v15 = Convert v14 declared={type=number site=w71}
+    v16 = Add v12, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=number site=w69}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v10
+    v21 = Convert v20 declared={type=number site=w70}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v25 = Convert v24 declared={type=number site=w14}
+    Return v25
+}
+function f6 name="overHiddenGuest" module=m0 position=2088 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L3 site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w16}] results=[{type=number site=w17}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L3, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w72}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w73}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v13 = PropGet v0 key="add"
+    v14 = Call v13, v0, v10 calleeKey="add" calleeName="target.add"
+    v15 = Convert v14 declared={type=number site=w74}
+    v16 = Add v12, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=number site=w72}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v10
+    v21 = Convert v20 declared={type=number site=w73}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v25 = Convert v24 declared={type=number site=w17}
+    Return v25
+}
+function f7 name="Plain" module=m0 position=517 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w18}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f15
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = Integer integer=1
+    v9 = Convert v8 declared={type=number site=w75}
+    PropSet v4, v9 key="heard"
+    Jump -> next b5()
+  b4(v11):
+    Jump -> next b5()
+  b5():
+    v12 = Undefined
+    v13 = TypeTest v12 testedType=object
+    Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v14):
+    Jump -> next b8(v14)
+  b7(v15):
+    Jump -> next b8(v4)
+  b8(v16):
+    Return v16
+}
+function f8 name="add" module=m0 position=571 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w21} parameters=[{type=number site=w20}] results=[{type=number site=w22}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="heard"
+    v3 = Add v2, v1
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Convert v5 declared={type=number site=w76}
+    PropSet v0, v6 key="heard"
+    v8 = PropGet v0 key="heard"
+    v9 = Integer integer=1
+    v10 = BitAnd v8, v9
+    v11 = Convert v10 declared={type=number site=w22}
+    Return v11
+}
+function f9 name="Hidden" module=m0 position=845 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w23}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f16
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = GetModuleVariable variable=g0
+    v9 = Convert v8 declared={type=undefined|null|function|f1|f10 site=w77 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v4, v9 key="add"
+    Jump -> next b5()
+  b4(v11):
+    Jump -> next b5()
+  b5():
+    v12 = Undefined
+    v13 = TypeTest v12 testedType=object
+    Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v14):
+    Jump -> next b8(v14)
+  b7(v15):
+    Jump -> next b8(v4)
+  b8(v16):
+    Return v16
+}
+function f10 name="add" module=m0 position=904 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1 site=w26} parameters=[{type=number site=w25}] results=[{type=number site=w27}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="heard"
+    v3 = Add v2, v1
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Convert v5 declared={type=number site=w78}
+    PropSet v0, v6 key="heard"
+    v8 = PropGet v0 key="heard"
+    v9 = Integer integer=1
+    v10 = BitAnd v8, v9
+    v11 = Convert v10 declared={type=number site=w27}
+    Return v11
+}
+function f11 name="PlainGuest" module=m0 position=1052 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w28}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f17
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = Integer integer=1
+    v9 = Convert v8 declared={type=number site=w79}
+    PropSet v4, v9 key="heard"
+    Jump -> next b5()
+  b4(v11):
+    Jump -> next b5()
+  b5():
+    v12 = Undefined
+    v13 = TypeTest v12 testedType=object
+    Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v14):
+    Jump -> next b8(v14)
+  b7(v15):
+    Jump -> next b8(v4)
+  b8(v16):
+    Return v16
+}
+function f12 name="add" module=m0 position=1106 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L2 site=w31} parameters=[{type=number site=w30}] results=[{type=number site=w32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="heard"
+    v3 = Add v2, v1
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Convert v5 declared={type=number site=w80}
+    PropSet v0, v6 key="heard"
+    v8 = PropGet v0 key="heard"
+    v9 = Integer integer=1
+    v10 = BitAnd v8, v9
+    v11 = Convert v10 declared={type=number site=w32}
+    Return v11
+}
+function f13 name="HiddenGuest" module=m0 position=1388 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w33}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f18
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = GetModuleVariable variable=g1
+    v9 = Convert v8 declared={type=undefined|null|function|f2|f14 site=w81 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v4, v9 key="add"
+    Jump -> next b5()
+  b4(v11):
+    Jump -> next b5()
+  b5():
+    v12 = Undefined
+    v13 = TypeTest v12 testedType=object
+    Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v14):
+    Jump -> next b8(v14)
+  b7(v15):
+    Jump -> next b8(v4)
+  b8(v16):
+    Return v16
+}
+function f14 name="add" module=m0 position=1448 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L3 site=w36} parameters=[{type=number site=w35}] results=[{type=number site=w37}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="heard"
+    v3 = Add v2, v1
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Convert v5 declared={type=number site=w82}
+    PropSet v0, v6 key="heard"
+    v8 = PropGet v0 key="heard"
+    v9 = Integer integer=1
+    v10 = BitAnd v8, v9
+    v11 = Convert v10 declared={type=number site=w37}
+    Return v11
+}
+function f15 module=m0 position=483 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w19}
+    PropDefine v1, v3 key="heard"
+    v5 = Undefined
+    Return v5
+}
+function f16 module=m0 position=810 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w24}
+    PropDefine v1, v3 key="heard"
+    v5 = Undefined
+    Return v5
+}
+function f17 module=m0 position=1013 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w29}
+    PropDefine v1, v3 key="heard"
+    v5 = Undefined
+    Return v5
+}
+function f18 module=m0 position=1348 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L3 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w34}
+    PropDefine v1, v3 key="heard"
+    v5 = Undefined
+    Return v5
+}
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f22]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

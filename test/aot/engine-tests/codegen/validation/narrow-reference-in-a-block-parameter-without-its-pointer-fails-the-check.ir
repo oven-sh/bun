@@ -1,0 +1,7 @@
+# drop-guard=Parameter:0 leaves out, in every function, the first pointer beside a narrow reference that a Parameter defines. The check of references fails the build
+# FORM: AsRead
+# OPTIONS: references=narrow check=validate-reference-guards drop-guard=Parameter:0
+# RUN: compile
+# DIAGNOSTIC: NarrowReferenceWithoutPointer
+# CHECK: image empty
+# PROGRAM-OF: narrow-reference-in-a-block-parameter-has-a-pointer.ir

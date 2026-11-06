@@ -6,6 +6,7 @@
 - `./bun` contains all `bun:*` modules
 - `./thirdparty` contains npm modules we replace like `ws`
 - `./internal` contains modules that aren't assigned to the module resolver
+- `./ahead-of-time` contains second texts of some of the modules above, under the same names. `bun run` evaluates the first text of a module. `bun build --compile --aot` compiles the second one where there is one. The two must do the same: a change to one of them goes into the other too. `bun src/codegen/check-types-of-modules.ts` checks the types as the compiler reads them
 
 Each `.ts`/`.js` file above is assigned a numeric id at compile time and inlined into an array of lazily initialized modules. Internal modules referencing each other is extremely optimized, skipping the module resolver entirely.
 
@@ -45,6 +46,8 @@ On top of this, we have some special functions that are handled by the builtin p
 - `IS_BUN_DEVELOPMENT` is inlined to be `true` in all development builds.
 
 - `process.platform` and `process.arch` is properly inlined and DCE'd. Do use this to run different code on different platforms.
+
+- `"unlikely";` as the first statement of an arm of an `if` (`if (error) { "unlikely"; ... }`, or the same in an `else { ... }`) is an expression statement that does nothing, so it is nothing in `bun run`. `bun build --compile --aot` reads it in these files only: the arm is compiled out of the way of the usual path, and what is called only from there counts as seldom run. It never changes what the code does. Use it where you know that the arm is unusual: errors, replaced built-ins, every way out of a fast path. A wrong one costs two jumps and slower code each time the arm runs. Anywhere else in a file it is read by nobody, and `bun lint` reports it (`bun/no-unused-expressions`).
 
 ## Builtin Modules
 

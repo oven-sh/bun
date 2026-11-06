@@ -81,6 +81,8 @@ pub struct Task<'s> {
     is_first_in_component: Cell<bool>,
     /// See `take_cycle_members`.
     cycle_members: RefCell<Vec<u64>>,
+    /// How often `close_cycle` was called.
+    closed_cycles: Cell<u32>,
     /// `Buffer::log_lengths` at the first cycle the task has resolved since it was last idle.
     cycle_since_idle: Cell<Option<[usize; 2]>>,
     /// See `take_logged_at_cycles`.
@@ -121,6 +123,7 @@ impl<'s> Task<'s> {
             is_first_in_order: Cell::new(false),
             is_first_in_component: Cell::new(false),
             cycle_members: RefCell::default(),
+            closed_cycles: Cell::new(0),
             cycle_since_idle: Cell::new(None),
             logged_at_cycles: RefCell::default(),
             logged_when_idle: Cell::new([0; 2]),
@@ -279,6 +282,8 @@ impl<'s> Task<'s> {
         is_reachable_only_by_importers: impl FnOnce() -> bool,
         members: impl Iterator<Item = u64>,
     ) {
+        self.closed_cycles
+            .set(self.closed_cycles.get().wrapping_add(1));
         if self.was_discarded() {
             return;
         }
@@ -295,6 +300,10 @@ impl<'s> Task<'s> {
         } else {
             self.discard_until_recheck();
         }
+    }
+
+    pub(super) fn closed_cycle_count(&self) -> u32 {
+        self.closed_cycles.get()
     }
 
     /// Returns the `members` of the cycles this task has resolved since its last commit, sorted. For a task that was
@@ -413,6 +422,7 @@ impl<'s> Task<'s> {
             is_first_in_order,
             is_first_in_component,
             cycle_members,
+            closed_cycles,
             cycle_since_idle,
             logged_at_cycles,
             logged_when_idle,
@@ -434,6 +444,7 @@ impl<'s> Task<'s> {
         is_first_in_order.set(false);
         is_first_in_component.set(false);
         cycle_members.get_mut().clear();
+        closed_cycles.set(0);
         cycle_since_idle.set(None);
         logged_at_cycles.get_mut().clear();
         logged_when_idle.set([0; 2]);

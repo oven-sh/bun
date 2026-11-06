@@ -1,0 +1,379 @@
+# A test of an array that is placed in front of a loop holds across a compiled serializer, a compiled parser and a chain of array methods, in the loop itself and in a function that the loop calls; where code of the program really changes the array in between, the loop sees the change.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="tests-arrays-serializers-parsers-chains.ts" displayPath="tests-arrays-serializers-parsers-chains.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Tree" module=m0 position=504 constructor=f3 fields=[{key="value" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="children" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 name="Segment" module=m0 position=775 fields=[{key="from" declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired]}, {key="tags" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="to" declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0, 3, 2] ownFieldCount=4
+layout L2 name="Point" module=m0 position=718 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}, {key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+data d0 root=Array{contents=undefined|null|string elements=[String{value="{\"id\":1,\"from\":{\"x\":1,\"y\":2},\"to\":{\"x\":3,\"y\":4},\"tags\":[]}"}, String{value="{\"tags\":[\"a\",\"b\"],\"to\":{\"y\":4,\"x\":5,\"label\":\"l\"},\"from\":{\"x\":1,\"y\":2},\"id\":2}"}, String{value="{\"id\":3,\"from\":{\"x\":1,\"y\":2},\"to\":{\"x\":7,\"y\":4},\"tags\":[\"c\"],\"more\":[1,2,{\"deep\":[3]}]}"}]} module=m0
+variable g0 name="Tree" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v7 variable=g0
+    v9 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Data data=d0
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v13)
+  b1(v14: number):
+    v15 = Integer
+    v16 = Construct v9, -, v15 calleeName="Tree"
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v18 = Integer integer=1
+    v19 = Construct v9, -, v18 calleeName="Tree"
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v21 = Construct v9, -, v14 calleeName="Tree"
+    v22 = Convert v21 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v23 = NewArray v17, v20, v22 contents=undefined|null|L0
+    v24 = Call v1, -, v23 calleeName="lengthsOfTrees"
+    v25 = Call v3, -, v11 calleeName="parsedInTheLoop"
+    v26 = Integer
+    v27 = Convert v26 declared={type=number}
+    LoopHint
+    v29 = Increment v14
+    v30 = Convert v29 declared={type=number}
+    Jump -> next b1(v30)
+}
+function f1 name="lengthsOfTrees" module=m0 position=996 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = Builtin builtin=JSON
+    v10 = PropGet v9 key="stringify"
+    v11 = Convert v10 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v12 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v13 = ElemGet v0, v12
+    v14 = Convert v13 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v15 = Call v11, v9, v14 calleeKey="stringify" calleeName="JSON.stringify"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v17 = PropGet v16 key="length"
+    v18 = Convert v17 declared={type=number} illTypedCause=Assertion
+    v19 = ElemGet v0, v12
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v21 = PropGet v20 key="value"
+    v22 = Add v18, v21
+    v23 = PropGet v0 key="length"
+    v24 = Convert v23 declared={type=number} illTypedCause=Assertion
+    v25 = Add v22, v24
+    v26 = Add v5, v25
+    v27 = Convert v26 declared={type=number}
+    v28 = Increment v12
+    v29 = Convert v28 declared={type=number}
+    Jump -> next b1(v27, v29)
+}
+function f2 name="parsedInTheLoop" module=m0 position=1375 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    LoopHint
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    Jump -> next b1(v2, v7)
+  b1(v8: number, v9: number):
+    LoopHint
+    v11 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    v12 = Builtin builtin=JSON
+    v13 = PropGet v12 key="parse"
+    v14 = Convert v13 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v15 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    v16 = ElemGet v0, v15
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v18 = Call v14, v12, v17 calleeKey="parse" calleeName="JSON.parse"
+    v19 = Convert v18 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v20 = Convert v19 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v21 = PropGet v20 key="to"
+    v22 = PropGet v21 key="x"
+    v23 = ElemGet v0, v15
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v25 = PropGet v24 key="length"
+    v26 = Add v22, v25
+    v27 = Add v8, v26
+    v28 = Convert v27 declared={type=number}
+    v29 = Increment v15
+    v30 = Convert v29 declared={type=number}
+    Jump -> next b1(v28, v30)
+}
+function f3 name="Tree" module=m0 position=569 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="Tree"
+    v8 = Integer integer=1
+    v9 = Sub v1, v8
+    v10 = Construct v7, -, v9 calleeName="Tree"
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="Tree"
+    v14 = Integer integer=1
+    v15 = Sub v1, v14
+    v16 = Construct v13, -, v15 calleeName="Tree"
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v18 = NewArray v11, v17 contents=undefined|null|L0
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    PropSet v4, v19 key="children"
+    v21 = Undefined
+    Return v4
+}
+function f4 module=m0 position=504 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0 lengthsOfTrees Tree
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "{\"id\":1,\"from\":{\"x\":1,\"y\":2},\"to\":{\"x\":3,\"y\":4},\"tags\":[]}" = String string="{\"id\":1,\"from\":{\"x\":1,\"y\":2},\"to\":{\"x\":3,\"y\":4},\"tags\":[]}"
+# CHECK-NEXT: v1: "{\"tags\":[\"a\",\"b\"],\"to\":{\"y\":4,\"x\":5,\"label\":\"l\"},\"from\":{\"x\":1,\"y\":2},\"id\":2}" = String string="{\"tags\":[\"a\",\"b\"],\"to\":{\"y\":4,\"x\":5,\"label\":\"l\"},\"from\":{\"x\":1,\"y\":2},\"id\":2}"
+# CHECK-NEXT: v2: "{\"id\":3,\"from\":{\"x\":1,\"y\":2},\"to\":{\"x\":7,\"y\":4},\"tags\":[\"c\"],\"more\":[1,2,{\"deep\":[3]}]}" = String string="{\"id\":3,\"from\":{\"x\":1,\"y\":2},\"to\":{\"x\":7,\"y\":4},\"tags\":[\"c\"],\"more\":[1,2,{\"deep\":[3]}]}"
+# CHECK-NEXT: v3: Array<string, Contiguous> = NewArray v0, v1, v2 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v4: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v5)
+# CHECK-NEXT: b1(v6: int|whole ~ 0) frequency=Rare:
+# CHECK-NEXT: v7: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v8: anything = CallDirect v7 function=f4 accessSite=19
+# CHECK-NEXT: v9: f3 = GetModuleVariable variable=g0
+# CHECK-NEXT: v10: -1 = Integer integer=-1
+# CHECK-NEXT: v11: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v12: undefined = CallDirect v11, v9, v10 function=f13 accessSite=20 [isConstruction]
+# CHECK-NEXT: v13: -1 = Integer integer=-1
+# CHECK-NEXT: v14: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v15: undefined = CallDirect v14, v9, v13 function=f13 accessSite=21 [isConstruction]
+# CHECK-NEXT: v16: Array<L0, Contiguous> = NewArray v11, v14 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v17: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v7, -, v17 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v19: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v20: anything = CallDirect v19 function=f4 accessSite=19
+# CHECK-NEXT: v21: 0 = Integer
+# CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v23: undefined = CallDirect v22, v9, v21 function=f13 accessSite=20 [isConstruction]
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: v25: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v26: undefined = CallDirect v25, v9, v24 function=f13 accessSite=21 [isConstruction]
+# CHECK-NEXT: v27: Array<L0, Contiguous> = NewArray v22, v25 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v28: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v19, -, v28 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v30: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v31: anything = CallDirect v30 function=f4 accessSite=19
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int|whole ~ -1 = Sub v6, v32
+# CHECK-NEXT: v34: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v35: undefined = CallDirect v34, v9, v33 function=f13 accessSite=20 [isConstruction]
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: int|whole ~ -1 = Sub v6, v36
+# CHECK-NEXT: v38: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v39: undefined = CallDirect v38, v9, v37 function=f13 accessSite=21 [isConstruction]
+# CHECK-NEXT: v40: Array<L0, Contiguous> = NewArray v34, v38 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v41: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v40 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v30, -, v41 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v43: Array<L0, Contiguous> = NewArray v7, v19, v30 contents=L0 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v44: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v43 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v45: number = CallDirect v44 function=f1 accessSite=3
+# CHECK-NEXT: v46: number = CallDirect v4 function=f2 accessSite=4
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v48: int|whole ~ 1 = Increment v6
+# CHECK-NEXT: Jump -> next b1(v48)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="lengthsOfTrees"
+# CHECK: module=m0 position=996 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295}] {
+# CHECK-NEXT: b0(v0: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v2: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v2)
+# CHECK-NEXT: b2(v3: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b3(v4: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v4 castType=int|whole
+# CHECK-NEXT: v7: boolean = IsElementPresent v0, v6 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v7 -> taken b4(| 0), notTaken b24(v6)
+# CHECK-NEXT: b4(v8: guard):
+# CHECK-NEXT: v9: L0 = GetArrayElement v0, v6, v8 arrayStorage=Contiguous level=Proven accessSite=6 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v10: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v11: i32 = StringBuilderCheckpoint v10
+# CHECK-NEXT: v12: boolean = JSONHasStackSpace [failsAtWatchedLevels]
+# CHECK-NEXT: Branch v12 -> taken b5(), notTaken b10()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v13: boolean = ShapeTest v9 layouts=[L0]
+# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b15()
+# CHECK-NEXT: b6(v14: guard):
+# CHECK-NEXT: v15: boolean = HasKeyOrder v9, v14 layout=L0
+# CHECK-NEXT: Branch v15 -> taken b7(), notTaken b14()
+# CHECK-NEXT: b7() handler=b23():
+# CHECK-NEXT: v16: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: v17: buildercursor = JSONAppendToken v10, v16 jsonToken=EmptyObject
+# CHECK-NEXT: StringBuilderCommit v10, v17
+# CHECK-NEXT: v19: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: StringBuilderCommit v10, v19
+# CHECK-NEXT: v21: i32 = StringBuilderCheckpoint v10
+# CHECK-NEXT: v22: boolean = StrictEq v11, v21
+# CHECK-NEXT: Branch v22 -> taken b19(), notTaken b8()
+# CHECK-NEXT: b8() handler=b23():
+# CHECK-NEXT: v23: string = StringBuilderFinish v10
+# CHECK-NEXT: v24: boolean ~ true = TypeTest v6 testedType=i32
+# CHECK-NEXT: Branch v24 -> taken b9(| 0), notTaken b25(v6)
+# CHECK-NEXT: b9(v25: int[0, 2147483647]):
+# CHECK-NEXT: v26: int[1, 2147483648] = Increment v25
+# CHECK-NEXT: Jump -> next b3(v26)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v27: boolean = JSONEnterWatchedLevel v10, v9
+# CHECK-NEXT: Branch v27 -> taken b11(), notTaken b16()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v28: boolean = ShapeTest v9 layouts=[L0]
+# CHECK-NEXT: Branch v28 -> taken b12(| 0), notTaken b15()
+# CHECK-NEXT: b12(v29: guard) frequency=Unlikely:
+# CHECK-NEXT: v30: boolean = HasKeyOrder v9, v29 layout=L0
+# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() frequency=Unlikely handler=b23():
+# CHECK-NEXT: v31: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: v32: buildercursor = JSONAppendToken v10, v31 jsonToken=EmptyObject
+# CHECK-NEXT: StringBuilderCommit v10, v32
+# CHECK-NEXT: v34: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: Jump -> next b18(v34)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b16() frequency=Rare:
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b17() frequency=Rare handler=b23():
+# CHECK-NEXT: v35: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: Jump -> next b18(v35)
+# CHECK-NEXT: b18(v36: buildercursor) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderCommit v10, v36
+# CHECK-NEXT: v38: i32 = StringBuilderCheckpoint v10
+# CHECK-NEXT: v39: boolean = StrictEq v11, v38
+# CHECK-NEXT: Branch v39 -> taken b19(), notTaken b20()
+# CHECK-NEXT: b19() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v10
+# CHECK-NEXT: v41: undefined = Undefined
+# CHECK-NEXT: v42: undefined|string = CallBuiltin -, v9, v41 overload=JSONStringify/0 accessSite=7
+# CHECK-NEXT: Jump -> next b21(v42)
+# CHECK-NEXT: b20() frequency=Unlikely handler=b23():
+# CHECK-NEXT: v43: string = StringBuilderFinish v10
+# CHECK-NEXT: Jump -> next b21(v43)
+# CHECK-NEXT: b21(v44: undefined|string ~ string) frequency=Unlikely:
+# CHECK-NEXT: v45: string = RequireObjectCoercible v44 name="length"
+# CHECK-NEXT: v46: boolean ~ true = TypeTest v6 testedType=i32
+# CHECK-NEXT: Branch v46 -> taken b22(| 0), notTaken b25(v6)
+# CHECK-NEXT: b22(v47: int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v48: int[1, 2147483648] = Increment v47
+# CHECK-NEXT: Jump -> next b2(v48)
+# CHECK-NEXT: b23() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v49: exception = CatchException
+# CHECK-NEXT: JSONResetHolders v10
+# CHECK-NEXT: Rethrow v49
+# CHECK-NEXT: b24(v51: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v52: undefined|L0 = GetArrayElement v0, v51 arrayStorage=Contiguous level=Proven accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v53: undefined = Undefined
+# CHECK-NEXT: v54: undefined|string = CallBuiltin -, v52, v53 overload=JSONStringify/0 accessSite=7
+# CHECK-NEXT: v55: string = RequireObjectCoercible v54 name="length"
+# CHECK-NEXT: v56: undefined|L0 = GetArrayElement v0, v51 arrayStorage=Contiguous level=Proven accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v57: L0 = RequireObjectCoercible v56 name="value"
+# CHECK-NEXT: Jump -> next b25(v51)
+# CHECK-NEXT: b25(v58: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v59: int|whole ~ int[1, 2147483648] = Increment v58
+# CHECK-NEXT: v60: boolean ~ true = TypeTest v59 testedType=int[0, 2147483648]
+# CHECK-NEXT: Branch v60 -> taken b26(| 0), notTaken b27()
+# CHECK-NEXT: b26(v61: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v61)
+# CHECK-NEXT: b27() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v63: int|whole ~ int[1, 2147483647] = Upcast v59 castType=int|whole
+# CHECK-NEXT: Jump -> next b24(v63)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Tree"
+# CHECK: module=m0 position=569 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# CHECK-LABEL: function {{*}}name="Tree"
+# CHECK: module=m0 position=569 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f3 callPosition=569 isTailCall=true module=m0}, {callee=f13 callPosition=4294967295 parent=1 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4: int|whole = AssumeType v3 provenType=int|whole
+# CHECK-NEXT: v5: fact = Entered function=f3 @569 tail
+# CHECK-NEXT: v6: f3 = AssumeType v2, v5 provenType=f3
+# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v8: L0 = NewObject layout=L0 allocationSite=5 allocationClass=0
+# CHECK-NEXT: v9: anything = CallDirect v8 function=f4 accessSite=19
+# CHECK-NEXT: Jump -> next b2(v8)
+# CHECK-NEXT: b2(v10: L0):
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: int|whole = Sub v4, v11
+# CHECK-NEXT: v13: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v14: anything = CallDirect v13 function=f4 accessSite=19
+# CHECK-NEXT: v15: f3 = GetModuleVariable variable=g0
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: int|whole = Sub v12, v16
+# CHECK-NEXT: v18: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v19: undefined = CallDirect v18, v15, v17 function=f13 accessSite=20 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: int|whole = Sub v12, v20
+# CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v23: undefined = CallDirect v22, v15, v21 function=f13 accessSite=21 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v24: Array<L0, Contiguous> = NewArray v18, v22 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v25: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v13, -, v25 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int|whole = Sub v4, v27
+# CHECK-NEXT: v29: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v30: anything = CallDirect v29 function=f4 accessSite=19
+# CHECK-NEXT: v31: 1 = Integer integer=1
+# CHECK-NEXT: v32: int|whole = Sub v28, v31
+# CHECK-NEXT: v33: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v34: undefined = CallDirect v33, v15, v32 function=f13 accessSite=20 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int|whole = Sub v28, v35
+# CHECK-NEXT: v37: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v38: undefined = CallDirect v37, v15, v36 function=f13 accessSite=21 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v39: Array<L0, Contiguous> = NewArray v33, v37 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v40: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v29, -, v40 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v42: Array<L0, Contiguous> = NewArray v13, v29 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v43: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v10, -, v43 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v45: object = GetConstructPrototype v6 layout=L0
+# CHECK-NEXT: v46: L0 = NewObject v45 layout=L0 allocationSite=5 allocationClass=0
+# CHECK-NEXT: v47: anything = CallDirect v46 function=f4 accessSite=19
+# CHECK-NEXT: Jump -> next b2(v46)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Tree"
+# CHECK: module=m0 position=569 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=int|whole}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f3} constructedClass=L0 {
+# CHECK-NEXT: b0(v0: L0, v1: anything, v2: int|whole):
+# CHECK-NEXT: v3: anything = CallDirect v0 function=f4 accessSite=19
+# CHECK-NEXT: v4: f3 = GetModuleVariable variable=g0
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: int|whole = Sub v2, v5
+# CHECK-NEXT: v7: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v8: undefined = CallDirect v7, v4, v6 function=f13 accessSite=20 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: int|whole = Sub v2, v9
+# CHECK-NEXT: v11: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v12: undefined = CallDirect v11, v4, v10 function=f13 accessSite=21 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v13: Array<L0, Contiguous> = NewArray v7, v11 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v0, -, v14 key="children" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: }

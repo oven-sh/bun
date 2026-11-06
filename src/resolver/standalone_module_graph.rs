@@ -3,6 +3,12 @@
 //! the trait here lets the resolver hold a `dyn` object without depending on
 //! the higher-tier crate that implements it.
 
+pub use crate::compiled_program::{
+    CompiledEntryPoint, CompiledProgram, ExtensionSearch, ImageFile, ModuleLookup, PackageLookup,
+    compare_source_paths,
+};
+use crate::resolver::Resolver;
+
 /// How many regions a bytecode payload laid out by an order file has (`JSC::BytecodeLinkRegions`): heads of evaluated
 /// modules, the function bodies the recorded run decoded, the ones its build did not have, heads of modules known not
 /// to be evaluated, all other bodies, expression info.
@@ -106,6 +112,67 @@ pub trait StandaloneModuleGraph: Send + Sync {
         buf[stem_len..stem_len + 3].copy_from_slice(b".js");
         self.find_assume_standalone_path(&buf[..stem_len + 3])
     }
+    /// The name of the file that an executable compiled in place holds for `path`, an absolute path that the disk no longer has.
+    fn file_at_source_path(&self, _path: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
+    /// `resolve` for an embedded path, then the modules compiled ahead of time, which are no files of the graph unless they are entry points.
+    fn resolve_module(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> Option<&'static [u8]> {
+        use bun_options_types::standalone_path::is_bun_standalone_file_path;
+        let is_embedded =
+            is_bun_standalone_file_path(specifier) || is_bun_standalone_file_path(source_dir);
+        // `resolve` adds `.js` to `./a/.`.
+        let is_left_to_program =
+            self.compiled_program().is_some() && Resolver::import_path_names_directory(specifier);
+        let file = match is_embedded && !is_left_to_program {
+            true => self.resolve(source_dir, specifier).or_else(|| {
+                // An entry point above the root directory of the build is a file of the graph under `_.._`.
+                self.compiled_program()?;
+                let public_root = self.base_public_path_with_default_suffix();
+                let path =
+                    crate::compiled_program::join_public_path(public_root, source_dir, specifier)?;
+                self.resolve(source_dir, &path)
+            }),
+            false => None,
+        };
+        let module = file.map(|name| match self.compiled_entry_point(name) {
+            Some(entry_point) => entry_point.module_path,
+            None => name,
+        });
+        module.or_else(|| {
+            let program = self.compiled_program()?;
+            let public_root = self.base_public_path_with_default_suffix();
+            program.resolve_module(public_root, source_dir, specifier, is_require, search)
+        })
+    }
+    /// `CompiledProgram::resolve_package`.
+    fn resolve_package(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> PackageLookup {
+        let Some(program) = self.compiled_program() else {
+            return PackageLookup::Unknown;
+        };
+        let public_root = self.base_public_path_with_default_suffix();
+        program.resolve_package(public_root, source_dir, specifier, is_require, search)
+    }
+    /// `compiled_program::directories_of_importer`.
+    fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
+        if self.compiled_program().is_none() {
+            return Vec::new();
+        }
+        let public_root = self.base_public_path_with_default_suffix();
+        crate::compiled_program::directories_of_importer(public_root, source_dir, base)
+    }
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
     /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).
     /// Baked-in `'static` constant; surfaced here so low-tier callers
@@ -143,4 +210,144 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn for_each_path(&self, _each: &mut dyn FnMut(&'static [u8])) {}
     /// Every module that has bytecode (`BUN_BYTECODE_ORDER_OUT`, `BUN_BYTECODE_DIGEST_OUT`).
     fn for_each_bytecode_module(&self, _each: &mut dyn FnMut(BytecodeModule)) {}
+    fn compiled_program(&self) -> Option<&CompiledProgram> {
+        None
+    }
+    /// The entry point whose file in the graph, or whose module, is named `name`.
+    fn compiled_entry_point(&self, _name: &[u8]) -> Option<&CompiledEntryPoint> {
+        None
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    const ROOT: &[u8] = b"/$bunfs/root/";
+    const ENTRY_POINT: &[u8] = b"/$bunfs/root/worker.js";
+    const COMPILED_MODULES: [&[u8]; 3] = [
+        b"/$bunfs/root/worker.ts",
+        b"/$bunfs/root/lib.ts",
+        b"/$bunfs/root/worker/index.ts",
+    ];
+
+    struct FakeGraph {
+        program: Option<CompiledProgram>,
+    }
+
+    impl StandaloneModuleGraph for FakeGraph {
+        fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
+            (name == ENTRY_POINT).then_some(ENTRY_POINT)
+        }
+        fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
+            ROOT
+        }
+        fn compile_exec_argv(&self) -> &[u8] {
+            b""
+        }
+        fn compiled_program(&self) -> Option<&CompiledProgram> {
+            self.program.as_ref()
+        }
+        fn compiled_entry_point(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
+            let program = self.program.as_ref()?;
+            (name == ENTRY_POINT).then(|| &program.entry_points[0])
+        }
+    }
+
+    fn find_compiled_module(path: &[u8]) -> Option<&'static [u8]> {
+        COMPILED_MODULES.into_iter().find(|&module| module == path)
+    }
+
+    fn graph_with_compiled_program() -> FakeGraph {
+        let entry_point = CompiledEntryPoint {
+            file_index: 0,
+            module_id: 0,
+            source_path: b"/project/worker.ts",
+            module_path: COMPILED_MODULES[0],
+        };
+        let entry_points = Box::new([entry_point]);
+        let program = CompiledProgram::new(b"image", None, entry_points, Box::new([0]), false);
+        program.set_module_lookup(find_compiled_module);
+        FakeGraph {
+            program: Some(program),
+        }
+    }
+
+    fn resolve_module(graph: &FakeGraph, specifier: &[u8]) -> Option<&'static [u8]> {
+        resolve_module_from(graph, ROOT, specifier)
+    }
+
+    fn resolve_module_from(
+        graph: &FakeGraph,
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> Option<&'static [u8]> {
+        let extensions = [&b".ts"[..], b".js"].map(Box::<[u8]>::from);
+        let search = ExtensionSearch {
+            extensions: &extensions,
+            extra_extensions: &[],
+            rewritten_extensions: &|_, _| &[],
+        };
+        graph.resolve_module(source_dir, specifier, true, &search)
+    }
+
+    #[test]
+    fn entry_point_found_by_file_name_is_answered_with_module_key() {
+        let graph = graph_with_compiled_program();
+        for specifier in [
+            &b"./worker"[..],
+            b"./worker.js",
+            b"./worker.mjs",
+            b"./worker.ts",
+        ] {
+            assert_eq!(resolve_module(&graph, specifier), Some(COMPILED_MODULES[0]));
+        }
+        assert_eq!(
+            resolve_module(&graph, ENTRY_POINT),
+            Some(COMPILED_MODULES[0])
+        );
+    }
+
+    #[test]
+    fn name_of_directory_beside_entry_point_of_same_name() {
+        let graph = graph_with_compiled_program();
+        for specifier in [&b"./worker/"[..], b"./worker/.", b"./lib/../worker/"] {
+            assert_eq!(resolve_module(&graph, specifier), Some(COMPILED_MODULES[2]));
+        }
+        assert_eq!(
+            resolve_module(&graph, b"/$bunfs/root/worker/"),
+            Some(COMPILED_MODULES[2])
+        );
+        assert_eq!(resolve_module(&graph, b"./lib/"), None);
+    }
+
+    #[test]
+    fn compiled_module_is_found_after_files_of_graph() {
+        let graph = graph_with_compiled_program();
+        assert_eq!(resolve_module(&graph, b"./lib"), Some(COMPILED_MODULES[1]));
+        assert_eq!(
+            resolve_module(&graph, b"./lib.ts"),
+            Some(COMPILED_MODULES[1])
+        );
+        assert_eq!(resolve_module(&graph, b"./absent"), None);
+        assert_eq!(resolve_module(&graph, b"lib"), None);
+    }
+
+    #[test]
+    fn path_on_disk_names_no_compiled_module() {
+        let graph = graph_with_compiled_program();
+        assert_eq!(resolve_module_from(&graph, b"/project/", b"./lib"), None);
+        assert_eq!(
+            resolve_module_from(&graph, b"/elsewhere/", b"/project/lib.ts"),
+            None
+        );
+        assert_eq!(resolve_module_from(&graph, b"/elsewhere/", b"./lib"), None);
+    }
+
+    #[test]
+    fn graph_without_compiled_program_has_only_its_files() {
+        let graph = FakeGraph { program: None };
+        assert_eq!(resolve_module(&graph, b"./worker"), Some(ENTRY_POINT));
+        assert_eq!(resolve_module(&graph, b"./lib"), None);
+    }
 }

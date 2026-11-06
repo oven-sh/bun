@@ -1,0 +1,34 @@
+# somethingThatNoTableLists(Buffer.from("abc"))[keyThatNoTableLists]   The program names neither Buffer.prototype.parent nor process.send (runtimefunction 65568; 65561 is called on behalf of process.send).
+# Reading an accessor is calling its getter. The receiver may be the buffer and the key may be "parent", so the function of the library behind the accessor is in the program and the read is not refused.
+# A function that the program would have to call stays out: the call throws the error that names it.
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65561 function=f2
+runtimefunction id=65568 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Buffer" [isFreeName]
+    v2 = PropGet v1 key="from"
+    v3 = String string="abc"
+    v4 = Call v2, v1, v3 calleeKey="from"
+    v5 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v6 = Call v5, -, v4
+    v7 = PropGet v0 key="keyThatNoTableLists" [isFreeName]
+    v8 = ElemGet v6, v7
+    Return
+}
+function f1 name="parent" role=Library flags=[HasThis] enclosingRuntimeFunction=65568 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="buffer"
+    Return v1
+}
+function f2 name="parseHandle" role=Library enclosingRuntimeFunction=65561 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

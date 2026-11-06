@@ -1,0 +1,143 @@
+//// fields-of-an-object-type-in-a-function-anybody-may-call
+type Item = { id: number; price: number; label: string };
+function priceOf(item: Item): number { return item.price + item.id; }
+(globalThis as any).priceOf = priceOf;
+const items: Item[] = [{ id: 1, price: 2, label: "a" }, { id: 2, price: 3, label: "b" }];
+function turn(i: number): number {
+  return (globalThis as any).priceOf(items[i & 1]);
+}
+//// this-in-a-method-found-by-name
+class Cart { total = 0; count = 0; add(price: number): number { this.total += price; this.count++; return this.total & 1023; } }
+(globalThis as any).cart = new Cart();
+function turn(i: number): number {
+  return (globalThis as any).cart.add(i & 7);
+}
+//// a-field-that-holds-a-function
+type Deps = { read: () => number; scale: (n: number) => number };
+class Client { constructor(readonly deps: Deps) {} value(): number { return this.deps.scale(this.deps.read()); } }
+let seen = 0;
+(globalThis as any).client = new Client({ read: () => ++seen & 255, scale: n => n * 2 });
+function turn(i: number): number {
+  const client: Client = (globalThis as any).client;
+  return client.value() + (i & 1);
+}
+//// fields-of-an-intersection
+type Named = { name: string; size: number };
+type Placed = { x: number; y: number };
+function area(box: Named & Placed): number { return box.x * box.y + box.size; }
+(globalThis as any).area = area;
+const box: Named & Placed = { name: "b", size: 3, x: 4, y: 5 };
+function turn(i: number): number {
+  return (globalThis as any).area(box) + (i & 1);
+}
+//// two-string-fields-compared
+type Message = { uuid: string; kind: string };
+function same(a: Message, b: Message): boolean { return a.uuid === b.uuid && a.kind === "user"; }
+(globalThis as any).same = same;
+const list: Message[] = [{ uuid: "a-1", kind: "user" }, { uuid: "a-2", kind: "user" }, { uuid: "a-" + 1, kind: "tool" }];
+function turn(i: number): number {
+  return (globalThis as any).same(list[i % 3], list[0]) ? 1 : 0;
+}
+//// environment-variables-by-key
+const wanted = ["HOME", "PATH", "NO_SUCH_VARIABLE", "LANG"];
+function turn(i: number): number {
+  return process.env[wanted[i & 3]!] ? 1 : 0;
+}
+//// two-records-compared-key-by-key
+type Props = Record<string, unknown>;
+function changed(before: Props, after: Props): number {
+  let n = 0;
+  for (const key in before) if (!Object.hasOwn(after, key)) n++;
+  for (const key in after) if (after[key] !== before[key]) n++;
+  return n;
+}
+const one: Props = { color: "red", width: 3, bold: true, gap: 1 }, two: Props = { color: "red", width: 4, bold: true, gap: 1 };
+function turn(i: number): number {
+  return changed(one, i & 1 ? two : one);
+}
+//// a-map-asked-with-a-string-out-of-a-field
+type Row = { key: string };
+const heights = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+function heightOf(row: Row): number { return heights.get(row.key) ?? 7; }
+(globalThis as any).heightOf = heightOf;
+const rows: Row[] = [{ key: "a" }, { key: "b" }, { key: "z" }];
+function turn(i: number): number {
+  return (globalThis as any).heightOf(rows[i % 3]);
+}
+//// a-literal-with-a-spread-and-a-member-left-out
+type Style = { color?: string; width: number; bold?: boolean };
+function withWidth(style: Style, width: number): Style { return { ...style, width, ...(width > 2 ? { bold: true } : undefined) }; }
+const plain: Style = { color: "red", width: 1 };
+function turn(i: number): number {
+  return withWidth(plain, i & 3).width;
+}
+//// an-optional-object-field-tested
+type Node = { value: number; next: Node | undefined };
+function reach(node: Node): number { return node.next ? node.next.value : node.value; }
+(globalThis as any).reach = reach;
+const tail: Node = { value: 1, next: undefined }, head: Node = { value: 2, next: tail };
+function turn(i: number): number {
+  return (globalThis as any).reach(i & 1 ? head : tail);
+}
+//// a-store-read-through-selectors
+type State = { count: number; name: string; open: boolean };
+const state: State = { count: 3, name: "s", open: true };
+const store = { getSnapshot: () => state };
+function select<T>(source: { getSnapshot: () => State }, pick: (s: State) => T): T { return pick(source.getSnapshot()); }
+function turn(i: number): number {
+  return select(store, s => s.count) + (select(store, s => s.open) ? 1 : 0) + select(store, s => s.name).length + (i & 1);
+}
+//// cells-of-one-maker-that-hold-many-types
+function cell<T>(value: T): { current: T } { return { current: value }; }
+const a = cell({ owner: 1, at: 2 }), b = cell("text"), c = cell([1, 2, 3]), d = cell<{ deep: { n: number } } | null>({ deep: { n: 4 } });
+function turn(i: number): number {
+  return a.current.owner + b.current.length + c.current.length + (d.current === null ? 0 : d.current.deep.n) + (i & 1);
+}
+//// optional-props-given-compared-with-what-a-cache-holds
+type TextProps = { color?: string; background?: string; bold?: boolean; dim?: boolean; width?: number; label: string };
+type Styles = { color: string | undefined; background: string | undefined; bold: boolean | undefined; dim: boolean | undefined; width: number | undefined };
+const empty = Symbol.for("empty");
+function styled($: unknown[], props: TextProps): Styles {
+  const { color, background, bold, dim, width } = props;
+  let styles: Styles;
+  if ($[0] !== color || $[1] !== background || $[2] !== bold || $[3] !== dim || $[4] !== width) {
+    styles = { color, background, bold, dim, width };
+    $[0] = color; $[1] = background; $[2] = bold; $[3] = dim; $[4] = width; $[5] = styles;
+  } else styles = $[5] as Styles;
+  return styles;
+}
+(globalThis as any).styled = styled;
+const caches = [new Array(6).fill(empty), new Array(6).fill(empty)];
+const all: TextProps[] = [{ color: "red", background: "blue", bold: true, dim: false, width: 3, label: "a" }, { color: "green", background: "gray", bold: false, dim: true, width: 5, label: "b" }];
+function turn(i: number): number {
+  return (globalThis as any).styled(caches[i & 1], all[i & 1]).color === "red" ? 1 : 2;
+}
+//// optional-props-left-out-compared-with-what-a-cache-holds
+type TextProps = { color?: string; background?: string; bold?: boolean; dim?: boolean; width?: number; label: string };
+type Styles = { color: string | undefined; background: string | undefined; bold: boolean | undefined; dim: boolean | undefined; width: number | undefined };
+const empty = Symbol.for("empty");
+function styled($: unknown[], props: TextProps): Styles {
+  const { color, background, bold, dim, width } = props;
+  let styles: Styles;
+  if ($[0] !== color || $[1] !== background || $[2] !== bold || $[3] !== dim || $[4] !== width) {
+    styles = { color, background, bold, dim, width };
+    $[0] = color; $[1] = background; $[2] = bold; $[3] = dim; $[4] = width; $[5] = styles;
+  } else styles = $[5] as Styles;
+  return styles;
+}
+(globalThis as any).styled = styled;
+const caches = [new Array(6).fill(empty), new Array(6).fill(empty)];
+const some: TextProps[] = [{ color: "red", label: "a" }, { bold: true, label: "b" }];
+function turn(i: number): number {
+  return (globalThis as any).styled(caches[i & 1], some[i & 1]).color === "red" ? 1 : 2;
+}
+//// optional-members-left-out-compared-with-each-other
+type Entry = { key?: string | null; kind?: string; pinned?: boolean; order?: number; owner?: { id: number } };
+function same(a: Entry, b: Entry): number {
+  return (a.key === b.key ? 1 : 0) + (a.kind === b.kind ? 2 : 0) + (a.pinned === b.pinned ? 4 : 0) + (a.order === b.order ? 8 : 0) + (a.owner === b.owner ? 16 : 0);
+}
+(globalThis as any).same = same;
+const entries: Entry[] = [{ key: null }, { kind: "row" }, { key: "k", pinned: true }, {}];
+function turn(i: number): number {
+  return (globalThis as any).same(entries[i & 3], entries[(i >> 2) & 3]);
+}

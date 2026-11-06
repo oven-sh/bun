@@ -1,0 +1,419 @@
+# -- source: values-outside-type-param-no-optional.ts
+# // A value that is outside the type of a parameter arrives through `any` or a cast. The entrance tests it, whichever passes a build leaves out.
+# // Flags: --aot-only-passes=AnalyzeFlow
+# function twice(x: number): number { return x * 2; }
+# const anyTwice: any = twice;
+# console.log(anyTwice("21"), anyTwice({ valueOf() { return 4; } }), anyTwice(undefined));
+# function nameOf(p: { name: string }) { return p.name; }
+# console.log((nameOf as any)({ name: 5 }), (nameOf as any)(new Map()), (nameOf as any)("text"));
+# interface Startable { method(): number }
+# function start(typed: Startable): number { return typed.method(); }
+# const odd = Object.create({ method() { return 7; } }) as Startable;
+# console.log(start({ method() { return 1; } }), start(odd), start(new (class { method() { return 9; } })()));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="values-outside-type-param-no-optional.ts" displayPath="values-outside-type-param-no-optional.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=199 kind=Parameter
+typesite w1 module=m0 position=184 kind=Result
+typesite w2 module=m0 position=370 kind=Parameter
+typesite w3 module=m0 position=354 kind=Result
+typesite w4 module=m0 position=562 kind=Parameter
+typesite w5 module=m0 position=547 kind=Result
+typesite w6 module=m0 position=304 kind=Result
+typesite w7 module=m0 position=468 kind=CallResult
+typesite w8 module=m0 position=643 kind=Result
+typesite w9 module=m0 position=672 kind=Assertion
+typesite w10 module=m0 position=703 kind=Result
+typesite w11 module=m0 position=695 kind=CallResult
+typesite w12 module=m0 position=730 kind=CallResult
+typesite w13 module=m0 position=761 kind=Result
+typesite w14 module=m0 position=748 kind=CallResult
+typesite w15 module=m0 position=742 kind=CallResult
+typesite w16 module=m0 position=400 kind=PropertyRead
+typesite w17 module=m0 position=597 kind=CallResult
+layout L0 kind=Instance module=m0 position=753 constructor=f7 supertypes=[L1]
+layout L1 name="Startable" module=m0 position=516 fields=[{key="method" declared={type=undefined|null|function|f5|f8 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L2 module=m0 position=373 fields=[{key="name" declared={type=undefined|null|number|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=302 fields=[{key="valueOf" declared={type=undefined|null|function|f4 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+data d0 root=Object{layout=L2 members=[{key="name" value=Number{value=5}}]} module=m0
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="console" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]}
+    v9 = PropGet v8 key="log"
+    v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v11 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v12 = String string="21"
+    v13 = Call v11, -, v12 calleeName="anyTwice"
+    v14 = NewClosure function=f4
+    v15 = Convert v14 declared={type=undefined|null|function|f4 flags=[OmitsNull, OmitsUndefined]}
+    v16 = NewObject -, v15 layout=L3 fields=[0]
+    v17 = FinishObject v16
+    v18 = Call v11, -, v17 calleeName="anyTwice"
+    v19 = Undefined
+    v20 = Call v11, -, v19 calleeName="anyTwice"
+    v21 = Call v10, v8, v13, v18, v20 calleeKey="log" calleeName="console.log"
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="console" [isFreeName]
+    v24 = Convert v23 declared={type=builtin(Console) flags=[IsExpected]}
+    v25 = PropGet v24 key="log"
+    v26 = Convert v25 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v27 = Data data=d0
+    v28 = Call v3, -, v27 calleeName="nameOf"
+    v29 = Builtin builtin=Map
+    v30 = Construct v29 calleeName="Map"
+    v31 = Convert v30 declared={type=undefined|null|Map site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v32 = Call v3, -, v31 calleeName="nameOf"
+    v33 = String string="text"
+    v34 = Call v3, -, v33 calleeName="nameOf"
+    v35 = Call v26, v24, v28, v32, v34 calleeKey="log" calleeName="console.log"
+    v36 = Builtin builtin=Object
+    v37 = Builtin builtin=ObjectCreate
+    v38 = NewClosure function=f5
+    v39 = Convert v38 declared={type=undefined|null|function|f5|f8 flags=[OmitsNull, OmitsUndefined]}
+    v40 = NewObject -, v39 layout=L1 fields=[0]
+    v41 = FinishObject v40
+    v42 = Call v37, v36, v41 calleeName="Object.create"
+    v43 = Convert v42 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v44 = Convert v43 declared={type=undefined|null|L0|L1 site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v45 = Builtin builtin=GlobalThis
+    v46 = PropGet v45 key="console" [isFreeName]
+    v47 = Convert v46 declared={type=builtin(Console) flags=[IsExpected]}
+    v48 = PropGet v47 key="log"
+    v49 = Convert v48 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v50 = NewClosure function=f6
+    v51 = Convert v50 declared={type=undefined|null|function|f5|f8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v52 = NewObject -, v51 layout=L1 fields=[0]
+    v53 = FinishObject v52
+    v54 = Call v5, -, v53 calleeName="start"
+    v55 = Convert v54 declared={type=number site=w11}
+    v56 = Call v5, -, v44 calleeName="start"
+    v57 = Convert v56 declared={type=number site=w12}
+    v58 = NewClosure function=f7
+    v59 = NewClass v58 layout=L0
+    PutModuleVariable v59 variable=g0
+    v61 = NewClosure function=f8
+    DefineMethod v59, v61 layout=L0 key="method"
+    v63 = FinishClass v59 layout=L0
+    v64 = Construct v63
+    v65 = Convert v64 declared={type=undefined|null|L0 site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v66 = Call v5, -, v65 calleeName="start"
+    v67 = Convert v66 declared={type=number site=w15}
+    v68 = Call v49, v47, v55, v57, v67 calleeKey="log" calleeName="console.log"
+    v69 = Undefined
+    Return v69
+}
+function f1 name="twice" module=m0 position=184 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    v3 = Convert v2 declared={type=number site=w1}
+    Return v3
+}
+function f2 name="nameOf" module=m0 position=354 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="name"
+    v2 = Convert v1 declared={type=undefined|null|string site=w16} illTypedCause=Assertion
+    Return v2
+}
+function f3 name="start" module=m0 position=547 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="method"
+    v2 = Call v1, v0 calleeKey="method" calleeName="typed.method"
+    ReturnCall v2 casts=[{declared={type=number site=w17}}, {declared={type=number site=w5}}]
+}
+function f4 name="valueOf" module=m0 position=304 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w6}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=4
+    v1 = Convert v0 declared={type=number site=w6}
+    Return v1
+}
+function f5 name="method" module=m0 position=643 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w8}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=7
+    v1 = Convert v0 declared={type=number site=w8}
+    Return v1
+}
+function f6 name="method" module=m0 position=703 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w10}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=number site=w10}
+    Return v1
+}
+function f7 module=m0 position=753 kind=BaseConstructor flags=[HasNewTarget, IsChecked] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f8 name="method" module=m0 position=761 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w13}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=9
+    v1 = Convert v0 declared={type=number site=w13}
+    Return v1
+}
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+# -- generated: f0 twice nameOf start valueOf method f7
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v0: f1 @Cell = NewClosure function=f1 allocationSite=0 closureForm=Slim
+# CHECK-NEXT: v1: f2 @Cell = NewClosure function=f2 allocationSite=1 closureForm=Slim
+# CHECK-NEXT: v2: f3 @Cell = NewClosure function=f3 allocationSite=2 closureForm=Slim
+# CHECK-NEXT: v3: builtin(GlobalThis) @Cell = Builtin builtin=GlobalThis
+# CHECK-NEXT: v4: builtin(Console) @Cell = Builtin builtin=Console
+# CHECK-NEXT: v5: builtin(Console) @Cell = AssumeType v4 provenType=builtin(Console)
+# CHECK-NEXT: v6: builtin(Console) @Cell = Upcast v5 castType=anything
+# CHECK-NEXT: v7: builtin(Console) @Cell = AssumeType v6 provenType=builtin(Console)
+# CHECK-NEXT: v8: builtin(ConsoleLog) @Cell = Builtin builtin=ConsoleLog
+# CHECK-NEXT: v9: builtin(ConsoleLog) @Cell = AssumeType v8 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v10: builtin(ConsoleLog) @Cell = Upcast v9 castType=anything
+# CHECK-NEXT: v11: builtin(ConsoleLog) @Cell = AssumeType v10 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v12: "21" @JSValue = String string="21"
+# CHECK-NEXT: v13: number @JSValue = Call v0, -, v12 calleeName="anyTwice" accessSite=2 callees=[f1]
+# CHECK-NEXT: v14: f4 @Cell = NewClosure function=f4 allocationSite=3 closureForm=Slim
+# CHECK-NEXT: v15: L3 @Cell = NewObject -, v14 layout=L3 fields=[0] allocationSite=4 allocation=4 allocationClass=3
+# CHECK-NEXT: v16: L3 @Cell = FinishObject v15
+# CHECK-NEXT: v17: number @JSValue = Call v0, -, v16 calleeName="anyTwice" accessSite=3 callees=[f1]
+# CHECK-NEXT: v18: undefined @JSValue = Undefined
+# CHECK-NEXT: v19: number @JSValue = Call v0, -, v18 calleeName="anyTwice" accessSite=4 callees=[f1]
+# CHECK-NEXT: v20: undefined @JSValue = CallBuiltin -, v13, v17, v19 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: v21: builtin(GlobalThis) @Cell = Builtin builtin=GlobalThis
+# CHECK-NEXT: v22: builtin(Console) @Cell = Builtin builtin=Console
+# CHECK-NEXT: v23: builtin(Console) @Cell = AssumeType v22 provenType=builtin(Console)
+# CHECK-NEXT: v24: builtin(Console) @Cell = Upcast v23 castType=anything
+# CHECK-NEXT: v25: builtin(Console) @Cell = AssumeType v24 provenType=builtin(Console)
+# CHECK-NEXT: v26: builtin(ConsoleLog) @Cell = Builtin builtin=ConsoleLog
+# CHECK-NEXT: v27: builtin(ConsoleLog) @Cell = AssumeType v26 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v28: builtin(ConsoleLog) @Cell = Upcast v27 castType=anything
+# CHECK-NEXT: v29: builtin(ConsoleLog) @Cell = AssumeType v28 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v30: 5 @Int32 = Integer integer=5
+# CHECK-NEXT: v31: L2 @Cell = NewObject -, v30 layout=L2 fields=[0] allocationSite=5 allocation=3 allocationClass=2
+# CHECK-NEXT: v32: anything @JSValue = Call v1, -, v31 calleeName="nameOf" accessSite=8 callees=[f2]
+# CHECK-NEXT: v33: undefined|int @JSValue = AssumeType v32 provenType=undefined|int
+# CHECK-NEXT: v34: undefined|int @JSValue = Expect v33 expectedType=undefined|null|string
+# CHECK-NEXT: v35: builtin(Map) @Cell = Builtin builtin=Map
+# CHECK-NEXT: v36: undefined @JSValue = Undefined
+# CHECK-NEXT: v37: Map<never, never> @Cell = CallInline -, v36 inlineBuiltin=NewMap overload=Map/1 accessSite=9
+# CHECK-NEXT: v38: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v37 provenType=Map<never, never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v39: Map<never, never, proven, pristine[Storage, Names]> @Cell = Upcast v38 castType=undefined|null|Map
+# CHECK-NEXT: v40: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v39 provenType=Map<never, never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v41: anything @JSValue = Call v1, -, v40 calleeName="nameOf" accessSite=10 callees=[f2]
+# CHECK-NEXT: v42: undefined|int @JSValue = AssumeType v41 provenType=undefined|int
+# CHECK-NEXT: v43: undefined|int @JSValue = Expect v42 expectedType=undefined|null|string
+# CHECK-NEXT: v44: "text" @JSValue = String string="text"
+# CHECK-NEXT: v45: anything @JSValue = Call v1, -, v44 calleeName="nameOf" accessSite=11 callees=[f2]
+# CHECK-NEXT: v46: undefined|int @JSValue = AssumeType v45 provenType=undefined|int
+# CHECK-NEXT: v47: undefined|int @JSValue = Expect v46 expectedType=undefined|null|string
+# CHECK-NEXT: v48: undefined @JSValue = CallBuiltin -, v34, v43, v47 overload=ConsoleLog/0 accessSite=12
+# CHECK-NEXT: v49: builtin(Object) @Cell = Builtin builtin=Object
+# CHECK-NEXT: v50: builtin(ObjectCreate) @Cell = Builtin builtin=ObjectCreate
+# CHECK-NEXT: v51: f5 @Cell = NewClosure function=f5 allocationSite=6 closureForm=Slim
+# CHECK-NEXT: v52: L1 @Cell = NewObject -, v51 layout=L1 fields=[0] allocationSite=7 allocation=2 allocationClass=1
+# CHECK-NEXT: v53: L1 @JSValue = FinishObject v52
+# CHECK-NEXT: TryCallInline -, v53 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b2(), miss b3()
+# CHECK-NEXT: b2(v54: Object @Cell):
+# CHECK-NEXT: v55: Object @Cell = AssumeType v54 provenType=Object
+# CHECK-NEXT: v56: undefined @Void = Undefined
+# CHECK-NEXT: v57: Object @Cell = Upcast v55 castType=anything
+# CHECK-NEXT: v58: Object @Cell = AssumeType v57 provenType=Object
+# CHECK-NEXT: v59: Object @Cell = AssumeType v58 provenType=Object
+# CHECK-NEXT: v60: builtin(GlobalThis) @Cell = Builtin builtin=GlobalThis
+# CHECK-NEXT: v61: builtin(Console) @Cell = Builtin builtin=Console
+# CHECK-NEXT: v62: builtin(Console) @Cell = AssumeType v61 provenType=builtin(Console)
+# CHECK-NEXT: v63: builtin(Console) @Cell = Upcast v62 castType=anything
+# CHECK-NEXT: v64: builtin(Console) @Cell = AssumeType v63 provenType=builtin(Console)
+# CHECK-NEXT: v65: builtin(ConsoleLog) @Cell = Builtin builtin=ConsoleLog
+# CHECK-NEXT: v66: builtin(ConsoleLog) @Cell = AssumeType v65 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v67: builtin(ConsoleLog) @Cell = Upcast v66 castType=anything
+# CHECK-NEXT: v68: builtin(ConsoleLog) @Cell = AssumeType v67 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v69: f6 @Cell = NewClosure function=f6 allocationSite=9 closureForm=Slim
+# CHECK-NEXT: v70: L1 @Cell = NewObject -, v69 layout=L1 fields=[0] allocationSite=10 allocation=2 allocationClass=1
+# CHECK-NEXT: v71: L1 @Cell = FinishObject v70
+# CHECK-NEXT: v72: int[1, 9] @JSValue = Call v2, -, v71 calleeName="start" accessSite=15 callees=[f3]
+# CHECK-NEXT: v73: int[1, 9] @Int32 = AssumeType v72 provenType=int[1, 9]
+# CHECK-NEXT: v74: int[1, 9] @Int32 = AssumeType v73 provenType=number
+# CHECK-NEXT: v75: int[1, 9] @Int32 = AssumeType v74 provenType=int
+# CHECK-NEXT: v76: int[1, 9] @JSValue = Call v2, -, v59 calleeName="start" accessSite=16 callees=[f3]
+# CHECK-NEXT: v77: int[1, 9] @Int32 = AssumeType v76 provenType=int[1, 9]
+# CHECK-NEXT: v78: int[1, 9] @Int32 = AssumeType v77 provenType=number
+# CHECK-NEXT: v79: int[1, 9] @Int32 = AssumeType v78 provenType=int
+# CHECK-NEXT: v80: f7 @Cell = NewClosure function=f7 allocationSite=11 allocation=0
+# CHECK-NEXT: v81: f7 @Cell = NewClass v80 layout=L0 request=4
+# CHECK-NEXT: PutModuleVariable v81 variable=g0
+# CHECK-NEXT: v83: f7 @Cell = FinishClass v81 layout=L0
+# CHECK-NEXT: v84: anything @JSValue = Construct v83 accessSite=17 callees=[f7]
+# CHECK-NEXT: v85: L0 @JSValue = AssumeType v84 provenType=L0
+# CHECK-NEXT: v86: L0 @JSValue = AssumeType v85 provenType=undefined|null|L0
+# CHECK-NEXT: v87: L0 @JSValue = AssumeType v86 provenType=L0
+# CHECK-NEXT: v88: int[1, 9] @JSValue = Call v2, -, v87 calleeName="start" accessSite=18 callees=[f3]
+# CHECK-NEXT: v89: int[1, 9] @Int32 = AssumeType v88 provenType=int[1, 9]
+# CHECK-NEXT: v90: int[1, 9] @Int32 = AssumeType v89 provenType=number
+# CHECK-NEXT: v91: int[1, 9] @Int32 = AssumeType v90 provenType=int
+# CHECK-NEXT: v92: undefined @JSValue = CallBuiltin -, v75, v79, v91 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v93: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v93
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v94: Object @JSValue = CallBuiltin -, v53 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next b2(v94)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=184 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything @JSValue):
+# CHECK-NEXT: v4: undefined|string|L3 @JSValue = AssumeType v0 provenType=undefined|string|L3
+# CHECK-NEXT: v1: undefined|string|L3 @JSValue = Expect v4 expectedType=number
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: 2 @Double = Integer integer=2
+# CHECK-NEXT: v3: number @Double = Mul v1, v2 form=NumberAndValue
+# CHECK-NEXT: v5: number @Double = AssumeType v3 provenType=number
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="nameOf"
+# CHECK: module=m0 position=354 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything @JSValue):
+# CHECK-NEXT: v4: "text"|L2|Map<never, never, proven, pristine[Storage, Names]> @JSValue = AssumeType v0 provenType="text"|L2|Map<never, never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: "text"|L2|Map<never, never, proven, pristine[Storage, Names]> @JSValue = Expect v4 expectedType=undefined|null|L2
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: anything @JSValue = PropGet v3 key="name" accessSite=20 siteCache=0
+# CHECK-NEXT: v5: undefined|int @JSValue = AssumeType v1 provenType=undefined|int
+# CHECK-NEXT: v2: undefined|int @JSValue = Expect v5 expectedType=undefined|null|string
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="start"
+# CHECK: module=m0 position=547 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Object site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[1, 9] site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L1|Object @Cell):
+# CHECK-NEXT: v4: L0|L1|Object @Cell = AssumeType v0 provenType=L0|L1|Object
+# CHECK-NEXT: v3: L0|L1|Object @JSValue = AssumeType v4 provenType=L0|L1|Object
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: anything @JSValue = PropGet v3 key="method" accessSite=21 receivers=[L1, ..]
+# CHECK-NEXT: v5: undefined|f5|f6|f8 @JSValue = AssumeType v1 provenType=undefined|f5|f6|f8
+# CHECK-NEXT: v2: anything @JSValue = Call v5, v3 calleeKey="method" calleeName="typed.method" accessSite=22 callees=[f5, f6, f8]
+# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=int[1, 9]} resolution=Assume}]
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="valueOf"
+# CHECK: module=m0 position=304 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=4 site=w6}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v0: 4 @JSValue = Integer integer=4
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="method"
+# CHECK: module=m0 position=643 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=7 site=w8}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v0: 7 @JSValue = Integer integer=7
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="method"
+# CHECK: module=m0 position=703 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=1 site=w10}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v0: 1 @JSValue = Integer integer=1
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f7 module=
+# CHECK: m0 position=753 kind=BaseConstructor flags=[HasNewTarget, IsChecked] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything @JSValue):
+# CHECK-NEXT: v3: f7 @JSValue = AssumeType v0 provenType=f7
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: object @Cell = GetConstructPrototype v3 layout=L0
+# CHECK-NEXT: v2: L0 @Cell = NewObject v1 layout=L0 allocationSite=13 allocation=1 allocationClass=0
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="method"
+# CHECK: module=m0 position=761 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=9 site=w13}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v0: 9 @JSValue = Integer integer=9
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=184 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f1 @Cell, v1: anything @JSValue, v2: anything @JSValue):
+# CHECK-NEXT: v3: number @JSValue = CallDirect v2 function=f1
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="nameOf"
+# CHECK: module=m0 position=354 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f2 @Cell, v1: anything @JSValue, v2: anything @JSValue):
+# CHECK-NEXT: v3: anything @JSValue = CallDirect v2 function=f2
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="start"
+# CHECK: module=m0 position=547 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f3 @Cell, v1: anything @JSValue, v2: anything @JSValue):
+# CHECK-NEXT: v3: L0|L1|Object @JSValue = AssumeType v2 provenType=L0|L1|Object
+# CHECK-NEXT: v4: int[1, 9] @JSValue = CallDirect v3 function=f3
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="valueOf"
+# CHECK: module=m0 position=304 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f4 @Cell, v1: anything @JSValue):
+# CHECK-NEXT: v2: 4 @JSValue = CallDirect function=f4
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="method"
+# CHECK: module=m0 position=643 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f5 @Cell, v1: anything @JSValue):
+# CHECK-NEXT: v2: 7 @JSValue = CallDirect function=f5
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="method"
+# CHECK: module=m0 position=703 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f6}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6} creator=Entrypoint{target=f6 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f6 @Cell, v1: anything @JSValue):
+# CHECK-NEXT: v2: 1 @JSValue = CallDirect function=f6
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="method"
+# CHECK: module=m0 position=761 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f8 @Cell, v1: anything @JSValue):
+# CHECK-NEXT: v2: 9 @JSValue = CallDirect function=f8
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }

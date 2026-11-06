@@ -1,0 +1,118 @@
+# A constructor function gets a new object as its prototype, and its members are stored through another name for that object. Classes below it read those members as values and call them.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="members-stored-another-name-new.js" displayPath="members-stored-another-name-new.js" body=f0 namespaceLayout=L(m0)
+module m1 path="internal:shared" displayPath="internal:shared" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalShared body=f7
+module m2 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f11
+module m3 path="/$bun/js/prelude/decorators.ts" displayPath="/$bun/js/prelude/decorators.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+entry module=m0
+layout L0 kind=Instance name="Emitter" module=m0 position=188 constructor=f1 fields=[{key="count" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Stream" module=m0 position=537 base=L0 constructor=f2 fields=[{key="count" declared={type=number flags=[IsExpected]}}, {key="name" declared={type=anything} flags=[IsRequired]}, {key="ended" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="size" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=4
+layout L2 kind=Instance name="NotImplementedError" module=m1 position=43 constructor=f8 fields=[{key="code" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=2
+layout L3 kind=Instance name="PerformanceNodeEntry" module=m1 position=9323 constructor=f9 fields=[{key="name" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="entryType" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="startTime" declared={type=number} flags=[IsRequired]}, {key="duration" declared={type=number} flags=[IsRequired]}, {key="detail" declared={type=anything} flags=[IsRequired]}] ownFieldCount=5
+layout L4 kind=Instance name="AssertionError" module=m2 position=8180 constructor=f12 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="code" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=2
+layout L5 module=m2 position=33356 fields=[{key="constructor" declared={type=undefined|null|function|builtin(Array)|builtin(ArrayBuffer)|builtin(Map)|builtin(Object)|builtin(Set) flags=[OmitsNull]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L6 module=m3 position=2955 fields=[{key="isPrivate" declared={type=anything} flags=[IsRequired]}, {key="isStatic" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 3, 1, 0] ownFieldCount=4
+layout L7 module=m3 position=3202 fields=[{key="addInitializer" declared={type=undefined|null|function|f13 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="metadata" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 3, 2, 0] ownFieldCount=4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = String string="a"
+    v5 = Construct v1, -, v4 calleeName="Stream"
+    v6 = String string="bc"
+    v7 = Construct v1, -, v6 calleeName="Stream"
+    v8 = String string="def"
+    v9 = Construct v1, -, v8 calleeName="Stream"
+    v10 = NewArray v5, v7, v9 contents=anything
+    v11 = Convert v10 declared={type=undefined|null|Array flags=[IsExpected]}
+    v12 = Builtin builtin=Number
+    v13 = Builtin builtin=Process
+    v14 = PropGet v13 key="argv"
+    v15 = Convert v14 declared={type=builtin(ProcessArgv) flags=[IsExpected]}
+    v16 = Integer integer=2
+    v17 = ElemGet v15, v16
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+    v19 = Integer integer=1000
+    v20 = Call v12, -, v19 calleeName="Number"
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Integer
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Integer
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v23, v25)
+  b1(v26, v27):
+    LoopHint
+    v29 = Integer integer=3
+    v30 = Mod v27, v29
+    v31 = ElemGet v11, v30
+    v32 = Convert v31 declared={type=undefined|null|L1|L2|L3|L4 flags=[IsExpected]}
+    v33 = Call v3, -, v32 calleeName="isUnheard"
+    v34 = Convert v33 declared={type=boolean flags=[IsExpected]}
+    v35 = Integer integer=1
+    v36 = Add v26, v35
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Increment v27
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v37, v39)
+}
+function f1 name="Emitter" module=m0 position=188 flags=[HasThis, HasExplicitName] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0|L1):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="Stream" module=m0 position=537 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v3 = Boolean
+    PropSet v2, v3 key="ended"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="isUnheard" module=m0 position=744 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2|L3|L4|L5|L6|L7 flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f7 module=m1 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f8 name="NotImplementedError" module=m1 position=108 kind=DerivedConstructor role=Library flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] constructedClass=L2
+function f9 name="PerformanceNodeEntry" module=m1 position=9457 kind=BaseConstructor role=Library flags=[HasNewTarget, IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] constructedClass=L3
+function f10 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m2 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f12 name="AssertionError" module=m2 position=8346 kind=DerivedConstructor role=Library flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}, {type=undefined|boolean}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsLongConstructor] constructedClass=L4
+function f13 name="addInitializer" module=m3 position=3267 kind=Arrow role=Library flags=[IsChecked, IsHiddenInStackTraces] length=1 captures=[{type=anything}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f14 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f3 @Cell = NewClosure function=f3 allocationSite=1 storage=Frame closureForm=Slim
+# CHECK-NEXT: v1: L1 @Cell = CallDirect function=f21
+# CHECK-NEXT: v2: false @JSValue = Boolean
+# CHECK-NEXT: PropSet v1, v2 key="ended" accessSite=8 receivers=[L1]
+# CHECK-NEXT: v4: L1 @Cell = CallDirect function=f21
+# CHECK-NEXT: v5: false @JSValue = Boolean
+# CHECK-NEXT: PropSet v4, v5 key="ended" accessSite=8 receivers=[L1]
+# CHECK-NEXT: v7: L1 @Cell = CallDirect function=f21
+# CHECK-NEXT: v8: false @JSValue = Boolean
+# CHECK-NEXT: PropSet v7, v8 key="ended" accessSite=8 receivers=[L1]
+# CHECK-NEXT: v10: anything @JSValue = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v11: anything @JSValue = Upcast v10 castType=anything
+# CHECK-NEXT: v12: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: v13: anything @JSValue = ElemGet v11, v12 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v14: 0 @Double = Integer
+# CHECK-NEXT: v23: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=1
+# CHECK-NEXT: Jump -> next b1(v14)
+# CHECK-NEXT: b1(v15: int|whole @Double):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v17: 3 @Double = Integer integer=3
+# CHECK-NEXT: v18: int|whole @Double = Mod v15, v17 form=Numbers
+# CHECK-NEXT: v19: undefined @JSValue = Undefined
+# CHECK-NEXT: Switch v18 cases=[0, 1, 2] -> case b2(v1), case b2(v4), case b2(v7), otherwise b2(v19)
+# CHECK-NEXT: b2(v20: undefined|L1 @JSValue):
+# CHECK-NEXT: v21: anything @JSValue = CallResolved v0, v23, -, v20 calleeName="isUnheard" accessSite=7 callees=[f3]
+# CHECK-NEXT: v22: int|whole @Double = Increment v15 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v22)
+# CHECK-NEXT: }

@@ -1,0 +1,144 @@
+# -- source: variable-assigned-every-case-exhaustive.ts
+# // A variable without an initializer is assigned in every case of a switch that is exhaustive over a union of literals.
+# // Flags: --aot-check=verify-each-pass
+# declare const console: { log(...values: unknown[]): void };
+# type Marker = '+' | '-' | ' '
+# function f(marker: Marker, a: number, b: number) {
+#   let n: number
+#   switch (marker) {
+#     case '+':
+#       n = a
+#       break
+#     case '-':
+#       n = b
+#       break
+#     case ' ':
+#       n = a + b
+#       break
+#   }
+#   return { n, marker }
+# }
+# console.log(f('+', 1, 2).n, f('-', 1, 2).n, f(' ', 1, 2).n)
+# -- end of source
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="variable-assigned-every-case-exhaustive.ts" displayPath="variable-assigned-every-case-exhaustive.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=260 kind=Parameter
+typesite w1 module=m0 position=276 kind=Parameter
+typesite w2 module=m0 position=287 kind=Parameter
+typesite w3 module=m0 position=249 kind=Result
+typesite w4 module=m0 position=495 kind=CallResult
+typesite w5 module=m0 position=511 kind=CallResult
+typesite w6 module=m0 position=527 kind=CallResult
+typesite w7 module=m0 position=306 kind=Variable
+layout L0 module=m0 position=467 fields=[{key="marker" declared={type=undefined|null|" "|"+"|"-" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="console" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
+    v5 = PropGet v4 key="log"
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v7 = String string="+"
+    v8 = Integer integer=1
+    v9 = Integer integer=2
+    v10 = Call v1, -, v7, v8, v9 calleeName="f"
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v12 = PropGet v11 key="n"
+    v13 = String string="-"
+    v14 = Integer integer=1
+    v15 = Integer integer=2
+    v16 = Call v1, -, v13, v14, v15 calleeName="f"
+    v17 = Convert v16 declared={type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v18 = PropGet v17 key="n"
+    v19 = String string=" "
+    v20 = Integer integer=1
+    v21 = Integer integer=2
+    v22 = Call v1, -, v19, v20, v21 calleeName="f"
+    v23 = Convert v22 declared={type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v24 = PropGet v23 key="n"
+    v25 = Call v6, v4, v12, v18, v24 calleeKey="log" calleeName="console.log"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="f" module=m0 position=249 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|" "|"+"|"-" site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w1}, {type=number site=w2}] results=[{type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|" "|"+"|"-", v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Undefined
+    v4 = Convert v3 declared={type=undefined|number site=w7} illTypedCause=FromLooseType
+    SwitchString v0 strings=["+", "-", " "] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8()
+  b2(v5):
+    Jump -> next b3()
+  b3():
+    v6 = Convert v1 declared={type=undefined|number site=w7}
+    Jump -> next b9(v6, v5)
+  b4(v7):
+    Jump -> next b5()
+  b5():
+    v8 = Convert v2 declared={type=undefined|number site=w7}
+    Jump -> next b9(v8, v7)
+  b6(v9):
+    Jump -> next b7()
+  b7():
+    v10 = Add v1, v2
+    v11 = Convert v10 declared={type=undefined|number site=w7}
+    Jump -> next b9(v11, v9)
+  b8():
+    Jump -> next b9(v4, v0)
+  b9(v12: undefined|number, v13: undefined|null|" "|"+"|"-"):
+    v14 = Convert v12 declared={type=number} illTypedCause=Assertion
+    v15 = Convert v13 declared={type=undefined|null|" "|"+"|"-" flags=[OmitsNull, OmitsUndefined]}
+    v16 = NewObject -, v14, v15 layout=L0 fields=[1, 0]
+    v17 = FinishObject v16
+    v18 = Convert v17 declared={type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    Return v18
+}
+# -- generated: f0 f
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "+" = String string="+"
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: L0 = CallDirect v0, v1, v2 function=f1 accessSite=2
+# CHECK-NEXT: v4: anything ~ int|whole = PropGet v3 key="n" accessSite=3 receivers=[L0]
+# CHECK-NEXT: v5: undefined|int|whole ~ int|whole = AssumeType v4 provenType=undefined|int|whole
+# CHECK-NEXT: v6: "-" = String string="-"
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: 2 = Integer integer=2
+# CHECK-NEXT: v9: L0 = CallDirect v6, v7, v8 function=f1 accessSite=4
+# CHECK-NEXT: v10: anything ~ int|whole = PropGet v9 key="n" accessSite=5 receivers=[L0]
+# CHECK-NEXT: v11: undefined|int|whole ~ int|whole = AssumeType v10 provenType=undefined|int|whole
+# CHECK-NEXT: v12: " " = String string=" "
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: 2 = Integer integer=2
+# CHECK-NEXT: v15: L0 = CallDirect v12, v13, v14 function=f1 accessSite=6
+# CHECK-NEXT: v16: anything ~ int|whole = PropGet v15 key="n" accessSite=7 receivers=[L0]
+# CHECK-NEXT: v17: undefined|int|whole ~ int|whole = AssumeType v16 provenType=undefined|int|whole
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v5, v11, v17 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="f"
+# CHECK: module=m0 position=249 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=" "|"+"|"-" site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=1 site=w1}, {type=2 site=w2}] results=[{type=L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: " "|"+"|"-", v1: 1, v2: 2):
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: SwitchString v0 strings=["+", "-", " "] -> case b2(v1), case b2(v2), case b1(), otherwise b2(v3)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int[1, 3] ~ int[1, 3]):
+# CHECK-NEXT: v6: L0 = NewObject -, v5 layout=L0 fields=[1] allocationSite=1 allocationClass=0
+# CHECK-NEXT: v7: L0 = FinishObject v6
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }

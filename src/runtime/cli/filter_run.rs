@@ -302,6 +302,7 @@ impl<'a> ProcessHandle<'a> {
 // fields touched here). `state` backref valid for the lifetime of the run loop.
 bun_io::impl_buffered_reader_parent! {
     FilterRunHandle for ProcessHandle<'a>;
+    feature = Tools;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();

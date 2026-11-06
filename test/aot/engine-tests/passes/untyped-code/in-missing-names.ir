@@ -1,0 +1,120 @@
+# `key in object` where no object of the program has ever had a property of that name, asked over and over with the same string. The answer is remembered, and it follows as soon as the object, or an object it inherits from, gets such a property.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="in-missing-names.ts" displayPath="in-missing-names.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="asks" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="aotOperationCount" [isFreeName, isForTypeOf]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="aotOperationCount" [isFreeName]
+    v4 = Convert v3 declared={type=undefined|null|function flags=[OmitsUndefined]}
+    v5 = NewClosure function=f2
+    v6 = Convert v5 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v7 = NewClosure function=f3
+    v8 = Convert v7 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    v9 = Builtin builtin=JSON
+    v10 = PropGet v9 key="parse"
+    v11 = Convert v10 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v12 = String string="{\"inherited\":1}"
+    v13 = Call v11, v9, v12 calleeKey="parse" calleeName="JSON.parse"
+    v14 = Convert v13 declared={type=undefined|null|object flags=[IsExpected]}
+    v15 = Builtin builtin=JSON
+    v16 = PropGet v15 key="parse"
+    v17 = Convert v16 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v18 = String string="{\"a\":1,\"b\":2}"
+    v19 = Call v17, v15, v18 calleeKey="parse" calleeName="JSON.parse"
+    v20 = Convert v19 declared={type=undefined|null|object flags=[IsExpected]}
+    v21 = Integer
+    v22 = Convert v21 declared={type=number}
+    v23 = Call v6 calleeName="entered"
+    v24 = Convert v23 declared={type=number}
+    v25 = Integer
+    v26 = Convert v25 declared={type=number}
+    v27 = Integer
+    v28 = Convert v27 declared={type=number}
+    v29 = Call v6 calleeName="entered"
+    v30 = Convert v29 declared={type=number}
+    v31 = Sub v30, v24
+    v32 = Integer integer=100
+    v33 = Less v31, v32
+    v34 = String string="first"
+    v35 = String string="Unknown"
+    v36 = Call v8, -, v34, v35 calleeName="join"
+    v37 = Convert v36 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v38 = Integer integer=1
+    ElemSet v14, v37, v38
+    v40 = Integer
+    v41 = Convert v40 declared={type=number}
+    v42 = Integer
+    v43 = Convert v42 declared={type=number}
+    Jump -> next b1(v41, v43)
+  b1(v44: number, v45: number):
+    LoopHint
+    v47 = GetModuleVariable variable=g0
+    v48 = String string="made"
+    v49 = String string="Anew"
+    v50 = Builtin builtin=String
+    v51 = Integer integer=7
+    v52 = Mod v45, v51
+    v53 = Call v50, -, v52 calleeName="String"
+    v54 = Convert v53 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v55 = Call v8, -, v48, v49, v54 calleeName="join"
+    v56 = Convert v55 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v57 = Call v47, -, v20, v56 calleeName="asks"
+    v58 = Convert v57 declared={type=boolean}
+    v59 = Integer integer=1
+    v60 = Add v44, v59
+    v61 = Convert v60 declared={type=number}
+    v62 = Increment v45
+    v63 = Convert v62 declared={type=number}
+    Jump -> next b1(v61, v63)
+}
+function f1 name="asks" module=m0 position=609 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="entered" module=m0 position=456 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="join" module=m0 position=569 kind=Arrow flags=[HasRestParameter, IsChecked] thisType={type=anything} parameters=[{type=Array<undefined|null|string> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: Array<undefined|null|string>):
+    v1 = PropGet v0 key="join"
+    v2 = String string=""
+    v3 = Call v1, v0, v2 calleeKey="join" calleeName="parts.join"
+    ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v1: anything = PropGet v0 key="aotOperationCount" accessSite=1 [isFreeName]
+# CHECK-NEXT: v2: f2 = NewClosure function=f2 allocationSite=0 storage=Frame
+# CHECK-NEXT: v3: "{\"inherited\":1}" = String string="{\"inherited\":1}"
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: null|boolean|number|string|object = CallBuiltin -, v3, v4 overload=JSONParse/0 accessSite=3
+# CHECK-NEXT: v6: null|boolean|number|string|object ~ null|object = Upcast v5 castType=anything
+# CHECK-NEXT: v7: "{\"a\":1,\"b\":2}" = String string="{\"a\":1,\"b\":2}"
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: null|boolean|number|string|object = CallBuiltin -, v7, v8 overload=JSONParse/0 accessSite=5
+# CHECK-NEXT: v10: null|boolean|number|string|object ~ null|object = Upcast v9 castType=anything
+# CHECK-NEXT: v11: number = Call v2 calleeName="entered" accessSite=6 callees=[f2]
+# CHECK-NEXT: v12: number = Call v2 calleeName="entered" accessSite=7 callees=[f2]
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: PropSet v6, v13 key="firstUnknown" accessSite=9
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1(v15)
+# CHECK-NEXT: b1(v17: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v19: "made" = String string="made"
+# CHECK-NEXT: v20: "Anew" = String string="Anew"
+# CHECK-NEXT: v21: 7 = Integer integer=7
+# CHECK-NEXT: v22: int|whole = Mod v17, v21
+# CHECK-NEXT: v23: string = CallBuiltin -, v22 overload=String/0 accessSite=10
+# CHECK-NEXT: v24: string = Strcat v19, v20, v23 @0:1 tail
+# CHECK-NEXT: v25: boolean = Call v16, -, v10, v24 calleeName="asks" accessSite=12 callees=[f1]
+# CHECK-NEXT: v26: int|whole = Increment v17
+# CHECK-NEXT: Jump -> next b1(v26)
+# CHECK-NEXT: }

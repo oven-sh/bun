@@ -1,0 +1,206 @@
+# Objects with eighteen to twenty-three optional numbers are filled in two arms of a switch that meet, handed back and summed.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="objects-many-optional-numbers-filled-two.ts" displayPath="objects-many-optional-numbers-filled-two.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Wide18" module=m0 position=133 fields=[{key="a00" declared={type=undefined|number}}, {key="a01" declared={type=undefined|number}}, {key="a02" declared={type=undefined|number}}, {key="a03" declared={type=undefined|number}}, {key="a04" declared={type=undefined|number}}, {key="a05" declared={type=undefined|number}}, {key="a06" declared={type=undefined|number}}, {key="a07" declared={type=undefined|number}}, {key="a08" declared={type=undefined|number}}, {key="a09" declared={type=undefined|number}}, {key="a10" declared={type=undefined|number}}, {key="a11" declared={type=undefined|number}}, {key="a12" declared={type=undefined|number}}, {key="a13" declared={type=undefined|number}}, {key="a14" declared={type=undefined|number}}, {key="a15" declared={type=undefined|number}}, {key="a16" declared={type=undefined|number}}, {key="a17" declared={type=undefined|number}}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[18, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] ownFieldCount=19
+layout L1 name="Wide20" module=m0 position=1470 fields=[{key="a00" declared={type=undefined|number}}, {key="a01" declared={type=undefined|number}}, {key="a02" declared={type=undefined|number}}, {key="a03" declared={type=undefined|number}}, {key="a04" declared={type=undefined|number}}, {key="a05" declared={type=undefined|number}}, {key="a06" declared={type=undefined|number}}, {key="a07" declared={type=undefined|number}}, {key="a08" declared={type=undefined|number}}, {key="a09" declared={type=undefined|number}}, {key="a10" declared={type=undefined|number}}, {key="a11" declared={type=undefined|number}}, {key="a12" declared={type=undefined|number}}, {key="a13" declared={type=undefined|number}}, {key="a14" declared={type=undefined|number}}, {key="a15" declared={type=undefined|number}}, {key="a16" declared={type=undefined|number}}, {key="a17" declared={type=undefined|number}}, {key="a18" declared={type=undefined|number}}, {key="a19" declared={type=undefined|number}}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ownFieldCount=21
+layout L2 name="Wide23" module=m0 position=2929 fields=[{key="a00" declared={type=undefined|number}}, {key="a01" declared={type=undefined|number}}, {key="a02" declared={type=undefined|number}}, {key="a03" declared={type=undefined|number}}, {key="a04" declared={type=undefined|number}}, {key="a05" declared={type=undefined|number}}, {key="a06" declared={type=undefined|number}}, {key="a07" declared={type=undefined|number}}, {key="a08" declared={type=undefined|number}}, {key="a09" declared={type=undefined|number}}, {key="a10" declared={type=undefined|number}}, {key="a11" declared={type=undefined|number}}, {key="a12" declared={type=undefined|number}}, {key="a13" declared={type=undefined|number}}, {key="a14" declared={type=undefined|number}}, {key="a15" declared={type=undefined|number}}, {key="a16" declared={type=undefined|number}}, {key="a17" declared={type=undefined|number}}, {key="a18" declared={type=undefined|number}}, {key="a19" declared={type=undefined|number}}, {key="a20" declared={type=undefined|number}}, {key="a21" declared={type=undefined|number}}, {key="a22" declared={type=undefined|number}}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22] ownFieldCount=24
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = Integer
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v13)
+  b1(v14: number):
+    LoopHint
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="console" [isFreeName]
+    v18 = Convert v17 declared={type=builtin(Console) flags=[IsExpected]}
+    v19 = PropGet v18 key="log"
+    v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v21 = Call v1, -, v14 calleeName="make18"
+    v22 = Convert v21 declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}
+    v23 = Call v3, -, v22 calleeName="sum18"
+    v24 = Convert v23 declared={type=number}
+    v25 = Call v5, -, v14 calleeName="make20"
+    v26 = Convert v25 declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}
+    v27 = Call v7, -, v26 calleeName="sum20"
+    v28 = Convert v27 declared={type=number}
+    v29 = Call v9, -, v14 calleeName="make23"
+    v30 = Convert v29 declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}
+    v31 = Call v11, -, v30 calleeName="sum23"
+    v32 = Convert v31 declared={type=number}
+    v33 = Call v20, v18, v24, v28, v32 calleeKey="log" calleeName="console.log"
+    v34 = Increment v14
+    v35 = Convert v34 declared={type=number}
+    Jump -> next b1(v35)
+}
+function f1 name="make18" module=m0 position=413 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = String string="n"
+    v2 = Add v1, v0
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v4 = NewObject -, v3 layout=L0 fields=[18]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Integer integer=4
+    v8 = Mod v0, v7
+    Switch v8 cases=[0, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v9 = Integer integer=2
+    v10 = Mul v0, v9
+    v11 = Integer integer=7
+    v12 = Add v10, v11
+    v13 = Convert v12 declared={type=undefined|number}
+    PropSet v6, v13 key="a07"
+    v15 = Integer integer=2
+    v16 = Mul v0, v15
+    v17 = Integer integer=8
+    v18 = Add v16, v17
+    v19 = Convert v18 declared={type=undefined|number}
+    PropSet v6, v19 key="a08"
+    Jump -> next b2()
+  b2():
+    v21 = Integer integer=2
+    v22 = Mul v0, v21
+    v23 = Integer
+    v24 = Add v22, v23
+    v25 = Convert v24 declared={type=undefined|number}
+    PropSet v6, v25 key="a09"
+    v27 = Integer integer=2
+    v28 = Mul v0, v27
+    v29 = Integer integer=1
+    v30 = Add v28, v29
+    v31 = Convert v30 declared={type=undefined|number}
+    PropSet v6, v31 key="a10"
+    v33 = Integer integer=2
+    v34 = Mul v0, v33
+    v35 = Integer integer=2
+    v36 = Add v34, v35
+    v37 = Convert v36 declared={type=undefined|number}
+    PropSet v6, v37 key="a11"
+    v39 = Integer integer=2
+    v40 = Mul v0, v39
+    v41 = Integer integer=3
+    v42 = Add v40, v41
+    v43 = Convert v42 declared={type=undefined|number}
+    PropSet v6, v43 key="a12"
+    v45 = Integer integer=2
+    v46 = Mul v0, v45
+    v47 = Integer integer=4
+    v48 = Add v46, v47
+    v49 = Convert v48 declared={type=undefined|number}
+    PropSet v6, v49 key="a13"
+    v51 = Integer integer=2
+    v52 = Mul v0, v51
+    v53 = Integer integer=5
+    v54 = Add v52, v53
+    v55 = Convert v54 declared={type=undefined|number}
+    PropSet v6, v55 key="a14"
+    v57 = Integer integer=2
+    v58 = Mul v0, v57
+    v59 = Integer integer=6
+    v60 = Add v58, v59
+    v61 = Convert v60 declared={type=undefined|number}
+    PropSet v6, v61 key="a15"
+    v63 = Integer integer=2
+    v64 = Mul v0, v63
+    v65 = Integer integer=7
+    v66 = Add v64, v65
+    v67 = Convert v66 declared={type=undefined|number}
+    PropSet v6, v67 key="a16"
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Return v6
+}
+function f2 name="sum18" module=m0 position=1060 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1|L2):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = PropGet v0 key="a00"
+    v4 = Integer
+    v5 = Add v2, v4
+    v6 = Convert v5 declared={type=number}
+    v7 = PropGet v0 key="a01"
+    v8 = Integer
+    v9 = Add v6, v8
+    v10 = Convert v9 declared={type=number}
+    v11 = PropGet v0 key="a02"
+    v12 = Integer
+    v13 = Add v10, v12
+    v14 = Convert v13 declared={type=number}
+    v15 = PropGet v0 key="a03"
+    v16 = Integer
+    v17 = Add v14, v16
+    v18 = Convert v17 declared={type=number}
+    v19 = PropGet v0 key="a04"
+    v20 = Integer
+    v21 = Add v18, v20
+    v22 = Convert v21 declared={type=number}
+    v23 = PropGet v0 key="a05"
+    v24 = Add v22, v23
+    v25 = Convert v24 declared={type=number}
+    v26 = PropGet v0 key="a06"
+    v27 = Add v25, v26
+    v28 = Convert v27 declared={type=number}
+    v29 = PropGet v0 key="a07"
+    v30 = Add v28, v29
+    v31 = Convert v30 declared={type=number}
+    v32 = PropGet v0 key="a08"
+    v33 = Add v31, v32
+    v34 = Convert v33 declared={type=number}
+    v35 = PropGet v0 key="a09"
+    v36 = Add v34, v35
+    v37 = Convert v36 declared={type=number}
+    v38 = PropGet v0 key="a10"
+    v39 = Add v37, v38
+    v40 = Convert v39 declared={type=number}
+    v41 = PropGet v0 key="a11"
+    v42 = Add v40, v41
+    v43 = Convert v42 declared={type=number}
+    v44 = PropGet v0 key="a12"
+    v45 = Add v43, v44
+    v46 = Convert v45 declared={type=number}
+    v47 = PropGet v0 key="a13"
+    v48 = Add v46, v47
+    v49 = Convert v48 declared={type=number}
+    v50 = PropGet v0 key="a14"
+    v51 = Add v49, v50
+    v52 = Convert v51 declared={type=number}
+    v53 = PropGet v0 key="a15"
+    v54 = Add v52, v53
+    v55 = Convert v54 declared={type=number}
+    v56 = PropGet v0 key="a16"
+    v57 = Add v55, v56
+    v58 = Convert v57 declared={type=number}
+    v59 = PropGet v0 key="a17"
+    v60 = Integer
+    v61 = Add v58, v60
+    v62 = Convert v61 declared={type=number}
+    Return v62
+}
+function f3 name="make20" module=m0 position=1778 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="sum20" module=m0 position=2481 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="make23" module=m0 position=3279 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="sum23" module=m0 position=4069 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 181, patchpoints: 18, rare instructions: 23, polls: 1
+# CHECK-NEXT: end of function f0

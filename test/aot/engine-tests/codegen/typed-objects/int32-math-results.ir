@@ -1,0 +1,161 @@
+# What `Math.min`, `Math.max`, `Math.abs`, `Math.sign` and a rounded quotient return is an `int32` by proof where the operands limit it, and so is a counter that several cases of a `switch` advance under the test of a loop. type-rules/int32-unproven-stores has what is not.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="int32-math-results.ts" displayPath="int32-math-results.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer integer=-9
+    v3 = Integer integer=9
+    v4 = Convert v2 declared={type=i32 flags=[IsInt32Promise]}
+    v5 = Convert v3 declared={type=i32 flags=[IsInt32Promise]}
+    v6 = Call v1, -, v4, v5 calleeName="steps"
+    v7 = Integer integer=5
+    v8 = Integer integer=5
+    v9 = Convert v7 declared={type=i32 flags=[IsInt32Promise]}
+    v10 = Convert v8 declared={type=i32 flags=[IsInt32Promise]}
+    v11 = Call v1, -, v9, v10 calleeName="steps"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="steps" module=m0 position=1409 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}, {type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: i32):
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]}
+    v4 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
+    Jump -> next b1(v3, v4)
+  b1(v5: i32, v6: i32):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(| 0, 1), notTaken b8(| 0, 1)
+  b2(v9, v10):
+    v11 = Integer integer=3
+    v12 = BitAnd v9, v11
+    Switch v12 cases=[0, 1, 2] -> case b3(), case b4(), case b5(v5), otherwise b6()
+  b3():
+    v13 = Increment v9
+    v14 = Convert v13 declared={type=i32 flags=[IsInt32Promise]}
+    Jump -> next b7(v5, v14)
+  b4():
+    v15 = Convert v5 declared={type=i32 flags=[IsInt32Promise]}
+    Return v15
+  b5(v16: i32):
+    v17 = Increment v9
+    v18 = Convert v17 declared={type=i32 flags=[IsInt32Promise]}
+    Jump -> next b7(v16, v18)
+  b6():
+    v19 = Integer integer=5
+    v20 = Add v9, v19
+    v21 = Integer
+    v22 = BitOr v20, v21
+    v23 = Convert v22 declared={type=i32 flags=[IsInt32Promise]}
+    Jump -> next b7(v5, v23)
+  b7(v24: i32, v25: i32):
+    v26 = Integer integer=1
+    v27 = Add v24, v26
+    v28 = Integer
+    v29 = BitOr v27, v28
+    v30 = Convert v29 declared={type=i32 flags=[IsInt32Promise]}
+    Jump -> next b1(v30, v25)
+  b8(v31, v32):
+    v33 = Convert v5 declared={type=i32 flags=[IsInt32Promise]}
+    Return v33
+}
+# -- generated: steps
+# CHECK-LABEL: function {{*}}name="steps"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@19 = Trunc(b@18)
+# CHECK-NEXT: Int64 b@20 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int32 b@21 = Trunc(b@20)
+# CHECK-NEXT: Int32 b@59 = LessThan(b@19, b@21, v6:Less)
+# CHECK-NEXT: Int32 b@27 = Const32(0, v2:Integer)
+# CHECK-NEXT: Void b@35 = Branch(b@59, Terminal, v6:Less)
+# CHECK-NEXT: Successors: Then:#16, Else:#7
+# CHECK-NEXT: BB#16: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@68 = Upsilon($0(b@27), ^66, WritesLocalState, v9:BitAnd)
+# CHECK-NEXT: Void b@69 = Upsilon(b@19, ^67, WritesLocalState, v9:BitAnd)
+# CHECK-NEXT: Void b@61 = Jump(Terminal, v9:BitAnd)
+# CHECK-NEXT: Successors: #11
+# CHECK-NEXT: BB#11: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #16, #10
+# CHECK-NEXT: Int32 b@66 = Phi(ReadsLocalState, v3:Parameter)
+# CHECK-NEXT: Int32 b@67 = Phi(ReadsLocalState, v4:Parameter)
+# CHECK-NEXT: Int32 b@36 = Const32(3, v8:Integer)
+# CHECK-NEXT: Int32 b@37 = BitAnd(b@67, $3(b@36), v9:BitAnd)
+# CHECK-NEXT: Int32 b@39 = Const32(1, v10:Increment)
+# CHECK-NEXT: Void b@23 = Branch(b@37, Terminal)
+# CHECK-NEXT: Successors: Then:#12, Else:#2
+# CHECK-NEXT: BB#12: ; frequency = 2.500000
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Int32 b@29 = Equal(b@37, $1(b@39))
+# CHECK-NEXT: Void b@32 = Branch(b@29, Terminal)
+# CHECK-NEXT: Successors: Then:#3, Else:#13
+# CHECK-NEXT: BB#3: ; frequency = 0.250000
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Void b@43 = Return(b@66, Terminal)
+# CHECK-NEXT: BB#13: ; frequency = 2.250000
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Int32 b@31 = Const32(2)
+# CHECK-NEXT: Int32 b@24 = Equal(b@37, $2(b@31))
+# CHECK-NEXT: Void b@49 = Branch(b@24, Terminal)
+# CHECK-NEXT: Successors: Then:#4, Else:#5
+# CHECK-NEXT: BB#4: ; frequency = 1.125000
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Int32 b@44 = Add(b@67, $1(b@39), v11:Increment)
+# CHECK-NEXT: Void b@45 = Upsilon(b@44, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@46 = Jump(Terminal)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#6: ; frequency = 4.750000
+# CHECK-NEXT: Predecessors: #5, #4, #2
+# CHECK-NEXT: Int32 b@25 = Phi(ReadsLocalState, v16:Parameter)
+# CHECK-NEXT: Int32 b@15 = Add(b@66, $1(b@39), v18:Add)
+# CHECK-NEXT: Void b@1 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v5:LoopHint)
+# CHECK-NEXT: Int32 b@33 = GreaterThan(b@21, b@25, v6:Less)
+# CHECK-NEXT: Void b@26 = Branch(b@33, Terminal, v6:Less)
+# CHECK-NEXT: Successors: Then:#10, Else:#8
+# CHECK-NEXT: BB#10: ; frequency = 4.275000
+# CHECK-NEXT: Predecessors: #6
+# CHECK-NEXT: Void b@70 = Upsilon(b@15, ^66, WritesLocalState, v9:BitAnd)
+# CHECK-NEXT: Void b@71 = Upsilon(b@25, ^67, WritesLocalState, v9:BitAnd)
+# CHECK-NEXT: Void b@63 = Jump(Terminal, v9:BitAnd)
+# CHECK-NEXT: Successors: #11
+# CHECK-NEXT: BB#8: ; frequency = 0.475000
+# CHECK-NEXT: Predecessors: #6
+# CHECK-NEXT: Void b@72 = Upsilon(b@15, ^65, WritesLocalState)
+# CHECK-NEXT: Void b@64 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#9: ; frequency = 0.975000
+# CHECK-NEXT: Predecessors: #7, #8
+# CHECK-NEXT: Int32 b@65 = Phi(ReadsLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@60 = Return(b@65, Terminal)
+# CHECK-NEXT: BB#5: ; frequency = 1.125000
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Int32 b@47 = Const32(5, v12:Integer)
+# CHECK-NEXT: Int32 b@48 = Add(b@67, $5(b@47), v13:Add)
+# CHECK-NEXT: Void b@50 = Upsilon(b@48, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@51 = Jump(Terminal)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#2: ; frequency = 2.500000
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Int32 b@40 = Add(b@67, $1(b@39), v10:Increment)
+# CHECK-NEXT: Void b@41 = Upsilon(b@40, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@42 = Jump(Terminal)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#7: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@9 = Upsilon($0(b@27), ^65, WritesLocalState)
+# CHECK-NEXT: Void b@62 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: range = [-9,5]
+# CHECK-NEXT: b@21: range = [5,9]
+# CHECK-NEXT: b@25: range = [-8,15]
+# CHECK-NEXT: b@67: range = [-9,15]
+# CHECK-NEXT: end of function f1

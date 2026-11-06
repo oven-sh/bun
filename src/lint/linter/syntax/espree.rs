@@ -389,7 +389,7 @@ impl Candidates {
                 | Kind::ImportCall { .. }
                 | Kind::NewTarget(_)
                 | Kind::PrivateIdentifier(_)
-                | Kind::Regex
+                | Kind::Regex { .. }
                 | Kind::Super
                 | Kind::TaggedTemplate(_)
                 | Kind::Yield { .. } => true,

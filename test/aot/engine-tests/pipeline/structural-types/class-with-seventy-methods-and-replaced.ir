@@ -1,0 +1,689 @@
+# A class with seventy methods and some are replaced.
+# FORM: AsRead
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="class-with-seventy-methods-and-replaced.ts" displayPath="class-with-seventy-methods-and-replaced.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Wide" module=m0 position=61 constructor=f3 fields=[{key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 position=3288 base=L0 constructor=f74 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="all" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f4
+    v5 = NewClosure function=f5
+    DefineMethod v3, v5 layout=L0 index=1 key="m2"
+    v7 = NewClosure function=f6
+    DefineMethod v3, v7 layout=L0 index=2 key="m3"
+    v9 = NewClosure function=f7
+    DefineMethod v3, v9 layout=L0 index=3 key="m4"
+    v11 = NewClosure function=f8
+    DefineMethod v3, v11 layout=L0 index=4 key="m5"
+    v13 = NewClosure function=f9
+    DefineMethod v3, v13 layout=L0 index=5 key="m6"
+    v15 = NewClosure function=f10
+    DefineMethod v3, v15 layout=L0 index=6 key="m7"
+    v17 = NewClosure function=f11
+    DefineMethod v3, v17 layout=L0 index=7 key="m8"
+    v19 = NewClosure function=f12
+    DefineMethod v3, v19 layout=L0 index=8 key="m9"
+    v21 = NewClosure function=f13
+    DefineMethod v3, v21 layout=L0 index=9 key="m10"
+    v23 = NewClosure function=f14
+    DefineMethod v3, v23 layout=L0 index=10 key="m11"
+    v25 = NewClosure function=f15
+    DefineMethod v3, v25 layout=L0 index=11 key="m12"
+    v27 = NewClosure function=f16
+    DefineMethod v3, v27 layout=L0 index=12 key="m13"
+    v29 = NewClosure function=f17
+    DefineMethod v3, v29 layout=L0 index=13 key="m14"
+    v31 = NewClosure function=f18
+    DefineMethod v3, v31 layout=L0 index=14 key="m15"
+    v33 = NewClosure function=f19
+    DefineMethod v3, v33 layout=L0 index=15 key="m16"
+    v35 = NewClosure function=f20
+    DefineMethod v3, v35 layout=L0 index=16 key="m17"
+    v37 = NewClosure function=f21
+    DefineMethod v3, v37 layout=L0 index=17 key="m18"
+    v39 = NewClosure function=f22
+    DefineMethod v3, v39 layout=L0 index=18 key="m19"
+    v41 = NewClosure function=f23
+    DefineMethod v3, v41 layout=L0 index=19 key="m20"
+    v43 = NewClosure function=f24
+    DefineMethod v3, v43 layout=L0 index=20 key="m21"
+    v45 = NewClosure function=f25
+    DefineMethod v3, v45 layout=L0 index=21 key="m22"
+    v47 = NewClosure function=f26
+    DefineMethod v3, v47 layout=L0 index=22 key="m23"
+    v49 = NewClosure function=f27
+    DefineMethod v3, v49 layout=L0 index=23 key="m24"
+    v51 = NewClosure function=f28
+    DefineMethod v3, v51 layout=L0 index=24 key="m25"
+    v53 = NewClosure function=f29
+    DefineMethod v3, v53 layout=L0 index=25 key="m26"
+    v55 = NewClosure function=f30
+    DefineMethod v3, v55 layout=L0 index=26 key="m27"
+    v57 = NewClosure function=f31
+    DefineMethod v3, v57 layout=L0 index=27 key="m28"
+    v59 = NewClosure function=f32
+    DefineMethod v3, v59 layout=L0 index=28 key="m29"
+    v61 = NewClosure function=f33
+    DefineMethod v3, v61 layout=L0 index=29 key="m30"
+    v63 = NewClosure function=f34
+    DefineMethod v3, v63 layout=L0 index=30 key="m31"
+    v65 = NewClosure function=f35
+    DefineMethod v3, v65 layout=L0 index=31 key="m32"
+    v67 = NewClosure function=f36
+    DefineMethod v3, v67 layout=L0 index=32 key="m33"
+    v69 = NewClosure function=f37
+    DefineMethod v3, v69 layout=L0 index=33 key="m34"
+    v71 = NewClosure function=f38
+    DefineMethod v3, v71 layout=L0 index=34 key="m35"
+    v73 = NewClosure function=f39
+    DefineMethod v3, v73 layout=L0 index=35 key="m36"
+    v75 = NewClosure function=f40
+    DefineMethod v3, v75 layout=L0 index=36 key="m37"
+    v77 = NewClosure function=f41
+    DefineMethod v3, v77 layout=L0 index=37 key="m38"
+    v79 = NewClosure function=f42
+    DefineMethod v3, v79 layout=L0 index=38 key="m39"
+    v81 = NewClosure function=f43
+    DefineMethod v3, v81 layout=L0 index=39 key="m40"
+    v83 = NewClosure function=f44
+    DefineMethod v3, v83 layout=L0 index=40 key="m41"
+    v85 = NewClosure function=f45
+    DefineMethod v3, v85 layout=L0 index=41 key="m42"
+    v87 = NewClosure function=f46
+    DefineMethod v3, v87 layout=L0 index=42 key="m43"
+    v89 = NewClosure function=f47
+    DefineMethod v3, v89 layout=L0 index=43 key="m44"
+    v91 = NewClosure function=f48
+    DefineMethod v3, v91 layout=L0 index=44 key="m45"
+    v93 = NewClosure function=f49
+    DefineMethod v3, v93 layout=L0 index=45 key="m46"
+    v95 = NewClosure function=f50
+    DefineMethod v3, v95 layout=L0 index=46 key="m47"
+    v97 = NewClosure function=f51
+    DefineMethod v3, v97 layout=L0 index=47 key="m48"
+    v99 = NewClosure function=f52
+    DefineMethod v3, v99 layout=L0 index=48 key="m49"
+    v101 = NewClosure function=f53
+    DefineMethod v3, v101 layout=L0 index=49 key="m50"
+    v103 = NewClosure function=f54
+    DefineMethod v3, v103 layout=L0 index=50 key="m51"
+    v105 = NewClosure function=f55
+    DefineMethod v3, v105 layout=L0 index=51 key="m52"
+    v107 = NewClosure function=f56
+    DefineMethod v3, v107 layout=L0 index=52 key="m53"
+    v109 = NewClosure function=f57
+    DefineMethod v3, v109 layout=L0 index=53 key="m54"
+    v111 = NewClosure function=f58
+    DefineMethod v3, v111 layout=L0 index=54 key="m55"
+    v113 = NewClosure function=f59
+    DefineMethod v3, v113 layout=L0 index=55 key="m56"
+    v115 = NewClosure function=f60
+    DefineMethod v3, v115 layout=L0 index=56 key="m57"
+    v117 = NewClosure function=f61
+    DefineMethod v3, v117 layout=L0 index=57 key="m58"
+    v119 = NewClosure function=f62
+    DefineMethod v3, v119 layout=L0 index=58 key="m59"
+    v121 = NewClosure function=f63
+    DefineMethod v3, v121 layout=L0 index=59 key="m60"
+    v123 = NewClosure function=f64
+    DefineMethod v3, v123 layout=L0 index=60 key="m61"
+    v125 = NewClosure function=f65
+    DefineMethod v3, v125 layout=L0 index=61 key="m62"
+    v127 = NewClosure function=f66
+    DefineMethod v3, v127 layout=L0 index=62 key="m63"
+    v129 = NewClosure function=f67
+    DefineMethod v3, v129 layout=L0 index=63 key="m64"
+    v131 = NewClosure function=f68
+    DefineMethod v3, v131 layout=L0 index=64 key="m65"
+    v133 = NewClosure function=f69
+    DefineMethod v3, v133 layout=L0 index=65 key="m66"
+    v135 = NewClosure function=f70
+    DefineMethod v3, v135 layout=L0 index=66 key="m67"
+    v137 = NewClosure function=f71
+    DefineMethod v3, v137 layout=L0 index=67 key="m68"
+    v139 = NewClosure function=f72
+    DefineMethod v3, v139 layout=L0 index=68 key="m69"
+    v141 = NewClosure function=f73
+    DefineMethod v3, v141 layout=L0 index=69 key="m70"
+    v143 = FinishClass v3 layout=L0
+    v144 = Convert v143 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v145 = Convert v143 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v146 = ResolveHeritage v145
+    v147 = NewClosure function=f74
+    v148 = NewClass v147, v145, v146 layout=L1
+    v149 = NewClosure function=f75
+    v150 = FinishClass v148 layout=L1
+    v151 = Convert v150 declared={type=f74 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v152 = Construct v145 calleeName="Wide"
+    v153 = Convert v152 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v154 = Construct v151 calleeName="Below"
+    v155 = Convert v154 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v156 = Integer
+    v157 = Convert v156 declared={type=number}
+    v158 = Integer
+    v159 = Convert v158 declared={type=number}
+    Jump -> next b1(v157, v159)
+  b1(v160: number, v161: number):
+    LoopHint
+    v163 = Integer integer=2000
+    v164 = Less v161, v163
+    Branch v164 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v165):
+    v166 = GetModuleVariable variable=g0
+    v167 = Call v166, -, v153 calleeName="all"
+    v168 = Convert v167 declared={type=number}
+    v169 = GetModuleVariable variable=g0
+    v170 = Call v169, -, v155 calleeName="all"
+    v171 = Convert v170 declared={type=number}
+    v172 = Add v168, v171
+    v173 = Add v160, v172
+    v174 = Convert v173 declared={type=number}
+    v175 = Increment v165
+    v176 = Convert v175 declared={type=number}
+    Jump -> next b1(v174, v176)
+  b3(v177):
+    v178 = Builtin builtin=GlobalThis
+    v179 = PropGet v178 key="console" [isFreeName]
+    v180 = Convert v179 declared={type=builtin(Console) flags=[IsExpected]}
+    v181 = PropGet v180 key="log"
+    v182 = Convert v181 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v183 = String string="2000 honest: "
+    v184 = Add v183, v160
+    v185 = Call v182, v180, v184 calleeKey="log" calleeName="console.log"
+    v186 = String string="before"
+    v187 = Call v1, -, v186 calleeName="round"
+    v188 = PropGet v145 key="prototype"
+    v189 = NewClosure function=f76
+    v190 = Convert v189 declared={type=undefined|null|function|f4|f76 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v188, v190 key="m1"
+    v192 = String string="the first replaced"
+    v193 = PropGet v145 key="prototype"
+    v194 = NewClosure function=f77
+    v195 = Convert v194 declared={type=undefined|null|function|f67|f77 flags=[OmitsNull, OmitsUndefined]}
+    v196 = String string="the 64th"
+    v197 = PropGet v145 key="prototype"
+    v198 = NewClosure function=f78
+    v199 = Convert v198 declared={type=undefined|null|function|f68|f78 flags=[OmitsNull, OmitsUndefined]}
+    v200 = String string="the 65th"
+    v201 = PropGet v145 key="prototype"
+    v202 = NewClosure function=f79
+    v203 = Convert v202 declared={type=undefined|null|function|f73|f75|f79 flags=[OmitsNull, OmitsUndefined]}
+    v204 = String string="the 70th"
+    v205 = NewClosure function=f80
+    v206 = Convert v205 declared={type=undefined|null|function|f36|f80 flags=[OmitsNull, OmitsUndefined]}
+    v207 = String string="an instance covers the 33rd"
+    v208 = NewClosure function=f81
+    v209 = Convert v208 declared={type=undefined|null|function|f69|f81 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v155, v209 key="m66"
+    v211 = String string="an instance of the subclass covers the 66th"
+    v212 = Call v1, -, v211 calleeName="round"
+    v213 = PropGet v151 key="prototype"
+    v214 = NewClosure function=f82
+    v215 = Convert v214 declared={type=undefined|null|function|f5|f82 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v213, v215 key="m2"
+    v217 = String string="the subclass gets a second of its own"
+    v218 = Undefined
+    Return v218
+}
+function f1 name="all" module=m0 position=3510 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = PropGet v0 key="m1"
+    v2 = Call v1, v0 calleeKey="m1" calleeName="w.m1"
+    v3 = Convert v2 declared={type=number}
+    v4 = PropGet v0 key="m2"
+    v5 = Call v4, v0 calleeKey="m2" calleeName="w.m2"
+    v6 = Convert v5 declared={type=number}
+    v7 = Add v3, v6
+    v8 = PropGet v0 key="m3"
+    v9 = Call v8, v0 calleeKey="m3" calleeName="w.m3"
+    v10 = Convert v9 declared={type=number}
+    v11 = Add v7, v10
+    v12 = PropGet v0 key="m4"
+    v13 = Call v12, v0 calleeKey="m4" calleeName="w.m4"
+    v14 = Convert v13 declared={type=number}
+    v15 = Add v11, v14
+    v16 = PropGet v0 key="m5"
+    v17 = Call v16, v0 calleeKey="m5" calleeName="w.m5"
+    v18 = Convert v17 declared={type=number}
+    v19 = Add v15, v18
+    v20 = PropGet v0 key="m6"
+    v21 = Call v20, v0 calleeKey="m6" calleeName="w.m6"
+    v22 = Convert v21 declared={type=number}
+    v23 = Add v19, v22
+    v24 = PropGet v0 key="m7"
+    v25 = Call v24, v0 calleeKey="m7" calleeName="w.m7"
+    v26 = Convert v25 declared={type=number}
+    v27 = Add v23, v26
+    v28 = PropGet v0 key="m8"
+    v29 = Call v28, v0 calleeKey="m8" calleeName="w.m8"
+    v30 = Convert v29 declared={type=number}
+    v31 = Add v27, v30
+    v32 = PropGet v0 key="m9"
+    v33 = Call v32, v0 calleeKey="m9" calleeName="w.m9"
+    v34 = Convert v33 declared={type=number}
+    v35 = Add v31, v34
+    v36 = PropGet v0 key="m10"
+    v37 = Call v36, v0 calleeKey="m10" calleeName="w.m10"
+    v38 = Convert v37 declared={type=number}
+    v39 = Add v35, v38
+    v40 = PropGet v0 key="m11"
+    v41 = Call v40, v0 calleeKey="m11" calleeName="w.m11"
+    v42 = Convert v41 declared={type=number}
+    v43 = Add v39, v42
+    v44 = PropGet v0 key="m12"
+    v45 = Call v44, v0 calleeKey="m12" calleeName="w.m12"
+    v46 = Convert v45 declared={type=number}
+    v47 = Add v43, v46
+    v48 = PropGet v0 key="m13"
+    v49 = Call v48, v0 calleeKey="m13" calleeName="w.m13"
+    v50 = Convert v49 declared={type=number}
+    v51 = Add v47, v50
+    v52 = PropGet v0 key="m14"
+    v53 = Call v52, v0 calleeKey="m14" calleeName="w.m14"
+    v54 = Convert v53 declared={type=number}
+    v55 = Add v51, v54
+    v56 = PropGet v0 key="m15"
+    v57 = Call v56, v0 calleeKey="m15" calleeName="w.m15"
+    v58 = Convert v57 declared={type=number}
+    v59 = Add v55, v58
+    v60 = PropGet v0 key="m16"
+    v61 = Call v60, v0 calleeKey="m16" calleeName="w.m16"
+    v62 = Convert v61 declared={type=number}
+    v63 = Add v59, v62
+    v64 = PropGet v0 key="m17"
+    v65 = Call v64, v0 calleeKey="m17" calleeName="w.m17"
+    v66 = Convert v65 declared={type=number}
+    v67 = Add v63, v66
+    v68 = PropGet v0 key="m18"
+    v69 = Call v68, v0 calleeKey="m18" calleeName="w.m18"
+    v70 = Convert v69 declared={type=number}
+    v71 = Add v67, v70
+    v72 = PropGet v0 key="m19"
+    v73 = Call v72, v0 calleeKey="m19" calleeName="w.m19"
+    v74 = Convert v73 declared={type=number}
+    v75 = Add v71, v74
+    v76 = PropGet v0 key="m20"
+    v77 = Call v76, v0 calleeKey="m20" calleeName="w.m20"
+    v78 = Convert v77 declared={type=number}
+    v79 = Add v75, v78
+    v80 = PropGet v0 key="m21"
+    v81 = Call v80, v0 calleeKey="m21" calleeName="w.m21"
+    v82 = Convert v81 declared={type=number}
+    v83 = Add v79, v82
+    v84 = PropGet v0 key="m22"
+    v85 = Call v84, v0 calleeKey="m22" calleeName="w.m22"
+    v86 = Convert v85 declared={type=number}
+    v87 = Add v83, v86
+    v88 = PropGet v0 key="m23"
+    v89 = Call v88, v0 calleeKey="m23" calleeName="w.m23"
+    v90 = Convert v89 declared={type=number}
+    v91 = Add v87, v90
+    v92 = PropGet v0 key="m24"
+    v93 = Call v92, v0 calleeKey="m24" calleeName="w.m24"
+    v94 = Convert v93 declared={type=number}
+    v95 = Add v91, v94
+    v96 = PropGet v0 key="m25"
+    v97 = Call v96, v0 calleeKey="m25" calleeName="w.m25"
+    v98 = Convert v97 declared={type=number}
+    v99 = Add v95, v98
+    v100 = PropGet v0 key="m26"
+    v101 = Call v100, v0 calleeKey="m26" calleeName="w.m26"
+    v102 = Convert v101 declared={type=number}
+    v103 = Add v99, v102
+    v104 = PropGet v0 key="m27"
+    v105 = Call v104, v0 calleeKey="m27" calleeName="w.m27"
+    v106 = Convert v105 declared={type=number}
+    v107 = Add v103, v106
+    v108 = PropGet v0 key="m28"
+    v109 = Call v108, v0 calleeKey="m28" calleeName="w.m28"
+    v110 = Convert v109 declared={type=number}
+    v111 = Add v107, v110
+    v112 = PropGet v0 key="m29"
+    v113 = Call v112, v0 calleeKey="m29" calleeName="w.m29"
+    v114 = Convert v113 declared={type=number}
+    v115 = Add v111, v114
+    v116 = PropGet v0 key="m30"
+    v117 = Call v116, v0 calleeKey="m30" calleeName="w.m30"
+    v118 = Convert v117 declared={type=number}
+    v119 = Add v115, v118
+    v120 = PropGet v0 key="m31"
+    v121 = Call v120, v0 calleeKey="m31" calleeName="w.m31"
+    v122 = Convert v121 declared={type=number}
+    v123 = Add v119, v122
+    v124 = PropGet v0 key="m32"
+    v125 = Call v124, v0 calleeKey="m32" calleeName="w.m32"
+    v126 = Convert v125 declared={type=number}
+    v127 = Add v123, v126
+    v128 = PropGet v0 key="m33"
+    v129 = Call v128, v0 calleeKey="m33" calleeName="w.m33"
+    v130 = Convert v129 declared={type=number}
+    v131 = Add v127, v130
+    v132 = PropGet v0 key="m34"
+    v133 = Call v132, v0 calleeKey="m34" calleeName="w.m34"
+    v134 = Convert v133 declared={type=number}
+    v135 = Add v131, v134
+    v136 = PropGet v0 key="m35"
+    v137 = Call v136, v0 calleeKey="m35" calleeName="w.m35"
+    v138 = Convert v137 declared={type=number}
+    v139 = Add v135, v138
+    v140 = PropGet v0 key="m36"
+    v141 = Call v140, v0 calleeKey="m36" calleeName="w.m36"
+    v142 = Convert v141 declared={type=number}
+    v143 = Add v139, v142
+    v144 = PropGet v0 key="m37"
+    v145 = Call v144, v0 calleeKey="m37" calleeName="w.m37"
+    v146 = Convert v145 declared={type=number}
+    v147 = Add v143, v146
+    v148 = PropGet v0 key="m38"
+    v149 = Call v148, v0 calleeKey="m38" calleeName="w.m38"
+    v150 = Convert v149 declared={type=number}
+    v151 = Add v147, v150
+    v152 = PropGet v0 key="m39"
+    v153 = Call v152, v0 calleeKey="m39" calleeName="w.m39"
+    v154 = Convert v153 declared={type=number}
+    v155 = Add v151, v154
+    v156 = PropGet v0 key="m40"
+    v157 = Call v156, v0 calleeKey="m40" calleeName="w.m40"
+    v158 = Convert v157 declared={type=number}
+    v159 = Add v155, v158
+    v160 = PropGet v0 key="m41"
+    v161 = Call v160, v0 calleeKey="m41" calleeName="w.m41"
+    v162 = Convert v161 declared={type=number}
+    v163 = Add v159, v162
+    v164 = PropGet v0 key="m42"
+    v165 = Call v164, v0 calleeKey="m42" calleeName="w.m42"
+    v166 = Convert v165 declared={type=number}
+    v167 = Add v163, v166
+    v168 = PropGet v0 key="m43"
+    v169 = Call v168, v0 calleeKey="m43" calleeName="w.m43"
+    v170 = Convert v169 declared={type=number}
+    v171 = Add v167, v170
+    v172 = PropGet v0 key="m44"
+    v173 = Call v172, v0 calleeKey="m44" calleeName="w.m44"
+    v174 = Convert v173 declared={type=number}
+    v175 = Add v171, v174
+    v176 = PropGet v0 key="m45"
+    v177 = Call v176, v0 calleeKey="m45" calleeName="w.m45"
+    v178 = Convert v177 declared={type=number}
+    v179 = Add v175, v178
+    v180 = PropGet v0 key="m46"
+    v181 = Call v180, v0 calleeKey="m46" calleeName="w.m46"
+    v182 = Convert v181 declared={type=number}
+    v183 = Add v179, v182
+    v184 = PropGet v0 key="m47"
+    v185 = Call v184, v0 calleeKey="m47" calleeName="w.m47"
+    v186 = Convert v185 declared={type=number}
+    v187 = Add v183, v186
+    v188 = PropGet v0 key="m48"
+    v189 = Call v188, v0 calleeKey="m48" calleeName="w.m48"
+    v190 = Convert v189 declared={type=number}
+    v191 = Add v187, v190
+    v192 = PropGet v0 key="m49"
+    v193 = Call v192, v0 calleeKey="m49" calleeName="w.m49"
+    v194 = Convert v193 declared={type=number}
+    v195 = Add v191, v194
+    v196 = PropGet v0 key="m50"
+    v197 = Call v196, v0 calleeKey="m50" calleeName="w.m50"
+    v198 = Convert v197 declared={type=number}
+    v199 = Add v195, v198
+    v200 = PropGet v0 key="m51"
+    v201 = Call v200, v0 calleeKey="m51" calleeName="w.m51"
+    v202 = Convert v201 declared={type=number}
+    v203 = Add v199, v202
+    v204 = PropGet v0 key="m52"
+    v205 = Call v204, v0 calleeKey="m52" calleeName="w.m52"
+    v206 = Convert v205 declared={type=number}
+    v207 = Add v203, v206
+    v208 = PropGet v0 key="m53"
+    v209 = Call v208, v0 calleeKey="m53" calleeName="w.m53"
+    v210 = Convert v209 declared={type=number}
+    v211 = Add v207, v210
+    v212 = PropGet v0 key="m54"
+    v213 = Call v212, v0 calleeKey="m54" calleeName="w.m54"
+    v214 = Convert v213 declared={type=number}
+    v215 = Add v211, v214
+    v216 = PropGet v0 key="m55"
+    v217 = Call v216, v0 calleeKey="m55" calleeName="w.m55"
+    v218 = Convert v217 declared={type=number}
+    v219 = Add v215, v218
+    v220 = PropGet v0 key="m56"
+    v221 = Call v220, v0 calleeKey="m56" calleeName="w.m56"
+    v222 = Convert v221 declared={type=number}
+    v223 = Add v219, v222
+    v224 = PropGet v0 key="m57"
+    v225 = Call v224, v0 calleeKey="m57" calleeName="w.m57"
+    v226 = Convert v225 declared={type=number}
+    v227 = Add v223, v226
+    v228 = PropGet v0 key="m58"
+    v229 = Call v228, v0 calleeKey="m58" calleeName="w.m58"
+    v230 = Convert v229 declared={type=number}
+    v231 = Add v227, v230
+    v232 = PropGet v0 key="m59"
+    v233 = Call v232, v0 calleeKey="m59" calleeName="w.m59"
+    v234 = Convert v233 declared={type=number}
+    v235 = Add v231, v234
+    v236 = PropGet v0 key="m60"
+    v237 = Call v236, v0 calleeKey="m60" calleeName="w.m60"
+    v238 = Convert v237 declared={type=number}
+    v239 = Add v235, v238
+    v240 = PropGet v0 key="m61"
+    v241 = Call v240, v0 calleeKey="m61" calleeName="w.m61"
+    v242 = Convert v241 declared={type=number}
+    v243 = Add v239, v242
+    v244 = PropGet v0 key="m62"
+    v245 = Call v244, v0 calleeKey="m62" calleeName="w.m62"
+    v246 = Convert v245 declared={type=number}
+    v247 = Add v243, v246
+    v248 = PropGet v0 key="m63"
+    v249 = Call v248, v0 calleeKey="m63" calleeName="w.m63"
+    v250 = Convert v249 declared={type=number}
+    v251 = Add v247, v250
+    v252 = PropGet v0 key="m64"
+    v253 = Call v252, v0 calleeKey="m64" calleeName="w.m64"
+    v254 = Convert v253 declared={type=number}
+    v255 = Add v251, v254
+    v256 = PropGet v0 key="m65"
+    v257 = Call v256, v0 calleeKey="m65" calleeName="w.m65"
+    v258 = Convert v257 declared={type=number}
+    v259 = Add v255, v258
+    v260 = PropGet v0 key="m66"
+    v261 = Call v260, v0 calleeKey="m66" calleeName="w.m66"
+    v262 = Convert v261 declared={type=number}
+    v263 = Add v259, v262
+    v264 = PropGet v0 key="m67"
+    v265 = Call v264, v0 calleeKey="m67" calleeName="w.m67"
+    v266 = Convert v265 declared={type=number}
+    v267 = Add v263, v266
+    v268 = PropGet v0 key="m68"
+    v269 = Call v268, v0 calleeKey="m68" calleeName="w.m68"
+    v270 = Convert v269 declared={type=number}
+    v271 = Add v267, v270
+    v272 = PropGet v0 key="m69"
+    v273 = Call v272, v0 calleeKey="m69" calleeName="w.m69"
+    v274 = Convert v273 declared={type=number}
+    v275 = Add v271, v274
+    v276 = PropGet v0 key="m70"
+    v277 = Call v276, v0 calleeKey="m70" calleeName="w.m70"
+    v278 = Convert v277 declared={type=number}
+    v279 = Add v275, v278
+    v280 = Convert v279 declared={type=number}
+    Return v280
+}
+function f2 name="round" module=m0 position=4290 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="Wide" module=m0 position=61 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f99] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f83
+    Return v3
+}
+function f4 name="m1" module=m0 position=79 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f84] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="m2" module=m0 position=123 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f85] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="m3" module=m0 position=167 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=3
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f7 name="m4" module=m0 position=211 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=4
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f8 name="m5" module=m0 position=255 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=5
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f9 name="m6" module=m0 position=299 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=6
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f10 name="m7" module=m0 position=343 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=7
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f11 name="m8" module=m0 position=387 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="m9" module=m0 position=431 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="m10" module=m0 position=475 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="m11" module=m0 position=521 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 name="m12" module=m0 position=567 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 name="m13" module=m0 position=613 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 name="m14" module=m0 position=659 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 name="m15" module=m0 position=705 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 name="m16" module=m0 position=751 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 name="m17" module=m0 position=797 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 name="m18" module=m0 position=843 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 name="m19" module=m0 position=889 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 name="m20" module=m0 position=935 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 name="m21" module=m0 position=981 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f25 name="m22" module=m0 position=1027 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 name="m23" module=m0 position=1073 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f27 name="m24" module=m0 position=1119 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 name="m25" module=m0 position=1165 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f29 name="m26" module=m0 position=1211 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f30 name="m27" module=m0 position=1257 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f31 name="m28" module=m0 position=1303 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f32 name="m29" module=m0 position=1349 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f33 name="m30" module=m0 position=1395 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f34 name="m31" module=m0 position=1441 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f35 name="m32" module=m0 position=1487 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f36 name="m33" module=m0 position=1533 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f86] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f37 name="m34" module=m0 position=1579 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f38 name="m35" module=m0 position=1625 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f39 name="m36" module=m0 position=1671 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f40 name="m37" module=m0 position=1717 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f41 name="m38" module=m0 position=1763 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f42 name="m39" module=m0 position=1809 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f43 name="m40" module=m0 position=1855 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f44 name="m41" module=m0 position=1901 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f45 name="m42" module=m0 position=1947 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f46 name="m43" module=m0 position=1993 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f47 name="m44" module=m0 position=2039 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f48 name="m45" module=m0 position=2085 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f49 name="m46" module=m0 position=2131 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f50 name="m47" module=m0 position=2177 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f51 name="m48" module=m0 position=2223 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f52 name="m49" module=m0 position=2269 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f53 name="m50" module=m0 position=2315 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f54 name="m51" module=m0 position=2361 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f55 name="m52" module=m0 position=2407 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f56 name="m53" module=m0 position=2453 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f57 name="m54" module=m0 position=2499 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f58 name="m55" module=m0 position=2545 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f59 name="m56" module=m0 position=2591 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f60 name="m57" module=m0 position=2637 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f61 name="m58" module=m0 position=2683 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f62 name="m59" module=m0 position=2729 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f63 name="m60" module=m0 position=2775 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f64 name="m61" module=m0 position=2821 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f65 name="m62" module=m0 position=2867 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f66 name="m63" module=m0 position=2913 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f67 name="m64" module=m0 position=2959 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f87] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f68 name="m65" module=m0 position=3005 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f69 name="m66" module=m0 position=3051 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f70 name="m67" module=m0 position=3097 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f71 name="m68" module=m0 position=3143 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f72 name="m69" module=m0 position=3189 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f73 name="m70" module=m0 position=3235 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=number}] functionTypes=[f90] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f74 name="Below" module=m0 position=3288 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f75 name="m70" module=m0 position=3311 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=number}] functionTypes=[f91] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f76 module=m0 position=4566 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f92] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=-1
+    v1 = Convert v0 declared={type=number}
+    Return v1
+}
+function f77 module=m0 position=4626 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f93] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f78 module=m0 position=4677 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f94] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f79 module=m0 position=4728 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f95] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f80 module=m0 position=4766 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f96] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f81 module=m0 position=4823 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f97] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f82 module=m0 position=4909 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f98] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=-2
+    v1 = Convert v0 declared={type=number}
+    Return v1
+}
+function f83 module=m0 position=61 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    PropDefine v1, v3 key="n"
+    v5 = Undefined
+    Return v5
+}
+function f84 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f85 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f86 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f87 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f88 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f89 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f90 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f91 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f90]
+function f92 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f84]
+function f93 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f87]
+function f94 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f88]
+function f95 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f90]
+function f96 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f86]
+function f97 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f89]
+function f98 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f85]
+function f99 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f100 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f99]
+# -- generated: all
+# CHECK-LABEL: function {{*}}name="all"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 950, patchpoints: 69, rare instructions: 121
+# CHECK-NEXT: end of function f1

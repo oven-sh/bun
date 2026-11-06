@@ -1,0 +1,10 @@
+{
+  "name": "backend-packages",
+  "private": true,
+  "dependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.5",
+    "express": "5.3.0",
+    "newrelic": "14.8.0"
+  }
+}

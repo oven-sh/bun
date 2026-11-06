@@ -420,8 +420,7 @@ impl Bin {
     }
 
     // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
-    // `u32`s); reading the wrong variant is well-defined garbage.
+    // `Value` is a `Copy` POD union; reading the wrong variant is well-defined garbage.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         File      => file: String;
@@ -479,13 +478,13 @@ pub union Value {
     ///```
     pub(crate) map: ExternalStringList,
 }
+bun_core::impl_zeroable!(Value);
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
     #[inline]
     pub(crate) fn init_none() -> Value {
-        // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed_unchecked() }
+        bun_core::ffi::zeroed()
     }
     #[inline]
     pub(crate) fn init_file(file: String) -> Value {

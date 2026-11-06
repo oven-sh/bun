@@ -1,0 +1,74 @@
+# Module lines of every kind with every field, and the namespace layouts of the three modules that have one
+# RUN: round-trip
+# CHECK: variable g0 name="a" module=m0 declared={type=anything}
+# CHECK-NEXT: variable g1 name="z" module=m9 declared={type=anything}
+# CHECK-NEXT: variable g2 name="namespaces" module=m0 declared={type=L(m0)|L(m8)|L(m9)}
+# CHECK-NEXT: variable g3 name="exports" module=m1 declared={type=anything} initialization=Undefined
+# CHECK-NEXT: module m0 path="/app/main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0 requests=[{target=m9 phase=Defer}, {target=m5 isDynamicStarExport=true completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m9 phase=Defer}, {name="c" kind=Indirect module=m5 importName="d" isFromStarExport=true}] requiredNames=[{module=m9 name="z"}] positions={lineStarts=[0, 12, 30] columnAdjustments=[{offset=14 line=1 column=2}]} functionText="a => a\x0a"
+# CHECK-NEXT: module m1 path="/app/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g3 requests=[{target=m8 kind=Require}]
+# CHECK-NEXT: module m2 path="/app/data.json" displayPath="data.json" kind=Data requireResult=DefaultExport data=d0
+# CHECK-NEXT: module m3 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f2
+# CHECK-NEXT: module m4 path="bun:ffi" displayPath="bun:ffi" kind=Runtime flags=[IsLoadedByImportOnly] exportRule=RuntimeModule runtimeModule=BunFfi
+# CHECK-NEXT: module m5 path="/app/plain.js" displayPath="plain.js" kind=External referrer=m0
+# CHECK-NEXT: module m6 path="/app/native.node" displayPath="native.node" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+# CHECK-NEXT: module m7 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+# CHECK-NEXT: module m8 path="/app/last.ts" displayPath="last.ts"
+# CHECK-NEXT: module m9 path="#9" displayPath="lib.cjs" exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default"}, {name="z" variable=g1 isKnownMember=true}]
+# CHECK-NEXT: function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateModule module=m8 referrer=m1 [isBare]
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f2 module=m3 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateModule module=m1 referrer=m9 [isBare]
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Null module=m2
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+variable g0 name="a" module=m0 declared={type=anything}
+variable g1 name="z" module=m9 declared={type=anything}
+variable g2 name="namespaces" module=m0 declared={type=L(m0)|L(m8)|L(m9)}
+variable g3 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0 requests=[{target=m9 phase=Defer}, {target=m5 isDynamicStarExport=true completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m9 phase=Defer}, {name="c" kind=Indirect module=m5 importName="d" isFromStarExport=true}] requiredNames=[{module=m9 name="z"}] positions={lineStarts=[0, 12, 30] columnAdjustments=[{offset=14 line=1 column=2}]} functionText="a => a\x0a"
+module m1 path="/app/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g3 requests=[{target=m8 kind=Require}]
+module m2 path="/app/data.json" displayPath="data.json" kind=Data requireResult=DefaultExport data=d0
+module m3 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f2
+module m4 path="bun:ffi" displayPath="bun:ffi" kind=Runtime flags=[IsLoadedByImportOnly] exportRule=RuntimeModule runtimeModule=BunFfi
+module m5 path="/app/plain.js" displayPath="plain.js" kind=External referrer=m0
+module m6 path="/app/native.node" displayPath="native.node" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+module m7 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+module m8 path="/app/last.ts" displayPath="last.ts"
+module m9 path="#9" displayPath="lib.cjs" exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default"}, {name="z" variable=g1 isKnownMember=true}]
+function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m8 referrer=m1 [isBare]
+    Return
+}
+function f2 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m9 [isBare]
+    Return
+}
+data d0 root=Null module=m2
+entry module=m0

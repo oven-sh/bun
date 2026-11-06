@@ -825,7 +825,7 @@ impl RunCommand {
         // stale value.
         env_loader.map.put(
             b"npm_config_local_prefix",
-            bun_fs::FileSystem::instance().top_level_dir(),
+            bun_fs::FileSystem::get().top_level_dir(),
         )?;
 
         // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.

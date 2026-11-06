@@ -1,0 +1,161 @@
+# Declares a list as an interface and lists what its methods return through `any` in an object literal, each in a field declared as a type that the value does not have.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="literal-lists-three-values-made-list.ts" displayPath="literal-lists-three-values-made-list.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=331 kind=Variable
+typesite w1 module=m0 position=383 kind=Variable
+typesite w2 module=m0 position=206 kind=Result
+typesite w3 module=m0 position=276 kind=CallResult
+typesite w4 module=m0 position=318 kind=Assertion
+typesite w5 module=m0 position=427 kind=Assertion
+typesite w6 module=m0 position=472 kind=Assertion
+typesite w7 module=m0 position=512 kind=Assertion
+typesite w8 module=m0 position=637 kind=CallResult
+typesite w9 module=m0 position=659 kind=CallResult
+typesite w10 module=m0 position=721 kind=Variable
+typesite w11 module=m0 position=750 kind=Variable
+typesite w12 module=m1 position=427 kind=Parameter
+typesite w13 module=m1 position=458 kind=Parameter
+typesite w14 module=m1 position=399 kind=Result
+typesite w15 module=m1 position=776 kind=Parameter
+typesite w16 module=m1 position=750 kind=Result
+typesite w17 module=m1 position=904 kind=Parameter
+typesite w18 module=m1 position=922 kind=Parameter
+typesite w19 module=m1 position=937 kind=Parameter
+typesite w20 module=m1 position=878 kind=Result
+typesite w21 module=m1 position=1226 kind=Parameter
+typesite w22 module=m1 position=1190 kind=This
+typesite w23 module=m1 position=1166 kind=Result
+typesite w24 module=m1 position=611 kind=Variable
+typesite w25 module=m1 position=1009 kind=Variable
+typesite w26 module=m1 position=1275 kind=Variable
+typesite w27 module=m1 position=1309 kind=Variable
+typesite w28 module=m1 position=1364 kind=Variable
+typesite w29 module=m1 position=1284 kind=PropertyRead
+typesite w30 module=m1 position=1317 kind=CallResult
+typesite w31 module=m1 position=1619 kind=CallResult
+typesite w32 module=m1 position=1684 kind=CallResult
+layout L0 name="Named" module=m0 position=180 fields=[{key="name" declared={type=undefined|null|bigint flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=339 fields=[{key="flag" declared={type=boolean} flags=[IsRequired]}, {key="ratio" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+layout L2 module=m0 position=288 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 position=758 fields=[{key="ratio" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L2 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="flag" value=Boolean{value=true}}, {key="ratio" value=Number{value=0.5}}, {key="text" value=String{value=""}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="name" value=BigInt{digits="1"}}]} module=m0
+variable g0 name="firstSearchedIndex" module=m1 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="holdsBoxedValues" module=m1 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g2 name="indexOfUndefined" module=m1 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectKeys
+    v3 = Data data=d0
+    v4 = Call v2, v1, v3 calleeName="Object.keys"
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v6 = Convert v5 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v7 = Data data=d1
+    v8 = PropGet v6 key="join"
+    v9 = Convert v8 declared={type=undefined|null|function flags=[IsExpected]}
+    v10 = String string="+"
+    v11 = Call v9, v6, v10 calleeKey="join" calleeName="list.join"
+    v12 = Convert v11 declared={type=boolean flags=[IsExpected]}
+    v13 = Convert v12 declared={type=boolean site=w5} illTypedCause=FromLooseType
+    v14 = PropGet v6 key="join"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = String string="-"
+    v17 = Call v15, v6, v16 calleeKey="join" calleeName="list.join"
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Convert v18 declared={type=number site=w6} illTypedCause=FromLooseType
+    v20 = PropGet v6 key="length"
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    v22 = Convert v21 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v23 = NewObject -, v13, v19, v22 layout=L1 fields=[0, 1, 2]
+    v24 = FinishObject v23
+    v25 = Convert v24 declared={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="console" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(Console) flags=[IsExpected]}
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="console" [isFreeName]
+    v31 = Convert v30 declared={type=builtin(Console) flags=[IsExpected]}
+    v32 = Builtin builtin=JSON
+    v33 = PropGet v32 key="stringify"
+    v34 = Convert v33 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v35 = Builtin builtin=Object
+    v36 = Builtin builtin=ObjectKeys
+    v37 = Call v36, v35, v25 calleeName="Object.keys"
+    v38 = Convert v37 declared={type=undefined|null|Array<undefined|null|string> site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v39 = PropGet v38 key="join"
+    v40 = Integer
+    v41 = Convert v40 declared={type=number site=w10}
+    Jump -> next b1(v41)
+  b1(v42: number):
+    LoopHint
+    v44 = Integer integer=3
+    v45 = Less v42, v44
+    Branch v45 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v46):
+    v47 = ToBoolean v46
+    Branch v47 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v48):
+    v49 = PropGet v6 key="indexOf"
+    v50 = Convert v49 declared={type=undefined|null|function flags=[IsExpected]}
+    v51 = String string="b"
+    v52 = Call v50, v6, v51 calleeKey="indexOf" calleeName="list.indexOf"
+    Jump -> next b5(v52, v48)
+  b4(v53):
+    v54 = PropGet v6 key="join"
+    v55 = Convert v54 declared={type=undefined|null|function flags=[IsExpected]}
+    v56 = String string=""
+    v57 = Call v55, v6, v56 calleeKey="join" calleeName="list.join"
+    Jump -> next b5(v57, v53)
+  b5(v58, v59: number):
+    v60 = NewObject -, v58 layout=L3 fields=[0]
+    v61 = FinishObject v60
+    v62 = Convert v61 declared={type=undefined|null|L1|L3 site=w11 flags=[OmitsNull, OmitsUndefined]}
+    v63 = Builtin builtin=GlobalThis
+    v64 = PropGet v63 key="console" [isFreeName]
+    v65 = Convert v64 declared={type=builtin(Console) flags=[IsExpected]}
+    v66 = PropGet v62 key="ratio"
+    v67 = Increment v59
+    v68 = Convert v67 declared={type=number site=w10}
+    Jump -> next b1(v68)
+  b6(v69):
+    v70 = Undefined
+    Return v70
+}
+function f1 name="make" module=m0 position=206 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="firstSearchedIndex" module=m1 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number site=w12}, {type=number site=w13}] results=[{type=number site=w14}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f3 name="holdsBoxedValues" module=m1 position=750 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w15}] results=[{type=boolean site=w16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f4 name="indexOfUndefined" module=m1 position=878 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=number site=w19}] results=[{type=number site=w20}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f5 name="indexOf" module=m1 position=1166 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=131088 thisType={type=undefined|null|Array site=w22 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=undefined|number site=w21}] results=[{type=number site=w23}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=131088 function=f5
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: L2 = NewObject -, v0, v1 layout=L2 fields=[0, 1] allocationSite=1 allocationClass=1
+# CHECK-NEXT: v3: Array<string> = CallBuiltin -, v2 overload=ObjectKeys/0 accessSite=0
+# CHECK-NEXT: v4: Array<"a"|"b", proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<"a"|"b", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: "+" = String string="+"
+# CHECK-NEXT: v6: string = CallBuiltin v4, v5 overload=ArrayPrototypeJoin/0 accessSite=2
+# CHECK-NEXT: v7: "-" = String string="-"
+# CHECK-NEXT: v8: string = CallBuiltin v4, v7 overload=ArrayPrototypeJoin/0 accessSite=4
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0 accessSite=5
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: v11: L1 = NewObject -, v10 layout=L1 fields=[0] allocationSite=3 allocationClass=0
+# CHECK-NEXT: PropSet v11, v6 key="flag"
+# CHECK-NEXT: PropDefine v11, v8 key="ratio"
+# CHECK-NEXT: TryFinishBirth v11
+# CHECK-NEXT: PutSlotOrAdd v11, -, v9 key="text" receivers=[L1] level=Proven
+# CHECK-NEXT: v15: "" = String string=""
+# CHECK-NEXT: v16: string = CallBuiltin v4, v15 overload=ArrayPrototypeJoin/0 accessSite=14
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: }

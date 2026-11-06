@@ -185,7 +185,7 @@ impl ChunkedDecoder {
             size_digits,
             state,
         };
-        if src != buf.len() {
+        if dst != src && src != buf.len() {
             buf.copy_within(src.., dst);
         }
         Decoded { len: dst, status }

@@ -1,12 +1,32 @@
 #![warn(unused_must_use)]
+pub mod build_id;
 pub mod builtins;
+mod cut_choice;
+pub mod cut_model;
 pub mod elf;
+pub mod elf_payload;
+pub mod elf_program_headers;
+pub mod elf_ranges;
+mod elf_relocations;
+pub mod elf_symbols;
 pub mod error;
+pub mod executable_memory_filter;
+pub mod identity;
+pub mod image;
 pub mod macho;
+pub mod macho_fixups;
+pub mod macho_ranges;
+pub mod macho_symbols;
 pub mod macho_types;
+pub mod mapped_file;
 pub mod pe;
+pub mod pe_ranges;
+pub mod section;
 
 pub use error::{Error, Result};
+
+#[cfg(test)]
+use bun_sema_standalone as _;
 
 // --- byte helpers ---
 //

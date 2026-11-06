@@ -110,7 +110,7 @@ impl Script {
             Some(interp.node(parent).kind())
         };
         let me = interp.as_script_mut(this);
-        // io.deref() — IO uses Arc fields; Drop on the cloned `io` handles the
+        // io.deref() — IO uses Rc fields; Drop on the cloned `io` handles the
         // refcount decrement, no explicit call needed.
         if !matches!(parent_kind, None | Some(StateKind::Subshell)) {
             // The shell env is owned by the parent when the parent is the

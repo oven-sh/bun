@@ -1,0 +1,475 @@
+# A recursive walk over a tree with property reads and stores in each branch.
+# FORM: AsRead
+# RUN: lower-to-air size f2 f6
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="impl.js" displayPath="impl.js" body=f0 namespaceLayout=L(m0)
+module m1 path="main.ts" displayPath="main.ts" body=f10 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f5 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=f6 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=f7 flags=[IsFromCompiler]} flags=[IsImmutable]}] ownFieldCount=5
+layout L1 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="e" declared={type=anything}}, {key="inner" declared={type=anything}}, {key="innerKind" declared={type=anything}}, {key="isVisited" declared={type=undefined|boolean flags=[IsExpected]}}] flags=[IsNeverAllocated] ownFieldCount=7 flow={allocation=NeverAllocated}
+layout L2 fields=[{key="a" declared={type=undefined|number flags=[IsExpected]}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f10" declared={type=anything}}, {key="f11" declared={type=anything}}, {key="f12" declared={type=anything}}, {key="f13" declared={type=anything}}, {key="f14" declared={type=anything}}, {key="f15" declared={type=anything}}, {key="f16" declared={type=anything}}, {key="f17" declared={type=anything}}, {key="f18" declared={type=anything}}, {key="f19" declared={type=anything}}, {key="f20" declared={type=anything}}, {key="f21" declared={type=anything}}, {key="f22" declared={type=anything}}, {key="f23" declared={type=anything}}, {key="f24" declared={type=anything}}, {key="f25" declared={type=anything}}, {key="f26" declared={type=anything}}, {key="f27" declared={type=anything}}, {key="f28" declared={type=anything}}, {key="f29" declared={type=anything}}, {key="f3" declared={type=anything}}, {key="f30" declared={type=anything}}, {key="f31" declared={type=anything}}, {key="f32" declared={type=anything}}, {key="f33" declared={type=anything}}, {key="f34" declared={type=anything}}, {key="f4" declared={type=anything}}, {key="f5" declared={type=anything}}, {key="f6" declared={type=anything}}, {key="f7" declared={type=anything}}, {key="f8" declared={type=anything}}, {key="f9" declared={type=anything}}, {key="inner" declared={type=anything}}, {key="innerKind" declared={type=anything}}, {key="isVisited" declared={type=undefined|boolean flags=[IsExpected]}}] flags=[IsNeverAllocated] ownFieldCount=39 flow={allocation=NeverAllocated}
+layout L3 fields=[{key="a" declared={type=anything}}, {key="c" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L4 module=m0 position=3163 fields=[{key="count" declared={type=anything}}, {key="isMarked" declared={type=undefined|boolean flags=[IsExpected]}}, {key="left" declared={type=anything} flags=[IsRequired]}, {key="right" declared={type=anything}}] declaredOrder=[2, 3, 1, 0] ownFieldCount=4
+layout L5 module=m0 position=3686 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="e" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="inner" declared={type=undefined|null|L5|L6 flags=[IsExpected]} flags=[IsRequired]}, {key="innerKind" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=5
+layout L6 module=m0 position=3713 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="e" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L7 module=m0 position=4151 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L2, L3] ownFieldCount=1
+data d0 root=Object{layout=L6 members=[{key="a" value=Number{value=3}}, {key="b" value=Number{value=4}}, {key="e" value=Number{value=6}}]} module=m0
+data d1 root=Object{layout=L7 members=[{key="a" value=Number{value=1}}]} module=m0
+variable g0 name="check" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="check" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=boolean|number flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: boolean|number, v2: undefined|null|string):
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectIs
+    v5 = Call v4, v3, v0, v1 calleeName="Object.is"
+    v6 = Convert v5 declared={type=boolean flags=[IsExpected]}
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8):
+    v9 = Undefined
+    Return v9
+  b2(v10):
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="Error" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Error) flags=[IsExpected]}
+    v14 = String string=": "
+    v15 = Add v2, v14
+    v16 = Builtin builtin=String
+    v17 = Call v16, -, v0 calleeName="String"
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+    v19 = Add v15, v18
+    v20 = String string=" instead of "
+    v21 = Add v19, v20
+    v22 = Builtin builtin=String
+    v23 = Call v22, -, v1 calleeName="String"
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
+    v25 = Add v21, v24
+    v26 = Construct v13, -, v25 calleeName="Error"
+    v27 = Convert v26 declared={type=undefined|null|Error flags=[IsExpected]}
+    Throw v27
+}
+function f2 module=m0 position=174 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure v0 function=f5
+    v2 = Convert v1 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v2 layout=L0 field=2
+    v4 = NewClosure v0 function=f6
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v5 layout=L0 field=3
+    v7 = NewClosure v0 function=f7
+    v8 = Convert v7 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v8 layout=L0 field=4
+    v10 = Integer
+    v11 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v11)
+  b1(v12):
+    v13 = Integer integer=20
+    v14 = Integer integer=5
+    v15 = Call v8, -, v14 calleeName="makeTree"
+    v16 = NewArray v2, v5 contents=undefined|null|function|f5|f6
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|function|f5|f6> flags=[IsExpected]}
+    v18 = IteratorOpen v17
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v20 = IteratorResume v18
+    v21 = ResultAt v20
+    v22 = ResultAt v20 index=1
+    Branch v21 -> taken b3(), notTaken b4()
+  b3():
+    v23 = Data data=d1
+    v24 = Integer integer=20
+    v25 = Call v5, -, v23, v24 calleeName="dispatchesInManyArms"
+    v26 = Increment v12
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v27)
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v28 = Convert v22 declared={type=undefined|null|function|f5|f6 flags=[IsExpected]}
+    v29 = Integer integer=1
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    v31 = NewObject layout=L5
+    PropDefine v31, v30 key="a"
+    v33 = Integer integer=5
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    PropDefine v31, v34 key="e"
+    v36 = Data data=d0
+    v37 = Convert v36 declared={type=undefined|null|L5|L6 flags=[IsExpected]}
+    PropDefine v31, v37 key="inner"
+    v39 = FinishObject v31
+    v40 = Convert v39 declared={type=undefined|null|L5 flags=[IsExpected]}
+    v41 = Integer
+    v42 = Call v28, -, v40, v41 calleeName="dispatches"
+    v43 = Integer integer=2
+    v44 = Call v28, -, v40, v43 calleeName="dispatches"
+    v45 = Integer integer=1
+    v46 = BitAnd v12, v45
+    v47 = Integer integer=3
+    v48 = GetModuleVariable variable=g0
+    v49 = PropGet v40 key="isVisited"
+    v50 = Boolean boolean=true
+    v51 = String string="the store ahead of that call"
+    v52 = Call v48, -, v49, v50, v51 calleeName="check"
+    v53 = Integer integer=99
+    v54 = Call v28, -, v40, v53 calleeName="dispatches"
+    Jump -> next b2()
+  b6() role=IterationCleanup subject=v18:
+    v55 = CatchException
+    Rethrow v55
+}
+function f3 name="marksTree" module=m0 position=192 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="marksAfterwards" module=m0 position=373 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="dispatchesInFewArms" module=m0 position=599 flags=[HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L5 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: undefined|null|number|string|symbol|bigint|L5, v2: anything):
+    Switch v2 cases=[0, 1, 2] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
+  b1(v3):
+    v4 = PropGet v1 key="a"
+    v5 = PropGet v1 key="b"
+    v6 = Add v4, v5
+    Return v6
+  b2(v7):
+    v8 = PropGet v1 key="c"
+    Return v8
+  b3(v9):
+    v10 = GetEnvironmentField v0 layout=L0 field=2
+    v11 = PropGet v1 key="inner"
+    v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|L5 flags=[IsExpected]}
+    v13 = PropGet v1 key="innerKind"
+    v14 = Call v10, -, v12, v13 calleeName="dispatchesInFewArms"
+    ReturnCall v14
+  b4():
+    v15 = PropGet v1 key="e"
+    Return v15
+}
+function f6 name="dispatchesInManyArms" module=m0 position=901 flags=[HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L5|L6|L7 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: undefined|null|number|string|symbol|bigint|L5|L6|L7, v2: anything):
+    Switch v2 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), case b9(| 0), case b10(| 0), case b11(| 0), case b12(| 0), case b13(| 0), case b14(| 0), case b15(| 0), case b16(| 0), case b17(| 0), case b18(| 0), case b19(| 0), case b20(| 0), case b21(| 0), case b22(| 0), case b23(| 0), case b24(| 0), case b25(| 0), case b26(| 0), case b27(| 0), case b28(| 0), case b29(| 0), case b30(| 0), case b31(| 0), case b32(| 0), case b33(| 0), case b34(| 0), case b35(| 0), otherwise b36()
+  b1(v3):
+    v4 = PropGet v1 key="a"
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = PropGet v1 key="b"
+    v7 = Add v5, v6
+    Return v7
+  b2(v8):
+    v9 = PropGet v1 key="a"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    PropSet v1, v10 key="c"
+    v12 = PropGet v1 key="c"
+    Return v12
+  b3(v13):
+    v14 = Boolean boolean=true
+    PropSet v1, v14 key="isVisited"
+    v16 = GetEnvironmentField v0 layout=L0 field=3
+    v17 = PropGet v1 key="inner"
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|L5|L6|L7 flags=[IsExpected]}
+    v19 = PropGet v1 key="innerKind"
+    v20 = Call v16, -, v18, v19 calleeName="dispatchesInManyArms"
+    ReturnCall v20
+  b4(v21):
+    v22 = PropGet v1 key="a"
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Integer integer=3
+    v25 = Add v23, v24
+    PropSet v1, v25 key="f3"
+    v27 = PropGet v1 key="f3"
+    Return v27
+  b5(v28):
+    v29 = PropGet v1 key="a"
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    v31 = Integer integer=4
+    v32 = Add v30, v31
+    PropSet v1, v32 key="f4"
+    v34 = PropGet v1 key="f4"
+    Return v34
+  b6(v35):
+    v36 = PropGet v1 key="a"
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Integer integer=5
+    v39 = Add v37, v38
+    PropSet v1, v39 key="f5"
+    v41 = PropGet v1 key="f5"
+    Return v41
+  b7(v42):
+    v43 = PropGet v1 key="a"
+    v44 = Convert v43 declared={type=number flags=[IsExpected]}
+    v45 = Integer integer=6
+    v46 = Add v44, v45
+    PropSet v1, v46 key="f6"
+    v48 = PropGet v1 key="f6"
+    Return v48
+  b8(v49):
+    v50 = PropGet v1 key="a"
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    v52 = Integer integer=7
+    v53 = Add v51, v52
+    PropSet v1, v53 key="f7"
+    v55 = PropGet v1 key="f7"
+    Return v55
+  b9(v56):
+    v57 = PropGet v1 key="a"
+    v58 = Convert v57 declared={type=number flags=[IsExpected]}
+    v59 = Integer integer=8
+    v60 = Add v58, v59
+    PropSet v1, v60 key="f8"
+    v62 = PropGet v1 key="f8"
+    Return v62
+  b10(v63):
+    v64 = PropGet v1 key="a"
+    v65 = Convert v64 declared={type=number flags=[IsExpected]}
+    v66 = Integer integer=9
+    v67 = Add v65, v66
+    PropSet v1, v67 key="f9"
+    v69 = PropGet v1 key="f9"
+    Return v69
+  b11(v70):
+    v71 = PropGet v1 key="a"
+    v72 = Convert v71 declared={type=number flags=[IsExpected]}
+    v73 = Integer integer=10
+    v74 = Add v72, v73
+    PropSet v1, v74 key="f10"
+    v76 = PropGet v1 key="f10"
+    Return v76
+  b12(v77):
+    v78 = PropGet v1 key="a"
+    v79 = Convert v78 declared={type=number flags=[IsExpected]}
+    v80 = Integer integer=11
+    v81 = Add v79, v80
+    PropSet v1, v81 key="f11"
+    v83 = PropGet v1 key="f11"
+    Return v83
+  b13(v84):
+    v85 = PropGet v1 key="a"
+    v86 = Convert v85 declared={type=number flags=[IsExpected]}
+    v87 = Integer integer=12
+    v88 = Add v86, v87
+    PropSet v1, v88 key="f12"
+    v90 = PropGet v1 key="f12"
+    Return v90
+  b14(v91):
+    v92 = PropGet v1 key="a"
+    v93 = Convert v92 declared={type=number flags=[IsExpected]}
+    v94 = Integer integer=13
+    v95 = Add v93, v94
+    PropSet v1, v95 key="f13"
+    v97 = PropGet v1 key="f13"
+    Return v97
+  b15(v98):
+    v99 = PropGet v1 key="a"
+    v100 = Convert v99 declared={type=number flags=[IsExpected]}
+    v101 = Integer integer=14
+    v102 = Add v100, v101
+    PropSet v1, v102 key="f14"
+    v104 = PropGet v1 key="f14"
+    Return v104
+  b16(v105):
+    v106 = PropGet v1 key="a"
+    v107 = Convert v106 declared={type=number flags=[IsExpected]}
+    v108 = Integer integer=15
+    v109 = Add v107, v108
+    PropSet v1, v109 key="f15"
+    v111 = PropGet v1 key="f15"
+    Return v111
+  b17(v112):
+    v113 = PropGet v1 key="a"
+    v114 = Convert v113 declared={type=number flags=[IsExpected]}
+    v115 = Integer integer=16
+    v116 = Add v114, v115
+    PropSet v1, v116 key="f16"
+    v118 = PropGet v1 key="f16"
+    Return v118
+  b18(v119):
+    v120 = PropGet v1 key="a"
+    v121 = Convert v120 declared={type=number flags=[IsExpected]}
+    v122 = Integer integer=17
+    v123 = Add v121, v122
+    PropSet v1, v123 key="f17"
+    v125 = PropGet v1 key="f17"
+    Return v125
+  b19(v126):
+    v127 = PropGet v1 key="a"
+    v128 = Convert v127 declared={type=number flags=[IsExpected]}
+    v129 = Integer integer=18
+    v130 = Add v128, v129
+    PropSet v1, v130 key="f18"
+    v132 = PropGet v1 key="f18"
+    Return v132
+  b20(v133):
+    v134 = PropGet v1 key="a"
+    v135 = Convert v134 declared={type=number flags=[IsExpected]}
+    v136 = Integer integer=19
+    v137 = Add v135, v136
+    PropSet v1, v137 key="f19"
+    v139 = PropGet v1 key="f19"
+    Return v139
+  b21(v140):
+    v141 = PropGet v1 key="a"
+    v142 = Convert v141 declared={type=number flags=[IsExpected]}
+    v143 = Integer integer=20
+    v144 = Add v142, v143
+    PropSet v1, v144 key="f20"
+    v146 = PropGet v1 key="f20"
+    Return v146
+  b22(v147):
+    v148 = PropGet v1 key="a"
+    v149 = Convert v148 declared={type=number flags=[IsExpected]}
+    v150 = Integer integer=21
+    v151 = Add v149, v150
+    PropSet v1, v151 key="f21"
+    v153 = PropGet v1 key="f21"
+    Return v153
+  b23(v154):
+    v155 = PropGet v1 key="a"
+    v156 = Convert v155 declared={type=number flags=[IsExpected]}
+    v157 = Integer integer=22
+    v158 = Add v156, v157
+    PropSet v1, v158 key="f22"
+    v160 = PropGet v1 key="f22"
+    Return v160
+  b24(v161):
+    v162 = PropGet v1 key="a"
+    v163 = Convert v162 declared={type=number flags=[IsExpected]}
+    v164 = Integer integer=23
+    v165 = Add v163, v164
+    PropSet v1, v165 key="f23"
+    v167 = PropGet v1 key="f23"
+    Return v167
+  b25(v168):
+    v169 = PropGet v1 key="a"
+    v170 = Convert v169 declared={type=number flags=[IsExpected]}
+    v171 = Integer integer=24
+    v172 = Add v170, v171
+    PropSet v1, v172 key="f24"
+    v174 = PropGet v1 key="f24"
+    Return v174
+  b26(v175):
+    v176 = PropGet v1 key="a"
+    v177 = Convert v176 declared={type=number flags=[IsExpected]}
+    v178 = Integer integer=25
+    v179 = Add v177, v178
+    PropSet v1, v179 key="f25"
+    v181 = PropGet v1 key="f25"
+    Return v181
+  b27(v182):
+    v183 = PropGet v1 key="a"
+    v184 = Convert v183 declared={type=number flags=[IsExpected]}
+    v185 = Integer integer=26
+    v186 = Add v184, v185
+    PropSet v1, v186 key="f26"
+    v188 = PropGet v1 key="f26"
+    Return v188
+  b28(v189):
+    v190 = PropGet v1 key="a"
+    v191 = Convert v190 declared={type=number flags=[IsExpected]}
+    v192 = Integer integer=27
+    v193 = Add v191, v192
+    PropSet v1, v193 key="f27"
+    v195 = PropGet v1 key="f27"
+    Return v195
+  b29(v196):
+    v197 = PropGet v1 key="a"
+    v198 = Convert v197 declared={type=number flags=[IsExpected]}
+    v199 = Integer integer=28
+    v200 = Add v198, v199
+    PropSet v1, v200 key="f28"
+    v202 = PropGet v1 key="f28"
+    Return v202
+  b30(v203):
+    v204 = PropGet v1 key="a"
+    v205 = Convert v204 declared={type=number flags=[IsExpected]}
+    v206 = Integer integer=29
+    v207 = Add v205, v206
+    PropSet v1, v207 key="f29"
+    v209 = PropGet v1 key="f29"
+    Return v209
+  b31(v210):
+    v211 = PropGet v1 key="a"
+    v212 = Convert v211 declared={type=number flags=[IsExpected]}
+    v213 = Integer integer=30
+    v214 = Add v212, v213
+    PropSet v1, v214 key="f30"
+    v216 = PropGet v1 key="f30"
+    Return v216
+  b32(v217):
+    v218 = PropGet v1 key="a"
+    v219 = Convert v218 declared={type=number flags=[IsExpected]}
+    v220 = Integer integer=31
+    v221 = Add v219, v220
+    PropSet v1, v221 key="f31"
+    v223 = PropGet v1 key="f31"
+    Return v223
+  b33(v224):
+    v225 = PropGet v1 key="a"
+    v226 = Convert v225 declared={type=number flags=[IsExpected]}
+    v227 = Integer integer=32
+    v228 = Add v226, v227
+    PropSet v1, v228 key="f32"
+    v230 = PropGet v1 key="f32"
+    Return v230
+  b34(v231):
+    v232 = PropGet v1 key="a"
+    v233 = Convert v232 declared={type=number flags=[IsExpected]}
+    v234 = Integer integer=33
+    v235 = Add v233, v234
+    PropSet v1, v235 key="f33"
+    v237 = PropGet v1 key="f33"
+    Return v237
+  b35(v238):
+    v239 = PropGet v1 key="a"
+    v240 = Convert v239 declared={type=number flags=[IsExpected]}
+    v241 = Integer integer=34
+    v242 = Add v240, v241
+    PropSet v1, v242 key="f34"
+    v244 = PropGet v1 key="f34"
+    Return v244
+  b36():
+    v245 = PropGet v1 key="e"
+    Return v245
+}
+function f7 name="makeTree" module=m0 position=3121 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L4 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = GetEnvironmentField v0 layout=L0 field=4
+    v4 = Convert v2 declared={type=number flags=[IsExpected]}
+    v5 = Integer integer=1
+    v6 = Sub v4, v5
+    v7 = Call v3, -, v6 calleeName="makeTree"
+    v8 = Convert v7 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v9 = NewObject layout=L4
+    v10 = GetEnvironmentField v0 layout=L0 field=4
+    v11 = Integer integer=1
+    v12 = Sub v4, v11
+    v13 = Call v10, -, v12 calleeName="makeTree"
+    v14 = Convert v13 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v15 = FinishObject v9
+    v16 = Convert v15 declared={type=undefined|null|L4 flags=[IsExpected]}
+    Return v16
+}
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f10 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# -- generated: f2 dispatchesInManyArms
+# CHECK-LABEL: function f2 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 26, patchpoints: 7, rare instructions: 32, polls: 2
+# CHECK-NEXT: end of function f2
+# CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 1460, patchpoints: 34, rare instructions: 602, polls: 1
+# CHECK-NEXT: end of function f6
+# CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: instructions: 2, patchpoints: 2
+# CHECK-NEXT: end of function f18

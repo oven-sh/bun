@@ -1,0 +1,94 @@
+# `require.main` held as a value.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+typesite w0 module=m1 position=6595 kind=Parameter
+typesite w1 module=m1 position=6682 kind=CallResult
+typesite w2 module=m1 position=6720 kind=CallResult
+typesite w3 module=m2 position=427 kind=Parameter
+typesite w4 module=m2 position=458 kind=Parameter
+typesite w5 module=m2 position=399 kind=Result
+typesite w6 module=m2 position=776 kind=Parameter
+typesite w7 module=m2 position=750 kind=Result
+typesite w8 module=m2 position=904 kind=Parameter
+typesite w9 module=m2 position=922 kind=Parameter
+typesite w10 module=m2 position=937 kind=Parameter
+typesite w11 module=m2 position=878 kind=Result
+typesite w12 module=m2 position=1226 kind=Parameter
+typesite w13 module=m2 position=1190 kind=This
+typesite w14 module=m2 position=1166 kind=Result
+typesite w15 module=m2 position=611 kind=Variable
+typesite w16 module=m2 position=1009 kind=Variable
+typesite w17 module=m2 position=1275 kind=Variable
+typesite w18 module=m2 position=1309 kind=Variable
+typesite w19 module=m2 position=1364 kind=Variable
+typesite w20 module=m2 position=1284 kind=PropertyRead
+typesite w21 module=m2 position=1317 kind=CallResult
+typesite w22 module=m2 position=1619 kind=CallResult
+typesite w23 module=m2 position=1684 kind=CallResult
+layout L0 module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="firstSearchedIndex" module=m2 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="holdsBoxedValues" module=m2 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="indexOfUndefined" module=m2 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = PropGet v0 key="main"
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = ModuleBuiltin builtin=ModuleObject module=m0
+    v4 = PropGet v2 key="id"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="get main" module=m1 position=168 kind=Method role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65546 thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"requireMap" [isFreeName]
+    v2 = PropGet v1 key=@"get"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="Bun"
+    v5 = Convert v4 declared={type=builtin(Bun) flags=[IsExpected]}
+    v6 = PropGet v5 key="main"
+    v7 = Call v2, v1, v6 calleeKey=@"get"
+    ReturnCall v7 casts=[{declared={type=undefined|null|object flags=[IsExpected]}}]
+}
+function f2 module=m1 position=6559 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces] length=2 enclosingRuntimeFunction=65548 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|object> site=w0 flags=[OmitsNull]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f3 name="firstSearchedIndex" module=m2 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number site=w3}, {type=number site=w4}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f4 name="holdsBoxedValues" module=m2 position=750 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6}] results=[{type=boolean site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f5 name="indexOfUndefined" module=m2 position=878 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w9}, {type=number site=w10}] results=[{type=number site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f6 name="indexOf" module=m2 position=1166 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=131088 thisType={type=undefined|null|Array site=w13 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=undefined|number site=w12}] results=[{type=number site=w14}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=65546 function=f1
+runtimefunction id=65548 function=f2 visibility=Private
+runtimefunction id=131088 function=f6
+# -- generated: f0 f1
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(ModuleRequire) = ModuleBuiltin builtin=ModuleRequire module=m0
+# CHECK-NEXT: v1: anything = PropGet v0 key="main" accessSite=0
+# CHECK-NEXT: v2: undefined|builtin(ModuleObject) = AssumeType v1 provenType=undefined|builtin(ModuleObject)
+# CHECK-NEXT: v3: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m0
+# CHECK-NEXT: v4: builtin(ModuleObject) = RequireObjectCoercible v2 name="id"
+# CHECK-NEXT: v5: anything = PropGet v4 key="id" accessSite=1
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function f1 name=
+# CHECK: "get main" module=m1 position=168 kind=Method role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65546 thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v1: anything = PropGet v0 key=@"requireMap" accessSite=2 [isFreeName]
+# CHECK-NEXT: v2: anything = PropGet v1 key=@"get" accessSite=3
+# CHECK-NEXT: v3: builtin(Bun) = Builtin builtin=Bun
+# CHECK-NEXT: v4: anything = PropGet v3 key="main" accessSite=5
+# CHECK-NEXT: v5: anything = Call v2, v1, v4 calleeKey=@"get" accessSite=6 callees=[builtin(MapPrototypeGet), ..]
+# CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|null|object flags=[IsExpected]} resolution=Nothing}]
+# CHECK-NEXT: }

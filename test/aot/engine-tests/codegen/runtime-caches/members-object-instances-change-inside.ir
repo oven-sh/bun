@@ -1,0 +1,267 @@
+# Loops read a method, a value and a getter off objects that Object.setPrototypeOf() has put below another object.
+# In the middle of a loop the object above changes, or one of the objects below does, and every turn behind the change sees it.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="members-object-instances-change-inside.js" displayPath="members-object-instances-change-inside.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=3682 fields=[{key="twice" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=4126 fields=[{key="x" declared={type=undefined|number flags=[IsExpected]}}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="makeLiteralAbove" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="readsThroughGetter" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = String string=""
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v10 = String string="the field that the getter reads changes"
+    v11 = NewClosure function=f4
+    v12 = Call v1, -, v10, v11 calleeName="showGetter"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="makeLiteralAbove" module=m0 position=3643 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f5
+    DefineGetter v0, v1 key="twice"
+    v3 = FinishObject v0
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v4
+}
+function f2 name="readsThroughGetter" module=m0 position=3742 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string|symbol|bigint|object> flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|number|string|symbol|bigint|object>, v1: undefined|null|function):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Integer integer=3
+    v10 = BitAnd v7, v9
+    v11 = ElemGet v0, v10
+    v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v13 = PropGet v12 key="twice"
+    v14 = TypeTest v13 testedType=undefined
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v15):
+    v16 = Integer integer=-1
+    Jump -> next b4(v16)
+  b3(v17):
+    Jump -> next b4(v17)
+  b4(v18):
+    v19 = Add v6, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Increment v7
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v20, v22)
+}
+function f3 name="showGetter" module=m0 position=3971 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2 calleeName="makeLiteralAbove"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v5 = Data data=d0
+    v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v9)
+  b1(v10):
+    LoopHint
+    v12 = Integer integer=4
+    v13 = Less v10, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = PropGet v7 key="push"
+    v16 = Convert v15 declared={type=undefined|null|function flags=[IsExpected]}
+    v17 = Builtin builtin=Object
+    v18 = Builtin builtin=ObjectSetPrototypeOf
+    v19 = NewObject layout=L1
+    v20 = FinishObject v19
+    v21 = Call v18, v17, v20, v4 calleeName="Object.setPrototypeOf"
+    v22 = Call v16, v7, v21 calleeKey="push" calleeName="below.push"
+    v23 = Increment v14
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v24)
+  b3(v25):
+    v26 = GetModuleVariable variable=g1
+    v27 = NewClosure v1, v4, v7 function=f6
+    v28 = Call v26, -, v7, v27 calleeName="readsThroughGetter"
+    v29 = Undefined
+    Return v29
+}
+function f4 module=m0 position=5018 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|Array<undefined|null|number|string|symbol|bigint|L1> flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="twice" module=m0 position=3688 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v2 = PropGet v1 key="x"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=2
+    v5 = Mul v3, v4
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v6
+}
+function f6 module=m0 position=4191 kind=Arrow captures=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 makeLiteralAbove readsThroughGetter twice showGetter
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f15 accessSite=0
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="makeLiteralAbove"
+# CHECK: module=m0 position=3643 flags=[HasExplicitName] thisType={type=anything} results=[{type=L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
+# CHECK-NEXT: v1: f5 = NewClosure function=f5 allocationSite=3 [isHeldByClosureTable]
+# CHECK-NEXT: DefineGetter v0, v1 key="twice"
+# CHECK-NEXT: v3: L0 = FinishObject v0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="readsThroughGetter"
+# CHECK: module=m0 position=3742 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=f6}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>, v1: f6):
+# CHECK-NEXT: v2: number = CallDirect v0 function=f14
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="showGetter"
+# CHECK: module=m0 position=3971 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=3688 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: number = Mul v1, v2
+# CHECK-NEXT: v4: int|whole = AssumeType v3 provenType=int|whole
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=3688 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} inlineFrames=[{}, {callee=f5 callPosition=3688 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f5, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: 2 = Integer integer=2
+# CHECK-NEXT: v4: number = Mul v2, v3
+# CHECK-NEXT: v5: int|whole = AssumeType v4 provenType=int|whole
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="readsThroughGetter"
+# CHECK: module=m0 position=3742 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f5 callPosition=4294967295 calleeIsPredicted=true module=m0}] {
+# CHECK-NEXT: b0(v0: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2)
+# CHECK-NEXT: b1(v3: int[0, 2147483647] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v3)
+# CHECK-NEXT: b2(v4: int[0, 2147483648] ~ int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: 3 = Integer integer=3
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v4 testedType=i32
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b12(v4)
+# CHECK-NEXT: b3(v8: int[0, 2147483647]):
+# CHECK-NEXT: v9: int[0, 3] = BitAnd v8, v6
+# CHECK-NEXT: v10: boolean = IsInBounds v0, v9
+# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b13(v9, v8)
+# CHECK-NEXT: b4(v11: guard):
+# CHECK-NEXT: v12: L1 = GetArrayElement v0, v9, v11 arrayStorage=Contiguous level=Proven accessSite=1 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v13: boolean = HasLayoutPrototype v12
+# CHECK-NEXT: Branch v13 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: anything = GetCachedGetter v12 key="twice"
+# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=f5
+# CHECK-NEXT: Branch v15 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v16: anything = PropGet v12 key="twice" accessSite=2 receivers=[L1]
+# CHECK-NEXT: v17: undefined|int|whole = AssumeType v16 provenType=undefined|int|whole
+# CHECK-NEXT: v18: undefined|int|whole ~ int|whole = Upcast v17 castType=undefined|int|whole
+# CHECK-NEXT: v19: boolean ~ false = TypeTest v18 testedType=undefined
+# CHECK-NEXT: Branch v19 -> taken b9(), notTaken b10()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v20: int[1, 2147483648] = Increment v8
+# CHECK-NEXT: v21: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v20 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v21)
+# CHECK-NEXT: b12(v22: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v23: int[0, 3] = BitAnd v22, v6
+# CHECK-NEXT: Jump -> next b13(v23, v22)
+# CHECK-NEXT: b13(v24: int[0, 3], v25: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v26: undefined|L1 = GetArrayElement v0, v24 arrayStorage=Contiguous level=Proven accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: v27: L1 = RequireObjectCoercible v26 name="twice"
+# CHECK-NEXT: v28: boolean = HasLayoutPrototype v27
+# CHECK-NEXT: Branch v28 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v29: anything = GetCachedGetter v27 key="twice"
+# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=f5
+# CHECK-NEXT: Branch v30 -> taken b16(), notTaken b17()
+# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b17() frequency=Rare:
+# CHECK-NEXT: v31: anything = PropGet v27 key="twice" accessSite=2 receivers=[L1]
+# CHECK-NEXT: v32: undefined|int|whole = AssumeType v31 provenType=undefined|int|whole
+# CHECK-NEXT: v33: undefined|int|whole ~ int|whole = Upcast v32 castType=undefined|int|whole
+# CHECK-NEXT: v34: boolean ~ false = TypeTest v33 testedType=undefined
+# CHECK-NEXT: Branch v34 -> taken b18(), notTaken b19()
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b20() frequency=Unlikely:
+# CHECK-NEXT: v35: int|whole ~ int[1, 2147483648] = Increment v25
+# CHECK-NEXT: v36: int|whole ~ int[1, 2147483647] = Upcast v35 castType=int|whole
+# CHECK-NEXT: v37: boolean ~ true = TypeTest v36 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v37 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v38: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v38)
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b12(v36)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="showGetter"
+# CHECK: module=m0 position=3971 flags=[HasExplicitName] length=2 thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} {
+# CHECK-NEXT: b0() frequency=Rare:
+# CHECK-NEXT: v0: L0 = CallDirect function=f1 accessSite=3
+# CHECK-NEXT: PutModuleVariable v0 variable=g3
+# CHECK-NEXT: v2: 4 = Integer integer=4
+# CHECK-NEXT: v3: Array<L1, Contiguous> = NewArray contents=L1 capacity=v2 allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v4: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v4 variable=g4
+# CHECK-NEXT: v6: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
+# CHECK-NEXT: v7: L1 = FinishObject v6
+# CHECK-NEXT: v8: L1 = CallBuiltin -, v7, v0 overload=ObjectSetPrototypeOf/0 accessSite=5
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v4, v8 overload=ArrayPrototypePush/0 accessSite=6
+# CHECK-NEXT: v10: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
+# CHECK-NEXT: v11: L1 = FinishObject v10
+# CHECK-NEXT: v12: L1 = CallBuiltin -, v11, v0 overload=ObjectSetPrototypeOf/0 accessSite=5
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v4, v12 overload=ArrayPrototypePush/0 accessSite=6
+# CHECK-NEXT: v14: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
+# CHECK-NEXT: v15: L1 = FinishObject v14
+# CHECK-NEXT: v16: L1 = CallBuiltin -, v15, v0 overload=ObjectSetPrototypeOf/0 accessSite=5
+# CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v4, v16 overload=ArrayPrototypePush/0 accessSite=6
+# CHECK-NEXT: v18: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
+# CHECK-NEXT: v19: L1 = FinishObject v18
+# CHECK-NEXT: v20: L1 = CallBuiltin -, v19, v0 overload=ObjectSetPrototypeOf/0 accessSite=5
+# CHECK-NEXT: v21: int[0, 4294967295] = CallBuiltin v4, v20 overload=ArrayPrototypePush/0 accessSite=6
+# CHECK-NEXT: v22: number = CallDirect v4 function=f14 accessSite=7
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: }

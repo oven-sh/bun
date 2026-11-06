@@ -1,0 +1,235 @@
+# The quotient of two 32-bit integers rounded down, up, to the nearest, toward zero and to 32 bits, the remainder, and the middle of two: every pair out of 21 integers at the ends of the ranges.
+# FORM: AsRead
+# RUN: lower-to-air size f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="quotients-of-integers-rounded-nine-ways.js" displayPath="quotients-of-integers-rounded-nine-ways.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=-1}, Number{value=2}, Number{value=-2}, Number{value=3}, Number{value=-3}, Number{value=7}, Number{value=-7}, Number{value=10}, Number{value=255}, Number{value=256}, Number{value=65535}, Number{value=65536}, Number{value=1000003}, Number{value=2147483647}, Number{value=-2147483647}, Number{value=-2147483648}, Number{value=2147483646}, Number{value=1073741824}, Number{value=-1073741824}]} module=m0
+variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    v7 = IteratorResume v6
+    v8 = ResultAt v7 index=1
+    Jump -> next b2()
+  b2() handler=b3():
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Call v1, -, v9 calleeName="byTwo"
+    LoopHint
+    Jump -> next b1()
+  b3() role=IterationCleanup subject=v6:
+    v12 = CatchException
+    Rethrow v12
+}
+function f1 name="show" module=m0 position=398 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="byTwo" module=m0 position=1266 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Builtin builtin=Math
+    v6 = Builtin builtin=MathFloor
+    v7 = Integer integer=2
+    v8 = Div v3, v7
+    v9 = Call v6, v5, v8 calleeName="Math.floor"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Call v4, -, v10 calleeName="show"
+    v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
+    v13 = String string=" "
+    v14 = Add v12, v13
+    v15 = GetModuleVariable variable=g0
+    v16 = Integer integer=2
+    v17 = Div v3, v16
+    v18 = Integer
+    v19 = BitOr v17, v18
+    v20 = Call v15, -, v19 calleeName="show"
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    v22 = Add v14, v21
+    v23 = String string=" "
+    v24 = Add v22, v23
+    v25 = GetModuleVariable variable=g0
+    v26 = Builtin builtin=Math
+    v27 = Builtin builtin=MathTrunc
+    v28 = Integer integer=2
+    v29 = Div v3, v28
+    v30 = Call v27, v26, v29 calleeName="Math.trunc"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Call v25, -, v31 calleeName="show"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = Add v24, v33
+    v35 = String string=" "
+    v36 = Add v34, v35
+    v37 = GetModuleVariable variable=g0
+    v38 = Builtin builtin=Math
+    v39 = Builtin builtin=MathFloor
+    v40 = Integer integer=-2
+    v41 = Div v3, v40
+    v42 = Call v39, v38, v41 calleeName="Math.floor"
+    v43 = Convert v42 declared={type=number flags=[IsExpected]}
+    v44 = Call v37, -, v43 calleeName="show"
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]}
+    v46 = Add v36, v45
+    v47 = String string=" "
+    v48 = Add v46, v47
+    v49 = GetModuleVariable variable=g0
+    v50 = Builtin builtin=Math
+    v51 = Builtin builtin=MathFloor
+    v52 = Integer integer=3
+    v53 = Div v3, v52
+    v54 = Call v51, v50, v53 calleeName="Math.floor"
+    v55 = Convert v54 declared={type=number flags=[IsExpected]}
+    v56 = Call v49, -, v55 calleeName="show"
+    v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]}
+    v58 = Add v48, v57
+    v59 = String string=" "
+    v60 = Add v58, v59
+    v61 = GetModuleVariable variable=g0
+    v62 = Integer integer=10
+    v63 = Div v3, v62
+    v64 = Integer
+    v65 = BitOr v63, v64
+    v66 = Call v61, -, v65 calleeName="show"
+    v67 = Convert v66 declared={type=undefined|null|string flags=[IsExpected]}
+    v68 = Add v60, v67
+    v69 = String string=" "
+    v70 = Add v68, v69
+    v71 = GetModuleVariable variable=g0
+    v72 = Builtin builtin=Math
+    v73 = Builtin builtin=MathFloor
+    v74 = Integer integer=1
+    v75 = Div v3, v74
+    v76 = Call v73, v72, v75 calleeName="Math.floor"
+    v77 = Convert v76 declared={type=number flags=[IsExpected]}
+    v78 = Call v71, -, v77 calleeName="show"
+    v79 = Convert v78 declared={type=undefined|null|string flags=[IsExpected]}
+    v80 = Add v70, v79
+    v81 = String string=" "
+    v82 = Add v80, v81
+    v83 = GetModuleVariable variable=g0
+    v84 = Builtin builtin=Math
+    v85 = Builtin builtin=MathFloor
+    v86 = Integer integer=-1
+    v87 = Div v3, v86
+    v88 = Call v85, v84, v87 calleeName="Math.floor"
+    v89 = Convert v88 declared={type=number flags=[IsExpected]}
+    v90 = Call v83, -, v89 calleeName="show"
+    v91 = Convert v90 declared={type=undefined|null|string flags=[IsExpected]}
+    v92 = Add v82, v91
+    v93 = String string=" "
+    v94 = Add v92, v93
+    v95 = GetModuleVariable variable=g0
+    v96 = Integer integer=-1
+    v97 = Div v3, v96
+    v98 = Integer
+    v99 = BitOr v97, v98
+    v100 = Call v95, -, v99 calleeName="show"
+    v101 = Convert v100 declared={type=undefined|null|string flags=[IsExpected]}
+    v102 = Add v94, v101
+    v103 = String string=" "
+    v104 = Add v102, v103
+    v105 = GetModuleVariable variable=g0
+    v106 = Builtin builtin=Math
+    v107 = Builtin builtin=MathFloor
+    v108 = Integer
+    v109 = Div v3, v108
+    v110 = Call v107, v106, v109 calleeName="Math.floor"
+    v111 = Convert v110 declared={type=number flags=[IsExpected]}
+    v112 = Call v105, -, v111 calleeName="show"
+    v113 = Convert v112 declared={type=undefined|null|string flags=[IsExpected]}
+    v114 = Add v104, v113
+    v115 = String string=" "
+    v116 = Add v114, v115
+    v117 = GetModuleVariable variable=g0
+    v118 = Integer
+    v119 = Div v3, v118
+    v120 = Integer
+    v121 = BitOr v119, v120
+    v122 = Call v117, -, v121 calleeName="show"
+    v123 = Convert v122 declared={type=undefined|null|string flags=[IsExpected]}
+    v124 = Add v116, v123
+    v125 = String string=" "
+    v126 = Add v124, v125
+    v127 = GetModuleVariable variable=g0
+    v128 = Integer integer=2
+    v129 = Mod v3, v128
+    v130 = Call v127, -, v129 calleeName="show"
+    v131 = Convert v130 declared={type=undefined|null|string flags=[IsExpected]}
+    v132 = Add v126, v131
+    v133 = String string=" "
+    v134 = Add v132, v133
+    v135 = GetModuleVariable variable=g0
+    v136 = Integer integer=-2
+    v137 = Mod v3, v136
+    v138 = Call v135, -, v137 calleeName="show"
+    v139 = Convert v138 declared={type=undefined|null|string flags=[IsExpected]}
+    v140 = Add v134, v139
+    v141 = String string=" "
+    v142 = Add v140, v141
+    v143 = GetModuleVariable variable=g0
+    v144 = Integer integer=1
+    v145 = Mod v3, v144
+    v146 = Call v143, -, v145 calleeName="show"
+    v147 = Convert v146 declared={type=undefined|null|string flags=[IsExpected]}
+    v148 = Add v142, v147
+    v149 = String string=" "
+    v150 = Add v148, v149
+    v151 = GetModuleVariable variable=g0
+    v152 = Integer
+    v153 = Mod v3, v152
+    v154 = Call v151, -, v153 calleeName="show"
+    v155 = Convert v154 declared={type=undefined|null|string flags=[IsExpected]}
+    v156 = Add v150, v155
+    v157 = String string=" "
+    v158 = Add v156, v157
+    v159 = GetModuleVariable variable=g0
+    v160 = Builtin builtin=Math
+    v161 = Builtin builtin=MathFloor
+    v162 = Integer integer=4096
+    v163 = Div v3, v162
+    v164 = Call v161, v160, v163 calleeName="Math.floor"
+    v165 = Convert v164 declared={type=number flags=[IsExpected]}
+    v166 = Call v159, -, v165 calleeName="show"
+    v167 = Convert v166 declared={type=undefined|null|string flags=[IsExpected]}
+    v168 = Add v158, v167
+    v169 = String string=" "
+    v170 = Add v168, v169
+    v171 = GetModuleVariable variable=g0
+    v172 = Builtin builtin=Math
+    v173 = Builtin builtin=MathFloor
+    v174 = Integer integer=2147483647
+    v175 = Div v3, v174
+    v176 = Call v173, v172, v175 calleeName="Math.floor"
+    v177 = Convert v176 declared={type=number flags=[IsExpected]}
+    v178 = Call v171, -, v177 calleeName="show"
+    v179 = Convert v178 declared={type=undefined|null|string flags=[IsExpected]}
+    v180 = Add v170, v179
+    v181 = String string=" "
+    v182 = Add v180, v181
+    v183 = GetModuleVariable variable=g0
+    v184 = Builtin builtin=Math
+    v185 = Builtin builtin=MathFloor
+    v186 = Integer integer=-2147483648
+    v187 = Div v3, v186
+    v188 = Call v185, v184, v187 calleeName="Math.floor"
+    v189 = Convert v188 declared={type=number flags=[IsExpected]}
+    v190 = Call v183, -, v189 calleeName="show"
+    v191 = Convert v190 declared={type=undefined|null|string flags=[IsExpected]}
+    v192 = Add v182, v191
+    v193 = Convert v192 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v193
+}
+# -- generated: byTwo
+# CHECK-LABEL: function {{*}}name="byTwo"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 523, patchpoints: 86, rare instructions: 85
+# CHECK-NEXT: end of function f2

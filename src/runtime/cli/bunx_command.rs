@@ -722,7 +722,7 @@ impl BunxCommand {
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different
         // working directory than this command.
         let mut temp_dir_buf = bun_paths::path_buffer_pool::get();
-        let temp_dir = bun_resolver::fs::FileSystem::instance()
+        let temp_dir = bun_resolver::fs::FileSystem::get()
             .abs_buf_checked(&[RealFS::platform_temp_dir()], &mut temp_dir_buf[..]);
         let bases = [
             install_cache.as_ref().map(|dir| dir.path.as_slice()),
@@ -1086,8 +1086,7 @@ impl BunxCommand {
             new_path
         };
 
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir();
+        let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
         let which_cwd: &[u8] = if ignore_cwd.is_empty() {
             top_level_dir
         } else {

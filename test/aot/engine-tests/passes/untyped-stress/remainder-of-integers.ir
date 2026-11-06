@@ -1,0 +1,753 @@
+# `%` on integers, objects, undefined and BigInts, including a BigInt divided by zero.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="impl.js" displayPath="impl.js" body=f0 namespaceLayout=L(m0)
+module m1 path="main.ts" displayPath="main.ts" body=f20 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 module=m0 position=3579 fields=[{key="valueOf" declared={type=undefined|null|function|f14 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{value=7}, Number{value=3}, Number{value=1}]}, Array{contents=number elements=[Number{value=-7}, Number{value=3}, Number{value=-1}]}, Array{contents=number elements=[Number{value=7}, Number{value=-3}, Number{value=1}]}, Array{contents=number elements=[Number{value=-7}, Number{value=-3}, Number{value=-1}]}, Array{contents=number elements=[Number{value=6}, Number{value=3}, Number{}]}, Array{contents=number elements=[Number{value=-6}, Number{value=3}, Number{value=-0}]}, Array{contents=number elements=[Number{value=6}, Number{value=-3}, Number{}]}, Array{contents=number elements=[Number{value=-6}, Number{value=-3}, Number{value=-0}]}, Array{contents=number elements=[Number{}, Number{value=3}, Number{}]}, Array{contents=number elements=[Number{value=-0}, Number{value=3}, Number{value=-0}]}, Array{contents=number elements=[Number{}, Number{value=-3}, Number{}]}, Array{contents=number elements=[Number{value=-0}, Number{value=-3}, Number{value=-0}]}, Array{contents=number elements=[Number{value=7}, Number{}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=-7}, Number{}, Number{value=NaN}]}, Array{contents=number elements=[Number{}, Number{}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=7}, Number{value=-0}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=1}, Number{value=1}, Number{}]}, Array{contents=number elements=[Number{value=-1}, Number{value=1}, Number{value=-0}]}, Array{contents=number elements=[Number{value=5}, Number{value=7}, Number{value=5}]}, Array{contents=number elements=[Number{value=-5}, Number{value=7}, Number{value=-5}]}, Array{contents=number elements=[Number{value=7.5}, Number{value=2}, Number{value=1.5}]}, Array{contents=number elements=[Number{value=-7.5}, Number{value=2}, Number{value=-1.5}]}, Array{contents=number elements=[Number{value=7}, Number{value=2.5}, Number{value=2}]}, Array{contents=number elements=[Number{value=7}, Number{value=0.5}, Number{}]}, Array{contents=number elements=[Number{value=-7}, Number{value=0.5}, Number{value=-0}]}, Array{contents=number elements=[Number{value=0.5}, Number{value=7}, Number{value=0.5}]}, Array{contents=number elements=[Number{value=2147483647}, Number{value=2}, Number{value=1}]}, Array{contents=number elements=[Number{value=-2147483648}, Number{value=2}, Number{value=-0}]}, Array{contents=number elements=[Number{value=-2147483648}, Number{value=-1}, Number{value=-0}]}, Array{contents=number elements=[Number{value=-2147483648}, Number{value=3}, Number{value=-2}]}, Array{contents=number elements=[Number{value=2147483647}, Number{value=2147483647}, Number{}]}, Array{contents=number elements=[Number{value=-2147483648}, Number{value=2147483647}, Number{value=-1}]}, Array{contents=number elements=[Number{value=2147483648}, Number{value=3}, Number{value=2}]}, Array{contents=number elements=[Number{value=-2147483649}, Number{value=3}, Number{value=-0}]}, Array{contents=number elements=[Number{value=4294967296}, Number{value=7}, Number{value=4}]}, Array{contents=number elements=[Number{value=9007199254740991}, Number{value=10}, Number{value=1}]}, Array{contents=number elements=[Number{value=-9007199254740991}, Number{value=10}, Number{value=-1}]}, Array{contents=number elements=[Number{value=9223372036854776000}, Number{value=3}, Number{value=2}]}, Array{contents=number elements=[Number{value=-9223372036854776000}, Number{value=3}, Number{value=-2}]}, Array{contents=number elements=[Number{value=9223372036854776000}, Number{value=1000}, Number{value=808}]}, Array{contents=number elements=[Number{value=1e+21}, Number{value=7}, Number{value=6}]}, Array{contents=number elements=[Number{value=1e+300}, Number{value=3}, Number{}]}, Array{contents=number elements=[Number{value=5}, Number{value=2147483648}, Number{value=5}]}, Array{contents=number elements=[Number{value=5}, Number{value=4294967296}, Number{value=5}]}, Array{contents=number elements=[Number{value=5}, Number{value=1e+300}, Number{value=5}]}, Array{contents=number elements=[Number{value=NaN}, Number{value=3}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=3}, Number{value=NaN}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=Infinity}, Number{value=3}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=-Infinity}, Number{value=3}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=3}, Number{value=Infinity}, Number{value=3}]}, Array{contents=number elements=[Number{value=-3}, Number{value=Infinity}, Number{value=-3}]}, Array{contents=number elements=[Number{value=3}, Number{value=-Infinity}, Number{value=3}]}, Array{contents=number elements=[Number{value=-0}, Number{value=Infinity}, Number{value=-0}]}, Array{contents=number elements=[Number{value=Infinity}, Number{value=Infinity}, Number{value=NaN}]}]} module=m0
+data d1 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{}, Number{}]}, Array{contents=number elements=[Number{value=-0}, Number{value=-0}]}, Array{contents=number elements=[Number{value=999}, Number{value=999}]}, Array{contents=number elements=[Number{value=1000}, Number{}]}, Array{contents=number elements=[Number{value=-1000}, Number{value=-0}]}, Array{contents=number elements=[Number{value=1234}, Number{value=234}]}, Array{contents=number elements=[Number{value=-1234}, Number{value=-234}]}, Array{contents=number elements=[Number{value=1234.5}, Number{value=234.5}]}, Array{contents=number elements=[Number{value=10000000000}, Number{}]}, Array{contents=number elements=[Number{value=10000000001}, Number{value=1}]}, Array{contents=number elements=[Number{value=-10000000000}, Number{value=-0}]}, Array{contents=number elements=[Number{value=NaN}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=Infinity}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=2147483647}, Number{value=647}]}, Array{contents=number elements=[Number{value=-2147483648}, Number{value=-648}]}, Array{contents=number elements=[Number{value=2147483648}, Number{value=648}]}, Array{contents=number elements=[Number{value=9223372036854776000}, Number{value=808}]}]} module=m0
+data d2 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{}, Number{}]}, Array{contents=number elements=[Number{value=1}, Number{value=37}]}, Array{contents=number elements=[Number{value=27}, Number{value=999}]}, Array{contents=number elements=[Number{value=28}, Number{value=36}]}, Array{contents=number elements=[Number{value=500}, Number{value=500}]}, Array{contents=number elements=[Number{value=-1}, Number{value=-37}]}, Array{contents=number elements=[Number{value=-1000}, Number{value=-0}]}, Array{contents=number elements=[Number{value=1000}, Number{}]}, Array{contents=number elements=[Number{value=0.5}, Number{value=18.5}]}, Array{contents=number elements=[Number{value=100000000}, Number{}]}, Array{contents=number elements=[Number{value=58040000}, Number{}]}, Array{contents=number elements=[Number{value=58040001}, Number{value=37}]}, Array{contents=number elements=[Number{value=NaN}, Number{value=NaN}]}, Array{contents=number elements=[Number{value=-0}, Number{value=-0}]}]} module=m0
+data d3 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{}, Number{}]}, Array{contents=number elements=[Number{value=1}, Number{value=37}]}, Array{contents=number elements=[Number{value=28}, Number{value=36}]}, Array{contents=number elements=[Number{value=-1}, Number{value=-37}]}, Array{contents=number elements=[Number{value=-1000}, Number{value=-0}]}, Array{contents=number elements=[Number{value=2147483647}, Number{value=939}]}, Array{contents=number elements=[Number{value=-2147483648}, Number{value=-976}]}, Array{contents=number elements=[Number{value=100000000}, Number{}]}]} module=m0
+data d4 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{value=7}, Number{}]}, Array{contents=number elements=[Number{value=-7}, Number{value=-0}]}, Array{contents=number elements=[Number{value=8}, Number{value=1}]}, Array{contents=number elements=[Number{value=-8}, Number{value=-1}]}, Array{contents=number elements=[Number{}, Number{}]}, Array{contents=number elements=[Number{value=-0}, Number{value=-0}]}, Array{contents=number elements=[Number{value=7.5}, Number{value=0.5}]}]} module=m0
+variable g0 name="check" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="errorOf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Call v1 calleeName="test"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="check" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectIs
+    v5 = Call v4, v3, v0, v1 calleeName="Object.is"
+    v6 = Convert v5 declared={type=boolean flags=[IsExpected]}
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8):
+    v9 = Undefined
+    Return v9
+  b2(v10):
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="Error" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Error) flags=[IsExpected]}
+    v14 = String string=": "
+    v15 = Add v2, v14
+    v16 = Builtin builtin=String
+    v17 = Builtin builtin=Object
+    v18 = Builtin builtin=ObjectIs
+    v19 = Double number=-0
+    v20 = Call v18, v17, v0, v19 calleeName="Object.is"
+    v21 = Convert v20 declared={type=boolean flags=[IsExpected]}
+    v22 = ToBoolean v21
+    Branch v22 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v23):
+    v24 = String string="-0"
+    Jump -> next b5(v24)
+  b4(v25):
+    Jump -> next b5(v0)
+  b5(v26):
+    v27 = Call v16, -, v26 calleeName="String"
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
+    v29 = Add v15, v28
+    v30 = String string=" instead of "
+    v31 = Add v29, v30
+    v32 = Builtin builtin=String
+    v33 = Builtin builtin=Object
+    v34 = Builtin builtin=ObjectIs
+    v35 = Double number=-0
+    v36 = Call v34, v33, v1, v35 calleeName="Object.is"
+    v37 = Convert v36 declared={type=boolean flags=[IsExpected]}
+    v38 = ToBoolean v37
+    Branch v38 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v39):
+    v40 = String string="-0"
+    Jump -> next b8(v40)
+  b7(v41):
+    Jump -> next b8(v1)
+  b8(v42):
+    v43 = Call v32, -, v42 calleeName="String"
+    v44 = Convert v43 declared={type=undefined|null|string flags=[IsExpected]}
+    v45 = Add v31, v44
+    v46 = Construct v13, -, v45 calleeName="Error"
+    v47 = Convert v46 declared={type=undefined|null|Error flags=[IsExpected]}
+    Throw v47
+}
+function f2 name="errorOf" module=m0 position=237 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = Call v0 calleeName="run"
+    Jump -> next b2()
+  b2():
+    v2 = Null
+    Return v2
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = PropGet v3 key="constructor"
+    Return v4
+}
+function f3 name="test" module=m0 position=368 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f6
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f7
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f8
+    v9 = Convert v8 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f9
+    v11 = Convert v10 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f10
+    v13 = Convert v12 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f11
+    v15 = Convert v14 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f12
+    v17 = Convert v16 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClosure function=f13
+    v19 = Convert v18 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = Data data=d0
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[IsExpected]}
+    v22 = Integer
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v23)
+  b2(v24):
+    LoopHint
+    v26 = Integer integer=50
+    v27 = Less v24, v26
+    Branch v27 -> taken b3(| 0), notTaken b75(| 0)
+  b3(v28):
+    Jump -> next b4()
+  b4():
+    v29 = IteratorOpen v21
+    Jump -> next b5()
+  b5():
+    LoopHint
+    v31 = IteratorResume v29
+    v32 = ResultAt v31
+    v33 = ResultAt v31 index=1
+    Branch v32 -> taken b6(), notTaken b52()
+  b6():
+    v34 = Data data=d1
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[IsExpected]}
+    v36 = IteratorOpen v35
+    Jump -> next b7()
+  b7():
+    LoopHint
+    v38 = IteratorResume v36
+    v39 = ResultAt v38
+    v40 = ResultAt v38 index=1
+    Branch v39 -> taken b8(), notTaken b43()
+  b8():
+    v41 = Data data=d2
+    v42 = Convert v41 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[IsExpected]}
+    v43 = IteratorOpen v42
+    Jump -> next b9()
+  b9():
+    LoopHint
+    v45 = IteratorResume v43
+    v46 = ResultAt v45
+    v47 = ResultAt v45 index=1
+    Branch v46 -> taken b10(), notTaken b34()
+  b10():
+    v48 = Data data=d3
+    v49 = Convert v48 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[IsExpected]}
+    v50 = IteratorOpen v49
+    Jump -> next b11()
+  b11():
+    LoopHint
+    v52 = IteratorResume v50
+    v53 = ResultAt v52
+    v54 = ResultAt v52 index=1
+    Branch v53 -> taken b12(), notTaken b25()
+  b12():
+    v55 = Data data=d4
+    v56 = Convert v55 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[IsExpected]}
+    v57 = IteratorOpen v56
+    Jump -> next b13()
+  b13():
+    LoopHint
+    v59 = IteratorResume v57
+    v60 = ResultAt v59
+    v61 = ResultAt v59 index=1
+    Branch v60 -> taken b14(), notTaken b16()
+  b14():
+    v62 = Integer integer=5
+    v63 = Call v13, -, v62 calleeName="byZero"
+    v64 = GetModuleVariable variable=g0
+    v65 = Double number=0.5
+    v66 = Call v13, -, v65 calleeName="byZero"
+    v67 = Convert v66 declared={type=number flags=[IsExpected]}
+    v68 = Double number=NaN
+    v69 = String string="0.5 % 0"
+    v70 = Call v64, -, v67, v68, v69 calleeName="check"
+    v71 = String string="7"
+    v72 = String string="3"
+    v73 = Call v15, -, v71, v72 calleeName="ofAnything"
+    v74 = NewObject layout=L0
+    v75 = FinishObject v74
+    v76 = Integer integer=3
+    v77 = Call v15, -, v75, v76 calleeName="ofAnything"
+    v78 = GetModuleVariable variable=g0
+    v79 = Null
+    v80 = Integer integer=3
+    v81 = Call v15, -, v79, v80 calleeName="ofAnything"
+    v82 = Convert v81 declared={type=number flags=[IsExpected]}
+    v83 = Integer
+    v84 = String string="null"
+    v85 = Call v78, -, v82, v83, v84 calleeName="check"
+    v86 = Undefined
+    v87 = Integer integer=3
+    v88 = Call v15, -, v86, v87 calleeName="ofAnything"
+    v89 = BigInt digits="7"
+    v90 = BigInt digits="3"
+    v91 = Call v17, -, v89, v90 calleeName="ofBigInts"
+    v92 = GetModuleVariable variable=g0
+    v93 = BigInt digits="7"
+    v94 = Negate v93
+    v95 = BigInt digits="3"
+    v96 = Call v17, -, v94, v95 calleeName="ofBigInts"
+    v97 = Convert v96 declared={type=number flags=[IsExpected]}
+    v98 = BigInt digits="1"
+    v99 = Negate v98
+    v100 = String string="BigInts"
+    v101 = Call v92, -, v97, v99, v100 calleeName="check"
+    v102 = GetModuleVariable variable=g0
+    v103 = Integer integer=15
+    v104 = Call v19, -, v103 calleeName="inLoop"
+    v105 = Convert v104 declared={type=number flags=[IsExpected]}
+    v106 = Integer integer=42
+    v107 = String string="in a loop"
+    v108 = Call v102, -, v105, v106, v107 calleeName="check"
+    Jump -> next b15()
+  b15():
+    v109 = Increment v28
+    v110 = Convert v109 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v110)
+  b16():
+    Jump -> next b17()
+  b17() handler=b24():
+    v111 = IteratorOpen v61 elementCount=2 [isDestructuring]
+    Jump -> next b18()
+  b18() handler=b23():
+    v112 = IteratorResume v111 stepIndex=0
+    v113 = ResultAt v112 index=1
+    v114 = Convert v113 declared={type=number flags=[IsExpected]}
+    Jump -> next b19()
+  b19() handler=b23():
+    v115 = IteratorResume v111 stepIndex=1
+    v116 = ResultAt v115 index=1
+    v117 = Convert v116 declared={type=number flags=[IsExpected]}
+    Jump -> next b20()
+  b20() handler=b23():
+    Jump -> next b21()
+  b21() handler=b24():
+    Jump -> next b22()
+  b22() handler=b24():
+    v118 = GetModuleVariable variable=g0
+    v119 = ToNumber v114
+    v120 = Call v11, -, v119 calleeName="byNegativeConstant"
+    v121 = Convert v120 declared={type=number flags=[IsExpected]}
+    v122 = String string=" % -7"
+    v123 = Add v114, v122
+    v124 = Call v118, -, v121, v117, v123 calleeName="check"
+    Jump -> next b13()
+  b23() role=IterationCleanup subject=v111 handler=b24():
+    v125 = CatchException
+    Rethrow v125
+  b24() role=IterationCleanup subject=v57:
+    v126 = CatchException
+    Rethrow v126
+  b25():
+    Jump -> next b26()
+  b26() handler=b33():
+    v127 = IteratorOpen v54 elementCount=2 [isDestructuring]
+    Jump -> next b27()
+  b27() handler=b32():
+    v128 = IteratorResume v127 stepIndex=0
+    v129 = ResultAt v128 index=1
+    v130 = Convert v129 declared={type=number flags=[IsExpected]}
+    Jump -> next b28()
+  b28() handler=b32():
+    v131 = IteratorResume v127 stepIndex=1
+    v132 = ResultAt v131 index=1
+    v133 = Convert v132 declared={type=number flags=[IsExpected]}
+    Jump -> next b29()
+  b29() handler=b32():
+    Jump -> next b30()
+  b30() handler=b33():
+    Jump -> next b31()
+  b31() handler=b33():
+    v134 = GetModuleVariable variable=g0
+    v135 = Call v9, -, v130 calleeName="ofWideProduct"
+    v136 = Convert v135 declared={type=number flags=[IsExpected]}
+    v137 = String string="("
+    v138 = Add v137, v130
+    v139 = String string=" | 0) * 37 % 1000"
+    v140 = Add v138, v139
+    v141 = Call v134, -, v136, v133, v140 calleeName="check"
+    Jump -> next b11()
+  b32() role=IterationCleanup subject=v127 handler=b33():
+    v142 = CatchException
+    Rethrow v142
+  b33() role=IterationCleanup subject=v50:
+    v143 = CatchException
+    Rethrow v143
+  b34():
+    Jump -> next b35()
+  b35() handler=b42():
+    v144 = IteratorOpen v47 elementCount=2 [isDestructuring]
+    Jump -> next b36()
+  b36() handler=b41():
+    v145 = IteratorResume v144 stepIndex=0
+    v146 = ResultAt v145 index=1
+    v147 = Convert v146 declared={type=number flags=[IsExpected]}
+    Jump -> next b37()
+  b37() handler=b41():
+    v148 = IteratorResume v144 stepIndex=1
+    v149 = ResultAt v148 index=1
+    v150 = Convert v149 declared={type=number flags=[IsExpected]}
+    Jump -> next b38()
+  b38() handler=b41():
+    Jump -> next b39()
+  b39() handler=b42():
+    Jump -> next b40()
+  b40() handler=b42():
+    v151 = GetModuleVariable variable=g0
+    v152 = Call v5, -, v147 calleeName="ofProduct"
+    v153 = Convert v152 declared={type=number flags=[IsExpected]}
+    v154 = String string=" * 37 % 1000"
+    v155 = Add v147, v154
+    v156 = Call v151, -, v153, v150, v155 calleeName="check"
+    Jump -> next b9()
+  b41() role=IterationCleanup subject=v144 handler=b42():
+    v157 = CatchException
+    Rethrow v157
+  b42() role=IterationCleanup subject=v43:
+    v158 = CatchException
+    Rethrow v158
+  b43():
+    Jump -> next b44()
+  b44() handler=b51():
+    v159 = IteratorOpen v40 elementCount=2 [isDestructuring]
+    Jump -> next b45()
+  b45() handler=b50():
+    v160 = IteratorResume v159 stepIndex=0
+    v161 = ResultAt v160 index=1
+    v162 = Convert v161 declared={type=number flags=[IsExpected]}
+    Jump -> next b46()
+  b46() handler=b50():
+    v163 = IteratorResume v159 stepIndex=1
+    v164 = ResultAt v163 index=1
+    v165 = Convert v164 declared={type=number flags=[IsExpected]}
+    Jump -> next b47()
+  b47() handler=b50():
+    Jump -> next b48()
+  b48() handler=b51():
+    Jump -> next b49()
+  b49() handler=b51():
+    v166 = GetModuleVariable variable=g0
+    v167 = ToNumber v162
+    v168 = Call v3, -, v167 calleeName="byConstant"
+    v169 = Convert v168 declared={type=number flags=[IsExpected]}
+    v170 = String string=" % 1000"
+    v171 = Add v162, v170
+    v172 = Call v166, -, v169, v165, v171 calleeName="check"
+    Jump -> next b7()
+  b50() role=IterationCleanup subject=v159 handler=b51():
+    v173 = CatchException
+    Rethrow v173
+  b51() role=IterationCleanup subject=v36:
+    v174 = CatchException
+    Rethrow v174
+  b52():
+    Jump -> next b53()
+  b53() handler=b74():
+    v175 = IteratorOpen v33 elementCount=3 [isDestructuring]
+    Jump -> next b54()
+  b54() handler=b73():
+    v176 = IteratorResume v175 stepIndex=0
+    v177 = ResultAt v176 index=1
+    v178 = Convert v177 declared={type=number flags=[IsExpected]}
+    Jump -> next b55()
+  b55() handler=b73():
+    v179 = IteratorResume v175 stepIndex=1
+    v180 = ResultAt v179 index=1
+    v181 = Convert v180 declared={type=number flags=[IsExpected]}
+    Jump -> next b56()
+  b56() handler=b73():
+    v182 = IteratorResume v175 stepIndex=2
+    v183 = ResultAt v182 index=1
+    v184 = Convert v183 declared={type=number flags=[IsExpected]}
+    Jump -> next b57()
+  b57() handler=b73():
+    Jump -> next b58()
+  b58() handler=b74():
+    Jump -> next b59()
+  b59() handler=b74():
+    v185 = GetModuleVariable variable=g0
+    v186 = ToNumber v178
+    v187 = ToNumber v181
+    v188 = Call v1, -, v186, v187 calleeName="ofNumbers"
+    v189 = Convert v188 declared={type=number flags=[IsExpected]}
+    v190 = String string=" % "
+    v191 = Add v178, v190
+    v192 = Add v191, v181
+    v193 = Call v185, -, v189, v184, v192 calleeName="check"
+    v194 = GetModuleVariable variable=g0
+    v195 = Call v15, -, v178, v181 calleeName="ofAnything"
+    v196 = Convert v195 declared={type=number flags=[IsExpected]}
+    v197 = String string=" % "
+    v198 = Add v178, v197
+    v199 = Add v198, v181
+    v200 = String string=", of anything"
+    v201 = Add v199, v200
+    v202 = Call v194, -, v196, v184, v201 calleeName="check"
+    v203 = Integer
+    v204 = BitOr v178, v203
+    v205 = StrictEq v204, v178
+    Branch v205 -> taken b60(| 1), notTaken b71(| 1)
+  b60(v206) handler=b74():
+    Jump -> next b61()
+  b61() handler=b74():
+    v207 = Integer
+    v208 = BitOr v181, v207
+    v209 = StrictEq v208, v181
+    Branch v209 -> taken b62(| 1), notTaken b70(| 1)
+  b62(v210) handler=b74():
+    Jump -> next b63()
+  b63() handler=b74():
+    v211 = Builtin builtin=Object
+    v212 = Builtin builtin=ObjectIs
+    v213 = Double number=-0
+    v214 = Call v212, v211, v206, v213 calleeName="Object.is"
+    v215 = Convert v214 declared={type=boolean flags=[IsExpected]}
+    v216 = ToBoolean v215
+    Branch v216 -> taken b64(| 0), notTaken b65(| 0)
+  b64(v217) handler=b74():
+    Jump -> next b72()
+  b65(v218) handler=b74():
+    Jump -> next b66()
+  b66() handler=b74():
+    v219 = Builtin builtin=Object
+    v220 = Builtin builtin=ObjectIs
+    v221 = Double number=-0
+    v222 = Call v220, v219, v210, v221 calleeName="Object.is"
+    v223 = Convert v222 declared={type=boolean flags=[IsExpected]}
+    v224 = ToBoolean v223
+    Branch v224 -> taken b67(| 0), notTaken b68(| 0)
+  b67(v225) handler=b74():
+    Jump -> next b72()
+  b68(v226) handler=b74():
+    Jump -> next b69()
+  b69() handler=b74():
+    v227 = GetModuleVariable variable=g0
+    v228 = Call v7, -, v206, v210 calleeName="ofInt32"
+    v229 = Convert v228 declared={type=number flags=[IsExpected]}
+    v230 = String string=" % "
+    v231 = Add v206, v230
+    v232 = Add v231, v210
+    v233 = String string=", as int32"
+    v234 = Add v232, v233
+    v235 = Call v227, -, v229, v184, v234 calleeName="check"
+    Jump -> next b72()
+  b70(v236) handler=b74():
+    Jump -> next b72()
+  b71(v237) handler=b74():
+    Jump -> next b72()
+  b72() handler=b74():
+    Jump -> next b5()
+  b73() role=IterationCleanup subject=v175 handler=b74():
+    v238 = CatchException
+    Rethrow v238
+  b74() role=IterationCleanup subject=v29:
+    v239 = CatchException
+    Rethrow v239
+  b75(v240):
+    Jump -> next b76()
+  b76():
+    v241 = GetModuleVariable variable=g1
+    v242 = NewClosure v17 function=f15
+    v243 = Call v241, -, v242 calleeName="errorOf"
+    v244 = GetModuleVariable variable=g0
+    v245 = GetModuleVariable variable=g1
+    v246 = NewClosure v15 function=f16
+    v247 = Call v245, -, v246 calleeName="errorOf"
+    v248 = Builtin builtin=GlobalThis
+    v249 = PropGet v248 key="TypeError" [isFreeName]
+    v250 = Convert v249 declared={type=builtin(TypeError) flags=[IsExpected]}
+    v251 = String string="a BigInt and a number"
+    v252 = Call v244, -, v247, v250, v251 calleeName="check"
+    v253 = Undefined
+    Return v253
+}
+function f4 name="ofNumbers" module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=number flags=[IsExpected]}
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Mod v2, v3
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Return v5
+}
+function f5 name="byConstant" module=m0 position=437 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer integer=1000
+    v3 = Mod v1, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v4
+}
+function f6 name="ofProduct" module=m0 position=485 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer integer=37
+    v3 = Mul v1, v2
+    v4 = Integer integer=1000
+    v5 = Mod v3, v4
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v6
+}
+function f7 name="ofInt32" module=m0 position=537 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: i32):
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Integer
+    v5 = BitOr v1, v4
+    v6 = Mod v3, v5
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v7
+}
+function f8 name="ofWideProduct" module=m0 position=594 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Integer integer=37
+    v4 = Mul v2, v3
+    v5 = Integer integer=1000
+    v6 = Mod v4, v5
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v7
+}
+function f9 name="byNegativeConstant" module=m0 position=656 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="byZero" module=m0 position=710 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer
+    v3 = Mod v1, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v4
+}
+function f11 name="ofAnything" module=m0 position=751 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=number flags=[IsExpected]}
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Mod v2, v3
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Return v5
+}
+function f12 name="ofBigInts" module=m0 position=799 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="inLoop" module=m0 position=846 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=undefined|number flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Convert v6 declared={type=number flags=[IsExpected]}
+    v9 = Convert v0 declared={type=number flags=[IsExpected]}
+    v10 = Less v8, v9
+    Branch v10 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v11, v12):
+    v13 = Convert v11 declared={type=number flags=[IsExpected]}
+    v14 = Integer integer=7
+    v15 = Mod v13, v14
+    v16 = Add v5, v15
+    v17 = Convert v16 declared={type=undefined|number flags=[IsExpected]}
+    v18 = Increment v13
+    v19 = Convert v18 declared={type=undefined|number flags=[IsExpected]}
+    Jump -> next b1(v17, v19)
+  b3(v20, v21):
+    v22 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v22
+}
+function f14 name="valueOf" module=m0 position=3581 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=3905 kind=Arrow captures=[{type=f12 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: f12):
+    v1 = BigInt digits="7"
+    v2 = BigInt digits="0"
+    v3 = Call v0, -, v1, v2 calleeName="ofBigInts"
+    ReturnCall v3 casts=[{declared={type=number flags=[IsExpected]}}]
+}
+function f16 module=m0 position=3982 kind=Arrow captures=[{type=f11 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: f11):
+    v1 = BigInt digits="7"
+    v2 = Integer integer=3
+    v3 = Call v0, -, v1, v2 calleeName="ofAnything"
+    ReturnCall v3 casts=[{declared={type=number flags=[IsExpected]}}]
+}
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# -- generated: f0 check errorOf ofNumbers ofInt32 ofAnything f15 f16 f20
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f3 accessSite=0
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="check"
+# CHECK: module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|number|bigint|builtin(TypeError)}, {type=string}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything, v1: undefined|number|bigint|builtin(TypeError), v2: string):
+# CHECK-NEXT: v3: boolean = CallBuiltin -, v0, v1 overload=ObjectIs/0 accessSite=1
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v5: ": " = String string=": "
+# CHECK-NEXT: v6: string = Add v2, v5
+# CHECK-NEXT: v7: whole = Double number=-0
+# CHECK-NEXT: v8: boolean = CallBuiltin -, v0, v7 overload=ObjectIs/0 accessSite=3
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b4(v0)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b4(v9)
+# CHECK-NEXT: b4(v10: anything):
+# CHECK-NEXT: v11: string = CallBuiltin -, v10 overload=String/0 builtinCallForm=AnyReceiver accessSite=4
+# CHECK-NEXT: v12: " instead of " = String string=" instead of "
+# CHECK-NEXT: v13: string = Strcat v6, v11, v12
+# CHECK-NEXT: v14: whole = Double number=-0
+# CHECK-NEXT: v15: boolean = CallBuiltin -, v1, v14 overload=ObjectIs/0 accessSite=5
+# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b6(v1)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v16: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b6(v16)
+# CHECK-NEXT: b6(v17: undefined|number|bigint|"-0"|builtin(TypeError)):
+# CHECK-NEXT: v18: string = CallBuiltin -, v17 overload=String/0 builtinCallForm=AnyReceiver accessSite=6
+# CHECK-NEXT: v19: string = Add v13, v18
+# CHECK-NEXT: v20: Error = CallBuiltin -, v19 overload=Error/1 accessSite=7
+# CHECK-NEXT: Throw v20
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="errorOf"
+# CHECK: module=m0 position=237 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f15|f16}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f15|f16):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=f15
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() handler=b4():
+# CHECK-NEXT: v2: anything ~ number = CallDirect function=f15 accessSite=8
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() handler=b4():
+# CHECK-NEXT: v3: number = CallDirect function=f16 accessSite=8
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v4: null = Null
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: anything = PropGet v5 key="constructor" accessSite=9
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ofNumbers"
+# CHECK: module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: v2: number = Mod v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ofInt32"
+# CHECK: module=m0 position=537 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=int[-2147483647, 2147483647]|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ i32, v1: anything ~ i32):
+# CHECK-NEXT: v2: int|whole ~ i32 = AssumeType v0 provenType=int|whole
+# CHECK-NEXT: v3: int|whole ~ i32 = AssumeType v1 provenType=int|whole
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v2 testedType=i32
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v6: i32):
+# CHECK-NEXT: v7: i32 = BitOr v6, v4
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v3 testedType=i32
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b5(v7)
+# CHECK-NEXT: b2(v9: i32):
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: i32 = BitOr v9, v10
+# CHECK-NEXT: Jump -> next b3(v7, v11)
+# CHECK-NEXT: b3(v12: i32, v13: i32):
+# CHECK-NEXT: v14: int[-2147483647, 2147483647]|whole = Mod v12, v13
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v15: i32 = BitOr v2, v4
+# CHECK-NEXT: Jump -> next b5(v15)
+# CHECK-NEXT: b5(v16: i32) frequency=Unlikely:
+# CHECK-NEXT: v17: 0 = Integer
+# CHECK-NEXT: v18: i32 = BitOr v3, v17
+# CHECK-NEXT: Jump -> next b3(v16, v18)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ofAnything"
+# CHECK: module=m0 position=751 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|bigint|L0}, {type=undefined|number|string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|number|string|bigint|L0, v1: undefined|number|string):
+# CHECK-NEXT: v2: undefined|null|number|string|bigint|L0 ~ number = Upcast v0 castType=anything
+# CHECK-NEXT: v3: undefined|number|string ~ number = Upcast v1 castType=anything
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=number
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v5: number):
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v7: number):
+# CHECK-NEXT: v8: number = Mod v5, v7
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v9: number|bigint ~ number = Mod v2, v3
+# CHECK-NEXT: v10: number = AssumeType v9 provenType=number
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function f15 module=
+# CHECK: m0 position=3905 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f12 = GetModuleVariable variable=g2
+# CHECK-NEXT: v1: bigint = BigInt digits="7"
+# CHECK-NEXT: v2: bigint = BigInt digits="0"
+# CHECK-NEXT: v3: anything ~ number = Call v0, -, v1, v2 calleeName="ofBigInts" accessSite=43 callees=[f12]
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number flags=[IsExpected]} resolution=Nothing}]
+# CHECK-NEXT: }
+# CHECK-LABEL: function f16 module=
+# CHECK: m0 position=3982 kind=Arrow thisType={type=anything} results=[{type=number}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: bigint = BigInt digits="7"
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: never = Mod v0, v1
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function f20 module=
+# CHECK: m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m1
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: undefined = CallDirect function=f0
+# CHECK-NEXT: FinishModuleEvaluation module=m1
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ofAnything"
+# CHECK: module=m0 position=751 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers}

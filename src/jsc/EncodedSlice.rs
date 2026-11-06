@@ -52,6 +52,14 @@ fn error_instance(slice: &EncodedSlice<'_>, global: &JSGlobalObject, kind: Error
     bun_string_jsc::error_instance(&StringView::from_encoded(*slice), global, kind)
 }
 
+/// Whether `to_json_object` offers the text to the JSON parser of a compiled program.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CompiledJsonParser {
+    Try,
+    /// `try_parse_json_from_utf8` already declined the text.
+    Skip,
+}
+
 /// JSC conversions for `bun_core::EncodedSlice`.
 pub trait EncodedSliceJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
@@ -66,7 +74,12 @@ pub trait EncodedSliceJsc: Sized {
     /// As `to_external_value`, `None` where that throws.
     fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn to_json_object(
+        &self,
+        global: &JSGlobalObject,
+        compiled_parser: CompiledJsonParser,
+    ) -> JsResult<JSValue>;
+    fn try_parse_json_from_utf8(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
     /// callback (used to keep a `Blob::Store` ref alive).
     ///
@@ -120,9 +133,19 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
         Some(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
     }
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_json_object(
+        &self,
+        global: &JSGlobalObject,
+        compiled_parser: CompiledJsonParser,
+    ) -> JsResult<JSValue> {
+        let skips_compiled_parser = compiled_parser == CompiledJsonParser::Skip;
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
-        unsafe { cpp::EncodedSlice__toJSONObject(self, global) }
+        unsafe { cpp::EncodedSlice__toJSONObject(self, global, skips_compiled_parser) }
+    }
+    fn try_parse_json_from_utf8(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
+        let parsed = unsafe { cpp::EncodedSlice__tryParseJSONFromUTF8(self, global.as_ptr()) };
+        (!parsed.is_empty()).then_some(parsed)
     }
     unsafe fn external(
         &self,

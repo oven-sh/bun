@@ -1,0 +1,276 @@
+# Regular expressions with two character classes whose members share a lead surrogate.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="regexp-shared-lead-surrogate-classes.ts" displayPath="regexp-shared-lead-surrogate-classes.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=148 kind=Variable
+typesite w1 module=m0 position=16149 kind=Variable
+typesite w2 module=m0 position=16155 kind=Parameter
+typesite w3 module=m0 position=16154 kind=Result
+typesite w4 module=m0 position=16204 kind=Element
+typesite w5 module=m0 position=16283 kind=Variable
+typesite w6 module=m0 position=16357 kind=Variable
+typesite w7 module=m0 position=16385 kind=Variable
+typesite w8 module=m0 position=16393 kind=Variable
+typesite w9 module=m0 position=16401 kind=Variable
+typesite w10 module=m0 position=16409 kind=Variable
+typesite w11 module=m0 position=16331 kind=Element
+typesite w12 module=m0 position=16349 kind=Assertion
+typesite w13 module=m0 position=16429 kind=Variable
+typesite w14 module=m0 position=16537 kind=Variable
+typesite w15 module=m0 position=16469 kind=CallResult
+typesite w16 module=m0 position=16488 kind=CallResult
+typesite w17 module=m0 position=16507 kind=CallResult
+typesite w18 module=m0 position=16524 kind=CallResult
+typesite w19 module=m0 position=16575 kind=CallResult
+typesite w20 module=m0 position=16659 kind=CallResult
+typesite w21 module=m0 position=16698 kind=CallResult
+typesite w22 module=m0 position=16782 kind=CallResult
+typesite w23 module=m0 position=16169 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Integer integer=126976
+    v2 = Integer integer=126977
+    v3 = Integer integer=126976
+    v4 = Integer integer=126985
+    v5 = NewRegExp pattern="^\\u4e2d[\\u{1f001}-\\u{1f005}\\u{1f051}-\\u{1f056}\\u{1f0a1}-\\u{1f0a7}\\u{1f0f1}-\\u{1f0f8}\\u{1f141}-\\u{1f149}\\u{1f191}-\\u{1f19a}\\u{1f1e1}-\\u{1f1eb}\\u{1f231}-\\u{1f23c}\\u{1f281}-\\u{1f28d}\\u{1f2d1}-\\u{1f2de}\\u{1f321}-\\u{1f32f}\\u{1f371}-\\u{1f380}][\\u{1f009}-\\u{1f015}\\u{1f059}-\\u{1f066}\\u{1f0a9}-\\u{1f0b7}\\u{1f0f9}-\\u{1f108}\\u{1f149}-\\u{1f159}\\u{1f199}-\\u{1f1aa}\\u{1f1e9}-\\u{1f1fb}\\u{1f239}-\\u{1f24c}\\u{1f289}-\\u{1f29d}\\u{1f2d9}-\\u{1f2ee}\\u{1f329}-\\u{1f33f}\\u{1f379}-\\u{1f390}]$" regExpFlags=[Unicode]
+    v6 = NewRegExp pattern="^\\u4e2d[\\u{1f001}-\\u{1f005}\\u{1f051}-\\u{1f056}\\u{1f0a1}-\\u{1f0a7}\\u{1f0f1}-\\u{1f0f8}\\u{1f141}-\\u{1f149}\\u{1f191}-\\u{1f19a}\\u{1f1e1}-\\u{1f1eb}\\u{1f231}-\\u{1f23c}\\u{1f281}-\\u{1f28d}\\u{1f2d1}-\\u{1f2de}\\u{1f321}-\\u{1f32f}\\u{1f371}-\\u{1f380}]{2}[\\u{1f009}-\\u{1f015}\\u{1f059}-\\u{1f066}\\u{1f0a9}-\\u{1f0b7}\\u{1f0f9}-\\u{1f108}\\u{1f149}-\\u{1f159}\\u{1f199}-\\u{1f1aa}\\u{1f1e9}-\\u{1f1fb}\\u{1f239}-\\u{1f24c}\\u{1f289}-\\u{1f29d}\\u{1f2d9}-\\u{1f2ee}\\u{1f329}-\\u{1f33f}\\u{1f379}-\\u{1f390}]{2}$" regExpFlags=[Unicode]
+    v7 = NewRegExp pattern="^\\u4e2d[\\u{1f001}-\\u{1f005}\\u{1f051}-\\u{1f056}\\u{1f0a1}-\\u{1f0a7}\\u{1f0f1}-\\u{1f0f8}\\u{1f141}-\\u{1f149}\\u{1f191}-\\u{1f19a}\\u{1f1e1}-\\u{1f1eb}\\u{1f231}-\\u{1f23c}\\u{1f281}-\\u{1f28d}\\u{1f2d1}-\\u{1f2de}\\u{1f321}-\\u{1f32f}\\u{1f371}-\\u{1f380}]+[\\u{1f009}-\\u{1f015}\\u{1f059}-\\u{1f066}\\u{1f0a9}-\\u{1f0b7}\\u{1f0f9}-\\u{1f108}\\u{1f149}-\\u{1f159}\\u{1f199}-\\u{1f1aa}\\u{1f1e9}-\\u{1f1fb}\\u{1f239}-\\u{1f24c}\\u{1f289}-\\u{1f29d}\\u{1f2d9}-\\u{1f2ee}\\u{1f329}-\\u{1f33f}\\u{1f379}-\\u{1f390}]+$" regExpFlags=[Unicode]
+    v8 = NewRegExp pattern="^\\u4e2d[\\u{1f001}-\\u{1f005}\\u{1f051}-\\u{1f056}\\u{1f0a1}-\\u{1f0a7}\\u{1f0f1}-\\u{1f0f8}\\u{1f141}-\\u{1f149}\\u{1f191}-\\u{1f19a}\\u{1f1e1}-\\u{1f1eb}\\u{1f231}-\\u{1f23c}\\u{1f281}-\\u{1f28d}\\u{1f2d1}-\\u{1f2de}\\u{1f321}-\\u{1f32f}\\u{1f371}-\\u{1f380}]+?[\\u{1f009}-\\u{1f015}\\u{1f059}-\\u{1f066}\\u{1f0a9}-\\u{1f0b7}\\u{1f0f9}-\\u{1f108}\\u{1f149}-\\u{1f159}\\u{1f199}-\\u{1f1aa}\\u{1f1e9}-\\u{1f1fb}\\u{1f239}-\\u{1f24c}\\u{1f289}-\\u{1f29d}\\u{1f2d9}-\\u{1f2ee}\\u{1f329}-\\u{1f33f}\\u{1f379}-\\u{1f390}]+?$" regExpFlags=[Unicode]
+    v9 = NewRegExp pattern="^\\u4e2d[\\u{1f001}-\\u{1f005}\\u{1f051}-\\u{1f056}\\u{1f0a1}-\\u{1f0a7}\\u{1f0f1}-\\u{1f0f8}\\u{1f141}-\\u{1f149}\\u{1f191}-\\u{1f19a}\\u{1f1e1}-\\u{1f1eb}\\u{1f231}-\\u{1f23c}\\u{1f281}-\\u{1f28d}\\u{1f2d1}-\\u{1f2de}\\u{1f321}-\\u{1f32f}\\u{1f371}-\\u{1f380}][\\u{1f009}-\\u{1f015}\\u{1f059}-\\u{1f066}\\u{1f0a9}-\\u{1f0b7}\\u{1f0f9}-\\u{1f108}\\u{1f149}-\\u{1f159}\\u{1f199}-\\u{1f1aa}\\u{1f1e9}-\\u{1f1fb}\\u{1f239}-\\u{1f24c}\\u{1f289}-\\u{1f29d}\\u{1f2d9}-\\u{1f2ee}\\u{1f329}-\\u{1f33f}\\u{1f379}-\\u{1f390}][\\u{1f001}-\\u{1f005}\\u{1f051}-\\u{1f056}\\u{1f0a1}-\\u{1f0a7}\\u{1f0f1}-\\u{1f0f8}\\u{1f141}-\\u{1f149}\\u{1f191}-\\u{1f19a}\\u{1f1e1}-\\u{1f1eb}\\u{1f231}-\\u{1f23c}\\u{1f281}-\\u{1f28d}\\u{1f2d1}-\\u{1f2de}\\u{1f321}-\\u{1f32f}\\u{1f371}-\\u{1f380}]$" regExpFlags=[Unicode]
+    v10 = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8, v9 contents=undefined|null|number|RegExp
+    v11 = Integer integer=1
+    v12 = Integer integer=128000
+    v13 = Integer integer=128005
+    v14 = Integer integer=128000
+    v15 = Integer integer=128017
+    v16 = NewRegExp pattern="^\\u4e2d[\\u{1f405}-\\u{1f40d}\\u{1f455}-\\u{1f45e}\\u{1f4a5}-\\u{1f4af}\\u{1f4f5}-\\u{1f500}\\u{1f545}-\\u{1f551}\\u{1f595}-\\u{1f5a2}\\u{1f5e5}-\\u{1f5f3}\\u{1f635}-\\u{1f644}\\u{1f685}-\\u{1f695}\\u{1f6d5}-\\u{1f6e6}\\u{1f725}-\\u{1f737}\\u{1f775}-\\u{1f788}][\\u{1f411}-\\u{1f425}\\u{1f461}-\\u{1f476}\\u{1f4b1}-\\u{1f4c7}\\u{1f501}-\\u{1f518}\\u{1f551}-\\u{1f569}\\u{1f5a1}-\\u{1f5ba}\\u{1f5f1}-\\u{1f60b}\\u{1f641}-\\u{1f65c}\\u{1f691}-\\u{1f6ad}\\u{1f6e1}-\\u{1f6fe}\\u{1f731}-\\u{1f74f}\\u{1f781}-\\u{1f7a0}]$" regExpFlags=[Unicode]
+    v17 = NewRegExp pattern="^\\u4e2d[\\u{1f405}-\\u{1f40d}\\u{1f455}-\\u{1f45e}\\u{1f4a5}-\\u{1f4af}\\u{1f4f5}-\\u{1f500}\\u{1f545}-\\u{1f551}\\u{1f595}-\\u{1f5a2}\\u{1f5e5}-\\u{1f5f3}\\u{1f635}-\\u{1f644}\\u{1f685}-\\u{1f695}\\u{1f6d5}-\\u{1f6e6}\\u{1f725}-\\u{1f737}\\u{1f775}-\\u{1f788}]{2}[\\u{1f411}-\\u{1f425}\\u{1f461}-\\u{1f476}\\u{1f4b1}-\\u{1f4c7}\\u{1f501}-\\u{1f518}\\u{1f551}-\\u{1f569}\\u{1f5a1}-\\u{1f5ba}\\u{1f5f1}-\\u{1f60b}\\u{1f641}-\\u{1f65c}\\u{1f691}-\\u{1f6ad}\\u{1f6e1}-\\u{1f6fe}\\u{1f731}-\\u{1f74f}\\u{1f781}-\\u{1f7a0}]{2}$" regExpFlags=[Unicode]
+    v18 = NewRegExp pattern="^\\u4e2d[\\u{1f405}-\\u{1f40d}\\u{1f455}-\\u{1f45e}\\u{1f4a5}-\\u{1f4af}\\u{1f4f5}-\\u{1f500}\\u{1f545}-\\u{1f551}\\u{1f595}-\\u{1f5a2}\\u{1f5e5}-\\u{1f5f3}\\u{1f635}-\\u{1f644}\\u{1f685}-\\u{1f695}\\u{1f6d5}-\\u{1f6e6}\\u{1f725}-\\u{1f737}\\u{1f775}-\\u{1f788}]+[\\u{1f411}-\\u{1f425}\\u{1f461}-\\u{1f476}\\u{1f4b1}-\\u{1f4c7}\\u{1f501}-\\u{1f518}\\u{1f551}-\\u{1f569}\\u{1f5a1}-\\u{1f5ba}\\u{1f5f1}-\\u{1f60b}\\u{1f641}-\\u{1f65c}\\u{1f691}-\\u{1f6ad}\\u{1f6e1}-\\u{1f6fe}\\u{1f731}-\\u{1f74f}\\u{1f781}-\\u{1f7a0}]+$" regExpFlags=[Unicode]
+    v19 = NewRegExp pattern="^\\u4e2d[\\u{1f405}-\\u{1f40d}\\u{1f455}-\\u{1f45e}\\u{1f4a5}-\\u{1f4af}\\u{1f4f5}-\\u{1f500}\\u{1f545}-\\u{1f551}\\u{1f595}-\\u{1f5a2}\\u{1f5e5}-\\u{1f5f3}\\u{1f635}-\\u{1f644}\\u{1f685}-\\u{1f695}\\u{1f6d5}-\\u{1f6e6}\\u{1f725}-\\u{1f737}\\u{1f775}-\\u{1f788}]+?[\\u{1f411}-\\u{1f425}\\u{1f461}-\\u{1f476}\\u{1f4b1}-\\u{1f4c7}\\u{1f501}-\\u{1f518}\\u{1f551}-\\u{1f569}\\u{1f5a1}-\\u{1f5ba}\\u{1f5f1}-\\u{1f60b}\\u{1f641}-\\u{1f65c}\\u{1f691}-\\u{1f6ad}\\u{1f6e1}-\\u{1f6fe}\\u{1f731}-\\u{1f74f}\\u{1f781}-\\u{1f7a0}]+?$" regExpFlags=[Unicode]
+    v20 = NewRegExp pattern="^\\u4e2d[\\u{1f405}-\\u{1f40d}\\u{1f455}-\\u{1f45e}\\u{1f4a5}-\\u{1f4af}\\u{1f4f5}-\\u{1f500}\\u{1f545}-\\u{1f551}\\u{1f595}-\\u{1f5a2}\\u{1f5e5}-\\u{1f5f3}\\u{1f635}-\\u{1f644}\\u{1f685}-\\u{1f695}\\u{1f6d5}-\\u{1f6e6}\\u{1f725}-\\u{1f737}\\u{1f775}-\\u{1f788}][\\u{1f411}-\\u{1f425}\\u{1f461}-\\u{1f476}\\u{1f4b1}-\\u{1f4c7}\\u{1f501}-\\u{1f518}\\u{1f551}-\\u{1f569}\\u{1f5a1}-\\u{1f5ba}\\u{1f5f1}-\\u{1f60b}\\u{1f641}-\\u{1f65c}\\u{1f691}-\\u{1f6ad}\\u{1f6e1}-\\u{1f6fe}\\u{1f731}-\\u{1f74f}\\u{1f781}-\\u{1f7a0}][\\u{1f405}-\\u{1f40d}\\u{1f455}-\\u{1f45e}\\u{1f4a5}-\\u{1f4af}\\u{1f4f5}-\\u{1f500}\\u{1f545}-\\u{1f551}\\u{1f595}-\\u{1f5a2}\\u{1f5e5}-\\u{1f5f3}\\u{1f635}-\\u{1f644}\\u{1f685}-\\u{1f695}\\u{1f6d5}-\\u{1f6e6}\\u{1f725}-\\u{1f737}\\u{1f775}-\\u{1f788}]$" regExpFlags=[Unicode]
+    v21 = NewArray v11, v12, v13, v14, v15, v16, v17, v18, v19, v20 contents=undefined|null|number|RegExp
+    v22 = Integer integer=2
+    v23 = Integer integer=126976
+    v24 = Integer integer=126979
+    v25 = Integer integer=128000
+    v26 = Integer integer=128003
+    v27 = NewRegExp pattern="^\\u4e2d[\\u{1f003}-\\u{1f009}\\u{1f053}-\\u{1f05a}\\u{1f0a3}-\\u{1f0ab}\\u{1f0f3}-\\u{1f0fc}\\u{1f143}-\\u{1f14d}\\u{1f193}-\\u{1f19e}\\u{1f1e3}-\\u{1f1ef}\\u{1f233}-\\u{1f240}\\u{1f283}-\\u{1f291}\\u{1f2d3}-\\u{1f2e2}\\u{1f323}-\\u{1f333}\\u{1f373}-\\u{1f384}][\\u{1f403}-\\u{1f409}\\u{1f453}-\\u{1f45a}\\u{1f4a3}-\\u{1f4ab}\\u{1f4f3}-\\u{1f4fc}\\u{1f543}-\\u{1f54d}\\u{1f593}-\\u{1f59e}\\u{1f5e3}-\\u{1f5ef}\\u{1f633}-\\u{1f640}\\u{1f683}-\\u{1f691}\\u{1f6d3}-\\u{1f6e2}\\u{1f723}-\\u{1f733}\\u{1f773}-\\u{1f784}]$" regExpFlags=[Unicode]
+    v28 = NewRegExp pattern="^\\u4e2d[\\u{1f003}-\\u{1f009}\\u{1f053}-\\u{1f05a}\\u{1f0a3}-\\u{1f0ab}\\u{1f0f3}-\\u{1f0fc}\\u{1f143}-\\u{1f14d}\\u{1f193}-\\u{1f19e}\\u{1f1e3}-\\u{1f1ef}\\u{1f233}-\\u{1f240}\\u{1f283}-\\u{1f291}\\u{1f2d3}-\\u{1f2e2}\\u{1f323}-\\u{1f333}\\u{1f373}-\\u{1f384}]{2}[\\u{1f403}-\\u{1f409}\\u{1f453}-\\u{1f45a}\\u{1f4a3}-\\u{1f4ab}\\u{1f4f3}-\\u{1f4fc}\\u{1f543}-\\u{1f54d}\\u{1f593}-\\u{1f59e}\\u{1f5e3}-\\u{1f5ef}\\u{1f633}-\\u{1f640}\\u{1f683}-\\u{1f691}\\u{1f6d3}-\\u{1f6e2}\\u{1f723}-\\u{1f733}\\u{1f773}-\\u{1f784}]{2}$" regExpFlags=[Unicode]
+    v29 = NewRegExp pattern="^\\u4e2d[\\u{1f003}-\\u{1f009}\\u{1f053}-\\u{1f05a}\\u{1f0a3}-\\u{1f0ab}\\u{1f0f3}-\\u{1f0fc}\\u{1f143}-\\u{1f14d}\\u{1f193}-\\u{1f19e}\\u{1f1e3}-\\u{1f1ef}\\u{1f233}-\\u{1f240}\\u{1f283}-\\u{1f291}\\u{1f2d3}-\\u{1f2e2}\\u{1f323}-\\u{1f333}\\u{1f373}-\\u{1f384}]+[\\u{1f403}-\\u{1f409}\\u{1f453}-\\u{1f45a}\\u{1f4a3}-\\u{1f4ab}\\u{1f4f3}-\\u{1f4fc}\\u{1f543}-\\u{1f54d}\\u{1f593}-\\u{1f59e}\\u{1f5e3}-\\u{1f5ef}\\u{1f633}-\\u{1f640}\\u{1f683}-\\u{1f691}\\u{1f6d3}-\\u{1f6e2}\\u{1f723}-\\u{1f733}\\u{1f773}-\\u{1f784}]+$" regExpFlags=[Unicode]
+    v30 = NewRegExp pattern="^\\u4e2d[\\u{1f003}-\\u{1f009}\\u{1f053}-\\u{1f05a}\\u{1f0a3}-\\u{1f0ab}\\u{1f0f3}-\\u{1f0fc}\\u{1f143}-\\u{1f14d}\\u{1f193}-\\u{1f19e}\\u{1f1e3}-\\u{1f1ef}\\u{1f233}-\\u{1f240}\\u{1f283}-\\u{1f291}\\u{1f2d3}-\\u{1f2e2}\\u{1f323}-\\u{1f333}\\u{1f373}-\\u{1f384}]+?[\\u{1f403}-\\u{1f409}\\u{1f453}-\\u{1f45a}\\u{1f4a3}-\\u{1f4ab}\\u{1f4f3}-\\u{1f4fc}\\u{1f543}-\\u{1f54d}\\u{1f593}-\\u{1f59e}\\u{1f5e3}-\\u{1f5ef}\\u{1f633}-\\u{1f640}\\u{1f683}-\\u{1f691}\\u{1f6d3}-\\u{1f6e2}\\u{1f723}-\\u{1f733}\\u{1f773}-\\u{1f784}]+?$" regExpFlags=[Unicode]
+    v31 = NewRegExp pattern="^\\u4e2d[\\u{1f003}-\\u{1f009}\\u{1f053}-\\u{1f05a}\\u{1f0a3}-\\u{1f0ab}\\u{1f0f3}-\\u{1f0fc}\\u{1f143}-\\u{1f14d}\\u{1f193}-\\u{1f19e}\\u{1f1e3}-\\u{1f1ef}\\u{1f233}-\\u{1f240}\\u{1f283}-\\u{1f291}\\u{1f2d3}-\\u{1f2e2}\\u{1f323}-\\u{1f333}\\u{1f373}-\\u{1f384}][\\u{1f403}-\\u{1f409}\\u{1f453}-\\u{1f45a}\\u{1f4a3}-\\u{1f4ab}\\u{1f4f3}-\\u{1f4fc}\\u{1f543}-\\u{1f54d}\\u{1f593}-\\u{1f59e}\\u{1f5e3}-\\u{1f5ef}\\u{1f633}-\\u{1f640}\\u{1f683}-\\u{1f691}\\u{1f6d3}-\\u{1f6e2}\\u{1f723}-\\u{1f733}\\u{1f773}-\\u{1f784}][\\u{1f003}-\\u{1f009}\\u{1f053}-\\u{1f05a}\\u{1f0a3}-\\u{1f0ab}\\u{1f0f3}-\\u{1f0fc}\\u{1f143}-\\u{1f14d}\\u{1f193}-\\u{1f19e}\\u{1f1e3}-\\u{1f1ef}\\u{1f233}-\\u{1f240}\\u{1f283}-\\u{1f291}\\u{1f2d3}-\\u{1f2e2}\\u{1f323}-\\u{1f333}\\u{1f373}-\\u{1f384}]$" regExpFlags=[Unicode]
+    v32 = NewArray v22, v23, v24, v25, v26, v27, v28, v29, v30, v31 contents=undefined|null|number|RegExp
+    v33 = Integer integer=3
+    v34 = Integer integer=119808
+    v35 = Integer integer=119815
+    v36 = Integer integer=119808
+    v37 = Integer integer=119828
+    v38 = NewRegExp pattern="^\\u4e2d[\\u{1d407}-\\u{1d411}\\u{1d457}-\\u{1d462}\\u{1d4a7}-\\u{1d4b3}\\u{1d4f7}-\\u{1d504}\\u{1d547}-\\u{1d555}\\u{1d597}-\\u{1d5a6}\\u{1d5e7}-\\u{1d5f7}\\u{1d637}-\\u{1d648}\\u{1d687}-\\u{1d699}\\u{1d6d7}-\\u{1d6ea}\\u{1d727}-\\u{1d73b}\\u{1d777}-\\u{1d78c}][\\u{1d414}-\\u{1d42b}\\u{1d464}-\\u{1d47c}\\u{1d4b4}-\\u{1d4cd}\\u{1d504}-\\u{1d51e}\\u{1d554}-\\u{1d56f}\\u{1d5a4}-\\u{1d5c0}\\u{1d5f4}-\\u{1d611}\\u{1d644}-\\u{1d662}\\u{1d694}-\\u{1d6b3}\\u{1d6e4}-\\u{1d6e7}\\u{1d734}-\\u{1d738}\\u{1d784}-\\u{1d789}]$" regExpFlags=[Unicode]
+    v39 = NewRegExp pattern="^\\u4e2d[\\u{1d407}-\\u{1d411}\\u{1d457}-\\u{1d462}\\u{1d4a7}-\\u{1d4b3}\\u{1d4f7}-\\u{1d504}\\u{1d547}-\\u{1d555}\\u{1d597}-\\u{1d5a6}\\u{1d5e7}-\\u{1d5f7}\\u{1d637}-\\u{1d648}\\u{1d687}-\\u{1d699}\\u{1d6d7}-\\u{1d6ea}\\u{1d727}-\\u{1d73b}\\u{1d777}-\\u{1d78c}]{2}[\\u{1d414}-\\u{1d42b}\\u{1d464}-\\u{1d47c}\\u{1d4b4}-\\u{1d4cd}\\u{1d504}-\\u{1d51e}\\u{1d554}-\\u{1d56f}\\u{1d5a4}-\\u{1d5c0}\\u{1d5f4}-\\u{1d611}\\u{1d644}-\\u{1d662}\\u{1d694}-\\u{1d6b3}\\u{1d6e4}-\\u{1d6e7}\\u{1d734}-\\u{1d738}\\u{1d784}-\\u{1d789}]{2}$" regExpFlags=[Unicode]
+    v40 = NewRegExp pattern="^\\u4e2d[\\u{1d407}-\\u{1d411}\\u{1d457}-\\u{1d462}\\u{1d4a7}-\\u{1d4b3}\\u{1d4f7}-\\u{1d504}\\u{1d547}-\\u{1d555}\\u{1d597}-\\u{1d5a6}\\u{1d5e7}-\\u{1d5f7}\\u{1d637}-\\u{1d648}\\u{1d687}-\\u{1d699}\\u{1d6d7}-\\u{1d6ea}\\u{1d727}-\\u{1d73b}\\u{1d777}-\\u{1d78c}]+[\\u{1d414}-\\u{1d42b}\\u{1d464}-\\u{1d47c}\\u{1d4b4}-\\u{1d4cd}\\u{1d504}-\\u{1d51e}\\u{1d554}-\\u{1d56f}\\u{1d5a4}-\\u{1d5c0}\\u{1d5f4}-\\u{1d611}\\u{1d644}-\\u{1d662}\\u{1d694}-\\u{1d6b3}\\u{1d6e4}-\\u{1d6e7}\\u{1d734}-\\u{1d738}\\u{1d784}-\\u{1d789}]+$" regExpFlags=[Unicode]
+    v41 = NewRegExp pattern="^\\u4e2d[\\u{1d407}-\\u{1d411}\\u{1d457}-\\u{1d462}\\u{1d4a7}-\\u{1d4b3}\\u{1d4f7}-\\u{1d504}\\u{1d547}-\\u{1d555}\\u{1d597}-\\u{1d5a6}\\u{1d5e7}-\\u{1d5f7}\\u{1d637}-\\u{1d648}\\u{1d687}-\\u{1d699}\\u{1d6d7}-\\u{1d6ea}\\u{1d727}-\\u{1d73b}\\u{1d777}-\\u{1d78c}]+?[\\u{1d414}-\\u{1d42b}\\u{1d464}-\\u{1d47c}\\u{1d4b4}-\\u{1d4cd}\\u{1d504}-\\u{1d51e}\\u{1d554}-\\u{1d56f}\\u{1d5a4}-\\u{1d5c0}\\u{1d5f4}-\\u{1d611}\\u{1d644}-\\u{1d662}\\u{1d694}-\\u{1d6b3}\\u{1d6e4}-\\u{1d6e7}\\u{1d734}-\\u{1d738}\\u{1d784}-\\u{1d789}]+?$" regExpFlags=[Unicode]
+    v42 = NewRegExp pattern="^\\u4e2d[\\u{1d407}-\\u{1d411}\\u{1d457}-\\u{1d462}\\u{1d4a7}-\\u{1d4b3}\\u{1d4f7}-\\u{1d504}\\u{1d547}-\\u{1d555}\\u{1d597}-\\u{1d5a6}\\u{1d5e7}-\\u{1d5f7}\\u{1d637}-\\u{1d648}\\u{1d687}-\\u{1d699}\\u{1d6d7}-\\u{1d6ea}\\u{1d727}-\\u{1d73b}\\u{1d777}-\\u{1d78c}][\\u{1d414}-\\u{1d42b}\\u{1d464}-\\u{1d47c}\\u{1d4b4}-\\u{1d4cd}\\u{1d504}-\\u{1d51e}\\u{1d554}-\\u{1d56f}\\u{1d5a4}-\\u{1d5c0}\\u{1d5f4}-\\u{1d611}\\u{1d644}-\\u{1d662}\\u{1d694}-\\u{1d6b3}\\u{1d6e4}-\\u{1d6e7}\\u{1d734}-\\u{1d738}\\u{1d784}-\\u{1d789}][\\u{1d407}-\\u{1d411}\\u{1d457}-\\u{1d462}\\u{1d4a7}-\\u{1d4b3}\\u{1d4f7}-\\u{1d504}\\u{1d547}-\\u{1d555}\\u{1d597}-\\u{1d5a6}\\u{1d5e7}-\\u{1d5f7}\\u{1d637}-\\u{1d648}\\u{1d687}-\\u{1d699}\\u{1d6d7}-\\u{1d6ea}\\u{1d727}-\\u{1d73b}\\u{1d777}-\\u{1d78c}]$" regExpFlags=[Unicode]
+    v43 = NewArray v33, v34, v35, v36, v37, v38, v39, v40, v41, v42 contents=undefined|null|number|RegExp
+    v44 = Integer integer=4
+    v45 = Integer integer=129024
+    v46 = Integer integer=129026
+    v47 = Integer integer=126976
+    v48 = Integer integer=126987
+    v49 = NewRegExp pattern="^\\u4e2d[\\u{1f802}-\\u{1f807}\\u{1f852}-\\u{1f858}\\u{1f8a2}-\\u{1f8a9}\\u{1f8f2}-\\u{1f8fa}\\u{1f942}-\\u{1f94b}\\u{1f992}-\\u{1f99c}\\u{1f9e2}-\\u{1f9ed}\\u{1fa32}-\\u{1fa3e}\\u{1fa82}-\\u{1fa8f}\\u{1fad2}-\\u{1fae0}\\u{1fb22}-\\u{1fb31}\\u{1fb72}-\\u{1fb82}][\\u{1f00b}-\\u{1f019}\\u{1f05b}-\\u{1f06a}\\u{1f0ab}-\\u{1f0bb}\\u{1f0fb}-\\u{1f10c}\\u{1f14b}-\\u{1f15d}\\u{1f19b}-\\u{1f1ae}\\u{1f1eb}-\\u{1f1ff}\\u{1f23b}-\\u{1f250}\\u{1f28b}-\\u{1f2a1}\\u{1f2db}-\\u{1f2f2}\\u{1f32b}-\\u{1f343}\\u{1f37b}-\\u{1f394}]$" regExpFlags=[Unicode]
+    v50 = NewRegExp pattern="^\\u4e2d[\\u{1f802}-\\u{1f807}\\u{1f852}-\\u{1f858}\\u{1f8a2}-\\u{1f8a9}\\u{1f8f2}-\\u{1f8fa}\\u{1f942}-\\u{1f94b}\\u{1f992}-\\u{1f99c}\\u{1f9e2}-\\u{1f9ed}\\u{1fa32}-\\u{1fa3e}\\u{1fa82}-\\u{1fa8f}\\u{1fad2}-\\u{1fae0}\\u{1fb22}-\\u{1fb31}\\u{1fb72}-\\u{1fb82}]{2}[\\u{1f00b}-\\u{1f019}\\u{1f05b}-\\u{1f06a}\\u{1f0ab}-\\u{1f0bb}\\u{1f0fb}-\\u{1f10c}\\u{1f14b}-\\u{1f15d}\\u{1f19b}-\\u{1f1ae}\\u{1f1eb}-\\u{1f1ff}\\u{1f23b}-\\u{1f250}\\u{1f28b}-\\u{1f2a1}\\u{1f2db}-\\u{1f2f2}\\u{1f32b}-\\u{1f343}\\u{1f37b}-\\u{1f394}]{2}$" regExpFlags=[Unicode]
+    v51 = NewRegExp pattern="^\\u4e2d[\\u{1f802}-\\u{1f807}\\u{1f852}-\\u{1f858}\\u{1f8a2}-\\u{1f8a9}\\u{1f8f2}-\\u{1f8fa}\\u{1f942}-\\u{1f94b}\\u{1f992}-\\u{1f99c}\\u{1f9e2}-\\u{1f9ed}\\u{1fa32}-\\u{1fa3e}\\u{1fa82}-\\u{1fa8f}\\u{1fad2}-\\u{1fae0}\\u{1fb22}-\\u{1fb31}\\u{1fb72}-\\u{1fb82}]+[\\u{1f00b}-\\u{1f019}\\u{1f05b}-\\u{1f06a}\\u{1f0ab}-\\u{1f0bb}\\u{1f0fb}-\\u{1f10c}\\u{1f14b}-\\u{1f15d}\\u{1f19b}-\\u{1f1ae}\\u{1f1eb}-\\u{1f1ff}\\u{1f23b}-\\u{1f250}\\u{1f28b}-\\u{1f2a1}\\u{1f2db}-\\u{1f2f2}\\u{1f32b}-\\u{1f343}\\u{1f37b}-\\u{1f394}]+$" regExpFlags=[Unicode]
+    v52 = NewRegExp pattern="^\\u4e2d[\\u{1f802}-\\u{1f807}\\u{1f852}-\\u{1f858}\\u{1f8a2}-\\u{1f8a9}\\u{1f8f2}-\\u{1f8fa}\\u{1f942}-\\u{1f94b}\\u{1f992}-\\u{1f99c}\\u{1f9e2}-\\u{1f9ed}\\u{1fa32}-\\u{1fa3e}\\u{1fa82}-\\u{1fa8f}\\u{1fad2}-\\u{1fae0}\\u{1fb22}-\\u{1fb31}\\u{1fb72}-\\u{1fb82}]+?[\\u{1f00b}-\\u{1f019}\\u{1f05b}-\\u{1f06a}\\u{1f0ab}-\\u{1f0bb}\\u{1f0fb}-\\u{1f10c}\\u{1f14b}-\\u{1f15d}\\u{1f19b}-\\u{1f1ae}\\u{1f1eb}-\\u{1f1ff}\\u{1f23b}-\\u{1f250}\\u{1f28b}-\\u{1f2a1}\\u{1f2db}-\\u{1f2f2}\\u{1f32b}-\\u{1f343}\\u{1f37b}-\\u{1f394}]+?$" regExpFlags=[Unicode]
+    v53 = NewRegExp pattern="^\\u4e2d[\\u{1f802}-\\u{1f807}\\u{1f852}-\\u{1f858}\\u{1f8a2}-\\u{1f8a9}\\u{1f8f2}-\\u{1f8fa}\\u{1f942}-\\u{1f94b}\\u{1f992}-\\u{1f99c}\\u{1f9e2}-\\u{1f9ed}\\u{1fa32}-\\u{1fa3e}\\u{1fa82}-\\u{1fa8f}\\u{1fad2}-\\u{1fae0}\\u{1fb22}-\\u{1fb31}\\u{1fb72}-\\u{1fb82}][\\u{1f00b}-\\u{1f019}\\u{1f05b}-\\u{1f06a}\\u{1f0ab}-\\u{1f0bb}\\u{1f0fb}-\\u{1f10c}\\u{1f14b}-\\u{1f15d}\\u{1f19b}-\\u{1f1ae}\\u{1f1eb}-\\u{1f1ff}\\u{1f23b}-\\u{1f250}\\u{1f28b}-\\u{1f2a1}\\u{1f2db}-\\u{1f2f2}\\u{1f32b}-\\u{1f343}\\u{1f37b}-\\u{1f394}][\\u{1f802}-\\u{1f807}\\u{1f852}-\\u{1f858}\\u{1f8a2}-\\u{1f8a9}\\u{1f8f2}-\\u{1f8fa}\\u{1f942}-\\u{1f94b}\\u{1f992}-\\u{1f99c}\\u{1f9e2}-\\u{1f9ed}\\u{1fa32}-\\u{1fa3e}\\u{1fa82}-\\u{1fa8f}\\u{1fad2}-\\u{1fae0}\\u{1fb22}-\\u{1fb31}\\u{1fb72}-\\u{1fb82}]$" regExpFlags=[Unicode]
+    v54 = NewArray v44, v45, v46, v47, v48, v49, v50, v51, v52, v53 contents=undefined|null|number|RegExp
+    v55 = Integer integer=5
+    v56 = Integer integer=66560
+    v57 = Integer integer=66573
+    v58 = Integer integer=66560
+    v59 = Integer integer=66564
+    v60 = NewRegExp pattern="^\\u4e2d[\\u{1040d}-\\u{1041d}\\u{1045d}-\\u{1046e}\\u{104ad}-\\u{104bf}\\u{104fd}-\\u{10510}\\u{1054d}-\\u{10561}\\u{1059d}-\\u{105b2}\\u{105ed}-\\u{10603}\\u{1063d}-\\u{10654}\\u{1068d}-\\u{106a5}\\u{106dd}-\\u{106f6}\\u{1072d}-\\u{10747}\\u{1077d}-\\u{10798}][\\u{10404}-\\u{1040b}\\u{10454}-\\u{1045c}\\u{104a4}-\\u{104ad}\\u{104f4}-\\u{104fe}\\u{10544}-\\u{1054f}\\u{10594}-\\u{105a0}\\u{105e4}-\\u{105f1}\\u{10634}-\\u{10642}\\u{10684}-\\u{10693}\\u{106d4}-\\u{106e4}\\u{10724}-\\u{10735}\\u{10774}-\\u{10786}]$" regExpFlags=[Unicode]
+    v61 = NewRegExp pattern="^\\u4e2d[\\u{1040d}-\\u{1041d}\\u{1045d}-\\u{1046e}\\u{104ad}-\\u{104bf}\\u{104fd}-\\u{10510}\\u{1054d}-\\u{10561}\\u{1059d}-\\u{105b2}\\u{105ed}-\\u{10603}\\u{1063d}-\\u{10654}\\u{1068d}-\\u{106a5}\\u{106dd}-\\u{106f6}\\u{1072d}-\\u{10747}\\u{1077d}-\\u{10798}]{2}[\\u{10404}-\\u{1040b}\\u{10454}-\\u{1045c}\\u{104a4}-\\u{104ad}\\u{104f4}-\\u{104fe}\\u{10544}-\\u{1054f}\\u{10594}-\\u{105a0}\\u{105e4}-\\u{105f1}\\u{10634}-\\u{10642}\\u{10684}-\\u{10693}\\u{106d4}-\\u{106e4}\\u{10724}-\\u{10735}\\u{10774}-\\u{10786}]{2}$" regExpFlags=[Unicode]
+    v62 = NewRegExp pattern="^\\u4e2d[\\u{1040d}-\\u{1041d}\\u{1045d}-\\u{1046e}\\u{104ad}-\\u{104bf}\\u{104fd}-\\u{10510}\\u{1054d}-\\u{10561}\\u{1059d}-\\u{105b2}\\u{105ed}-\\u{10603}\\u{1063d}-\\u{10654}\\u{1068d}-\\u{106a5}\\u{106dd}-\\u{106f6}\\u{1072d}-\\u{10747}\\u{1077d}-\\u{10798}]+[\\u{10404}-\\u{1040b}\\u{10454}-\\u{1045c}\\u{104a4}-\\u{104ad}\\u{104f4}-\\u{104fe}\\u{10544}-\\u{1054f}\\u{10594}-\\u{105a0}\\u{105e4}-\\u{105f1}\\u{10634}-\\u{10642}\\u{10684}-\\u{10693}\\u{106d4}-\\u{106e4}\\u{10724}-\\u{10735}\\u{10774}-\\u{10786}]+$" regExpFlags=[Unicode]
+    v63 = NewRegExp pattern="^\\u4e2d[\\u{1040d}-\\u{1041d}\\u{1045d}-\\u{1046e}\\u{104ad}-\\u{104bf}\\u{104fd}-\\u{10510}\\u{1054d}-\\u{10561}\\u{1059d}-\\u{105b2}\\u{105ed}-\\u{10603}\\u{1063d}-\\u{10654}\\u{1068d}-\\u{106a5}\\u{106dd}-\\u{106f6}\\u{1072d}-\\u{10747}\\u{1077d}-\\u{10798}]+?[\\u{10404}-\\u{1040b}\\u{10454}-\\u{1045c}\\u{104a4}-\\u{104ad}\\u{104f4}-\\u{104fe}\\u{10544}-\\u{1054f}\\u{10594}-\\u{105a0}\\u{105e4}-\\u{105f1}\\u{10634}-\\u{10642}\\u{10684}-\\u{10693}\\u{106d4}-\\u{106e4}\\u{10724}-\\u{10735}\\u{10774}-\\u{10786}]+?$" regExpFlags=[Unicode]
+    v64 = NewRegExp pattern="^\\u4e2d[\\u{1040d}-\\u{1041d}\\u{1045d}-\\u{1046e}\\u{104ad}-\\u{104bf}\\u{104fd}-\\u{10510}\\u{1054d}-\\u{10561}\\u{1059d}-\\u{105b2}\\u{105ed}-\\u{10603}\\u{1063d}-\\u{10654}\\u{1068d}-\\u{106a5}\\u{106dd}-\\u{106f6}\\u{1072d}-\\u{10747}\\u{1077d}-\\u{10798}][\\u{10404}-\\u{1040b}\\u{10454}-\\u{1045c}\\u{104a4}-\\u{104ad}\\u{104f4}-\\u{104fe}\\u{10544}-\\u{1054f}\\u{10594}-\\u{105a0}\\u{105e4}-\\u{105f1}\\u{10634}-\\u{10642}\\u{10684}-\\u{10693}\\u{106d4}-\\u{106e4}\\u{10724}-\\u{10735}\\u{10774}-\\u{10786}][\\u{1040d}-\\u{1041d}\\u{1045d}-\\u{1046e}\\u{104ad}-\\u{104bf}\\u{104fd}-\\u{10510}\\u{1054d}-\\u{10561}\\u{1059d}-\\u{105b2}\\u{105ed}-\\u{10603}\\u{1063d}-\\u{10654}\\u{1068d}-\\u{106a5}\\u{106dd}-\\u{106f6}\\u{1072d}-\\u{10747}\\u{1077d}-\\u{10798}]$" regExpFlags=[Unicode]
+    v65 = NewArray v55, v56, v57, v58, v59, v60, v61, v62, v63, v64 contents=undefined|null|number|RegExp
+    v66 = NewArray v10, v21, v32, v43, v54, v65 contents=undefined|null|Array<undefined|null|number|RegExp>
+    v67 = Convert v66 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|number|RegExp>> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v68 = NewClosure function=f1
+    v69 = Convert v68 declared={type=undefined|null|function|f1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v70 = IteratorOpen v67
+    Jump -> next b1()
+  b1():
+    v71 = IteratorResume v70
+    v72 = ResultAt v71 index=1
+    Jump -> next b2()
+  b2() handler=b21():
+    v73 = Convert v72 declared={type=undefined|null|Array<undefined|null|number|RegExp> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v74 = IteratorOpen v73 elementCount=5 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b20():
+    v75 = IteratorResume v74 stepIndex=0
+    v76 = ResultAt v75 index=1
+    v77 = Convert v76 declared={type=number} illTypedCause=Assertion
+    v78 = IteratorResume v74 stepIndex=1
+    v79 = ResultAt v78 index=1
+    v80 = Convert v79 declared={type=number} illTypedCause=Assertion
+    v81 = IteratorResume v74 stepIndex=2
+    v82 = ResultAt v81 index=1
+    v83 = Convert v82 declared={type=number} illTypedCause=Assertion
+    v84 = IteratorResume v74 stepIndex=3
+    v85 = ResultAt v84 index=1
+    v86 = Convert v85 declared={type=number} illTypedCause=Assertion
+    v87 = IteratorResume v74 stepIndex=4
+    v88 = ResultAt v87 index=1
+    v89 = Convert v88 declared={type=number} illTypedCause=Assertion
+    Jump -> next b4()
+  b4() handler=b21():
+    v90 = Integer
+    v91 = Convert v90 declared={type=number site=w5}
+    Jump -> next b5(v91)
+  b5(v92: number) handler=b21():
+    LoopHint
+    v94 = Convert v92 declared={type=i32 flags=[IsExpected]}
+    v95 = Integer integer=5
+    v96 = Less v94, v95
+    Branch v96 -> taken b6(| 0), notTaken b19(| 0)
+  b6(v97) handler=b21():
+    v98 = Integer integer=5
+    v99 = Convert v97 declared={type=i32 flags=[IsExpected]}
+    v100 = Add v98, v99
+    v101 = ElemGet v73, v100
+    v102 = Convert v101 declared={type=undefined|null|number|RegExp site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v103 = Convert v102 declared={type=undefined|null|RegExp site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v104 = Integer integer=1
+    v105 = StrictEq v99, v104
+    v106 = Convert v105 declared={type=boolean site=w6}
+    v107 = Integer
+    v108 = Convert v107 declared={type=number site=w7}
+    v109 = Integer
+    v110 = Convert v109 declared={type=number site=w8}
+    v111 = Integer
+    v112 = Convert v111 declared={type=number site=w9}
+    v113 = Integer
+    v114 = Convert v113 declared={type=number site=w10}
+    v115 = Integer
+    v116 = Convert v115 declared={type=number site=w13}
+    Jump -> next b7(v108, v110, v112, v114, v116)
+  b7(v117: number, v118: number, v119: number, v120: number, v121: number) handler=b21():
+    LoopHint
+    v123 = Convert v121 declared={type=i32 flags=[IsExpected]}
+    v124 = Integer integer=1024
+    v125 = Less v123, v124
+    Branch v125 -> taken b8(| 0), notTaken b18(| 0)
+  b8(v126) handler=b21():
+    v127 = Convert v126 declared={type=i32 flags=[IsExpected]}
+    v128 = Add v80, v127
+    v129 = Call v69, -, v128 calleeName="at"
+    v130 = Convert v129 declared={type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}
+    v131 = Add v86, v127
+    v132 = Call v69, -, v131 calleeName="at"
+    v133 = Convert v132 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}
+    v134 = Call v69, -, v83 calleeName="at"
+    v135 = Convert v134 declared={type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]}
+    v136 = Call v69, -, v89 calleeName="at"
+    v137 = Convert v136 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v138 = Convert v135 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]}
+    v139 = PropGet v103 key="test"
+    v140 = String string="\u{4e2d}"
+    v141 = Add v135, v130
+    v142 = Add v140, v141
+    v143 = ToBoolean v106
+    Branch v143 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v144) handler=b21():
+    v145 = Add v137, v137
+    Jump -> next b11(v145, v144)
+  b10(v146) handler=b21():
+    Jump -> next b11(v137, v146)
+  b11(v147, v148: boolean) handler=b21():
+    v149 = Add v142, v147
+    v150 = Add v149, v138
+    v151 = Call v139, v103, v150 calleeKey="test" calleeName="re.test"
+    v152 = Convert v151 declared={type=boolean site=w19} illTypedCause=DeclarationWithoutBody
+    v153 = Increment v117
+    v154 = Convert v153 declared={type=number site=w7}
+    v155 = Builtin builtin=Math
+    v156 = Builtin builtin=MathImul
+    v157 = Integer integer=31
+    v158 = Call v156, v155, v118, v157 calleeName="Math.imul"
+    v159 = Convert v158 declared={type=number site=w20} illTypedCause=DeclarationWithoutBody
+    v160 = Add v159, v127
+    v161 = Integer
+    v162 = BitOr v160, v161
+    v163 = Convert v162 declared={type=number site=w8}
+    v164 = PropGet v103 key="test"
+    v165 = String string="\u{4e2d}"
+    v166 = ToBoolean v148
+    Branch v166 -> taken b12(| 0), notTaken b13(| 0)
+  b12(v167) handler=b21():
+    v168 = Add v135, v135
+    Jump -> next b14(v168, v167)
+  b13(v169) handler=b21():
+    Jump -> next b14(v135, v169)
+  b14(v170, v171: boolean) handler=b21():
+    v172 = Add v165, v170
+    v173 = ToBoolean v171
+    Branch v173 -> taken b15(| 0), notTaken b16(| 0)
+  b15(v174) handler=b21():
+    v175 = Add v133, v137
+    Jump -> next b17(v175)
+  b16(v176) handler=b21():
+    Jump -> next b17(v133)
+  b17(v177) handler=b21():
+    v178 = Add v172, v177
+    v179 = Add v178, v138
+    v180 = Call v164, v103, v179 calleeKey="test" calleeName="re.test"
+    v181 = Convert v180 declared={type=boolean site=w21} illTypedCause=DeclarationWithoutBody
+    v182 = Increment v119
+    v183 = Convert v182 declared={type=number site=w9}
+    v184 = Builtin builtin=Math
+    v185 = Builtin builtin=MathImul
+    v186 = Integer integer=31
+    v187 = Call v185, v184, v120, v186 calleeName="Math.imul"
+    v188 = Convert v187 declared={type=number site=w22} illTypedCause=DeclarationWithoutBody
+    v189 = Add v188, v127
+    v190 = Integer
+    v191 = BitOr v189, v190
+    v192 = Convert v191 declared={type=number site=w10}
+    v193 = Increment v127
+    v194 = Convert v193 declared={type=number site=w13}
+    Jump -> next b7(v154, v163, v183, v192, v194)
+  b18(v195) handler=b21():
+    v196 = Builtin builtin=GlobalThis
+    v197 = PropGet v196 key="console" [isFreeName]
+    v198 = Convert v197 declared={type=builtin(Console) flags=[IsExpected]}
+    v199 = PropGet v198 key="log"
+    v200 = Convert v199 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v201 = Call v200, v198, v77, v99, v117, v118, v119, v120 calleeKey="log" calleeName="console.log"
+    v202 = Increment v99
+    v203 = Convert v202 declared={type=number site=w5}
+    Jump -> next b5(v203)
+  b19(v204) handler=b21():
+    Jump -> next b1()
+  b20() role=IterationCleanup subject=v74 handler=b21():
+    v205 = CatchException
+    Rethrow v205
+  b21() role=IterationCleanup subject=v70:
+    v206 = CatchException
+    Rethrow v206
+}
+function f1 name="at" module=m0 position=16154 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w2}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=String
+    v2 = Builtin builtin=StringFromCodePoint
+    v3 = Call v2, v1, v0 calleeName="String.fromCodePoint"
+    ReturnCall v3 casts=[{declared={type=undefined|null|string site=w23 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 423, patchpoints: 52, rare instructions: 595, polls: 3
+# CHECK-NEXT: end of function f0

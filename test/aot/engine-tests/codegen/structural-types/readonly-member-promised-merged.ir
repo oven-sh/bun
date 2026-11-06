@@ -1,0 +1,247 @@
+# A readonly member promised by a merged interface is never stored.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f11
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="readonly-member-promised-merged.ts" displayPath="readonly-member-promised-merged.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Ticket" module=m0 position=1012 constructor=f3 fields=[{key="id" declared={type=number} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=1
+layout L1 module=m0 position=1753 fields=[{key="code" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="serial" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated] declaredOrder=[1, 0] ownFieldCount=2 flow={allocation=NeverAllocated}
+variable g0 name="serialOf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="ticket" module=m0 declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="writable" module=m0 declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Construct v5 calleeName="Ticket"
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    PutModuleVariable v7 variable=g1
+    v9 = String string="read 2000 times"
+    v10 = NewClosure function=f11
+    v11 = Call v1, -, v9, v10 calleeName="show"
+    v12 = Convert v7 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v12 variable=g2
+    v14 = String string="read in a loop that stores through a view that is not readonly"
+    v15 = NewClosure function=f14
+    v16 = Call v1, -, v14, v15 calleeName="show"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="serialOf" module=m0 position=1093 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="serial"
+    v2 = Convert v1 declared={type=number}
+    Return v2
+}
+function f2 name="show" module=m0 position=692 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="run"
+    Jump -> next b2()
+  b2():
+    Jump -> next b5()
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="Error" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(Error) flags=[IsExpected]}
+    v7 = InstanceOf v3, v6 writtenExpression="error instanceof Error"
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = Convert v3 declared={type=undefined|null|Error flags=[IsExpected]}
+    v10 = PropGet v9 key="constructor"
+    v11 = Convert v10 declared={type=undefined|null|function} illTypedCause=Assertion
+    v12 = PropGet v11 key="name"
+    v13 = Convert v12 declared={type=undefined|null|string} illTypedCause=Assertion
+    Jump -> next b5()
+  b5():
+    v14 = Undefined
+    Return v14
+}
+function f3 name="Ticket" module=m0 position=1012 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f4 module=m0 position=1206 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=1243 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=1289 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 position=1332 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=1383 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1430 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=1479 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=1528 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v1, v3)
+  b1(v4: number, v5: number):
+    LoopHint
+    v7 = Integer integer=2000
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v9):
+    v10 = GetModuleVariable variable=g0
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="ticket"
+    v13 = Call v10, -, v12 calleeName="serialOf"
+    v14 = Convert v13 declared={type=number}
+    v15 = TypeTest v14 testedType=undefined
+    Branch v15 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v16):
+    v17 = Increment v4
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b5(v18)
+  b4(v19):
+    Jump -> next b5(v4)
+  b5(v20: number):
+    v21 = Increment v9
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b1(v20, v22)
+  b6(v23):
+    v24 = Convert v4 declared={type=number}
+    Return v24
+}
+function f12 module=m0 position=1668 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1708 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=1867 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number}
+    Jump -> next b1(v1)
+  b1(v2: number):
+    LoopHint
+    v4 = GetModuleVariable variable=g2
+    v5 = CheckInitialized v4 name="writable"
+    v6 = Integer integer=40
+    v7 = Convert v6 declared={type=number}
+    PropSet v5, v7 key="serial"
+    v9 = Increment v2
+    v10 = Convert v9 declared={type=number}
+    Jump -> next b1(v10)
+}
+function f15 module=m0 position=2053 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|Array<undefined|null|string>> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m0 position=2184 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=2251 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f18]
+# -- generated: f11
+# CHECK-LABEL: function f11 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@24 = Load(b@10, offset = -1114112, ControlDependent|Reads:ModuleVariables.37, v2:GetModuleVariable)
+# CHECK-NEXT: Int32 b@34 = Load(b@24, offset = 16, ControlDependent|Reads:ObjectFields.11, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int32 b@35 = Const32(-2147483643, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int32 b@36 = LessThan(b@34, $-2147483643(b@35), v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int32 b@51 = Const32(1, v12:Increment)
+# CHECK-NEXT: Int32 b@29 = Const32(2000, v6:Integer)
+# CHECK-NEXT: Int32 b@23 = Const32(0, v0:Integer)
+# CHECK-NEXT: Void b@6 = Branch(b@36, Terminal, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Successors: Then:Rare:#12, Else:#20
+# CHECK-NEXT: BB#20: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@79 = Upsilon($0(b@23), ^81, WritesLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@101 = Jump(Terminal, v3:Parameter)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#21: ; frequency = 9.990234
+# CHECK-NEXT: Predecessors: #20, #26
+# CHECK-NEXT: Int32 b@81 = Phi(ReadsLocalState, v4:Parameter)
+# CHECK-NEXT: Int32 b@87 = Add(b@81, $1(b@51), v14:Increment)
+# CHECK-NEXT: Int32 b@92 = Below(b@87, $2000(b@29), v7:Less)
+# CHECK-NEXT: Void b@93 = Branch(b@92, Terminal, v7:Less)
+# CHECK-NEXT: Successors: Then:#26, Else:#8
+# CHECK-NEXT: BB#26: ; frequency = 8.991211
+# CHECK-NEXT: Predecessors: #21
+# CHECK-NEXT: Void b@88 = Upsilon(b@87, ^81, WritesLocalState, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Void b@100 = Jump(Terminal, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#8: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #21
+# CHECK-NEXT: Void b@99 = Upsilon($0(b@23), ^106, WritesLocalState)
+# CHECK-NEXT: Void b@105 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#9: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #8, #7
+# CHECK-NEXT: Int32 b@106 = Phi(ReadsLocalState, v13:Parameter)
+# CHECK-NEXT: Double b@61 = IToD(b@106)
+# CHECK-NEXT: Void b@62 = Return(b@61, Terminal)
+# CHECK-NEXT: BB#12: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@113 = Upsilon($0(b@23), ^7, WritesLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@30 = Upsilon($0(b@23), ^80, WritesLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@104 = Jump(Terminal, v3:Parameter)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#13: ; frequency = 0.009766
+# CHECK-NEXT: Predecessors: #12, #11
+# CHECK-NEXT: Int32 b@7 = Phi(ReadsLocalState, v3:Parameter)
+# CHECK-NEXT: Int32 b@80 = Phi(ReadsLocalState, v4:Parameter)
+# CHECK-NEXT: Int32 b@42 = Const32(-2147483645, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int32 b@43 = Equal(b@34, $-2147483645(b@42), v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int64 b@72 = Load(b@10, offset = -96, ReadsImmutable, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int64 b@9 = Load(b@10, offset = -104, ReadsImmutable, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int64 b@45 = Select(b@43, b@72, b@9, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Int64 b@32 = Load(b@10, offset = -104, ReadsImmutable, v11:TypeTest)
+# CHECK-NEXT: Int32 b@49 = GreaterEqual(b@45, b@32, v11:TypeTest)
+# CHECK-NEXT: Void b@50 = Branch(b@49, Terminal, v11:TypeTest)
+# CHECK-NEXT: Successors: Then:#2, Else:Unlikely:#4
+# CHECK-NEXT: BB#2: ; frequency = 0.009191
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Int32 b@52 = Add(b@7, $1(b@51), v12:Increment)
+# CHECK-NEXT: Void b@59 = Upsilon(b@52, ^38, WritesLocalState)
+# CHECK-NEXT: Void b@54 = Jump(Terminal)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: BB#5: ; frequency = 0.009766
+# CHECK-NEXT: Predecessors: #4, #2
+# CHECK-NEXT: Int32 b@38 = Phi(ReadsLocalState, v13:Parameter)
+# CHECK-NEXT: Int32 b@57 = Add(b@80, $1(b@51), v14:Increment)
+# CHECK-NEXT: Int32 b@65 = Below(b@57, $2000(b@29), v7:Less)
+# CHECK-NEXT: Void b@66 = Branch(b@65, Terminal, v7:Less)
+# CHECK-NEXT: Successors: Then:#11, Else:#7
+# CHECK-NEXT: BB#11: ; frequency = 0.008789
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Void b@48 = Upsilon(b@38, ^7, WritesLocalState, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Void b@2 = Upsilon(b@57, ^80, WritesLocalState, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Void b@70 = Jump(Terminal, v9:GetSlotOrUndefined)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#7: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Void b@46 = Upsilon(b@38, ^106, WritesLocalState)
+# CHECK-NEXT: Void b@103 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#4: ; frequency = 0.000574
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Void b@73 = Upsilon(b@7, ^38, WritesLocalState)
+# CHECK-NEXT: Void b@56 = Jump(Terminal)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@7: range = [0,2000]
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@38: range = [0,2001]
+# CHECK-NEXT: b@80: range = [0,2000]
+# CHECK-NEXT: b@81: range = [0,2000]
+# CHECK-NEXT: b@106: range = [0,2001]
+# CHECK-NEXT: end of function f11

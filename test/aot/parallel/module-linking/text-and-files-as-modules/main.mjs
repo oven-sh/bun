@@ -1,0 +1,2 @@
+// Reference: bun build --compile
+const say = (...v) => console.log(...v.map(x => typeof x === "function" ? "fn:" + x.name : typeof x === "symbol" ? String(x) : typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))); const tryit = f => { try { return f(); } catch (e) { return e.constructor.name; } }; import t from "./t.txt"; import * as ns from "./t.txt"; say(t.trim(), Object.keys(ns).join(), typeof require("./t.txt"), typeof (await import("./t.txt")).default);

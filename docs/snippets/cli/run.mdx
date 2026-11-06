@@ -73,6 +73,14 @@ bun run <file or script>
   Use less memory, but run garbage collection more often
 </ParamField>
 
+<ParamField path="--aot" type="boolean">
+  Check the program like <code>bun compile</code> does, then run it with built-in objects read-only
+</ParamField>
+
+<ParamField path="--aot-log-type-mismatches" type="boolean">
+  Compile the program like <code>bun compile</code>, run it, and log every value that doesn't match its declared type
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

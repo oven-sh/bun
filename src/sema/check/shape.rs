@@ -3,6 +3,7 @@
 use super::instantiate::PropInstantiation;
 use super::relate::Ternary;
 use super::*;
+use crate::atom::is_reserved_member_name;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
 use crate::util::{PositionSet, SharedSort, in_order_of_decimal_text};
@@ -1223,16 +1224,10 @@ impl<'p, 's> Checker<'p, 's> {
         sym: Sym,
         under: MapperId,
     ) -> Shape<'s> {
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
+        let dropped = self.save_drops_reported();
         let (binding, bases) = (MemberBinding::Late, BaseMembers::Inherited);
         let shape = self.build_declared_shape(sym, under, binding, bases, None, Some(ty));
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
+        self.restore_drops_reported(dropped);
         shape
     }
 
@@ -1849,7 +1844,7 @@ impl<'p, 's> Checker<'p, 's> {
         // For `[Symbol.iterator]`, unless `Symbol` is shadowed, read that property of the global `Symbol` without
         // checking the expression. This is very common in the default libraries.
         let hir = self.hir(file);
-        if let ExprKind::Dot { obj, name, .. } = hir[e].kind
+        if let ExprKind::Dot { obj, name, .. } = hir.checked_kind(e)
             && matches!(hir[obj].kind, ExprKind::Ident(known::Symbol))
             && self.bound(file).symbol_of_expr(obj).is_none()
             && let Some(global) = self.files().global(known::Symbol, SymFlags::VALUE)
@@ -1970,6 +1965,9 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some_and(|m| self.is_declared_outside_classes(file, m));
         // Declarations with the same name form one property.
         let mut groups: Vec<(Atom, SmallVec<[MemberId; 4]>)> = Vec::new();
+        // Filled once there are too many groups to search one by one.
+        const MAX_GROUPS_SEARCHED: usize = 32;
+        let mut group_indexes = FxHashMap::<Atom, usize>::default();
         for m in members.iter() {
             let member = &hir[m];
             if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
@@ -2009,8 +2007,17 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_dynamic && self.is_late_bound_by_another_call(file, m) {
                         continue;
                     }
-                    match groups.iter_mut().find(|g| g.0 == name) {
-                        Some(group) => group.1.push(m),
+                    let group = if groups.len() <= MAX_GROUPS_SEARCHED {
+                        groups.iter().position(|g| g.0 == name)
+                    } else {
+                        if group_indexes.is_empty() {
+                            group_indexes.extend(groups.iter().enumerate().map(|(i, g)| (g.0, i)));
+                        }
+                        Some(*group_indexes.entry(name).or_insert(groups.len()))
+                            .filter(|&group| group < groups.len())
+                    };
+                    match group {
+                        Some(group) => groups[group].1.push(m),
                         None => groups.push((name, smallvec![m])),
                     }
                 }
@@ -2895,6 +2902,28 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(part)
     }
 
+    // Nothing says which members such a class has.
+    pub(super) fn stands_below_undeclared_class(&mut self, class: Sym) -> bool {
+        self.lacks_bun_types() && self.has_base_type_among(class, &[TypeId::ANY])
+    }
+
+    pub(super) fn is_of_class_below_undeclared_class(&mut self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Ref { target: class, .. }
+            | TypeData::Anon {
+                origin: Origin::ClassStatic(class),
+                ..
+            } => self.stands_below_undeclared_class(class),
+            TypeData::Union(ref parts) => {
+                (parts.iter()).all(|&part| self.is_of_class_below_undeclared_class(part))
+            }
+            TypeData::Intersection(ref parts) => {
+                (parts.iter()).any(|&part| self.is_of_class_below_undeclared_class(part))
+            }
+            _ => false,
+        }
+    }
+
     fn has_base_type_among(&mut self, sym: Sym, types: &[TypeId]) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_among = types.contains(&base)
@@ -3679,6 +3708,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let hir = self.hir(file);
         let constructor = self.base_constructor_type_of_class(class);
+        if for_default_constructor && constructor == TypeId::ANY && self.lacks_bun_types() {
+            return (true, vec![self.construct_signature_of_undeclared_class()]);
+        }
         let sigs = self.signatures(constructor, true);
         // `getDefaultConstructSignatures` returns before `getTypeArgumentsFromNode`.
         if for_default_constructor && sigs.is_empty() {
@@ -3694,6 +3726,26 @@ impl<'p, 's> Checker<'p, 's> {
                 for_default_constructor && hir.is_js,
             ),
         )
+    }
+
+    /// `new (...args: any[]) => any`
+    fn construct_signature_of_undeclared_class(&mut self) -> SigId {
+        let params = [SigParam {
+            name: known::args,
+            ty: self.array_of(TypeId::ANY),
+            optional: false,
+            is_required_rest: false,
+            rest: true,
+            declaration: None,
+        }];
+        self.types().intern_sig(SigData::Synth {
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
+            ret: TypeId::ANY,
+            this: None,
+            of: ArenaBox::empty(),
+            is_union: true,
+        })
     }
 
     /// `getInstantiatedConstructorsForTypeArguments` for the `extends` clause of `class`: the candidates of `super(..)`, and the
@@ -4313,6 +4365,11 @@ impl<'p, 's> Checker<'p, 's> {
             Origin::GlobalThis => {
                 let global_this = self.files().global_this_symbol;
                 for &(name, sym) in self.files().globals.iter() {
+                    if is_reserved_member_name(self.atoms().bytes(name))
+                        || self.is_ambient_module_symbol(sym)
+                    {
+                        continue;
+                    }
                     // The alias target determines whether it's a value. The symbol itself
                     // determines its scoping.
                     if self.symbol_is_value(sym)
@@ -4341,6 +4398,21 @@ impl<'p, 's> Checker<'p, 's> {
         let is_contained = |i: usize| contained.iter().any(|range| range.contains(&i));
         self.get_named_members(&mut b.shape.props, is_contained, &ranges);
         b.shape
+    }
+
+    /// `core.Every(p.Declarations, ast.IsAmbientModule)` for a value module: only `declare module "name"` and
+    /// `declare global` declare it.
+    fn is_ambient_module_symbol(&self, sym: Sym) -> bool {
+        let files = self.files();
+        if !files.flags(sym).contains(SymFlags::VALUE_MODULE) {
+            return false;
+        }
+        let decls = files.decls_of(sym);
+        !decls.is_empty()
+            && decls.iter().all(|&(file, decl)| {
+                matches!(decl, Decl::Module(module)
+                    if !matches!(files.hir(file)[module].name, ModuleName::Ident(_)))
+            })
     }
 
     /// `symbolIsValue`: a value itself, or an alias whose resolution chain reaches a value with no
@@ -4404,7 +4476,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &(file, decl) in files.decls_of(all).iter() {
             if let Decl::Expando(e) | Decl::ThisProperty(e) = decl
                 && let ExprKind::Assign { target, .. } = self.hir(file)[e].kind
-                && let ExprKind::Index { index, .. } = self.hir(file)[target].kind
+                && let ExprKind::Index { index, .. } = self.hir(file).checked_kind(target)
                 && let Some(name) = self.declared_member_name(file, PropKey::Computed(index))
                 && !b.has(name)
                 && let Some(&(of, first)) = self.declarations_of_member(file, decl).first()
@@ -5586,7 +5658,8 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
             cold_path();
-            self.get_widened_type(ty)
+            let widened = self.get_widened_type(ty);
+            self.widened_type_of_literal_member(prop, widened)
         } else if prop.flags.contains(PropFlags::REGULAR) {
             cold_path();
             self.regular_type_of_resolved_object_literal(ty)
@@ -5699,7 +5772,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reportImplicitAny` for a property whose type resolves to `ty`.
     fn report_implicit_any(&mut self, file: FileId, declaration: UntypedProperty, ty: TypeId) {
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.module_options(file).no_implicit_any;
         if self.hir(file).is_js && !self.is_check_js(file)
             || !no_implicit_any && !self.captures_suggestions()
         {
@@ -5750,7 +5823,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return ThisAssignmentDeclaration::None;
             };
             if assignment_declaration_kind(hir, e) != JsDeclarationKind::ThisProperty
-                || matches!(hir[target].kind, ExprKind::Index { index, .. }
+                || matches!(hir.checked_kind(target), ExprKind::Index { index, .. }
                     if !is_string_or_numeric_literal_like(hir, index))
             {
                 return ThisAssignmentDeclaration::None;
@@ -5811,6 +5884,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some((of, e)) = assignment_declaration(declaration) else {
                         continue;
                     };
+                    // An assignment that the build has folded away stores nothing, and what it names may not be in the program: `if (process.env.NODE_ENV === "production") module.exports = require(a); else module.exports = require(b);`
+                    if self.is_dead_expression(of, e) {
+                        continue;
+                    }
                     let hir = self.hir(of);
                     // `declaration.Type()`: the first annotated declaration decides.
                     let annotation = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
@@ -6423,6 +6500,15 @@ impl<'p, 's> Checker<'p, 's> {
             .any(|&(f, m)| matches!(self.hir(f)[m].kind, MemberKind::Getter | MemberKind::Setter))
     }
 
+    /// `widenTypeForVariableLikeDeclaration`, for what `getFlowTypeInConstructor` or `getFlowTypeInStaticBlocks` returns.
+    fn widen_flow_type_of_property(&mut self, ty: TypeId) -> TypeId {
+        let ty = match self.data(ty) {
+            TypeData::UniqueSymbol { .. } => TypeId::SYMBOL,
+            _ => ty,
+        };
+        self.get_widened_type(ty)
+    }
+
     pub(super) fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let hir = self.hir(file);
@@ -6527,14 +6613,17 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let widened = self.get_widened_type(ty);
                     // `widenTypeForVariableLikeDeclaration`
-                    if reports_errors && self.report_errors_from_widening(ty) {
+                    if reports_errors
+                        && self.module_options(file).no_implicit_any
+                        && self.report_errors_from_widening(ty)
+                    {
                         self.report_implicit_any(file, UntypedProperty::Member(first), widened);
                     }
                     return widened;
                 }
                 // `getTypeForVariableLikeDeclaration`: when an implicit `any` is an error, the
                 // assignments to it are inspected first.
-                if self.p.files.options.no_implicit_any
+                if self.follows_untyped_variables(file)
                     && let MemberOwner::Class(c) = owner
                     // `declaration.Symbol()` is the binder's symbol, and no reference and no
                     // property of a base class is named `InternalSymbolNameComputed`.
@@ -6566,7 +6655,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 initial,
                                 value_declaration,
                             ) {
-                                return ty;
+                                return self.widen_flow_type_of_property(ty);
                             }
                         }
                     } else {
@@ -6583,7 +6672,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 initial,
                                 value_declaration,
                             ) {
-                                return ty;
+                                return self.widen_flow_type_of_property(ty);
                             }
                         }
                     }
@@ -6802,7 +6891,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // A parenthesized expression is neither a property access nor an identifier.
         let left = hir[call].callee;
-        let left = match hir[left].kind {
+        let left = match hir.checked_kind(left) {
             ExprKind::Dot { obj, name, .. }
                 if !is_parenthesized(hir, left) && self.atoms().bytes(name) == b"for" =>
             {

@@ -28,7 +28,7 @@ Bun statically links these libraries:
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
-| [`picohttp`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from it) | dual-licensed under the Perl License or the MIT License |
+| [`picohttp`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from it) | [dual-licensed under the Perl License or the MIT License](src/http1/LICENSE) |
 | [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
@@ -106,6 +106,17 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 | [`url`](https://npmjs.com/package/url) | MIT |
 | [`util`](https://npmjs.com/package/util) | MIT |
 | [`vm-browserify`](https://npmjs.com/package/vm-browserify) | MIT |
+
+## Type declarations
+
+The type declarations of these packages are embedded into Bun's binary. `bun build --compile --aot` reads them in a project that hasn't installed `@types/bun`. They're embedded without their comments, except for copyright notices. The `LICENSE` files of `@types/node` and `undici-types` are embedded next to them.
+
+| Package | License |
+|---------|---------|
+| [`@types/node`](https://npmjs.com/package/@types/node) | MIT |
+| [`undici-types`](https://npmjs.com/package/undici-types) | MIT |
+| [`expect-type`](https://npmjs.com/package/expect-type), which `bun-types` includes | Apache 2.0 |
+| Types from [`jest-mock`](https://npmjs.com/package/jest-mock), which `bun-types` includes | MIT |
 
 ## Additional credits
 

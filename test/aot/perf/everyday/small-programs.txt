@@ -1,0 +1,508 @@
+//// reducer-with-a-switch-on-the-action
+type State = { count: number; items: string[]; user: { name: string; visits: number } };
+type Action = { type: "add"; by: number } | { type: "push"; item: string } | { type: "visit" } | { type: "reset" };
+const first: State = { count: 0, items: [], user: { name: "ann", visits: 0 } };
+function reduce(state: State, action: Action): State {
+  switch (action.type) {
+    case "add":
+      return { ...state, count: state.count + action.by };
+    case "push":
+      return { ...state, items: state.items.length > 8 ? [] : [...state.items, action.item] };
+    case "visit":
+      return { ...state, user: { ...state.user, visits: state.user.visits + 1 } };
+    case "reset":
+      return first;
+  }
+}
+const actions: Action[] = [{ type: "add", by: 2 }, { type: "push", item: "x" }, { type: "visit" }, { type: "add", by: 1 }];
+let state = first;
+function turn(i: number): number {
+  state = reduce(state, actions[i & 3]!);
+  return (state.count + state.items.length + state.user.visits) & 0xffff;
+}
+//// objects-of-twelve-shapes-read-at-one-place
+const mixed: { size: number }[] = [];
+for (let k = 0; k < 12; k++) {
+  const object: Record<string, number> = {};
+  for (let extra = 0; extra < k; extra++) object["p" + extra] = extra;
+  object.size = k;
+  mixed.push(object as { size: number });
+}
+function turn(i: number): number {
+  return mixed[i % 12]!.size;
+}
+//// trie-with-object-children
+type Trie = { end: boolean; next: Record<string, Trie> };
+const root: Trie = { end: false, next: {} };
+function insert(word: string) {
+  let node = root;
+  for (const letter of word) node = node.next[letter] ??= { end: false, next: {} };
+  node.end = true;
+}
+function has(word: string): boolean {
+  let node: Trie | undefined = root;
+  for (const letter of word) if (!(node = node.next[letter])) return false;
+  return node.end;
+}
+["tea", "ten", "team", "to", "inn", "in"].forEach(insert);
+const asked = ["team", "tex", "in", "t"];
+function turn(i: number): number {
+  return has(asked[i & 3]!) ? 1 : 0;
+}
+//// trie-with-map-children
+class Node {
+  end = false;
+  next = new Map<string, Node>();
+}
+const root = new Node();
+for (const word of ["tea", "ten", "team", "to", "inn", "in"]) {
+  let node = root;
+  for (const letter of word) {
+    let child = node.next.get(letter);
+    if (!child) node.next.set(letter, (child = new Node()));
+    node = child;
+  }
+  node.end = true;
+}
+const asked = ["team", "tex", "in", "t"];
+function turn(i: number): number {
+  let node: Node | undefined = root;
+  for (const letter of asked[i & 3]!) if (!(node = node.next.get(letter))) return 0;
+  return node.end ? 1 : 0;
+}
+//// union-find
+const parent = new Int32Array(64);
+function find(x: number): number {
+  while (parent[x] !== x) x = parent[x] = parent[parent[x]!]!;
+  return x;
+}
+function turn(i: number): number {
+  if ((i & 63) === 0) for (let k = 0; k < 64; k++) parent[k] = k;
+  parent[find(i & 63)] = find((i * 7) & 63);
+  return find(i & 63);
+}
+//// ring-buffer-class
+class Ring {
+  private items = new Array<number>(16).fill(0);
+  private head = 0;
+  private size = 0;
+  push(value: number) {
+    this.items[(this.head + this.size) & 15] = value;
+    if (this.size < 16) this.size++;
+    else this.head = (this.head + 1) & 15;
+  }
+  shift(): number {
+    const value = this.items[this.head]!;
+    this.head = (this.head + 1) & 15;
+    this.size--;
+    return value;
+  }
+}
+const ring = new Ring();
+ring.push(1);
+function turn(i: number): number {
+  ring.push(i);
+  return ring.shift();
+}
+//// linked-list-insert-and-remove
+type Link = { value: number; next: Link | null };
+let head: Link | null = null;
+let length = 0;
+function turn(i: number): number {
+  head = { value: i, next: head };
+  if (++length > 8) {
+    let link = head;
+    while (link.next!.next) link = link.next!;
+    link.next = null;
+    length--;
+  }
+  return head.value;
+}
+//// towers-of-hanoi
+function hanoi(disks: number, from: number, to: number, via: number): number {
+  return disks === 0 ? 0 : hanoi(disks - 1, from, via, to) + 1 + hanoi(disks - 1, via, to, from);
+}
+function turn(i: number): number {
+  return hanoi(6, 0, 2, 1) + (i & 1);
+}
+//// six-queens
+function place(row: number, columns: number, left: number, right: number, all: number): number {
+  if (columns === all) return 1;
+  let count = 0;
+  for (let free = all & ~(columns | left | right); free; free &= free - 1) {
+    const bit = free & -free;
+    count += place(row + 1, columns | bit, ((left | bit) << 1) & all, (right | bit) >> 1, all);
+  }
+  return count;
+}
+function turn(i: number): number {
+  return place(0, 0, 0, 0, 63) + (i & 1);
+}
+//// permutations-by-recursion
+function permutations(items: number[]): number[][] {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, at) => permutations([...items.slice(0, at), ...items.slice(at + 1)]).map(rest => [item, ...rest]));
+}
+function turn(i: number): number {
+  return permutations([1, 2, 3, i & 7]).length;
+}
+//// longest-common-subsequence
+function lcs(a: string, b: string): number {
+  const table = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let r = 1; r <= a.length; r++)
+    for (let c = 1; c <= b.length; c++) table[r]![c] = a[r - 1] === b[c - 1] ? table[r - 1]![c - 1]! + 1 : Math.max(table[r - 1]![c]!, table[r]![c - 1]!);
+  return table[a.length]![b.length]!;
+}
+const words = ["democrat", "republican", "intention", "execution"];
+function turn(i: number): number {
+  return lcs(words[i & 3]!, words[(i + 1) & 3]!);
+}
+//// run-length-encoding
+const inputs = ["aaabbbccccd", "abcd", "zzzzzzzzzz", "aabbaabb"];
+function turn(i: number): number {
+  const input = inputs[i & 3]!;
+  let out = "";
+  for (let at = 0; at < input.length; ) {
+    let end = at;
+    while (end < input.length && input[end] === input[at]) end++;
+    out += input[at]! + (end - at);
+    at = end;
+  }
+  return out.length;
+}
+//// caesar-cipher
+const message = "The Quick Brown Fox Jumps";
+function turn(i: number): number {
+  const shift = i % 26;
+  let out = "";
+  for (const letter of message) {
+    const code = letter.charCodeAt(0);
+    out += code >= 97 && code <= 122 ? String.fromCharCode(((code - 97 + shift) % 26) + 97) : code >= 65 && code <= 90 ? String.fromCharCode(((code - 65 + shift) % 26) + 65) : letter;
+  }
+  return out.charCodeAt(4);
+}
+//// anagrams-by-sorting
+const pairs = [["listen", "silent"], ["apple", "papel"], ["rat", "car"], ["night", "thing"]];
+function turn(i: number): number {
+  const [a, b] = pairs[i & 3]!;
+  return a!.split("").sort().join("") === b!.split("").sort().join("") ? 1 : 0;
+}
+//// count-vowels-by-a-pattern
+const sentences = ["The quick brown fox", "rhythm", "aeiou AEIOU", "jumps over the lazy dog"];
+function turn(i: number): number {
+  return sentences[i & 3]!.match(/[aeiou]/gi)?.length ?? 0;
+}
+//// title-case
+const sentence = "the quick brown fox jumps over the lazy dog";
+function turn(i: number): number {
+  return (
+    sentence
+      .split(" ")
+      .map(word => word[0]!.toUpperCase() + word.slice(1))
+      .join(" ").length + (i & 1)
+  );
+}
+//// csv-parsed
+const csv = "id,name,score\n1,ann,9.5\n2,bob,7\n3,cy,8.25\n4,dee,10";
+function turn(i: number): number {
+  const [header, ...lines] = csv.split("\n");
+  const names = header!.split(",");
+  const rows = lines.map(line => Object.fromEntries(line.split(",").map((cell, at) => [names[at]!, cell])));
+  return Number(rows[i & 3]!.score) * 4;
+}
+//// ini-parsed-by-patterns
+const ini = "[server]\nhost = localhost\nport = 8080\n; comment\n[client]\nretries = 3";
+function turn(i: number): number {
+  const sections: Record<string, Record<string, string>> = {};
+  let current = "";
+  for (const line of ini.split("\n")) {
+    let match;
+    if ((match = /^\[(\w+)\]$/.exec(line))) sections[(current = match[1]!)] = {};
+    else if ((match = /^(\w+)\s*=\s*(.*)$/.exec(line))) sections[current]![match[1]!] = match[2]!;
+  }
+  return Number(sections.server!.port) + Number(sections.client!.retries) + (i & 1);
+}
+//// json-written-by-hand
+const rows = [{ id: 1, name: "ann" }, { id: 2, name: "bob" }, { id: 3, name: "cy" }];
+function turn(i: number): number {
+  let out = "[";
+  for (let k = 0; k < rows.length; k++) out += (k ? "," : "") + '{"id":' + (rows[k]!.id + i) + ',"name":"' + rows[k]!.name + '"}';
+  return (out + "]").length;
+}
+//// number-parsed-by-character-codes
+const inputs = ["12345", "987", "40096", "7"];
+function turn(i: number): number {
+  const input = inputs[i & 3]!;
+  let value = 0;
+  for (let at = 0; at < input.length; at++) value = value * 10 + (input.charCodeAt(at) - 48);
+  return value;
+}
+//// uuid-by-hand
+function turn(i: number): number {
+  let out = "";
+  for (let k = 0; k < 16; k++) out += (((i * 31 + k * 17) & 255) | 256).toString(16).slice(1) + (k === 3 || k === 5 || k === 7 || k === 9 ? "-" : "");
+  return out.length;
+}
+//// clock-text-by-hand
+function turn(i: number): number {
+  const seconds = i % 86400;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`.length;
+}
+//// bytes-as-a-human-reads-them
+const units = ["B", "KB", "MB", "GB", "TB"];
+function turn(i: number): number {
+  let size = i * 4099;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${size.toFixed(1)} ${units[unit]}`.length;
+}
+//// matrix-four-by-four-in-float32
+const a = Float32Array.from({ length: 16 }, (_, k) => k / 3);
+const b = Float32Array.from({ length: 16 }, (_, k) => 1 - k / 7);
+const out = new Float32Array(16);
+function turn(i: number): number {
+  for (let r = 0; r < 4; r++)
+    for (let c = 0; c < 4; c++) out[r * 4 + c] = a[r * 4]! * b[c]! + a[r * 4 + 1]! * b[4 + c]! + a[r * 4 + 2]! * b[8 + c]! + a[r * 4 + 3]! * b[12 + c]!;
+  return out[i & 15]!;
+}
+//// vector-normalized
+function normalize(v: { x: number; y: number; z: number }) {
+  const length = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / length, y: v.y / length, z: v.z / length };
+}
+function turn(i: number): number {
+  const unit = normalize({ x: i & 15, y: 3, z: 4 });
+  return (unit.x + unit.y + unit.z) * 100;
+}
+//// prime-factors
+function turn(i: number): number {
+  let n = (i & 4095) + 2;
+  let count = 0;
+  for (let d = 2; d * d <= n; d++)
+    while (n % d === 0) {
+      n /= d;
+      count++;
+    }
+  return count + (n > 1 ? 1 : 0);
+}
+//// power-modulo
+function turn(i: number): number {
+  let base = (i & 1023) + 2;
+  let exponent = 65537;
+  let result = 1;
+  while (exponent > 0) {
+    if (exponent & 1) result = (result * base) % 9973;
+    base = (base * base) % 9973;
+    exponent >>= 1;
+  }
+  return result;
+}
+//// bits-counted
+function turn(i: number): number {
+  let n = i;
+  n = n - ((n >>> 1) & 0x55555555);
+  n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
+  return (((n + (n >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+}
+//// range-by-array-keys
+function turn(i: number): number {
+  return [...Array(16).keys()].reduce((sum, k) => sum + k, i & 1);
+}
+//// range-by-fill-and-map
+function turn(i: number): number {
+  return Array(16)
+    .fill(0)
+    .map((_, k) => k + i)[15]!;
+}
+//// sort-numbers-without-a-comparator
+function turn(i: number): number {
+  return [10, 9, 1, i & 7, 100, 25].sort()[0]!;
+}
+//// values-of-a-map-to-an-array
+const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4], ["salt", 1]]);
+function turn(i: number): number {
+  return Array.from(stock.values()).reduce((sum, n) => sum + n, i & 1);
+}
+//// nested-update-by-spread
+type Tree = { a: { b: { c: number; d: number }; e: number }; f: number };
+let tree: Tree = { a: { b: { c: 1, d: 2 }, e: 3 }, f: 4 };
+function turn(i: number): number {
+  tree = { ...tree, a: { ...tree.a, b: { ...tree.a.b, c: i & 255 } } };
+  return tree.a.b.c + tree.a.b.d + tree.a.e + tree.f;
+}
+//// getters-and-setters-in-a-loop
+class Cell {
+  #value = 0;
+  get value() {
+    return this.#value;
+  }
+  set value(next: number) {
+    this.#value = next & 0xffff;
+  }
+}
+const cell = new Cell();
+function turn(i: number): number {
+  for (let k = 0; k < 16; k++) cell.value = cell.value + k + i;
+  return cell.value;
+}
+//// five-classes-deep
+class A {
+  base() {
+    return 1;
+  }
+}
+class B extends A {
+  override base() {
+    return super.base() + 1;
+  }
+}
+class C extends B {
+  override base() {
+    return super.base() + 1;
+  }
+}
+class D extends C {
+  override base() {
+    return super.base() + 1;
+  }
+}
+class E extends D {
+  override base() {
+    return super.base() + 1;
+  }
+}
+const deepest = new E();
+function turn(i: number): number {
+  return deepest.base() + (i & 1);
+}
+//// visitor-over-a-syntax-tree
+type Expr = { kind: "num"; value: number } | { kind: "add" | "mul"; left: Expr; right: Expr } | { kind: "neg"; inner: Expr };
+const tree: Expr = { kind: "add", left: { kind: "mul", left: { kind: "num", value: 3 }, right: { kind: "neg", inner: { kind: "num", value: 4 } } }, right: { kind: "add", left: { kind: "num", value: 5 }, right: { kind: "num", value: 6 } } };
+function evaluate(e: Expr): number {
+  switch (e.kind) {
+    case "num":
+      return e.value;
+    case "add":
+      return evaluate(e.left) + evaluate(e.right);
+    case "mul":
+      return evaluate(e.left) * evaluate(e.right);
+    case "neg":
+      return -evaluate(e.inner);
+  }
+}
+function turn(i: number): number {
+  return evaluate(tree) + (i & 1);
+}
+//// observers-told
+class Subject {
+  private observers: ((n: number) => void)[] = [];
+  subscribe(observer: (n: number) => void) {
+    this.observers.push(observer);
+    return () => void this.observers.splice(this.observers.indexOf(observer), 1);
+  }
+  tell(n: number) {
+    for (const observer of this.observers) observer(n);
+  }
+}
+const subject = new Subject();
+let seen = 0;
+subject.subscribe(n => void (seen = (seen + n) & 0xffff));
+function turn(i: number): number {
+  const leave = subject.subscribe(n => void (seen ^= n & 15));
+  subject.tell(i);
+  leave();
+  return seen;
+}
+//// dependency-order-by-depth-first-walk
+const needs: Record<string, string[]> = { app: ["ui", "api"], ui: ["core"], api: ["core", "db"], db: ["core"], core: [] };
+function turn(i: number): number {
+  const order: string[] = [];
+  const seen = new Set<string>();
+  const visit = (name: string) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    needs[name]!.forEach(visit);
+    order.push(name);
+  };
+  visit("app");
+  return order.length + order[0]!.length + (i & 1);
+}
+//// flood-fill-on-a-grid
+const width = 8;
+const walls = Uint8Array.from({ length: 64 }, (_, k) => (k % 9 === 4 ? 1 : 0));
+function turn(i: number): number {
+  const seen = new Uint8Array(64);
+  const stack = [i & 3];
+  let filled = 0;
+  while (stack.length) {
+    const at = stack.pop()!;
+    if (seen[at] || walls[at]) continue;
+    seen[at] = 1;
+    filled++;
+    const x = at % width;
+    if (x > 0) stack.push(at - 1);
+    if (x < width - 1) stack.push(at + 1);
+    if (at >= width) stack.push(at - width);
+    if (at < 56) stack.push(at + width);
+  }
+  return filled;
+}
+//// next-tick
+async function turn(i: number): Promise<number> {
+  return new Promise<number>(resolve => process.nextTick(resolve, i & 255));
+}
+//// set-immediate
+async function turn(i: number): Promise<number> {
+  return new Promise<number>(resolve => setImmediate(resolve, i & 255));
+}
+//// sha256-of-a-short-text
+import { createHash } from "node:crypto";
+function turn(i: number): number {
+  return createHash("sha256")
+    .update("message " + (i & 255))
+    .digest("hex").length;
+}
+//// random-bytes
+import { randomBytes } from "node:crypto";
+function turn(i: number): number {
+  return randomBytes(16).length + (i & 1);
+}
+//// gzip-round-trip
+import { gunzipSync, gzipSync } from "node:zlib";
+const input = Buffer.from("a text that repeats, a text that repeats, a text that repeats");
+function turn(i: number): number {
+  return gunzipSync(gzipSync(input)).length + (i & 1);
+}
+//// path-resolve-and-relative
+import { relative, resolve } from "node:path";
+const names = ["a/b", "../c", "./d/e/../f", "/g"];
+function turn(i: number): number {
+  return relative("/usr/local", resolve("/usr/local/lib", names[i & 3]!)).length;
+}
+//// response-json
+async function turn(i: number): Promise<number> {
+  const reply = (await Response.json({ id: i & 255, ok: true }).json()) as { id: number };
+  return reply.id;
+}
+//// request-made-and-read
+async function turn(i: number): Promise<number> {
+  const request = new Request("http://localhost/items?page=2", { method: "POST", headers: { "content-type": "text/plain" }, body: "body " + (i & 255) });
+  return (await request.text()).length + request.method.length;
+}
+//// readable-stream-read-to-its-end
+async function turn(i: number): Promise<number> {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(8));
+      controller.enqueue(new Uint8Array(i & 7));
+      controller.close();
+    },
+  });
+  let bytes = 0;
+  for await (const chunk of stream) bytes += chunk.length;
+  return bytes;
+}

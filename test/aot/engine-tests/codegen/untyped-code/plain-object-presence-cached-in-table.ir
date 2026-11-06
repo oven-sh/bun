@@ -1,0 +1,165 @@
+# The first read by name, and the later ones, of what an ordinary object has itself and of what neither it nor Object.prototype has, whatever gave the object its shape.
+# FORM: AsRead
+# RUN: lower-to-air size f2 f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="plain-object-presence-cached-in-table.js" displayPath="plain-object-presence-cached-in-table.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=200 fields=[{key="alpha" declared={type=anything}}, {key="beta" declared={type=anything}}] ownFieldCount=2
+data d0 root=Object{layout=L0} module=m0
+variable g0 name="alphaOf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="betaOf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="keyed" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="sum" module=m0 declared={type=undefined|null|function|absent|f7 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v4 = NewClosure function=f6
+    v5 = Convert v4 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    v6 = NewClosure function=f7
+    v7 = Convert v6 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    PutModuleVariable v7 variable=g3
+    v9 = Integer integer=1
+    v10 = Call v1, -, v9 calleeName="grown"
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v12 = Integer integer=2
+    v13 = Call v1, -, v12 calleeName="grown"
+    v14 = Convert v13 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v15 = String string="{\"alpha\":3,\"beta\":4}"
+    v16 = Call v3, -, v15 calleeName="parsed"
+    v17 = String string="{\"beta\":5,\"alpha\":6,\"more\":7}"
+    v18 = Call v3, -, v17 calleeName="parsed"
+    v19 = Integer integer=1
+    v20 = Call v5, -, v19 calleeName="assigned"
+    v21 = Convert v20 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v22 = Integer integer=2
+    v23 = Call v5, -, v22 calleeName="assigned"
+    v24 = Convert v23 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v25 = NewArray v11, v14, v16, v18, v21, v24 contents=anything
+    v26 = Convert v25 declared={type=undefined|null|Array flags=[IsExpected]}
+    v27 = PropGet v26 key="map"
+    v28 = Convert v27 declared={type=undefined|null|function flags=[IsExpected]}
+    v29 = NewClosure function=f8
+    v30 = Call v28, v26, v29 calleeKey="map" calleeName="objects.map"
+    v31 = PropGet v26 key="map"
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
+    v33 = NewClosure function=f9
+    v34 = Call v32, v26, v33 calleeKey="map" calleeName="objects.map"
+    v35 = Undefined
+    Return v35
+}
+function f1 name="alphaOf" module=m0 position=436 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="betaOf" module=m0 position=534 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v11, v12):
+    v13 = PropGet v0 key="beta"
+    v14 = Add v6, v13
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Increment v11
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15, v17)
+  b3(v18, v19):
+    v20 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v20
+}
+function f3 name="keyed" module=m0 position=1641 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|string, v2: anything):
+    v3 = Undefined
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v2 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v11, v12):
+    v13 = ElemGet v0, v1
+    v14 = Increment v11
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v13, v15)
+  b3(v16, v17):
+    Return v6
+}
+function f4 name="grown" module=m0 position=170 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="parsed" module=m0 position=328 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4
+}
+function f6 name="assigned" module=m0 position=371 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectAssign
+    v3 = Data data=d0
+    v4 = Convert v0 declared={type=number flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    v6 = String string="q"
+    v7 = Add v6, v4
+    v8 = ToPropertyKey v7
+    v9 = Integer
+    ElemDefine v5, v8, v9
+    v11 = FinishObject v5
+    v12 = Call v2, v1, v3, v11 calleeName="Object.assign"
+    ReturnCall v12 casts=[{declared={type=undefined|null|L0 flags=[IsExpected]}}]
+}
+function f7 name="sum" module=m0 position=642 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Call v2, -, v0, v3 calleeName="alphaOf"
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v0, v3 calleeName="betaOf"
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Add v5, v8
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    Return v10
+}
+function f8 module=m0 position=1181 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = GetModuleVariable variable=g3
+    v2 = CheckInitialized v1 name="sum"
+    v3 = Integer integer=50
+    v4 = Call v2, -, v0, v3 calleeName="sum"
+    ReturnCall v4 casts=[{declared={type=number flags=[IsExpected]}}]
+}
+function f9 module=m0 position=1760 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = GetModuleVariable variable=g2
+    v2 = String string="alpha"
+    v3 = Integer integer=20
+    v4 = Call v1, -, v0, v2, v3 calleeName="keyed"
+    ReturnCall v4
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: betaOf keyed
+# CHECK-LABEL: function {{*}}name="betaOf"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 64, patchpoints: 10, rare instructions: 37, polls: 2
+# CHECK-NEXT: end of function f2
+# CHECK-LABEL: function {{*}}name="keyed"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 30, patchpoints: 5, polls: 1
+# CHECK-NEXT: end of function f3

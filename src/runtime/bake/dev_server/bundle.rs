@@ -331,12 +331,14 @@ impl TestingBatch {
 }
 
 impl DevServer {
+    #[inline(never)]
     pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
         had_reload_event: bool,
         timer: Instant,
     ) -> crate::Result<()> {
+        bun_removable_features::removable_definition!(Bundler, Self::start_async_bundle);
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();

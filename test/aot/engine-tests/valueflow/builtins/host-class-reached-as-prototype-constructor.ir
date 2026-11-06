@@ -1,0 +1,28 @@
+# A class of the host is read as the constructor of its prototype object and constructed
+# -- source: made.js
+# const Found = Bun.CookieMap.prototype.constructor;
+# new Found("a=1");
+# -- end of source
+# FORM: AsRead
+# RUN: valueflow-solve used
+# CHECK: run BunCookieMap
+
+module m0 path="made.js" displayPath="made.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Bun) flags=[IsExpected]}
+    v3 = PropGet v2 key="CookieMap"
+    v4 = Convert v3 declared={type=builtin(BunCookieMap) flags=[IsExpected]}
+    v5 = PropGet v4 key="prototype"
+    v6 = PropGet v5 key="constructor"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = String string="a=1"
+    v9 = Construct v7, -, v8 calleeName="Found"
+    v10 = Undefined
+    Return v10
+}

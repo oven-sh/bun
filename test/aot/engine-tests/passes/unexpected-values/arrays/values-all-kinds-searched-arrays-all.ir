@@ -1,0 +1,136 @@
+# Values of every kind are searched for in arrays of every kind.
+# FORM: AsRead
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="values-all-kinds-searched-arrays-all.js" displayPath="values-all-kinds-searched-arrays-all.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1422 fields=[{key="name" declared={type=anything}}] ownFieldCount=1
+layout L1 module=m0 position=1527 fields=[{key="2 ** 31" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="2n" declared={type=undefined|null|bigint flags=[IsExpected]} flags=[IsRequired]}, {key="2n, computed" declared={type=undefined|null|bigint flags=[IsExpected]} flags=[IsRequired]}, {key="a String object" declared={type=undefined|null|string|String flags=[IsExpected]} flags=[IsRequired]}, {key="an empty text" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="an object that looks the same" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsRequired]}, {key="an object with valueOf" declared={type=undefined|null|L3 flags=[IsExpected]} flags=[IsRequired]}, {key="infinity" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="null" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="the shared object" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsRequired]}, {key="the shared symbol" declared={type=undefined|null|symbol flags=[IsExpected]} flags=[IsRequired]}, {key="the text 2" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="the text ab" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="the text ab, concatenated" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="true" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="undefined" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 7, 11, 12, 13, 4, 3, 1, 2, 15, 8, 14, 9, 5, 10, 6] ownFieldCount=16
+layout L2 module=m0 position=2069 fields=[{key="a typed array" declared={type=undefined|null|function|f12 flags=[IsExpected]} flags=[IsRequired]}, {key="a typed array of big integers" declared={type=undefined|null|function|f14 flags=[IsExpected]} flags=[IsRequired]}, {key="a typed array of integers" declared={type=undefined|null|function|f13 flags=[IsExpected]} flags=[IsRequired]}, {key="doubles" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsRequired]}, {key="doubles with a hole" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="empty" declared={type=undefined|null|function|f11 flags=[IsExpected]} flags=[IsRequired]}, {key="integers" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired]}, {key="integers with a hole" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired]}, {key="large numbers" declared={type=undefined|null|function|f5 flags=[IsExpected]} flags=[IsRequired]}, {key="mixed values" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="only holes" declared={type=undefined|null|function|f10 flags=[IsExpected]} flags=[IsRequired]}, {key="strings" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[6, 3, 8, 11, 9, 7, 4, 10, 5, 0, 2, 1] ownFieldCount=12
+layout L3 module=m0 position=2029 fields=[{key="valueOf" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{}, Number{value=2}]} module=m0
+data d1 root=Array{contents=undefined|null|bigint elements=[BigInt{digits="2"}, BigInt{digits="0"}]} module=m0
+variable g0 name="shared" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="sharedSymbol" module=m0 declared={type=undefined|null|symbol|absent flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewObject layout=L1
+    v3 = String string=""
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]}
+    PropDefine v2, v4 key="an empty text"
+    v6 = FinishObject v2
+    v7 = Convert v6 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v8 = NewObject layout=L2
+    v9 = FinishObject v8
+    v10 = Convert v9 declared={type=undefined|null|L2 flags=[IsExpected]}
+    v11 = Integer
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    v13 = ForInOpen v10
+    v14 = ForInStep v13, v10
+    v15 = ResultAt v14 index=1
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    v17 = ForInOpen v7
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v19 = ForInStep v17, v7
+    v20 = ResultAt v19 index=1
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    v22 = ElemGet v7, v21
+    v23 = ElemGet v10, v16
+    v24 = Convert v23 declared={type=undefined|null|function flags=[IsExpected]}
+    v25 = Call v24, v10 calleeName="lists[list]"
+    v26 = Convert v25 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v27 = Call v1, -, v26, v22 calleeName="byLoop"
+    Jump -> next b1()
+}
+function f1 name="byLoop" module=m0 position=2903 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = ElemGet v0, v4
+    v7 = StrictEq v6, v1
+    Branch v7 -> taken b2(| 1), notTaken b3(| 1)
+  b2(v8):
+    v9 = Convert v4 declared={type=number flags=[IsExpected]}
+    Return v9
+  b3(v10):
+    v11 = Increment v4
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v12)
+}
+function f2 name="valueOf" module=m0 position=2040 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="integers" module=m0 position=2083 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="doubles" module=m0 position=2117 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="large numbers" module=m0 position=2166 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="strings" module=m0 position=2224 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="mixed values" module=m0 position=2292 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|number|string|symbol|bigint|L0> flags=[IsExpected]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = BigInt digits="2"
+    v1 = Null
+    v2 = Undefined
+    v3 = Boolean boolean=true
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="shared"
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="sharedSymbol"
+    v8 = String string="2"
+    v9 = Integer integer=2
+    v10 = NewArray v0, v1, v2, v3, v5, v7, v8, v9 contents=undefined|null|boolean|number|string|symbol|bigint|L0
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|boolean|number|string|symbol|bigint|L0> flags=[IsExpected]}
+    Return v11
+}
+function f8 name="integers with a hole" module=m0 position=2383 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|number> flags=[IsExpected]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewArray v0, v1 contents=undefined|number holes=[1]
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|number> flags=[IsExpected]}
+    Return v3
+}
+function f9 name="doubles with a hole" module=m0 position=2424 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<undefined|number> flags=[IsExpected]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="only holes" module=m0 position=2458 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="empty" module=m0 position=2487 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<never> flags=[IsExpected]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="a typed array" module=m0 position=2516 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Float64Array flags=[IsExpected]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="a typed array of integers" module=m0 position=2590 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Int32Array flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v3 = Construct v0, -, v2 calleeName="Int32Array"
+    v4 = Convert v3 declared={type=undefined|null|Int32Array flags=[IsExpected]}
+    Return v4
+}
+function f14 name="a typed array of big integers" module=m0 position=2664 kind=Arrow thisType={type=anything} results=[{type=undefined|null|BigInt64Array flags=[IsExpected]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=BigInt64Array
+    v1 = Data data=d1
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|bigint> flags=[IsExpected]}
+    v3 = Construct v0, -, v2 calleeName="BigInt64Array"
+    v4 = Convert v3 declared={type=undefined|null|BigInt64Array flags=[IsExpected]}
+    Return v4
+}
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: byLoop
+# CHECK-LABEL: function {{*}}name="byLoop"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 109, patchpoints: 10, rare instructions: 51, polls: 3
+# CHECK-NEXT: end of function f1

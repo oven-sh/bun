@@ -19,8 +19,8 @@ export const setDefaultTimeout = b.fn({
 /** The bound `this` of the `done` a test callback takes. */
 export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallback" });
 
-const modifier = { getter: b.any, cache: true, ...js } as const;
-const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any, ...js } as const;
+const modifier = { getter: b.any.returning("object"), cache: true, ...js } as const;
+const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any.returning("object"), ...js } as const;
 
 /** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
 export const ScopeFunctions = b.class({
@@ -30,7 +30,7 @@ export const ScopeFunctions = b.class({
   proto: {
     concurrent: modifier,
     concurrentIf: conditionalModifier,
-    each: { args: { table: b.any }, returns: b.any, ...js },
+    each: { args: { table: b.any }, returns: b.any.returning("object"), ...js },
     failing: modifier,
     failingIf: conditionalModifier,
     if: conditionalModifier,

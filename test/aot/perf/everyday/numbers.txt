@@ -1,0 +1,401 @@
+//// empty-turn
+function turn(i: number): number {
+  return i;
+}
+//// int-arithmetic
+function turn(i: number): number {
+  return ((i * 3 + 7) ^ (i >> 2)) & 0xffff;
+}
+//// int-sum-without-a-mask
+let total = 0;
+function turn(i: number): number {
+  total += i;
+  return total & 255;
+}
+//// double-arithmetic
+function turn(i: number): number {
+  const x = i * 0.5;
+  return x * x - x / 3 + 1.25;
+}
+//// int-becomes-double
+function turn(i: number): number {
+  const half = i / 2;
+  return half + i;
+}
+//// int-and-double-mixed-in-a-variable
+function turn(i: number): number {
+  let value = i & 1 ? 1 : 0.5;
+  value += i & 7;
+  return value * 2;
+}
+//// division-then-floor
+function turn(i: number): number {
+  return Math.floor(i / 7);
+}
+//// division-then-or-zero
+function turn(i: number): number {
+  return (i / 7) | 0;
+}
+//// division-then-trunc
+function turn(i: number): number {
+  return Math.trunc(i / 7);
+}
+//// remainder
+function turn(i: number): number {
+  return i % 7;
+}
+//// remainder-of-a-variable
+const divisors = [3, 5, 7, 11];
+function turn(i: number): number {
+  return i % divisors[i & 3]!;
+}
+//// remainder-of-doubles
+function turn(i: number): number {
+  return (i + 0.5) % 2.25;
+}
+//// even-or-odd
+function turn(i: number): number {
+  return i % 2 === 0 ? 1 : 2;
+}
+//// power-operator
+function turn(i: number): number {
+  return (i & 15) ** 2;
+}
+//// power-of-a-double
+function turn(i: number): number {
+  return 1.0001 ** (i & 255);
+}
+//// math-pow
+function turn(i: number): number {
+  return Math.pow(i & 15, 3);
+}
+//// math-sqrt
+function turn(i: number): number {
+  return Math.sqrt(i);
+}
+//// math-hypot
+function turn(i: number): number {
+  return Math.hypot(i & 15, 3);
+}
+//// distance
+function turn(i: number): number {
+  const dx = (i & 31) - 7.5;
+  const dy = ((i >> 5) & 31) - 2.5;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+//// math-abs
+function turn(i: number): number {
+  return Math.abs((i & 255) - 128);
+}
+//// math-min-max-clamp
+function turn(i: number): number {
+  return Math.min(100, Math.max(10, i & 255));
+}
+//// math-round
+function turn(i: number): number {
+  return Math.round(i / 3);
+}
+//// math-ceil
+function turn(i: number): number {
+  return Math.ceil(i / 3);
+}
+//// round-to-two-places
+function turn(i: number): number {
+  return Math.round((i / 7) * 100) / 100;
+}
+//// math-sign
+function turn(i: number): number {
+  return Math.sign((i & 3) - 1);
+}
+//// math-sin-cos
+function turn(i: number): number {
+  const angle = (i & 255) / 40;
+  return Math.sin(angle) + Math.cos(angle);
+}
+//// math-log-exp
+function turn(i: number): number {
+  return Math.log((i & 255) + 1) + Math.exp((i & 7) / 8);
+}
+//// math-atan2
+function turn(i: number): number {
+  return Math.atan2((i & 15) - 8, 3);
+}
+//// math-random
+function turn(i: number): number {
+  return Math.random() < 2 ? i & 1 : 0;
+}
+//// random-int
+function turn(i: number): number {
+  return Math.floor(Math.random() * 6) < 6 ? i & 1 : 0;
+}
+//// math-imul
+function turn(i: number): number {
+  return Math.imul(i, 0x9e3779b1) >>> 24;
+}
+//// math-clz32
+function turn(i: number): number {
+  return Math.clz32(i);
+}
+//// bit-operations
+function turn(i: number): number {
+  return ((i << 3) | (i >>> 5)) ^ (~i & 0xff);
+}
+//// unsigned-shift
+function turn(i: number): number {
+  return (i * 2654435761) >>> 16;
+}
+//// flags
+const Read = 1;
+const Write = 2;
+const Execute = 4;
+function turn(i: number): number {
+  let mode = i & 7;
+  mode |= Write;
+  mode &= ~Execute;
+  return (mode & Read ? 1 : 0) + mode;
+}
+//// hash-fnv
+function turn(i: number): number {
+  let hash = 0x811c9dc5;
+  for (let k = 0; k < 4; k++) {
+    hash ^= (i >>> (k * 8)) & 255;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+//// xorshift
+let seed = 2463534242;
+function turn(i: number): number {
+  seed ^= seed << 13;
+  seed ^= seed >>> 17;
+  seed ^= seed << 5;
+  return (seed + i) & 255;
+}
+//// counter-past-two-to-the-31
+let ticks = 2147483000;
+function turn(i: number): number {
+  ticks += 1000;
+  return ticks % 1000 + (i & 1);
+}
+//// field-counter-past-two-to-the-31
+const meter = { bytes: 2147483000 };
+function turn(i: number): number {
+  meter.bytes += 1500;
+  return (meter.bytes % 1000) + (i & 1);
+}
+//// average
+const samples = [12, 15, 11, 19, 14, 13, 17, 16];
+function turn(i: number): number {
+  let sum = i & 7;
+  for (const sample of samples) sum += sample;
+  return sum / samples.length;
+}
+//// percent
+function turn(i: number): number {
+  return Math.round(((i & 1023) / 1024) * 100);
+}
+//// parse-int
+const inputs = ["12", "345", "6789", "0"];
+function turn(i: number): number {
+  return parseInt(inputs[i & 3]!, 10);
+}
+//// parse-int-without-a-radix
+const inputs = ["12px", "345", " 67", "8.9"];
+function turn(i: number): number {
+  return parseInt(inputs[i & 3]!);
+}
+//// parse-int-of-hex
+const inputs = ["ff", "10", "abcd", "7"];
+function turn(i: number): number {
+  return parseInt(inputs[i & 3]!, 16);
+}
+//// parse-float
+const inputs = ["1.5", "22.75", "0.125", "3"];
+function turn(i: number): number {
+  return parseFloat(inputs[i & 3]!);
+}
+//// to-fixed
+function turn(i: number): number {
+  return ((i & 1023) / 7).toFixed(2).length;
+}
+//// to-precision
+function turn(i: number): number {
+  return ((i & 1023) / 7).toPrecision(4).length;
+}
+//// to-locale-string
+function turn(i: number): number {
+  return (i & 0xfffff).toLocaleString("en-US").length;
+}
+//// is-nan
+const values = [1, NaN, 2.5, NaN];
+function turn(i: number): number {
+  return Number.isNaN(values[i & 3]!) ? 1 : 0;
+}
+//// is-integer
+const values = [1, 1.5, 2, NaN];
+function turn(i: number): number {
+  return Number.isInteger(values[i & 3]!) ? 1 : 0;
+}
+//// is-finite
+const values = [1, Infinity, 2.5, NaN];
+function turn(i: number): number {
+  return Number.isFinite(values[i & 3]!) ? 1 : 0;
+}
+//// is-safe-integer
+function turn(i: number): number {
+  return Number.isSafeInteger(i * 4294967296) ? 1 : 0;
+}
+//// number-or-undefined
+const maybe: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  return (maybe[i & 3] ?? 10) + 1;
+}
+//// number-or-null-added
+const maybe: (number | null)[] = [1, null, 3, null];
+function turn(i: number): number {
+  const value = maybe[i & 3];
+  return value === null ? 0 : value! * 2;
+}
+//// increment-operators
+function turn(i: number): number {
+  let a = i;
+  let b = a++ + ++a;
+  b--;
+  return b - a;
+}
+//// compound-assignments
+function turn(i: number): number {
+  let value = i & 255;
+  value *= 3;
+  value -= 7;
+  value /= 2;
+  value %= 50;
+  return value;
+}
+//// comparison-chain
+function turn(i: number): number {
+  const score = i & 127;
+  return score >= 90 ? 4 : score >= 75 ? 3 : score >= 50 ? 2 : score >= 25 ? 1 : 0;
+}
+//// fibonacci-by-a-loop
+function turn(i: number): number {
+  let a = 0;
+  let b = 1;
+  for (let k = 0; k < (i & 15); k++) [a, b] = [b, a + b];
+  return a;
+}
+//// fibonacci-by-recursion
+function fibonacci(n: number): number {
+  return n < 2 ? n : fibonacci(n - 1) + fibonacci(n - 2);
+}
+function turn(i: number): number {
+  return fibonacci(8 + (i & 1));
+}
+//// greatest-common-divisor
+function turn(i: number): number {
+  let a = (i & 1023) + 1;
+  let b = 360;
+  while (b) [a, b] = [b, a % b];
+  return a;
+}
+//// is-prime
+function turn(i: number): number {
+  const n = (i & 255) + 2;
+  for (let d = 2; d * d <= n; d++) if (n % d === 0) return 0;
+  return 1;
+}
+//// linear-interpolation
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+function turn(i: number): number {
+  return lerp(10, 20, (i & 255) / 255);
+}
+//// bigint-add
+let big = 0n;
+function turn(i: number): number {
+  big += 1n;
+  return Number(big & 255n) + (i & 1);
+}
+//// bigint-from-a-number
+function turn(i: number): number {
+  return Number(BigInt(i) * 3n % 1000n);
+}
+//// bigint-large-multiply
+const factor = 123456789012345678901234567890n;
+function turn(i: number): number {
+  return Number((factor * BigInt(i & 255)) % 1000n);
+}
+//// bigint-as-uint-n
+function turn(i: number): number {
+  return Number(BigInt.asUintN(64, BigInt(i) << 60n) >> 60n);
+}
+//// number-from-a-boolean
+function turn(i: number): number {
+  return Number((i & 3) === 0) + +((i & 1) === 1);
+}
+//// money-in-cents
+function turn(i: number): number {
+  const price = (i & 1023) + 0.99;
+  return Math.round(price * 100) * 3;
+}
+//// celsius-to-fahrenheit
+function turn(i: number): number {
+  return ((i & 127) * 9) / 5 + 32;
+}
+//// add-of-values-that-once-held-a-fraction
+function add(a: number, b: number): number {
+  return a + b;
+}
+add(0.5, 1);
+function turn(i: number): number {
+  return add(i, 3) & 1023;
+}
+//// words-in-an-array-made-with-new-array
+const state: { words: number[] } = { words: [] };
+function refill(seed: number): void {
+  const words: number[] = (state.words = new Array());
+  for (let k = 0; k < 16; k++) words[k] = (seed + k * 40503) | 0;
+}
+function mix(): number {
+  const w = state.words;
+  let sum = 0;
+  for (let k = 0; k < 16; k++) sum = (sum + (w[k]! >>> 3) + w[(k + 9) & 15]!) | 0;
+  return sum;
+}
+function turn(i: number): number {
+  refill(i);
+  return mix();
+}
+//// digits-in-arrays-made-with-new-array
+class Digits {
+  array: number[] = new Array();
+  used = 0;
+  addTo(other: Digits, result: Digits): number {
+    const a = this.array;
+    const b = other.array;
+    const r = result.array;
+    let carry = 0;
+    for (let k = 0; k < this.used; k++) {
+      carry += a[k]! + b[k]!;
+      r[k] = carry & 0xfffffff;
+      carry >>= 28;
+    }
+    result.used = this.used;
+    return carry;
+  }
+}
+function digitsOf(seed: number): Digits {
+  const digits = new Digits();
+  for (let k = 0; k < 32; k++) digits.array[k] = (k * seed) & 0xfffffff;
+  digits.used = 32;
+  return digits;
+}
+const x = digitsOf(2654435761);
+const y = digitsOf(40503);
+function turn(i: number): number {
+  const sum = new Digits();
+  const twice = new Digits();
+  x.addTo(y, sum);
+  return sum.addTo(sum, twice) + twice.array[i & 31]!;
+}

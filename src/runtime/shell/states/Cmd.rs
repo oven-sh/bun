@@ -190,10 +190,10 @@ impl BufferedIoClosed {
             // of the command. Single-threaded.
             unsafe { (*shell_buf).append_slice(the_slice) };
         }
-        // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
+        // SAFETY: `Rc<PipeReader>` interior mutability — the shell is
         // single-threaded and this is the same pattern `subproc::on_close_io`
         // uses to take the done buffer.
-        let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
+        let buffer = unsafe { &mut *(std::rc::Rc::as_ptr(pipe).cast_mut()) }.take_buffer();
         *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
     }
 }

@@ -1,0 +1,150 @@
+# One declared type with optional fields is many layouts: literals give every combination of the fields, in the declared order and in others, some give `undefined` outright. One set of reads, stores and tests serves them all.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="optional-fields-present-every.ts" displayPath="optional-fields-present-every.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Style" module=m0 position=237 fields=[{key="bold" declared={type=undefined|boolean}}, {key="color" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}, {key="parent" declared={type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull]}}, {key="width" declared={type=undefined|number}}] declaredOrder=[1, 3, 0, 2] ownFieldCount=4
+data d0 root=Object{layout=L0 members=[{key="color" value=String{value="root"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="bold" value=Boolean{}}, {key="color" value=String{value="c"}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="bold" value=Boolean{value=true}}, {key="width" value=Number{value=1}}, {key="color" value=String{value="c"}}]} module=m0
+data d3 root=Object{layout=L0 members=[{key="width" value=Number{}}, {key="bold" value=Boolean{}}, {key="parent" value=Object{layout=L0}}]} module=m0
+data d4 root=Object{layout=L0 members=[{key="color"}, {key="width"}, {key="bold"}, {key="parent"}]} module=m0
+data d5 root=Object{layout=L0 members=[{key="color" value=String{value="c"}}, {key="width"}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Data data=d1
+    v8 = String string="c"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull]}
+    v10 = NewObject -, v9 layout=L0 fields=[1]
+    v11 = Data data=d2
+    v12 = Data data=d3
+    v13 = String string="c"
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull]}
+    v15 = Integer integer=1
+    v16 = Convert v15 declared={type=undefined|number}
+    v17 = Boolean boolean=true
+    v18 = Convert v17 declared={type=undefined|boolean}
+    v19 = NewObject -, v14, v16, v18 layout=L0 fields=[1, 3, 0]
+    v20 = Data data=d4
+    v21 = Data data=d5
+    v22 = Boolean
+    v23 = Boolean
+    v24 = Boolean boolean=true
+    v25 = Call v3, -, v22, v23, v24 calleeName="build"
+    v26 = String string="built cwb"
+    v27 = Boolean boolean=true
+    v28 = Boolean boolean=true
+    v29 = Boolean boolean=true
+    v30 = Call v3, -, v27, v28, v29 calleeName="build"
+    v31 = Convert v30 declared={type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v32 = Call v1, -, v26, v31 calleeName="look"
+    v33 = String string="conditional, true"
+    v34 = Boolean boolean=true
+    v35 = Call v5, -, v34 calleeName="conditional"
+    v36 = Convert v35 declared={type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v37 = Call v1, -, v33, v36 calleeName="look"
+    v38 = Boolean
+    v39 = Call v5, -, v38 calleeName="conditional"
+    v40 = Undefined
+    Return v40
+}
+function f1 name="look" module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|number|symbol|bigint|L0):
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v3, v2, v1 calleeName="Object.keys"
+    v5 = Builtin builtin=JSON
+    v6 = PropGet v5 key="stringify"
+    v7 = Convert v6 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v8 = Call v7, v5, v1 calleeKey="stringify" calleeName="JSON.stringify"
+    v9 = Undefined
+    Return v9
+}
+function f2 name="build" module=m0 position=2588 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean}, {type=boolean}, {type=boolean}] results=[{type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="conditional" module=m0 position=3100 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0 look
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=1 storage=Frame
+# CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=2 storage=Frame
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: v3: false = Boolean
+# CHECK-NEXT: v4: true = Boolean boolean=true
+# CHECK-NEXT: v5: anything ~ undefined|null|number|symbol|bigint|L0 = Call v0, -, v2, v3, v4 calleeName="build" accessSite=0 callees=[f2]
+# CHECK-NEXT: v6: true = Boolean boolean=true
+# CHECK-NEXT: v7: true = Boolean boolean=true
+# CHECK-NEXT: v8: true = Boolean boolean=true
+# CHECK-NEXT: v9: anything ~ undefined|null|number|symbol|bigint|L0 = Call v0, -, v6, v7, v8 calleeName="build" accessSite=1 callees=[f2]
+# CHECK-NEXT: v10: undefined = CallDirect v9 function=f9 accessSite=2
+# CHECK-NEXT: v11: true = Boolean boolean=true
+# CHECK-NEXT: v12: anything ~ undefined|null|number|symbol|bigint|L0 = Call v1, -, v11 calleeName="conditional" accessSite=3 callees=[f3]
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f9 accessSite=4
+# CHECK-NEXT: v14: false = Boolean
+# CHECK-NEXT: v15: anything ~ undefined|null|number|symbol|bigint|L0 = Call v1, -, v14 calleeName="conditional" accessSite=5 callees=[f3]
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="look"
+# CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="look"
+# CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=1}]} {
+# CHECK-NEXT: b0(v1: anything ~ undefined|null|number|symbol|bigint|L0):
+# CHECK-NEXT: v2: object = ToObject v1 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v3: Array<string> = CallBuiltin -, v2 overload=ObjectKeys/0 accessSite=6
+# CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v5: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v6: boolean = TypeTest v1 testedType=undefined
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v7: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b10(v7)
+# CHECK-NEXT: b2(v8: null|boolean|number|string|symbol|bigint|object ~ null|number|symbol|bigint|L0):
+# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=null
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v11: buildercursor = JSONAppendToken v4, v10 jsonToken=Null
+# CHECK-NEXT: Jump -> next b10(v11)
+# CHECK-NEXT: b4(v12: boolean|number|string|symbol|bigint|object ~ number|symbol|bigint|L0):
+# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=object
+# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v14: object ~ L0):
+# CHECK-NEXT: v15: boolean = ShapeTest v14 layouts=[L0]
+# CHECK-NEXT: Branch v15 -> taken b6(), notTaken b8()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v16: int[0, 2] = CallDirect v14, v4 function=f6 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v16 cases=[1] -> case b7(), otherwise b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v17: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b9(v17)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v18: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b9(v18)
+# CHECK-NEXT: b9(v19: buildercursor):
+# CHECK-NEXT: Jump -> next b10(v19)
+# CHECK-NEXT: b10(v20: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v4, v20
+# CHECK-NEXT: v22: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v23: boolean = StrictEq v5, v22
+# CHECK-NEXT: Branch v23 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v4
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: undefined|string = CallBuiltin -, v1, v25 overload=JSONStringify/0 accessSite=8
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v27: string = StringBuilderFinish v4
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }

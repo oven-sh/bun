@@ -1,0 +1,79 @@
+# -- source: main.cjs
+# module.exports = {
+#   get zeta() {
+#     console.log("zeta is read");
+#     return 1;
+#   },
+#   get alpha() {
+#     console.log("alpha is read");
+#     return 2;
+#   },
+# };
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0 position=17 fields=[{key="alpha" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="zeta" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="zeta"
+    v3 = NewClosure function=f2
+    DefineGetter v0, v3 key="alpha"
+    v5 = FinishObject v0
+    PutModuleVariable v5 variable=g0
+    v7 = Undefined
+    Return v7
+}
+function f1 name="zeta" module=m0 position=21 kind=Getter flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = String string="zeta is read"
+    v6 = Call v4, v2, v5 calleeKey="log" calleeName="console.log"
+    v7 = Integer integer=1
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    Return v8
+}
+function f2 name="alpha" module=m0 position=88 kind=Getter flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = String string="alpha is read"
+    v6 = Call v4, v2, v5 calleeKey="log" calleeName="console.log"
+    v7 = Integer integer=2
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    Return v8
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=0 allocationClass=0
+# CHECK-NEXT: v1: f1 = NewClosure function=f1 allocationSite=1
+# CHECK-NEXT: DefineGetter v0, v1 key="zeta"
+# CHECK-NEXT: v3: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: DefineGetter v0, v3 key="alpha"
+# CHECK-NEXT: v5: L0 = FinishObject v0
+# CHECK-NEXT: PutModuleVariable v5 variable=g0
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }

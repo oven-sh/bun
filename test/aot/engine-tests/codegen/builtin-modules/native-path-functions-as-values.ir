@@ -1,0 +1,238 @@
+# A native function that compiled code calls directly is still a function object like any other where the program treats it as a value.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="native-path-functions-as-values.ts" displayPath="native-path-functions-as-values.ts" body=f0 requests=[{target=m1 completes=true}] namespaceLayout=L(m0)
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f11 syntheticExports=[{name="isAbsolute" variable=g0 isKnownMember=true}, {name="join" variable=g1 isKnownMember=true}]
+entry module=m0
+layout L0 name="Path" module=m1 position=315 fields=[{key="_makeLong" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="basename" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="delimiter" declared={type=undefined|null|":"|";" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="dirname" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="extname" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="format" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="isAbsolute" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="join" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="matchesGlob" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="normalize" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="parse" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="posix" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="relative" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="resolve" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="sep" declared={type=undefined|null|"/"|"\\" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="toNamespacedPath" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="win32" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[13, 9, 6, 7, 12, 15, 3, 1, 4, 5, 10, 8, 14, 2, 16, 11, 0] ownFieldCount=17
+variable g0 name="isAbsolute" module=m1 declared={type=anything}
+variable g1 name="join" module=m1 declared={type=anything}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="imported by name"
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="report"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="report" module=m0 position=232 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f2|f3|f4|f5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f2|f3|f4|f5):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="probe"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4(v2)
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v5 = PropGet v4 key="name"
+    v6 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v7 = PropGet v6 key="code"
+    v8 = Convert v6 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v9 = PropGet v8 key="message"
+    v10 = Convert v9 declared={type=undefined|null|string} illTypedCause=Assertion
+    v11 = NewArray v5, v7, v10 contents=anything
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = Undefined
+    Return v13
+}
+function f2 module=m0 position=600 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="isAbsolute"
+    v2 = Convert v1 declared={type=builtin(NodePathIsAbsolute) flags=[IsExpected]}
+    v3 = String string="/a"
+    v4 = Call v2, -, v3 calleeName="isAbsolute"
+    v5 = Convert v4 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="join"
+    v8 = Convert v7 declared={type=builtin(NodePathJoin) flags=[IsExpected]}
+    v9 = String string="a"
+    v10 = String string="b"
+    v11 = Call v8, -, v9, v10 calleeName="join"
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v13 = NewArray v5, v12 contents=anything
+    v14 = Convert v13 declared={type=undefined|null|Array<undefined|null|boolean|string> flags=[OmitsNull, OmitsUndefined]}
+    Return v14
+}
+function f3 module=m0 position=669 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=752 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=881 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f11 module=m1 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_pathBindTsToNamespacedPathPosix
+    v1 = NativeBinding builtin=NativeBindgenNode_pathBindTsResolvePosix
+    v2 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v3 = NativeBinding builtin=NativeBindgenNode_pathBindTsNormalizePosix
+    v4 = Convert v3 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v5 = NativeBinding builtin=NativeBindgenNode_pathBindTsIsAbsolutePosix
+    v6 = Convert v5 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v7 = NativeBinding builtin=NativeBindgenNode_pathBindTsJoinPosix
+    v8 = Convert v7 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v9 = NativeBinding builtin=NativeBindgenNode_pathBindTsRelativePosix
+    v10 = Convert v9 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v11 = Convert v0 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v12 = NativeBinding builtin=NativeBindgenNode_pathBindTsDirnamePosix
+    v13 = Convert v12 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v14 = NativeBinding builtin=NativeBindgenNode_pathBindTsBasenamePosix
+    v15 = Convert v14 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v16 = NativeBinding builtin=NativeBindgenNode_pathBindTsExtnamePosix
+    v17 = Convert v16 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v18 = NativeBinding builtin=NativeBindgenNode_pathBindTsFormatPosix
+    v19 = Convert v18 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v20 = NativeBinding builtin=NativeBindgenNode_pathBindTsParsePosix
+    v21 = Convert v20 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v22 = String string="/"
+    v23 = Convert v22 declared={type=undefined|null|"/"|"\\" flags=[OmitsNull, OmitsUndefined]}
+    v24 = String string=":"
+    v25 = Convert v24 declared={type=undefined|null|":"|";" flags=[OmitsNull, OmitsUndefined]}
+    v26 = Undefined
+    v27 = Convert v26 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v28 = Undefined
+    v29 = Convert v28 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v30 = Convert v0 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v31 = Undefined
+    v32 = Convert v31 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v33 = NewObject -, v2, v4, v6, v8, v10, v11, v13, v15, v17, v19, v21, v23, v25, v27, v29, v30, v32 layout=L0 fields=[13, 9, 6, 7, 12, 15, 3, 1, 4, 5, 10, 14, 2, 16, 11, 0, 8]
+    v34 = FinishObject v33
+    v35 = Convert v34 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v36 = NativeBinding builtin=NativeBindgenNode_pathBindTsBasenameWin32
+    v37 = NativeBinding builtin=NativeBindgenNode_pathBindTsExtnameWin32
+    v38 = NativeBinding builtin=NativeBindgenNode_pathBindTsFormatWin32
+    v39 = NativeBinding builtin=NativeBindgenNode_pathBindTsParseWin32
+    Return v35
+}
+# -- generated: f0 report f2 f11
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: "imported by name" = String string="imported by name"
+# CHECK-NEXT: v2: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v3: undefined = Call v0, -, v1, v2 calleeName="report" accessSite=0 callees=[f1]
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="report"
+# CHECK: module=m0 position=232 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: f2):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK-NEXT: v2: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = Call v1 calleeName="probe" accessSite=1 callees=[f2]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b4(v2)
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: v3: anything = CatchValue
+# CHECK-NEXT: v4: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v3 castType=anything
+# CHECK-NEXT: v5: anything = PropGet v4 key="name" accessSite=2
+# CHECK-NEXT: v6: anything = PropGet v4 key="code" accessSite=3
+# CHECK-NEXT: v7: anything ~ undefined|null|Error = Upcast v4 castType=anything
+# CHECK-NEXT: v8: anything = PropGet v7 key="message" accessSite=4
+# CHECK-NEXT: v9: undefined|null|string = Check v8 expectedType=undefined|null|string
+# CHECK-NEXT: v10: Array<anything, Contiguous> = NewArray v5, v6, v9 contents=anything allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v13: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b4(v13)
+# CHECK-NEXT: b4(v11: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m0 position=600 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: anything = CheckInitialized v0 name="isAbsolute"
+# CHECK-NEXT: v2: anything ~ builtin(NodePathIsAbsolute) = Upcast v1 castType=anything
+# CHECK-NEXT: v15: undefined|builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v2 provenType=undefined|builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v3: "/a" = String string="/a"
+# CHECK-NEXT: v4: anything = Call v15, -, v3 calleeName="isAbsolute" accessSite=5 callees=[builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)]
+# CHECK-NEXT: v16: boolean = AssumeType v4 provenType=boolean
+# CHECK-NEXT: v5: boolean = AssumeType v16 provenType=boolean
+# CHECK-NEXT: v6: anything = GetModuleVariable variable=g1
+# CHECK-NEXT: v7: anything = CheckInitialized v6 name="join"
+# CHECK-NEXT: v8: anything ~ builtin(NodePathJoin) = Upcast v7 castType=anything
+# CHECK-NEXT: v17: undefined|builtin(NativeFunctionsNode_pathBindTsJoinPosix) = AssumeType v8 provenType=undefined|builtin(NativeFunctionsNode_pathBindTsJoinPosix)
+# CHECK-NEXT: v9: "a" = String string="a"
+# CHECK-NEXT: v10: "b" = String string="b"
+# CHECK-NEXT: v11: anything = Call v17, -, v9, v10 calleeName="join" accessSite=6 callees=[builtin(NativeFunctionsNode_pathBindTsJoinPosix)]
+# CHECK-NEXT: v18: string = AssumeType v11 provenType=string
+# CHECK-NEXT: v12: string = AssumeType v18 provenType=undefined|null|string
+# CHECK-NEXT: v19: string = AssumeType v12 provenType=string
+# CHECK-NEXT: v13: Array<boolean|string, Contiguous> = NewArray v5, v19 contents=boolean|string allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v20: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v20 castType=undefined|null|Array<undefined|null|boolean|string>
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-LABEL: function f11 module=
+# CHECK: m1 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsToNamespacedPathPosix
+# CHECK-NEXT: v34: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = AssumeType v0 provenType=builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix)
+# CHECK-NEXT: v1: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsResolvePosix
+# CHECK-NEXT: v35: builtin(NativeFunctionsNode_pathBindTsResolvePosix) = AssumeType v1 provenType=builtin(NativeFunctionsNode_pathBindTsResolvePosix)
+# CHECK-NEXT: v2: builtin(NativeFunctionsNode_pathBindTsResolvePosix) = Check v35 expectedType=undefined|null|function
+# CHECK-NEXT: v36: builtin(NativeFunctionsNode_pathBindTsResolvePosix) = AssumeType v2 provenType=builtin(NativeFunctionsNode_pathBindTsResolvePosix)
+# CHECK-NEXT: v3: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsNormalizePosix
+# CHECK-NEXT: v37: builtin(NativeFunctionsNode_pathBindTsNormalizePosix) = AssumeType v3 provenType=builtin(NativeFunctionsNode_pathBindTsNormalizePosix)
+# CHECK-NEXT: v4: builtin(NativeFunctionsNode_pathBindTsNormalizePosix) = Check v37 expectedType=undefined|null|function
+# CHECK-NEXT: v38: builtin(NativeFunctionsNode_pathBindTsNormalizePosix) = AssumeType v4 provenType=builtin(NativeFunctionsNode_pathBindTsNormalizePosix)
+# CHECK-NEXT: v5: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsIsAbsolutePosix
+# CHECK-NEXT: v39: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v5 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v6: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = Check v39 expectedType=undefined|null|function
+# CHECK-NEXT: v40: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v6 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v7: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsJoinPosix
+# CHECK-NEXT: v41: builtin(NativeFunctionsNode_pathBindTsJoinPosix) = AssumeType v7 provenType=builtin(NativeFunctionsNode_pathBindTsJoinPosix)
+# CHECK-NEXT: v8: builtin(NativeFunctionsNode_pathBindTsJoinPosix) = Check v41 expectedType=undefined|null|function
+# CHECK-NEXT: v42: builtin(NativeFunctionsNode_pathBindTsJoinPosix) = AssumeType v8 provenType=builtin(NativeFunctionsNode_pathBindTsJoinPosix)
+# CHECK-NEXT: v9: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsRelativePosix
+# CHECK-NEXT: v43: builtin(NativeFunctionsNode_pathBindTsRelativePosix) = AssumeType v9 provenType=builtin(NativeFunctionsNode_pathBindTsRelativePosix)
+# CHECK-NEXT: v10: builtin(NativeFunctionsNode_pathBindTsRelativePosix) = Check v43 expectedType=undefined|null|function
+# CHECK-NEXT: v44: builtin(NativeFunctionsNode_pathBindTsRelativePosix) = AssumeType v10 provenType=builtin(NativeFunctionsNode_pathBindTsRelativePosix)
+# CHECK-NEXT: v11: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = Check v34 expectedType=undefined|null|function
+# CHECK-NEXT: v45: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = AssumeType v11 provenType=builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix)
+# CHECK-NEXT: v12: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsDirnamePosix
+# CHECK-NEXT: v46: builtin(NativeFunctionsNode_pathBindTsDirnamePosix) = AssumeType v12 provenType=builtin(NativeFunctionsNode_pathBindTsDirnamePosix)
+# CHECK-NEXT: v13: builtin(NativeFunctionsNode_pathBindTsDirnamePosix) = Check v46 expectedType=undefined|null|function
+# CHECK-NEXT: v47: builtin(NativeFunctionsNode_pathBindTsDirnamePosix) = AssumeType v13 provenType=builtin(NativeFunctionsNode_pathBindTsDirnamePosix)
+# CHECK-NEXT: v14: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsBasenamePosix
+# CHECK-NEXT: v48: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v14 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
+# CHECK-NEXT: v15: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = Check v48 expectedType=undefined|null|function
+# CHECK-NEXT: v49: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v15 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
+# CHECK-NEXT: v16: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsExtnamePosix
+# CHECK-NEXT: v50: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v16 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
+# CHECK-NEXT: v17: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = Check v50 expectedType=undefined|null|function
+# CHECK-NEXT: v51: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v17 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
+# CHECK-NEXT: v18: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsFormatPosix
+# CHECK-NEXT: v52: builtin(NativeFunctionsNode_pathBindTsFormatPosix) = AssumeType v18 provenType=builtin(NativeFunctionsNode_pathBindTsFormatPosix)
+# CHECK-NEXT: v19: builtin(NativeFunctionsNode_pathBindTsFormatPosix) = Check v52 expectedType=undefined|null|function
+# CHECK-NEXT: v53: builtin(NativeFunctionsNode_pathBindTsFormatPosix) = AssumeType v19 provenType=builtin(NativeFunctionsNode_pathBindTsFormatPosix)
+# CHECK-NEXT: v20: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsParsePosix
+# CHECK-NEXT: v54: builtin(NativeFunctionsNode_pathBindTsParsePosix) = AssumeType v20 provenType=builtin(NativeFunctionsNode_pathBindTsParsePosix)
+# CHECK-NEXT: v21: builtin(NativeFunctionsNode_pathBindTsParsePosix) = Check v54 expectedType=undefined|null|function
+# CHECK-NEXT: v55: builtin(NativeFunctionsNode_pathBindTsParsePosix) = AssumeType v21 provenType=builtin(NativeFunctionsNode_pathBindTsParsePosix)
+# CHECK-NEXT: v22: "/" = String string="/"
+# CHECK-NEXT: v23: ":" = String string=":"
+# CHECK-NEXT: v24: undefined = Undefined
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = Check v34 expectedType=undefined|null|function
+# CHECK-NEXT: v56: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = AssumeType v26 provenType=builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix)
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: v28: L0 = NewObject -, v36, v38, v40, v42, v44, v45, v47, v49, v51, v53, v55, v22, v23, v24, v25, v56, v27 layout=L0 fields=[13, 9, 6, 7, 12, 15, 3, 1, 4, 5, 10, 14, 2, 16, 11, 0, 8] allocationSite=4 allocationClass=0
+# CHECK-NEXT: v29: L0 = FinishObject v28
+# CHECK-NEXT: v30: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsBasenameWin32
+# CHECK-NEXT: v31: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsExtnameWin32
+# CHECK-NEXT: v32: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsFormatWin32
+# CHECK-NEXT: v33: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsParseWin32
+# CHECK-NEXT: v57: L0 = AssumeType v29 provenType=L0
+# CHECK-NEXT: Return v57
+# CHECK-NEXT: }

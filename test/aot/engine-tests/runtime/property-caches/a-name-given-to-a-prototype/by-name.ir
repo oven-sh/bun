@@ -1,0 +1,564 @@
+# Six objects, each the prototype of the next, and four receivers of four shapes below them. A round reads a value, calls a method, runs a getter and misses a name on each receiver, and adds a name to four new objects.
+# Between any two of 30 rounds one of the six is given a name that nobody reads: chain[0].unrelated0 = 0;
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null const asked = () => aotOperationCount("operationAOTGetByIdAndCache") + aotOperationCount("operationAOTPutByIdAndCache") + aotOperationCount("operationAOTFillSiteCache"); let marked; globalThis.mark = () => { marked = asked(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); print(marked > 0 ? "the first rounds ask" : "nothing asks"); const later = asked() - marked; print(later < 90 ? "few ask later: a round that lost its caches would ask sixteen times" : later); };
+# What is cached under the names that are read outlives the names that a prototype is given.
+# CHECK: 64080
+# CHECK-NEXT: the first rounds ask
+# CHECK-NEXT: few ask later: a round that lost its caches would ask sixteen times
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=3
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L1
+    v4 = NewClosure v3 function=f1
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v3, v5 layout=L1
+    v7 = NewClosure v3 function=f2
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectCreate
+    v11 = Null
+    v12 = Call v10, v9, v11 calleeName="Object.create"
+    v13 = NewArray v12 contents=anything
+    v14 = Convert v13 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutEnvironmentField v3, v14 layout=L1 field=1
+    v16 = Integer integer=1
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v17)
+  b2(v18):
+    LoopHint
+    v20 = Integer integer=6
+    v21 = Less v18, v20
+    Branch v21 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v22):
+    Jump -> next b4()
+  b4():
+    v23 = Builtin builtin=Object
+    v24 = Builtin builtin=ObjectCreate
+    v25 = Integer integer=1
+    v26 = Sub v22, v25
+    v27 = ElemGet v14, v26
+    v28 = Convert v27 declared={type=undefined|null|object flags=[IsExpected]}
+    v29 = Call v24, v23, v28 calleeName="Object.create"
+    ElemSet v14, v22, v29 mode=Sloppy
+    Jump -> next b5()
+  b5():
+    v31 = Increment v22
+    v32 = Convert v31 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v32)
+  b6(v33):
+    Jump -> next b7()
+  b7():
+    v34 = Integer
+    v35 = ElemGet v14, v34
+    v36 = Convert v35 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v37 = Integer integer=10
+    PropSet v36, v37 key="value" mode=Sloppy
+    v39 = Integer
+    v40 = ElemGet v14, v39
+    v41 = Convert v40 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v42 = NewClosure function=f3
+    PropSet v41, v42 key="method" mode=Sloppy
+    v44 = Builtin builtin=Object
+    v45 = Builtin builtin=ObjectDefineProperty
+    v46 = Integer
+    v47 = ElemGet v14, v46
+    v48 = String string="computed"
+    v49 = NewClosure function=f4
+    v50 = Convert v49 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v51 = NewObject layout=L2
+    PropDefine v51, v50 key="get"
+    v53 = Boolean boolean=true
+    v54 = Convert v53 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v51, v54 key="configurable"
+    v56 = FinishObject v51
+    v57 = Call v45, v44, v47, v48, v56 calleeName="Object.defineProperty"
+    v58 = Call v5 calleeName="make"
+    v59 = Convert v58 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutEnvironmentField v3, v59 layout=L1 field=2
+    v61 = Integer
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = Integer
+    v64 = Convert v63 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v62, v64)
+  b8(v65, v66):
+    LoopHint
+    v68 = Integer integer=6
+    v69 = Less v66, v68
+    Branch v69 -> taken b9(| 0), notTaken b12(| 0)
+  b9(v70):
+    Jump -> next b10()
+  b10():
+    v71 = Call v8 calleeName="round"
+    v72 = Convert v71 declared={type=number flags=[IsExpected]}
+    v73 = Add v65, v72
+    v74 = Convert v73 declared={type=number flags=[IsExpected]}
+    Jump -> next b11()
+  b11():
+    v75 = Increment v70
+    v76 = Convert v75 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v74, v76)
+  b12(v77):
+    Jump -> next b13()
+  b13():
+    v78 = Builtin builtin=GlobalThis
+    v79 = PropGet v78 key="mark" [isFreeName]
+    v80 = Call v79 calleeName="mark"
+    v81 = Integer
+    v82 = ElemGet v14, v81
+    v83 = Convert v82 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v84 = Integer
+    PropSet v83, v84 key="unrelated0" mode=Sloppy
+    v86 = Call v8 calleeName="round"
+    v87 = Convert v86 declared={type=number flags=[IsExpected]}
+    v88 = Add v65, v87
+    v89 = Convert v88 declared={type=number flags=[IsExpected]}
+    v90 = Integer integer=1
+    v91 = ElemGet v14, v90
+    v92 = Convert v91 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v93 = Integer integer=1
+    PropSet v92, v93 key="unrelated1" mode=Sloppy
+    v95 = Call v8 calleeName="round"
+    v96 = Convert v95 declared={type=number flags=[IsExpected]}
+    v97 = Add v89, v96
+    v98 = Convert v97 declared={type=number flags=[IsExpected]}
+    v99 = Integer integer=2
+    v100 = ElemGet v14, v99
+    v101 = Convert v100 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v102 = Integer integer=2
+    PropSet v101, v102 key="unrelated2" mode=Sloppy
+    v104 = Call v8 calleeName="round"
+    v105 = Convert v104 declared={type=number flags=[IsExpected]}
+    v106 = Add v98, v105
+    v107 = Convert v106 declared={type=number flags=[IsExpected]}
+    v108 = Integer integer=3
+    v109 = ElemGet v14, v108
+    v110 = Convert v109 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v111 = Integer integer=3
+    PropSet v110, v111 key="unrelated3" mode=Sloppy
+    v113 = Call v8 calleeName="round"
+    v114 = Convert v113 declared={type=number flags=[IsExpected]}
+    v115 = Add v107, v114
+    v116 = Convert v115 declared={type=number flags=[IsExpected]}
+    v117 = Integer integer=4
+    v118 = ElemGet v14, v117
+    v119 = Convert v118 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v120 = Integer integer=4
+    PropSet v119, v120 key="unrelated4" mode=Sloppy
+    v122 = Call v8 calleeName="round"
+    v123 = Convert v122 declared={type=number flags=[IsExpected]}
+    v124 = Add v116, v123
+    v125 = Convert v124 declared={type=number flags=[IsExpected]}
+    v126 = Integer integer=5
+    v127 = ElemGet v14, v126
+    v128 = Convert v127 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v129 = Integer integer=5
+    PropSet v128, v129 key="unrelated5" mode=Sloppy
+    v131 = Call v8 calleeName="round"
+    v132 = Convert v131 declared={type=number flags=[IsExpected]}
+    v133 = Add v125, v132
+    v134 = Convert v133 declared={type=number flags=[IsExpected]}
+    v135 = Integer
+    v136 = ElemGet v14, v135
+    v137 = Convert v136 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v138 = Integer integer=6
+    PropSet v137, v138 key="unrelated6" mode=Sloppy
+    v140 = Call v8 calleeName="round"
+    v141 = Convert v140 declared={type=number flags=[IsExpected]}
+    v142 = Add v134, v141
+    v143 = Convert v142 declared={type=number flags=[IsExpected]}
+    v144 = Integer integer=1
+    v145 = ElemGet v14, v144
+    v146 = Convert v145 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v147 = Integer integer=7
+    PropSet v146, v147 key="unrelated7" mode=Sloppy
+    v149 = Call v8 calleeName="round"
+    v150 = Convert v149 declared={type=number flags=[IsExpected]}
+    v151 = Add v143, v150
+    v152 = Convert v151 declared={type=number flags=[IsExpected]}
+    v153 = Integer integer=2
+    v154 = ElemGet v14, v153
+    v155 = Convert v154 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v156 = Integer integer=8
+    PropSet v155, v156 key="unrelated8" mode=Sloppy
+    v158 = Call v8 calleeName="round"
+    v159 = Convert v158 declared={type=number flags=[IsExpected]}
+    v160 = Add v152, v159
+    v161 = Convert v160 declared={type=number flags=[IsExpected]}
+    v162 = Integer integer=3
+    v163 = ElemGet v14, v162
+    v164 = Convert v163 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v165 = Integer integer=9
+    PropSet v164, v165 key="unrelated9" mode=Sloppy
+    v167 = Call v8 calleeName="round"
+    v168 = Convert v167 declared={type=number flags=[IsExpected]}
+    v169 = Add v161, v168
+    v170 = Convert v169 declared={type=number flags=[IsExpected]}
+    v171 = Integer integer=4
+    v172 = ElemGet v14, v171
+    v173 = Convert v172 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v174 = Integer integer=10
+    PropSet v173, v174 key="unrelated10" mode=Sloppy
+    v176 = Call v8 calleeName="round"
+    v177 = Convert v176 declared={type=number flags=[IsExpected]}
+    v178 = Add v170, v177
+    v179 = Convert v178 declared={type=number flags=[IsExpected]}
+    v180 = Integer integer=5
+    v181 = ElemGet v14, v180
+    v182 = Convert v181 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v183 = Integer integer=11
+    PropSet v182, v183 key="unrelated11" mode=Sloppy
+    v185 = Call v8 calleeName="round"
+    v186 = Convert v185 declared={type=number flags=[IsExpected]}
+    v187 = Add v179, v186
+    v188 = Convert v187 declared={type=number flags=[IsExpected]}
+    v189 = Integer
+    v190 = ElemGet v14, v189
+    v191 = Convert v190 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v192 = Integer integer=12
+    PropSet v191, v192 key="unrelated12" mode=Sloppy
+    v194 = Call v8 calleeName="round"
+    v195 = Convert v194 declared={type=number flags=[IsExpected]}
+    v196 = Add v188, v195
+    v197 = Convert v196 declared={type=number flags=[IsExpected]}
+    v198 = Integer integer=1
+    v199 = ElemGet v14, v198
+    v200 = Convert v199 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v201 = Integer integer=13
+    PropSet v200, v201 key="unrelated13" mode=Sloppy
+    v203 = Call v8 calleeName="round"
+    v204 = Convert v203 declared={type=number flags=[IsExpected]}
+    v205 = Add v197, v204
+    v206 = Convert v205 declared={type=number flags=[IsExpected]}
+    v207 = Integer integer=2
+    v208 = ElemGet v14, v207
+    v209 = Convert v208 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v210 = Integer integer=14
+    PropSet v209, v210 key="unrelated14" mode=Sloppy
+    v212 = Call v8 calleeName="round"
+    v213 = Convert v212 declared={type=number flags=[IsExpected]}
+    v214 = Add v206, v213
+    v215 = Convert v214 declared={type=number flags=[IsExpected]}
+    v216 = Integer integer=3
+    v217 = ElemGet v14, v216
+    v218 = Convert v217 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v219 = Integer integer=15
+    PropSet v218, v219 key="unrelated15" mode=Sloppy
+    v221 = Call v8 calleeName="round"
+    v222 = Convert v221 declared={type=number flags=[IsExpected]}
+    v223 = Add v215, v222
+    v224 = Convert v223 declared={type=number flags=[IsExpected]}
+    v225 = Integer integer=4
+    v226 = ElemGet v14, v225
+    v227 = Convert v226 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v228 = Integer integer=16
+    PropSet v227, v228 key="unrelated16" mode=Sloppy
+    v230 = Call v8 calleeName="round"
+    v231 = Convert v230 declared={type=number flags=[IsExpected]}
+    v232 = Add v224, v231
+    v233 = Convert v232 declared={type=number flags=[IsExpected]}
+    v234 = Integer integer=5
+    v235 = ElemGet v14, v234
+    v236 = Convert v235 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v237 = Integer integer=17
+    PropSet v236, v237 key="unrelated17" mode=Sloppy
+    v239 = Call v8 calleeName="round"
+    v240 = Convert v239 declared={type=number flags=[IsExpected]}
+    v241 = Add v233, v240
+    v242 = Convert v241 declared={type=number flags=[IsExpected]}
+    v243 = Integer
+    v244 = ElemGet v14, v243
+    v245 = Convert v244 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v246 = Integer integer=18
+    PropSet v245, v246 key="unrelated18" mode=Sloppy
+    v248 = Call v8 calleeName="round"
+    v249 = Convert v248 declared={type=number flags=[IsExpected]}
+    v250 = Add v242, v249
+    v251 = Convert v250 declared={type=number flags=[IsExpected]}
+    v252 = Integer integer=1
+    v253 = ElemGet v14, v252
+    v254 = Convert v253 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v255 = Integer integer=19
+    PropSet v254, v255 key="unrelated19" mode=Sloppy
+    v257 = Call v8 calleeName="round"
+    v258 = Convert v257 declared={type=number flags=[IsExpected]}
+    v259 = Add v251, v258
+    v260 = Convert v259 declared={type=number flags=[IsExpected]}
+    v261 = Integer integer=2
+    v262 = ElemGet v14, v261
+    v263 = Convert v262 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v264 = Integer integer=20
+    PropSet v263, v264 key="unrelated20" mode=Sloppy
+    v266 = Call v8 calleeName="round"
+    v267 = Convert v266 declared={type=number flags=[IsExpected]}
+    v268 = Add v260, v267
+    v269 = Convert v268 declared={type=number flags=[IsExpected]}
+    v270 = Integer integer=3
+    v271 = ElemGet v14, v270
+    v272 = Convert v271 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v273 = Integer integer=21
+    PropSet v272, v273 key="unrelated21" mode=Sloppy
+    v275 = Call v8 calleeName="round"
+    v276 = Convert v275 declared={type=number flags=[IsExpected]}
+    v277 = Add v269, v276
+    v278 = Convert v277 declared={type=number flags=[IsExpected]}
+    v279 = Integer integer=4
+    v280 = ElemGet v14, v279
+    v281 = Convert v280 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v282 = Integer integer=22
+    PropSet v281, v282 key="unrelated22" mode=Sloppy
+    v284 = Call v8 calleeName="round"
+    v285 = Convert v284 declared={type=number flags=[IsExpected]}
+    v286 = Add v278, v285
+    v287 = Convert v286 declared={type=number flags=[IsExpected]}
+    v288 = Integer integer=5
+    v289 = ElemGet v14, v288
+    v290 = Convert v289 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v291 = Integer integer=23
+    PropSet v290, v291 key="unrelated23" mode=Sloppy
+    v293 = Call v8 calleeName="round"
+    v294 = Convert v293 declared={type=number flags=[IsExpected]}
+    v295 = Add v287, v294
+    v296 = Convert v295 declared={type=number flags=[IsExpected]}
+    v297 = Integer
+    v298 = ElemGet v14, v297
+    v299 = Convert v298 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v300 = Integer integer=24
+    PropSet v299, v300 key="unrelated24" mode=Sloppy
+    v302 = Call v8 calleeName="round"
+    v303 = Convert v302 declared={type=number flags=[IsExpected]}
+    v304 = Add v296, v303
+    v305 = Convert v304 declared={type=number flags=[IsExpected]}
+    v306 = Integer integer=1
+    v307 = ElemGet v14, v306
+    v308 = Convert v307 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v309 = Integer integer=25
+    PropSet v308, v309 key="unrelated25" mode=Sloppy
+    v311 = Call v8 calleeName="round"
+    v312 = Convert v311 declared={type=number flags=[IsExpected]}
+    v313 = Add v305, v312
+    v314 = Convert v313 declared={type=number flags=[IsExpected]}
+    v315 = Integer integer=2
+    v316 = ElemGet v14, v315
+    v317 = Convert v316 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v318 = Integer integer=26
+    PropSet v317, v318 key="unrelated26" mode=Sloppy
+    v320 = Call v8 calleeName="round"
+    v321 = Convert v320 declared={type=number flags=[IsExpected]}
+    v322 = Add v314, v321
+    v323 = Convert v322 declared={type=number flags=[IsExpected]}
+    v324 = Integer integer=3
+    v325 = ElemGet v14, v324
+    v326 = Convert v325 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v327 = Integer integer=27
+    PropSet v326, v327 key="unrelated27" mode=Sloppy
+    v329 = Call v8 calleeName="round"
+    v330 = Convert v329 declared={type=number flags=[IsExpected]}
+    v331 = Add v323, v330
+    v332 = Convert v331 declared={type=number flags=[IsExpected]}
+    v333 = Integer integer=4
+    v334 = ElemGet v14, v333
+    v335 = Convert v334 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v336 = Integer integer=28
+    PropSet v335, v336 key="unrelated28" mode=Sloppy
+    v338 = Call v8 calleeName="round"
+    v339 = Convert v338 declared={type=number flags=[IsExpected]}
+    v340 = Add v332, v339
+    v341 = Convert v340 declared={type=number flags=[IsExpected]}
+    v342 = Integer integer=5
+    v343 = ElemGet v14, v342
+    v344 = Convert v343 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v345 = Integer integer=29
+    PropSet v344, v345 key="unrelated29" mode=Sloppy
+    v347 = Call v8 calleeName="round"
+    v348 = Convert v347 declared={type=number flags=[IsExpected]}
+    v349 = Add v341, v348
+    v350 = Convert v349 declared={type=number flags=[IsExpected]}
+    v351 = Builtin builtin=GlobalThis
+    v352 = PropGet v351 key="report" [isFreeName]
+    v353 = Call v352, -, v350 calleeName="report"
+    v354 = Undefined
+    Return v354
+}
+function f1 name="make" module=m0 flags=[IsSloppy, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    Jump -> next b1()
+  b1():
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v3 = Convert v2 declared={type=undefined|null|Array flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = Integer integer=4
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b12(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectCreate
+    v13 = GetEnvironmentField v0 layout=L1 field=1
+    v14 = CheckInitialized v13 name="chain"
+    v15 = Integer integer=5
+    v16 = ElemGet v14, v15
+    v17 = Convert v16 declared={type=undefined|null|object flags=[IsExpected]}
+    v18 = Call v12, v11, v17 calleeName="Object.create"
+    v19 = Convert v18 declared={type=undefined|null|object flags=[IsExpected]}
+    v20 = Integer
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5(v21)
+  b5(v22):
+    LoopHint
+    v24 = Less v22, v10
+    Branch v24 -> taken b6(| 0, 1), notTaken b9(| 0, 1)
+  b6(v25, v26):
+    Jump -> next b7()
+  b7():
+    v27 = String string="own"
+    v28 = Add v27, v25
+    ElemSet v19, v28, v25 mode=Sloppy
+    Jump -> next b8()
+  b8():
+    v30 = Increment v25
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5(v31)
+  b9(v32, v33):
+    Jump -> next b10()
+  b10():
+    PropSet v19, v33 key="shared" mode=Sloppy
+    v35 = PropGet v3 key="push"
+    v36 = Convert v35 declared={type=undefined|null|function flags=[IsExpected]}
+    v37 = Call v36, v3, v19 calleeKey="push" calleeName="objects.push"
+    Jump -> next b11()
+  b11():
+    v38 = Increment v33
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v39)
+  b12(v40):
+    Jump -> next b13()
+  b13():
+    Return v3
+}
+function f2 name="round" module=m0 flags=[IsSloppy, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v2, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = Integer integer=16
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = GetEnvironmentField v0 layout=L1 field=2
+    v12 = CheckInitialized v11 name="receivers"
+    v13 = Integer integer=3
+    v14 = BitAnd v10, v13
+    v15 = ElemGet v12, v14
+    v16 = Convert v15 declared={type=undefined|null|object flags=[IsExpected]}
+    v17 = PropGet v16 key="value"
+    v18 = PropGet v16 key="method"
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]}
+    v20 = Call v19, v16 calleeKey="method" calleeName="object.method"
+    v21 = Add v17, v20
+    v22 = PropGet v16 key="computed"
+    v23 = Add v21, v22
+    v24 = PropGet v16 key="missing"
+    v25 = TypeTest v24 testedType=undefined
+    Branch v25 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v26):
+    Jump -> next b6()
+  b6():
+    v27 = Integer
+    Jump -> next b9(v27)
+  b7(v28):
+    Jump -> next b8()
+  b8():
+    v29 = Integer integer=1000
+    Jump -> next b9(v29)
+  b9(v30):
+    v31 = Add v23, v30
+    v32 = Add v5, v31
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    Jump -> next b10()
+  b10():
+    v34 = Increment v10
+    v35 = Convert v34 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v33, v35)
+  b11(v36):
+    Jump -> next b12()
+  b12():
+    v37 = GetEnvironmentField v0 layout=L1
+    v38 = Call v37 calleeName="make"
+    v39 = Convert v38 declared={type=undefined|null|Array flags=[IsExpected]}
+    v40 = IteratorOpen v39
+    Jump -> next b13(v5)
+  b13(v41):
+    LoopHint
+    v43 = IteratorResume v40
+    v44 = ResultAt v43
+    v45 = ResultAt v43 index=1
+    Branch v44 -> taken b14(), notTaken b15()
+  b14():
+    v46 = Convert v41 declared={type=number flags=[IsExpected]}
+    Return v46
+  b15():
+    Jump -> next b16()
+  b16() handler=b18():
+    v47 = Convert v45 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v48 = Integer integer=1
+    PropSet v47, v48 key="added" mode=Sloppy
+    v50 = PropGet v47 key="added"
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    v52 = Add v41, v51
+    v53 = Convert v52 declared={type=number flags=[IsExpected]}
+    Jump -> next b17()
+  b17() handler=b18():
+    Jump -> next b13(v53)
+  b18() role=IterationCleanup subject=v40:
+    v54 = CatchException
+    IteratorClose v40 completion=Throw
+    Rethrow v54
+}
+function f3 module=m0 flags=[IsSloppy] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    Return v1
+}
+function f4 name="get" module=m0 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=100
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    Return v1
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=anything} module=m0

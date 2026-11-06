@@ -1,0 +1,147 @@
+# Bit-flag enums: combinations of flags are outside the set, and outside the range, of the declared members.
+# FORM: AsRead
+# RUN: lower-to-air size f1 f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="bit-flag-enums.ts" displayPath="bit-flag-enums.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Tn" module=m0 position=4662 fields=[{key="flags" declared={type=i32} flags=[IsRequired]}, {key="kids" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = BitOr v4, v5
+    v7 = Integer integer=4
+    v8 = BitOr v6, v7
+    v9 = Convert v8 declared={type=i32}
+    v10 = BitNot v9
+    v11 = BitAnd v9, v10
+    v12 = Convert v11 declared={type=i32}
+    v13 = Integer integer=1
+    v14 = Convert v13 declared={type=i32}
+    v15 = Integer
+    v16 = Convert v15 declared={type=number}
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="console" [isFreeName]
+    v19 = Convert v18 declared={type=builtin(Console) flags=[IsExpected]}
+    v20 = PropGet v19 key="log"
+    v21 = Convert v20 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v22 = Call v1 calleeName="classify"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v24 = Integer integer=1
+    v25 = Call v1, -, v24 calleeName="classify"
+    v26 = Convert v25 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v27 = Integer integer=1
+    v28 = Integer integer=2
+    v29 = BitOr v27, v28
+    v30 = Call v1, -, v29 calleeName="classify"
+    v31 = Convert v30 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v32 = Call v1, -, v9 calleeName="classify"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v34 = Call v1, -, v12 calleeName="classify"
+    v35 = Convert v34 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v36 = Integer integer=4
+    v37 = Integer integer=1
+    v38 = LShift v36, v37
+    v39 = Call v1, -, v38 calleeName="classify"
+    v40 = Convert v39 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v41 = Undefined
+    v42 = Call v1, -, v41 calleeName="classify"
+    v43 = Convert v42 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v44 = Call v21, v19, v23, v26, v31, v33, v35, v40, v43 calleeKey="log" calleeName="console.log"
+    v45 = Integer integer=1
+    v46 = Integer integer=65536
+    v47 = Integer integer=8
+    v48 = BitOr v46, v47
+    v49 = Call v3, -, v48 calleeName="tn"
+    v50 = Convert v49 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v51 = Call v3, -, v45, v50 calleeName="tn"
+    v52 = Undefined
+    Return v52
+}
+function f1 name="classify" module=m0 position=3444 flags=[IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|i32}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|i32):
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=2
+    v4 = Convert v3 declared={type=i32}
+    Jump -> next b3(v4)
+  b2(v5):
+    Jump -> next b3(v5)
+  b3(v6):
+    Switch v6 cases=[1, 2, 4] -> case b4(| 0), case b5(| 0), case b6(| 0), otherwise b7()
+  b4(v7):
+    v8 = String string="a"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v9
+  b5(v10):
+    v11 = String string="b"
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v12
+  b6(v13):
+    v14 = String string="c"
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v15
+  b7():
+    v16 = Integer integer=1
+    v17 = Integer integer=2
+    v18 = BitOr v16, v17
+    v19 = StrictEq v6, v18
+    Branch v19 -> taken b8(| 0), notTaken b9(| 0)
+  b8(v20):
+    v21 = String string="ab"
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v22
+  b9(v23):
+    v24 = String string="other "
+    v25 = Add v24, v23
+    v26 = Convert v25 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v26
+}
+function f2 name="tn" module=m0 position=4698 flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}, {type=Array<undefined|null|L0> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: Array<undefined|null|L0>):
+    v2 = Convert v0 declared={type=i32}
+    v3 = IteratorOpen v1
+    Jump -> next b1(v2)
+  b1(v4: i32):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Convert v4 declared={type=i32}
+    v10 = Convert v1 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v11 = NewObject -, v9, v10 layout=L0 fields=[0, 1]
+    v12 = FinishObject v11
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v13
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v14 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v15 = PropGet v14 key="flags"
+    v16 = Integer integer=8
+    v17 = BitNot v16
+    v18 = BitAnd v15, v17
+    v19 = BitOr v4, v18
+    v20 = Convert v19 declared={type=i32}
+    Jump -> next b1(v20)
+  b5() role=IterationCleanup subject=v3:
+    v21 = CatchException
+    Rethrow v21
+}
+# -- generated: classify tn
+# CHECK-LABEL: function {{*}}name="classify"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 26, patchpoints: 4
+# CHECK-NEXT: end of function f1
+# CHECK-LABEL: function {{*}}name="tn"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 63, patchpoints: 10, rare instructions: 47
+# CHECK-NEXT: end of function f2

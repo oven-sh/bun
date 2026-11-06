@@ -1,0 +1,94 @@
+---
+title: "Test and debug a compiled program"
+sidebarTitle: "Testing and debugging"
+description: "Stack traces, source maps, crash reports and profiles of an executable, and how to check your program before you build it"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Stack traces, crash reports and profilers work on an executable built with [`bun compile`](/compiler/aot). Breakpoints don't. To use them, run your program from its source with `bun --inspect-brk ./app.ts`. If the problem only shows up in the executable, check [Compatibility](/compiler/compatibility).
+
+## Stack traces
+
+```ts repo.ts icon="/icons/typescript.svg"
+class Repo {
+  find(id: number): string {
+    if (id < 0) throw new RangeError("bad id " + id);
+    return "x";
+  }
+}
+new Repo().find(-1);
+```
+
+```bash terminal icon="terminal"
+bun compile ./repo.ts && ./repo
+```
+
+```txt
+RangeError: bad id -1
+      at find (/$bunfs/root/repo.ts:3:27)
+      at /$bunfs/root/repo.ts:7:12
+```
+
+Stack traces have the file, line and column of your source code. You don't need a source map. The part after `/$bunfs/root/` is the path of the source file, relative to the directory where you ran the build. The executable doesn't hold the text of your files, so it prints no source excerpt above the message.
+
+### Minified executables and external source maps
+
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./repo.ts
+```
+
+`--minify` shortens the names of functions, classes and variables. `--sourcemap=external` moves names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`, as in `compiled.js:4:2`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines.
+
+Keep the map of every build you deploy, and don't ship it.
+
+### Use with Sentry
+
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./src/index.ts --outfile dist/app
+sentry-cli sourcemaps upload --org my-org --project my-project dist
+```
+
+`@sentry/bun` and `@sentry/node` work as they are. Sentry finds the map of an event by its debug ID, so you don't set a release or a URL prefix, and you don't run `sentry-cli sourcemaps inject`. Deploy `dist/app` without `app.map` and `app.map.js`.
+
+## Crash reports
+
+If the process crashes, Bun prints a report to stderr. It ends with the functions of your program that were running, innermost first, with file, line and column. The `Build ID:` line matches the ID that `bun compile` printed when you built it. Please [open an issue](https://github.com/oven-sh/bun/issues) with the report.
+
+## Run under the compiler's rules
+
+```bash terminal icon="terminal"
+bun run --aot ./app.ts
+bun test --aot
+```
+
+Both commands check your program the way `bun compile` does, and exit with code `1` on anything that would stop the build. Then they run it from its source files with the JIT, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. Mocks, `--watch`, `--inspect` and `--coverage` work. The other [differences from `bun run`](/compiler/compatibility) don't show up, because the code that runs isn't compiled. To see those, build the executable and run it.
+
+## Find the guards that fail
+
+```bash terminal icon="terminal"
+bun check --aot --explain=guards ./app.ts   # guards that can fail
+bun --aot-log-type-mismatches ./app.ts      # guards that do fail
+```
+
+A [guard](/compiler/types#when-a-value-doesnt-match-its-type) that fails doesn't change what your program does. It sends the function to its slow version, so look here when a hot function is slower than you expected.
+
+The first command reads your source and lists each guard that the compiler couldn't remove, with the reason and a fix. The second compiles your program and runs it. When a value doesn't match its declared type, it writes a line to stderr with the location, the declared type and the kind of value that arrived. `bun test` and `bun compile` take the flag too. A build that logs is slower, so don't benchmark it.
+
+## Profiles
+
+```bash terminal icon="terminal"
+BUN_OPTIONS="--cpu-prof" ./app    # a .cpuprofile for Chrome DevTools or VS Code
+BUN_OPTIONS="--heap-prof" ./app   # a heap profile
+```
+
+Both show your functions, classes and files by their names. `perf`, `gdb` and Instruments show addresses where your compiled code runs. On Linux, build with `--aot-symbols` to see function names there too.
+
+## The inspector
+
+```bash terminal icon="terminal"
+bun compile --compile-inspector ./app.ts
+BUN_INSPECT="ws://127.0.0.1:6499/app" ./app
+```
+
+The console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements don't. The flag makes the executable larger and slower, so leave it out of production builds.

@@ -1,0 +1,969 @@
+# One value in both places of an operation on strings: compared with itself, looked for in itself, cut by itself.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="string-used-with-itself.js" displayPath="string-used-with-itself.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|Array<undefined|null|string> elements=[Array{contents=undefined|null|string elements=[String{value="a"}, String{value="a"}]}, Array{contents=undefined|null|string elements=[String{value="ab"}, String{value="ab"}]}, Array{contents=undefined|null|string elements=[String{value="empty"}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="alpha"}, String{value="\u{3b1}"}]}, Array{contents=undefined|null|string elements=[String{value="pair"}, String{value="\u{1f600}"}]}, Array{contents=undefined|null|string elements=[String{value="dot"}, String{value="."}]}, Array{contents=undefined|null|string elements=[String{value="dollar"}, String{value="$&"}]}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|"" flags=[IsExpected]}
+    v4 = PropGet v3 key="split"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = Call v5, v3, v3 calleeKey="split" calleeName="k47.split"
+    v7 = String string="\u{3b1}"
+    v8 = Convert v7 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v9 = PropGet v8 key="includes"
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]}
+    v11 = Call v10, v8, v8 calleeKey="includes" calleeName="k61.includes"
+    v12 = String string="\u{3b1}"
+    v13 = Convert v12 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v14 = PropGet v13 key="indexOf"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = Call v15, v13, v13 calleeKey="indexOf" calleeName="k62.indexOf"
+    v17 = String string="\u{3b1}"
+    v18 = Convert v17 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v19 = PropGet v18 key="lastIndexOf"
+    v20 = Convert v19 declared={type=undefined|null|function flags=[IsExpected]}
+    v21 = Call v20, v18, v18 calleeKey="lastIndexOf" calleeName="k63.lastIndexOf"
+    v22 = String string="\u{3b1}"
+    v23 = Convert v22 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v24 = Builtin builtin=JSON
+    v25 = PropGet v24 key="stringify"
+    v26 = Convert v25 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v27 = PropGet v23 key="split"
+    v28 = Convert v27 declared={type=undefined|null|function flags=[IsExpected]}
+    v29 = Call v28, v23, v23 calleeKey="split" calleeName="k64.split"
+    v30 = Convert v29 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v31 = Call v26, v24, v30 calleeKey="stringify" calleeName="JSON.stringify"
+    v32 = String string="\u{3b1}"
+    v33 = Convert v32 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v34 = PropGet v33 key="replace"
+    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]}
+    v36 = Call v35, v33, v33, v33 calleeKey="replace" calleeName="k65.replace"
+    v37 = String string="\u{3b1}"
+    v38 = Convert v37 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v39 = PropGet v38 key="localeCompare"
+    v40 = Convert v39 declared={type=undefined|null|function flags=[IsExpected]}
+    v41 = Call v40, v38, v38 calleeKey="localeCompare" calleeName="k66.localeCompare"
+    v42 = String string="\u{3b1}"
+    v43 = Convert v42 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v44 = PropGet v43 key="concat"
+    v45 = Convert v44 declared={type=undefined|null|function flags=[IsExpected]}
+    v46 = Call v45, v43, v43 calleeKey="concat" calleeName="k68.concat"
+    v47 = String string="a"
+    v48 = Convert v47 declared={type=undefined|null|"a" flags=[IsExpected]}
+    v49 = String string="b"
+    v50 = Convert v49 declared={type=undefined|null|string flags=[IsExpected]}
+    v51 = LessEq v50, v50
+    v52 = GreaterEq v50, v50
+    v53 = String string=""
+    v54 = Convert v53 declared={type=undefined|null|"" flags=[IsExpected]}
+    v55 = Greater v54, v54
+    v56 = PropGet v54 key="split"
+    v57 = Convert v56 declared={type=undefined|null|function flags=[IsExpected]}
+    v58 = Call v57, v54, v54 calleeKey="split" calleeName="empty.split"
+    v59 = String string="\u{3b1}"
+    v60 = Convert v59 declared={type=undefined|null|"\u{3b1}" flags=[IsExpected]}
+    v61 = Less v60, v60
+    v62 = Greater v60, v60
+    v63 = PropGet v60 key="split"
+    v64 = Convert v63 declared={type=undefined|null|function flags=[IsExpected]}
+    v65 = Call v64, v60, v60 calleeKey="split" calleeName="wide.split"
+    v66 = String string="\u{1f600}"
+    v67 = Convert v66 declared={type=undefined|null|"\u{1f600}" flags=[IsExpected]}
+    v68 = PropGet v67 key="at"
+    v69 = Convert v68 declared={type=undefined|null|function flags=[IsExpected]}
+    v70 = Integer
+    v71 = Call v69, v67, v70 calleeKey="at" calleeName="pair.at"
+    v72 = PropGet v67 key="at"
+    v73 = Convert v72 declared={type=undefined|null|function flags=[IsExpected]}
+    v74 = Integer
+    v75 = Call v73, v67, v74 calleeKey="at" calleeName="pair.at"
+    v76 = Integer integer=1
+    v77 = ElemGet v67, v76
+    v78 = Convert v77 declared={type=undefined|null|string flags=[IsExpected]}
+    v79 = Integer integer=1
+    v80 = ElemGet v67, v79
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]}
+    v82 = GreaterEq v78, v81
+    v83 = String string="xyz"
+    v84 = Convert v83 declared={type=undefined|null|"xyz" flags=[IsExpected]}
+    v85 = PropGet v84 key="at"
+    v86 = Convert v85 declared={type=undefined|null|function flags=[IsExpected]}
+    v87 = Integer integer=1
+    v88 = Call v86, v84, v87 calleeKey="at" calleeName="text.at"
+    v89 = Convert v88 declared={type=undefined|null|string flags=[IsExpected]}
+    v90 = PropGet v84 key="charAt"
+    v91 = Convert v90 declared={type=undefined|null|function flags=[IsExpected]}
+    v92 = Integer integer=1
+    v93 = Call v91, v84, v92 calleeKey="charAt" calleeName="text.charAt"
+    v94 = Convert v93 declared={type=undefined|null|string flags=[IsExpected]}
+    v95 = PropGet v84 key="slice"
+    v96 = Convert v95 declared={type=undefined|null|function flags=[IsExpected]}
+    v97 = Integer integer=1
+    v98 = Integer integer=2
+    v99 = Call v96, v84, v97, v98 calleeKey="slice" calleeName="text.slice"
+    v100 = String string="y"
+    v101 = PropGet v100 key="normalize"
+    v102 = Convert v101 declared={type=undefined|null|function flags=[IsExpected]}
+    v103 = Call v102, v100 calleeKey="normalize" calleeName="normalize"
+    v104 = Convert v103 declared={type=undefined|null|string flags=[IsExpected]}
+    v105 = LessEq v89, v89
+    v106 = Less v89, v89
+    v107 = LessEq v94, v94
+    v108 = Greater v94, v94
+    v109 = LessEq v104, v104
+    v110 = Greater v104, v104
+    v111 = LessEq v48, v48
+    v112 = Less v48, v48
+    v113 = Integer
+    v114 = Convert v113 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v114)
+  b1(v115):
+    LoopHint
+    v117 = GreaterEq v48, v48
+    Branch v117 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v118):
+    v119 = Increment v115
+    v120 = Convert v119 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v120)
+  b3(v121):
+    v122 = Data data=d0
+    v123 = Convert v122 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string>> flags=[IsExpected]}
+    v124 = IteratorOpen v123
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v126 = IteratorResume v124
+    v127 = ResultAt v126 index=1
+    Jump -> next b5()
+  b5() handler=b9():
+    v128 = IteratorOpen v127 elementCount=2 [isDestructuring]
+    Jump -> next b6()
+  b6() handler=b8():
+    v129 = IteratorResume v128 stepIndex=0
+    v130 = ResultAt v129 index=1
+    v131 = Convert v130 declared={type=undefined|null|string flags=[IsExpected]}
+    v132 = IteratorResume v128 stepIndex=1
+    v133 = ResultAt v132 index=1
+    v134 = Convert v133 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b7()
+  b7() handler=b9():
+    v135 = Call v1, -, v131, v134 calleeName="report"
+    Jump -> next b4()
+  b8() role=IterationCleanup subject=v128 handler=b9():
+    v136 = CatchException
+    Rethrow v136
+  b9() role=IterationCleanup subject=v124:
+    v137 = CatchException
+    Rethrow v137
+}
+function f1 name="report" module=m0 position=115 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    v2 = LessEq v1, v1
+    v3 = GreaterEq v1, v1
+    v4 = Less v1, v1
+    v5 = Greater v1, v1
+    v6 = StrictEq v1, v1
+    v7 = Eq v1, v1
+    v8 = StrictEq v1, v1
+    v9 = LogicalNot v8
+    v10 = Eq v1, v1
+    v11 = LogicalNot v10
+    v12 = Builtin builtin=Object
+    v13 = Builtin builtin=ObjectIs
+    v14 = Call v13, v12, v1, v1 calleeName="Object.is"
+    v15 = Convert v14 declared={type=boolean flags=[IsExpected]}
+    v16 = PropGet v1 key="startsWith"
+    v17 = Convert v16 declared={type=undefined|null|function flags=[IsExpected]}
+    v18 = Call v17, v1, v1 calleeKey="startsWith" calleeName="S.startsWith"
+    v19 = Convert v18 declared={type=boolean flags=[IsExpected]}
+    v20 = PropGet v1 key="endsWith"
+    v21 = Convert v20 declared={type=undefined|null|function flags=[IsExpected]}
+    v22 = Call v21, v1, v1 calleeKey="endsWith" calleeName="S.endsWith"
+    v23 = Convert v22 declared={type=boolean flags=[IsExpected]}
+    v24 = PropGet v1 key="includes"
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]}
+    v26 = Call v25, v1, v1 calleeKey="includes" calleeName="S.includes"
+    v27 = Convert v26 declared={type=boolean flags=[IsExpected]}
+    v28 = PropGet v1 key="indexOf"
+    v29 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
+    v30 = Call v29, v1, v1 calleeKey="indexOf" calleeName="S.indexOf"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = PropGet v1 key="lastIndexOf"
+    v33 = Convert v32 declared={type=undefined|null|function flags=[IsExpected]}
+    v34 = Call v33, v1, v1 calleeKey="lastIndexOf" calleeName="S.lastIndexOf"
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = PropGet v1 key="search"
+    v37 = Convert v36 declared={type=undefined|null|function flags=[IsExpected]}
+    v38 = Call v37, v1, v1 calleeKey="search" calleeName="S.search"
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    v40 = PropGet v1 key="localeCompare"
+    v41 = Convert v40 declared={type=undefined|null|function flags=[IsExpected]}
+    v42 = Call v41, v1, v1 calleeKey="localeCompare" calleeName="S.localeCompare"
+    v43 = Convert v42 declared={type=number flags=[IsExpected]}
+    v44 = Builtin builtin=JSON
+    v45 = PropGet v44 key="stringify"
+    v46 = Convert v45 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v47 = PropGet v1 key="split"
+    v48 = Convert v47 declared={type=undefined|null|function flags=[IsExpected]}
+    v49 = Call v48, v1, v1 calleeKey="split" calleeName="S.split"
+    v50 = Convert v49 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v51 = Call v46, v44, v50 calleeKey="stringify" calleeName="JSON.stringify"
+    v52 = Convert v51 declared={type=undefined|null|string flags=[IsExpected]}
+    v53 = Builtin builtin=JSON
+    v54 = PropGet v53 key="stringify"
+    v55 = Convert v54 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v56 = PropGet v1 key="replace"
+    v57 = Convert v56 declared={type=undefined|null|function flags=[IsExpected]}
+    v58 = Call v57, v1, v1, v1 calleeKey="replace" calleeName="S.replace"
+    v59 = Convert v58 declared={type=undefined|null|string flags=[IsExpected]}
+    v60 = Call v55, v53, v59 calleeKey="stringify" calleeName="JSON.stringify"
+    v61 = Convert v60 declared={type=undefined|null|string flags=[IsExpected]}
+    v62 = Builtin builtin=JSON
+    v63 = PropGet v62 key="stringify"
+    v64 = Convert v63 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v65 = PropGet v1 key="replaceAll"
+    v66 = Convert v65 declared={type=undefined|null|function flags=[IsExpected]}
+    v67 = Call v66, v1, v1, v1 calleeKey="replaceAll" calleeName="S.replaceAll"
+    v68 = Convert v67 declared={type=undefined|null|string flags=[IsExpected]}
+    v69 = Call v64, v62, v68 calleeKey="stringify" calleeName="JSON.stringify"
+    v70 = Convert v69 declared={type=undefined|null|string flags=[IsExpected]}
+    v71 = Builtin builtin=JSON
+    v72 = PropGet v71 key="stringify"
+    v73 = Convert v72 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v74 = PropGet v1 key="concat"
+    v75 = Convert v74 declared={type=undefined|null|function flags=[IsExpected]}
+    v76 = Call v75, v1, v1 calleeKey="concat" calleeName="S.concat"
+    v77 = Convert v76 declared={type=undefined|null|string flags=[IsExpected]}
+    v78 = Call v73, v71, v77 calleeKey="stringify" calleeName="JSON.stringify"
+    v79 = Convert v78 declared={type=undefined|null|string flags=[IsExpected]}
+    v80 = Builtin builtin=JSON
+    v81 = PropGet v80 key="stringify"
+    v82 = Convert v81 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v83 = Add v1, v1
+    v84 = Call v82, v80, v83 calleeKey="stringify" calleeName="JSON.stringify"
+    v85 = Convert v84 declared={type=undefined|null|string flags=[IsExpected]}
+    v86 = Builtin builtin=JSON
+    v87 = PropGet v86 key="stringify"
+    v88 = Convert v87 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v89 = ToString v1
+    v90 = ToString v1
+    v91 = Strcat v89, v90
+    v92 = Call v88, v86, v91 calleeKey="stringify" calleeName="JSON.stringify"
+    v93 = Convert v92 declared={type=undefined|null|string flags=[IsExpected]}
+    v94 = PropGet v1 key="startsWith"
+    v95 = Convert v94 declared={type=undefined|null|function flags=[IsExpected]}
+    v96 = Integer integer=1
+    v97 = Call v95, v1, v1, v96 calleeKey="startsWith" calleeName="S.startsWith"
+    v98 = Convert v97 declared={type=boolean flags=[IsExpected]}
+    v99 = PropGet v1 key="endsWith"
+    v100 = Convert v99 declared={type=undefined|null|function flags=[IsExpected]}
+    v101 = Integer integer=1
+    v102 = Call v100, v1, v1, v101 calleeKey="endsWith" calleeName="S.endsWith"
+    v103 = Convert v102 declared={type=boolean flags=[IsExpected]}
+    v104 = PropGet v1 key="indexOf"
+    v105 = Convert v104 declared={type=undefined|null|function flags=[IsExpected]}
+    v106 = Integer integer=1
+    v107 = Call v105, v1, v1, v106 calleeKey="indexOf" calleeName="S.indexOf"
+    v108 = Convert v107 declared={type=number flags=[IsExpected]}
+    v109 = PropGet v1 key="lastIndexOf"
+    v110 = Convert v109 declared={type=undefined|null|function flags=[IsExpected]}
+    v111 = Integer
+    v112 = Call v110, v1, v1, v111 calleeKey="lastIndexOf" calleeName="S.lastIndexOf"
+    v113 = Convert v112 declared={type=number flags=[IsExpected]}
+    v114 = Builtin builtin=JSON
+    v115 = PropGet v114 key="stringify"
+    v116 = Convert v115 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v117 = PropGet v1 key="padStart"
+    v118 = Convert v117 declared={type=undefined|null|function flags=[IsExpected]}
+    v119 = Integer integer=3
+    v120 = Call v118, v1, v119, v1 calleeKey="padStart" calleeName="S.padStart"
+    v121 = Convert v120 declared={type=undefined|null|string flags=[IsExpected]}
+    v122 = Call v116, v114, v121 calleeKey="stringify" calleeName="JSON.stringify"
+    v123 = Convert v122 declared={type=undefined|null|string flags=[IsExpected]}
+    v124 = Builtin builtin=JSON
+    v125 = PropGet v124 key="stringify"
+    v126 = Convert v125 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v127 = PropGet v1 key="padEnd"
+    v128 = Convert v127 declared={type=undefined|null|function flags=[IsExpected]}
+    v129 = Integer integer=3
+    v130 = Call v128, v1, v129, v1 calleeKey="padEnd" calleeName="S.padEnd"
+    v131 = Convert v130 declared={type=undefined|null|string flags=[IsExpected]}
+    v132 = Call v126, v124, v131 calleeKey="stringify" calleeName="JSON.stringify"
+    v133 = Convert v132 declared={type=undefined|null|string flags=[IsExpected]}
+    v134 = NewArray v2, v3, v4, v5, v6, v7, v9, v11, v15, v19, v23, v27, v31, v35, v39, v43, v52, v61, v70, v79, v85, v93, v98, v103, v108, v113, v123, v133 contents=anything
+    v135 = Convert v134 declared={type=undefined|null|Array flags=[IsExpected]}
+    v136 = PropGet v135 key="join"
+    v137 = Convert v136 declared={type=undefined|null|function flags=[IsExpected]}
+    v138 = String string=" "
+    v139 = Call v137, v135, v138 calleeKey="join" calleeName="lines.join"
+    v140 = Undefined
+    Return v140
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@33 = Load(b@10, offset = -8, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:String)
+# CHECK-NEXT: Int64 b@35 = Patchpoint(b@33:Register(%rsi), b@33:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v2:NewArray)
+# CHECK-NEXT: Int64 b@37 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000005, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v5:CallBuiltin)
+# CHECK-NEXT: Int64 b@38 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v5:CallBuiltin)
+# CHECK-NEXT: Int64 b@36 = Const64(10, v4:Undefined)
+# CHECK-NEXT: Int64 b@39 = Patchpoint(b@37:Register(%r8), b@38:Register(%rax), b@35:Register(%rdi), $10(b@36):Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v5:CallBuiltin)
+# CHECK-NEXT: Int64 b@41 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v6:String)
+# CHECK-NEXT: Int64 b@46 = Load(b@41, offset = 776, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v6:String)
+# CHECK-NEXT: Int64 b@52 = Load(b@41, offset = 784, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v7:String)
+# CHECK-NEXT: Int64 b@53 = Load(b@52, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v121:FlattenString)
+# CHECK-NEXT: Int64 b@54 = Const64(1, v121:FlattenString)
+# CHECK-NEXT: Int64 b@55 = BitAnd(b@53, $1(b@54), v121:FlattenString)
+# CHECK-NEXT: Void b@57 = Branch(b@55, Terminal, v121:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#21, Else:#20
+# CHECK-NEXT: BB#20: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@58 = Upsilon(b@52, ^66, WritesLocalState, v121:FlattenString)
+# CHECK-NEXT: Void b@59 = Upsilon(b@53, ^67, WritesLocalState, v121:FlattenString)
+# CHECK-NEXT: Void b@60 = Jump(Terminal, v121:FlattenString)
+# CHECK-NEXT: Successors: #22
+# CHECK-NEXT: BB#22: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #20, #21
+# CHECK-NEXT: Int64 b@66 = Phi(ReadsLocalState, v121:FlattenString)
+# CHECK-NEXT: Int64 b@67 = Phi(ReadsLocalState, v121:FlattenString)
+# CHECK-NEXT: Int32 b@69 = Load(b@67, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v121:FlattenString)
+# CHECK-NEXT: Int32 b@70 = Load(b@67, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v121:FlattenString)
+# CHECK-NEXT: Int32 b@71 = Const32(4, v113:StringOrderToCharacter)
+# CHECK-NEXT: Void b@75 = Branch(b@69, Terminal, v113:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#23, Else:#28
+# CHECK-NEXT: BB#23: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #22
+# CHECK-NEXT: Int32 b@72 = BitAnd(b@70, $4(b@71), v113:StringOrderToCharacter)
+# CHECK-NEXT: Void b@80 = Branch(b@72, Terminal, v113:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#25, Else:Unlikely:#26
+# CHECK-NEXT: BB#25: ; frequency = 0.470588
+# CHECK-NEXT: Predecessors: #23
+# CHECK-NEXT: Void b@85 = Patchpoint(b@66:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v113:StringOrderToCharacter)
+# CHECK-NEXT: Void b@119 = Patchpoint(b@66:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v111:StringOrderToCharacter)
+# CHECK-NEXT: Void b@121 = Jump(Terminal, v111:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #28
+# CHECK-NEXT: BB#28: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #22, #26, #25
+# CHECK-NEXT: Int64 b@141 = Patchpoint(b@33:Register(%r9), b@33:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v11:Greater)
+# CHECK-NEXT: Int64 b@144 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x2, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v12:String)
+# CHECK-NEXT: Int64 b@145 = Load(b@144, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v120:FlattenString)
+# CHECK-NEXT: Int64 b@146 = BitAnd(b@145, $1(b@54), v120:FlattenString)
+# CHECK-NEXT: Void b@148 = Branch(b@146, Terminal, v120:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#32, Else:#31
+# CHECK-NEXT: BB#31: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #28
+# CHECK-NEXT: Void b@149 = Upsilon(b@144, ^157, WritesLocalState, v120:FlattenString)
+# CHECK-NEXT: Void b@150 = Upsilon(b@145, ^158, WritesLocalState, v120:FlattenString)
+# CHECK-NEXT: Void b@151 = Jump(Terminal, v120:FlattenString)
+# CHECK-NEXT: Successors: #33
+# CHECK-NEXT: BB#33: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #31, #32
+# CHECK-NEXT: Int64 b@157 = Phi(ReadsLocalState, v120:FlattenString)
+# CHECK-NEXT: Int64 b@158 = Phi(ReadsLocalState, v120:FlattenString)
+# CHECK-NEXT: Int32 b@160 = Load(b@158, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v120:FlattenString)
+# CHECK-NEXT: Int32 b@161 = Load(b@158, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v120:FlattenString)
+# CHECK-NEXT: Void b@166 = Branch(b@160, Terminal, v109:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#34, Else:#39
+# CHECK-NEXT: BB#34: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #33
+# CHECK-NEXT: Int32 b@162 = BitAnd(b@161, $4(b@71), v109:StringOrderToCharacter)
+# CHECK-NEXT: Void b@169 = Branch(b@162, Terminal, v109:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#36, Else:Unlikely:#37
+# CHECK-NEXT: BB#36: ; frequency = 0.470588
+# CHECK-NEXT: Predecessors: #34
+# CHECK-NEXT: Void b@174 = Patchpoint(b@157:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v109:StringOrderToCharacter)
+# CHECK-NEXT: Void b@206 = Patchpoint(b@157:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v107:StringOrderToCharacter)
+# CHECK-NEXT: Void b@208 = Jump(Terminal, v107:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #39
+# CHECK-NEXT: BB#39: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #33, #37, #36
+# CHECK-NEXT: Int64 b@227 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x3, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v15:String)
+# CHECK-NEXT: Int64 b@228 = Load(b@227, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v119:FlattenString)
+# CHECK-NEXT: Int64 b@229 = BitAnd(b@228, $1(b@54), v119:FlattenString)
+# CHECK-NEXT: Void b@231 = Branch(b@229, Terminal, v119:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#43, Else:#42
+# CHECK-NEXT: BB#42: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #39
+# CHECK-NEXT: Void b@232 = Upsilon(b@227, ^240, WritesLocalState, v119:FlattenString)
+# CHECK-NEXT: Void b@233 = Upsilon(b@228, ^241, WritesLocalState, v119:FlattenString)
+# CHECK-NEXT: Void b@234 = Jump(Terminal, v119:FlattenString)
+# CHECK-NEXT: Successors: #44
+# CHECK-NEXT: BB#44: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #42, #43
+# CHECK-NEXT: Int64 b@240 = Phi(ReadsLocalState, v119:FlattenString)
+# CHECK-NEXT: Int64 b@241 = Phi(ReadsLocalState, v119:FlattenString)
+# CHECK-NEXT: Int64 b@242 = Load(b@241, offset = 8, ControlDependent|ReadsImmutable|Reads:StringImpl_data, v119:FlattenString)
+# CHECK-NEXT: Int32 b@243 = Load(b@241, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v119:FlattenString)
+# CHECK-NEXT: Int32 b@244 = Load(b@241, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v119:FlattenString)
+# CHECK-NEXT: Int32 b@245 = BitAnd(b@244, $4(b@71), v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int32 b@304 = Const32(1, v113:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@658 = Above(b@243, $1(b@304), v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int32 b@327 = Const32(3, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@248 = Branch(b@658, Terminal, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: Then:#45, Else:Unlikely:#54
+# CHECK-NEXT: BB#45: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #44
+# CHECK-NEXT: Void b@249 = Branch(b@245, Terminal, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: Then:#47, Else:Unlikely:#48
+# CHECK-NEXT: BB#47: ; frequency = 0.885813
+# CHECK-NEXT: Predecessors: #45
+# CHECK-NEXT: Int32 b@253 = Load8Z(b@242, offset = 1, ControlDependent|ReadsImmutable|Reads:characters8, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@254 = Patchpoint(b@240:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@649 = ZExt32(b@253, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@291 = Shl(b@649, $3(b@327), v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@290 = Add(b@41, b@291, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@651 = Load(b@290, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@335 = Patchpoint(b@240:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@262 = Upsilon(b@651, ^554, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@553 = Upsilon(b@253, ^395, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@330 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #59
+# CHECK-NEXT: BB#59: ; frequency = 0.937920
+# CHECK-NEXT: Predecessors: #58, #47
+# CHECK-NEXT: Int64 b@554 = Phi(ReadsLocalState, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int32 b@395 = Phi(ReadsLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@307 = ZExt32(b@395, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@647 = Shl(b@307, $3(b@327), v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@309 = Add(b@41, b@647, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@310 = Load(b@309, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@311 = Upsilon(b@310, ^316, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@282 = Upsilon(b@554, ^476, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@312 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #61
+# CHECK-NEXT: BB#61: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #60, #59
+# CHECK-NEXT: Int64 b@476 = Phi(ReadsLocalState, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@316 = Phi(ReadsLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@317 = Upsilon(b@316, ^321, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@358 = Upsilon(b@476, ^473, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@318 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #55
+# CHECK-NEXT: BB#55: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #54, #61
+# CHECK-NEXT: Int64 b@473 = Phi(ReadsLocalState, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@321 = Phi(ReadsLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@322 = Patchpoint(b@473:Register(%rax), b@321:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v20:GreaterEq)
+# CHECK-NEXT: Int64 b@329 = Load(b@41, offset = 968, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v21:String)
+# CHECK-NEXT: Int64 b@340 = Load(b@329, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v118:FlattenString)
+# CHECK-NEXT: Int64 b@341 = BitAnd(b@340, $1(b@54), v118:FlattenString)
+# CHECK-NEXT: Void b@343 = Branch(b@341, Terminal, v118:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#63, Else:#62
+# CHECK-NEXT: BB#62: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #55
+# CHECK-NEXT: Void b@344 = Upsilon(b@329, ^352, WritesLocalState, v118:FlattenString)
+# CHECK-NEXT: Void b@345 = Upsilon(b@340, ^353, WritesLocalState, v118:FlattenString)
+# CHECK-NEXT: Void b@346 = Jump(Terminal, v118:FlattenString)
+# CHECK-NEXT: Successors: #64
+# CHECK-NEXT: BB#64: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #62, #63
+# CHECK-NEXT: Int64 b@352 = Phi(ReadsLocalState, v118:FlattenString)
+# CHECK-NEXT: Int64 b@353 = Phi(ReadsLocalState, v118:FlattenString)
+# CHECK-NEXT: Int32 b@355 = Load(b@353, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v118:FlattenString)
+# CHECK-NEXT: Int32 b@356 = Load(b@353, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v118:FlattenString)
+# CHECK-NEXT: Void b@360 = Branch(b@355, Terminal, v105:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#65, Else:#70
+# CHECK-NEXT: BB#65: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #64
+# CHECK-NEXT: Int32 b@357 = BitAnd(b@356, $4(b@71), v105:StringOrderToCharacter)
+# CHECK-NEXT: Void b@363 = Branch(b@357, Terminal, v105:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#67, Else:Unlikely:#68
+# CHECK-NEXT: BB#67: ; frequency = 0.470588
+# CHECK-NEXT: Predecessors: #65
+# CHECK-NEXT: Void b@368 = Patchpoint(b@352:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v105:StringOrderToCharacter)
+# CHECK-NEXT: Void b@400 = Patchpoint(b@352:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v103:StringOrderToCharacter)
+# CHECK-NEXT: Void b@402 = Jump(Terminal, v103:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #70
+# CHECK-NEXT: BB#70: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #64, #68, #67
+# CHECK-NEXT: Int64 b@421 = Load(b@329, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v117:FlattenString)
+# CHECK-NEXT: Int64 b@422 = BitAnd(b@421, $1(b@54), v117:FlattenString)
+# CHECK-NEXT: Void b@424 = Branch(b@422, Terminal, v117:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#74, Else:#73
+# CHECK-NEXT: BB#73: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #70
+# CHECK-NEXT: Void b@425 = Upsilon(b@329, ^433, WritesLocalState, v117:FlattenString)
+# CHECK-NEXT: Void b@426 = Upsilon(b@421, ^434, WritesLocalState, v117:FlattenString)
+# CHECK-NEXT: Void b@427 = Jump(Terminal, v117:FlattenString)
+# CHECK-NEXT: Successors: #75
+# CHECK-NEXT: BB#75: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #73, #74
+# CHECK-NEXT: Int64 b@433 = Phi(ReadsLocalState, v117:FlattenString)
+# CHECK-NEXT: Int64 b@434 = Phi(ReadsLocalState, v117:FlattenString)
+# CHECK-NEXT: Int32 b@436 = Load(b@434, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v117:FlattenString)
+# CHECK-NEXT: Int32 b@437 = Load(b@434, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v117:FlattenString)
+# CHECK-NEXT: Void b@441 = Branch(b@436, Terminal, v101:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#76, Else:#81
+# CHECK-NEXT: BB#76: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #75
+# CHECK-NEXT: Int32 b@438 = BitAnd(b@437, $4(b@71), v101:StringOrderToCharacter)
+# CHECK-NEXT: Void b@444 = Branch(b@438, Terminal, v101:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#78, Else:Unlikely:#79
+# CHECK-NEXT: BB#78: ; frequency = 0.470588
+# CHECK-NEXT: Predecessors: #76
+# CHECK-NEXT: Void b@449 = Patchpoint(b@433:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v101:StringOrderToCharacter)
+# CHECK-NEXT: Void b@481 = Patchpoint(b@433:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v99:StringOrderToCharacter)
+# CHECK-NEXT: Void b@483 = Jump(Terminal, v99:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #81
+# CHECK-NEXT: BB#81: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #75, #79, #78
+# CHECK-NEXT: Int64 b@502 = Load(b@329, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v116:FlattenString)
+# CHECK-NEXT: Int64 b@503 = BitAnd(b@502, $1(b@54), v116:FlattenString)
+# CHECK-NEXT: Void b@505 = Branch(b@503, Terminal, v116:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#85, Else:#84
+# CHECK-NEXT: BB#84: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #81
+# CHECK-NEXT: Void b@506 = Upsilon(b@329, ^514, WritesLocalState, v116:FlattenString)
+# CHECK-NEXT: Void b@507 = Upsilon(b@502, ^515, WritesLocalState, v116:FlattenString)
+# CHECK-NEXT: Void b@508 = Jump(Terminal, v116:FlattenString)
+# CHECK-NEXT: Successors: #86
+# CHECK-NEXT: BB#86: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #84, #85
+# CHECK-NEXT: Int64 b@514 = Phi(ReadsLocalState, v116:FlattenString)
+# CHECK-NEXT: Int64 b@515 = Phi(ReadsLocalState, v116:FlattenString)
+# CHECK-NEXT: Int32 b@517 = Load(b@515, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v116:FlattenString)
+# CHECK-NEXT: Int32 b@518 = Load(b@515, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v116:FlattenString)
+# CHECK-NEXT: Void b@522 = Branch(b@517, Terminal, v97:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#87, Else:#92
+# CHECK-NEXT: BB#87: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #86
+# CHECK-NEXT: Int32 b@519 = BitAnd(b@518, $4(b@71), v97:StringOrderToCharacter)
+# CHECK-NEXT: Void b@525 = Branch(b@519, Terminal, v97:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#89, Else:Unlikely:#90
+# CHECK-NEXT: BB#89: ; frequency = 0.470588
+# CHECK-NEXT: Predecessors: #87
+# CHECK-NEXT: Void b@530 = Patchpoint(b@514:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v97:StringOrderToCharacter)
+# CHECK-NEXT: Void b@562 = Patchpoint(b@514:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v95:StringOrderToCharacter)
+# CHECK-NEXT: Void b@564 = Jump(Terminal, v95:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #92
+# CHECK-NEXT: BB#92: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #86, #90, #89
+# CHECK-NEXT: Int64 b@583 = Load(b@46, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v115:FlattenString)
+# CHECK-NEXT: Int64 b@584 = BitAnd(b@583, $1(b@54), v115:FlattenString)
+# CHECK-NEXT: Void b@586 = Branch(b@584, Terminal, v115:FlattenString)
+# CHECK-NEXT: Successors: Then:Unlikely:#96, Else:#95
+# CHECK-NEXT: BB#95: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #92
+# CHECK-NEXT: Void b@587 = Upsilon(b@46, ^595, WritesLocalState, v115:FlattenString)
+# CHECK-NEXT: Void b@588 = Upsilon(b@583, ^596, WritesLocalState, v115:FlattenString)
+# CHECK-NEXT: Void b@589 = Jump(Terminal, v115:FlattenString)
+# CHECK-NEXT: Successors: #97
+# CHECK-NEXT: BB#97: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #95, #96
+# CHECK-NEXT: Int64 b@595 = Phi(ReadsLocalState, v115:FlattenString)
+# CHECK-NEXT: Int64 b@596 = Phi(ReadsLocalState, v115:FlattenString)
+# CHECK-NEXT: Int64 b@597 = Load(b@596, offset = 8, ControlDependent|ReadsImmutable|Reads:StringImpl_data, v115:FlattenString)
+# CHECK-NEXT: Int32 b@598 = Load(b@596, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, v115:FlattenString)
+# CHECK-NEXT: Int32 b@599 = Load(b@596, offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, v115:FlattenString)
+# CHECK-NEXT: Int32 b@600 = BitAnd(b@599, $4(b@71), v93:StringOrderToCharacter)
+# CHECK-NEXT: Void b@603 = Branch(b@598, Terminal, v93:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#98, Else:#4
+# CHECK-NEXT: BB#98: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #97
+# CHECK-NEXT: Void b@606 = Branch(b@600, Terminal, v93:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#100, Else:Unlikely:#101
+# CHECK-NEXT: BB#100: ; frequency = 0.470588
+# CHECK-NEXT: Predecessors: #98
+# CHECK-NEXT: Void b@611 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v93:StringOrderToCharacter)
+# CHECK-NEXT: Void b@643 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v91:StringOrderToCharacter)
+# CHECK-NEXT: Void b@645 = Jump(Terminal, v91:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #97, #101, #100
+# CHECK-NEXT: Int32 b@0 = Const32(0)
+# CHECK-NEXT: Int32 b@97 = Const32(1, v113:StringOrderToCharacter)
+# CHECK-NEXT: Void b@669 = Branch(b@598, Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#117, Else:#6
+# CHECK-NEXT: BB#117: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Int32 b@688 = Equal(b@598, $1(b@97), v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@689 = Select(b@688, $0(b@0), $1(b@97), v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@40 = Const32(97, v6:String)
+# CHECK-NEXT: Int32 b@76 = Const32(-1, v113:StringOrderToCharacter)
+# CHECK-NEXT: Void b@276 = Branch(b@600, Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#119, Else:Rare:#107
+# CHECK-NEXT: BB#119: ; frequency = 0.499512
+# CHECK-NEXT: Predecessors: #117
+# CHECK-NEXT: Int32 b@644 = Load8Z(b@597, ControlDependent|ReadsImmutable|Reads:characters8, v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@264 = Below(b@644, $97(b@40), v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@331 = Above(b@644, $97(b@40), v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@642 = Select(b@331, $1(b@97), b@689, v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@337 = Select(b@264, $-1(b@76), b@642, v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@306 = GreaterEqual(b@337, $0(b@0), v33:GreaterEq)
+# CHECK-NEXT: Void b@359 = Branch(b@306, Terminal, v33:GreaterEq)
+# CHECK-NEXT: Successors: Then:#122, Else:Rare:#107
+# CHECK-NEXT: BB#122: ; frequency = 4.990239
+# CHECK-NEXT: Predecessors: #119, #122
+# CHECK-NEXT: Void b@333 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@551 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v32:LoopHint)
+# CHECK-NEXT: Void b@552 = Jump(Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #122
+# CHECK-NEXT: BB#107: ; frequency = 0.009761
+# CHECK-NEXT: Predecessors: #117, #116, #119
+# CHECK-NEXT: Void b@672 = Branch(b@600, Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: Then:#109, Else:Unlikely:#110
+# CHECK-NEXT: BB#109: ; frequency = 0.009187
+# CHECK-NEXT: Predecessors: #107
+# CHECK-NEXT: Int32 b@676 = Load8Z(b@597, ControlDependent|ReadsImmutable|Reads:characters8, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@677 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@278 = Upsilon(b@676, ^273, WritesLocalState, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@679 = Jump(Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #111
+# CHECK-NEXT: BB#111: ; frequency = 0.009761
+# CHECK-NEXT: Predecessors: #110, #109
+# CHECK-NEXT: Int32 b@273 = Phi(ReadsLocalState, v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@690 = Below(b@273, $97(b@40), v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@691 = Above(b@273, $97(b@40), v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@692 = Select(b@691, $1(b@97), b@689, v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@693 = Select(b@690, $-1(b@76), b@692, v89:StringOrderToCharacter)
+# CHECK-NEXT: Int32 b@697 = GreaterEqual(b@693, $0(b@0), v33:GreaterEq)
+# CHECK-NEXT: Void b@698 = Branch(b@697, Terminal, v33:GreaterEq)
+# CHECK-NEXT: Successors: Then:#116, Else:#6
+# CHECK-NEXT: BB#116: ; frequency = 0.008785
+# CHECK-NEXT: Predecessors: #111
+# CHECK-NEXT: Void b@440 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v32:LoopHint)
+# CHECK-NEXT: Void b@301 = Jump(Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #107
+# CHECK-NEXT: BB#6: ; frequency = 0.500976
+# CHECK-NEXT: Predecessors: #4, #111
+# CHECK-NEXT: Int64 b@700 = Const64(4, v34:Data)
+# CHECK-NEXT: Int64 b@701 = Patchpoint($4(b@700):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v34:Data)
+# CHECK-NEXT: Void b@703 = Upsilon($0(b@0), ^18, WritesLocalState)
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Void b@704 = Upsilon($0(b@2), ^19, WritesLocalState)
+# CHECK-NEXT: Void b@705 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#7: ; frequency = 5.009761
+# CHECK-NEXT: Predecessors: #6, #19
+# CHECK-NEXT: Int32 b@18 = Phi(ReadsLocalState, v38:Parameter)
+# CHECK-NEXT: Int64 b@19 = Phi(ReadsLocalState, v39:Parameter)
+# CHECK-NEXT: Void b@706 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v40:LoopHint)
+# CHECK-NEXT: Int32 b@720 = Const32(6, v46:HasArrayStorage)
+# CHECK-NEXT: Void b@707 = Branch(b@18, Terminal)
+# CHECK-NEXT: Successors: Then:#8, Else:#9
+# CHECK-NEXT: BB#8: ; frequency = 2.504880
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Void b@708 = Upsilon($1(b@97), ^21, WritesLocalState)
+# CHECK-NEXT: Void b@709 = Upsilon($10(b@36), ^22, WritesLocalState)
+# CHECK-NEXT: Void b@710 = Upsilon(b@19, ^23, WritesLocalState)
+# CHECK-NEXT: Void b@711 = Jump(Terminal)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#13: ; frequency = 4.936088
+# CHECK-NEXT: Predecessors: #12, #10, #8
+# CHECK-NEXT: Int32 b@21 = Phi(ReadsLocalState, v62:Parameter)
+# CHECK-NEXT: Int64 b@22 = Phi(ReadsLocalState, v63:Parameter)
+# CHECK-NEXT: Int64 b@23 = Phi(ReadsLocalState, v64:Parameter)
+# CHECK-NEXT: Int32 b@750 = Load8Z<Traps>(b@22, offset = 5, range = JSCell_typeInfoType, ExitsSideways|ControlDependent|ReadsImmutable|Reads:Top, v65:RequireObjectCoercible)
+# CHECK-NEXT: Int32 b@755 = Load8Z(b@22, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v67:HasArrayStorage)
+# CHECK-NEXT: Int32 b@756 = BitAnd(b@755, $6(b@720), v67:HasArrayStorage)
+# CHECK-NEXT: Void b@758 = Branch(b@756, Terminal, v67:HasArrayStorage)
+# CHECK-NEXT: Successors: Then:Unlikely:#113, Else:#14
+# CHECK-NEXT: BB#14: ; frequency = 4.645730
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Int64 b@764 = Load(b@22, offset = 8, ControlDependent|Reads:JSObject_butterfly, v69:IsInBounds)
+# CHECK-NEXT: Int32 b@765 = Load(b@764, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v69:IsInBounds)
+# CHECK-NEXT: Void b@648 = Jump(Terminal, v69:IsInBounds)
+# CHECK-NEXT: Successors: #15
+# CHECK-NEXT: BB#15: ; frequency = 4.645730
+# CHECK-NEXT: Predecessors: #14
+# CHECK-NEXT: Int32 b@628 = Above(b@765, $1(b@97), v71:IsInBounds)
+# CHECK-NEXT: Void b@778 = Branch(b@628, Terminal, v71:IsInBounds)
+# CHECK-NEXT: Successors: Then:#16, Else:Unlikely:#128
+# CHECK-NEXT: BB#16: ; frequency = 4.627653
+# CHECK-NEXT: Predecessors: #15
+# CHECK-NEXT: Int64 b@781 = Load(b@764, offset = 8, ControlDependent|Reads:indexedContiguousProperties, v74:GetArrayElement)
+# CHECK-NEXT: Void b@782 = Patchpoint(b@22:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v74:GetArrayElement)
+# CHECK-NEXT: Void b@783 = Patchpoint(b@781:Register(%rdi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v75:CallDirect)
+# CHECK-NEXT: Void b@784 = Upsilon(b@23, ^30, WritesLocalState)
+# CHECK-NEXT: Void b@785 = Upsilon(b@21, ^31, WritesLocalState)
+# CHECK-NEXT: Void b@786 = Jump(Terminal)
+# CHECK-NEXT: Successors: #19
+# CHECK-NEXT: BB#19: ; frequency = 5.009761
+# CHECK-NEXT: Predecessors: #18, #16
+# CHECK-NEXT: Int64 b@30 = Phi(ReadsLocalState, v87:Parameter)
+# CHECK-NEXT: Int32 b@31 = Phi(ReadsLocalState, v88:Parameter)
+# CHECK-NEXT: Void b@799 = Upsilon(b@31, ^18, WritesLocalState)
+# CHECK-NEXT: Void b@800 = Upsilon(b@30, ^19, WritesLocalState)
+# CHECK-NEXT: Void b@801 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#128: ; frequency = 0.018077
+# CHECK-NEXT: Predecessors: #15
+# CHECK-NEXT: Void b@768 = Branch(b@765, Terminal, v69:IsInBounds)
+# CHECK-NEXT: Successors: Then:Unlikely:#115, Else:Unlikely:#114
+# CHECK-NEXT: BB#115: ; frequency = 0.009038
+# CHECK-NEXT: Predecessors: #128
+# CHECK-NEXT: Void b@769 = Upsilon(b@23, ^27, WritesLocalState)
+# CHECK-NEXT: Void b@770 = Upsilon(b@21, ^28, WritesLocalState)
+# CHECK-NEXT: Void b@771 = Upsilon(b@22, ^29, WritesLocalState)
+# CHECK-NEXT: Void b@772 = Jump(Terminal)
+# CHECK-NEXT: Successors: #18
+# CHECK-NEXT: BB#18: ; frequency = 0.382108
+# CHECK-NEXT: Predecessors: #17, #115
+# CHECK-NEXT: Int64 b@27 = Phi(ReadsLocalState, v81:Parameter)
+# CHECK-NEXT: Int32 b@28 = Phi(ReadsLocalState, v82:Parameter)
+# CHECK-NEXT: Int64 b@29 = Phi(ReadsLocalState, v83:Parameter)
+# CHECK-NEXT: Int64 b@585 = Const64(1, v85:ElemGet)
+# CHECK-NEXT: Int64 b@794 = Patchpoint(b@29:Register(%rax), $1(b@585):Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v85:ElemGet)
+# CHECK-NEXT: Void b@795 = Patchpoint(b@794:Register(%rdi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v86:CallDirect)
+# CHECK-NEXT: Void b@796 = Upsilon(b@27, ^30, WritesLocalState)
+# CHECK-NEXT: Void b@797 = Upsilon(b@28, ^31, WritesLocalState)
+# CHECK-NEXT: Void b@798 = Jump(Terminal)
+# CHECK-NEXT: Successors: #19
+# CHECK-NEXT: BB#114: ; frequency = 0.009038
+# CHECK-NEXT: Predecessors: #128
+# CHECK-NEXT: Void b@759 = Upsilon(b@23, ^24, WritesLocalState)
+# CHECK-NEXT: Void b@760 = Upsilon(b@21, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@761 = Upsilon(b@22, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@762 = Jump(Terminal)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#17: ; frequency = 0.373069
+# CHECK-NEXT: Predecessors: #114, #113, #11
+# CHECK-NEXT: Int64 b@24 = Phi(ReadsLocalState, v76:Parameter)
+# CHECK-NEXT: Int32 b@25 = Phi(ReadsLocalState, v77:Parameter)
+# CHECK-NEXT: Int64 b@26 = Phi(ReadsLocalState, v78:Parameter)
+# CHECK-NEXT: Int64 b@788 = Patchpoint(b@26:Register(%rax), $0(b@2):Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v80:ElemGet)
+# CHECK-NEXT: Void b@789 = Upsilon(b@24, ^27, WritesLocalState)
+# CHECK-NEXT: Void b@790 = Upsilon(b@25, ^28, WritesLocalState)
+# CHECK-NEXT: Void b@791 = Upsilon(b@26, ^29, WritesLocalState)
+# CHECK-NEXT: Void b@792 = Jump(Terminal)
+# CHECK-NEXT: Successors: #18
+# CHECK-NEXT: BB#113: ; frequency = 0.290358
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Void b@751 = Upsilon(b@23, ^24, WritesLocalState)
+# CHECK-NEXT: Void b@752 = Upsilon(b@21, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@753 = Upsilon(b@22, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@754 = Jump(Terminal)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#9: ; frequency = 2.504880
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Int64 b@712 = Load(b@701, offset = 8, ControlDependent|Reads:JSObject_butterfly, v43:CallInline)
+# CHECK-NEXT: Int32 b@713 = Load(b@712, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v43:CallInline)
+# CHECK-NEXT: Int64 b@714 = ZExt32(b@713, v43:CallInline)
+# CHECK-NEXT: Int32 b@717 = Below(b@19, b@714, v44:Less)
+# CHECK-NEXT: Void b@718 = Branch(b@717, Terminal, v44:Less)
+# CHECK-NEXT: Successors: Then:#112, Else:#12
+# CHECK-NEXT: BB#112: ; frequency = 1.252440
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int32 b@719 = Load8Z(b@701, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v46:HasArrayStorage)
+# CHECK-NEXT: Int32 b@721 = BitAnd(b@719, $6(b@720), v46:HasArrayStorage)
+# CHECK-NEXT: Void b@723 = Branch(b@721, Terminal, v46:HasArrayStorage)
+# CHECK-NEXT: Successors: Then:Unlikely:#11, Else:#10
+# CHECK-NEXT: BB#10: ; frequency = 1.178767
+# CHECK-NEXT: Predecessors: #112
+# CHECK-NEXT: Int64 b@662 = Shl(b@19, $3(b@327), v51:GetArrayElement)
+# CHECK-NEXT: Int64 b@731 = Add(b@662, b@712, v51:GetArrayElement)
+# CHECK-NEXT: Int64 b@732 = Load(b@731, ControlDependent|Reads:indexedContiguousProperties, v51:GetArrayElement)
+# CHECK-NEXT: Void b@733 = Patchpoint(b@701:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v51:GetArrayElement)
+# CHECK-NEXT: Void b@735 = Upsilon($0(b@0), ^21, WritesLocalState)
+# CHECK-NEXT: Void b@736 = Upsilon(b@732, ^22, WritesLocalState)
+# CHECK-NEXT: Int64 b@734 = Add(b@19, $1(b@54), v53:Add)
+# CHECK-NEXT: Void b@737 = Upsilon(b@734, ^23, WritesLocalState)
+# CHECK-NEXT: Void b@738 = Jump(Terminal)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#11: ; frequency = 0.073673
+# CHECK-NEXT: Predecessors: #112
+# CHECK-NEXT: Int64 b@739 = Patchpoint(b@701:Register(%rax), b@19:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v55:ElemGet)
+# CHECK-NEXT: Int32 b@740 = Load8Z<Traps>(b@739, offset = 5, range = JSCell_typeInfoType, ExitsSideways|ControlDependent|ReadsImmutable|Reads:Top, v59:RequireObjectCoercible)
+# CHECK-NEXT: Int64 b@741 = Add(b@19, $1(b@54), v57:Add)
+# CHECK-NEXT: Void b@742 = Upsilon(b@741, ^24, WritesLocalState)
+# CHECK-NEXT: Void b@743 = Upsilon($0(b@0), ^25, WritesLocalState)
+# CHECK-NEXT: Void b@744 = Upsilon(b@739, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@745 = Jump(Terminal)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#12: ; frequency = 1.252440
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Void b@746 = Upsilon($1(b@97), ^21, WritesLocalState)
+# CHECK-NEXT: Void b@747 = Upsilon($10(b@36), ^22, WritesLocalState)
+# CHECK-NEXT: Void b@748 = Upsilon(b@19, ^23, WritesLocalState)
+# CHECK-NEXT: Void b@749 = Jump(Terminal)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#110: ; frequency = 0.000574
+# CHECK-NEXT: Predecessors: #107
+# CHECK-NEXT: Int32 b@683 = Load16Z(b@597, ControlDependent|ReadsImmutable|Reads:characters16, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@684 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@641 = Upsilon(b@683, ^273, WritesLocalState, v89:StringOrderToCharacter)
+# CHECK-NEXT: Void b@686 = Jump(Terminal, v89:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #111
+# CHECK-NEXT: BB#101: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #98
+# CHECK-NEXT: Void b@618 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v93:StringOrderToCharacter)
+# CHECK-NEXT: Void b@650 = Patchpoint(b@595:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v91:StringOrderToCharacter)
+# CHECK-NEXT: Void b@652 = Jump(Terminal, v91:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#96: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #92
+# CHECK-NEXT: Int64 b@590 = Patchpoint(b@46:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v115:FlattenString)
+# CHECK-NEXT: Void b@591 = Upsilon(b@590, ^595, WritesLocalState, v115:FlattenString)
+# CHECK-NEXT: Int64 b@592 = Load(b@590, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v115:FlattenString)
+# CHECK-NEXT: Void b@593 = Upsilon(b@592, ^596, WritesLocalState, v115:FlattenString)
+# CHECK-NEXT: Void b@594 = Jump(Terminal, v115:FlattenString)
+# CHECK-NEXT: Successors: #97
+# CHECK-NEXT: BB#90: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #87
+# CHECK-NEXT: Void b@537 = Patchpoint(b@514:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v97:StringOrderToCharacter)
+# CHECK-NEXT: Void b@569 = Patchpoint(b@514:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v95:StringOrderToCharacter)
+# CHECK-NEXT: Void b@571 = Jump(Terminal, v95:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #92
+# CHECK-NEXT: BB#85: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #81
+# CHECK-NEXT: Int64 b@509 = Patchpoint(b@329:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v116:FlattenString)
+# CHECK-NEXT: Void b@510 = Upsilon(b@509, ^514, WritesLocalState, v116:FlattenString)
+# CHECK-NEXT: Int64 b@511 = Load(b@509, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v116:FlattenString)
+# CHECK-NEXT: Void b@512 = Upsilon(b@511, ^515, WritesLocalState, v116:FlattenString)
+# CHECK-NEXT: Void b@513 = Jump(Terminal, v116:FlattenString)
+# CHECK-NEXT: Successors: #86
+# CHECK-NEXT: BB#79: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #76
+# CHECK-NEXT: Void b@456 = Patchpoint(b@433:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v101:StringOrderToCharacter)
+# CHECK-NEXT: Void b@488 = Patchpoint(b@433:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v99:StringOrderToCharacter)
+# CHECK-NEXT: Void b@490 = Jump(Terminal, v99:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #81
+# CHECK-NEXT: BB#74: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #70
+# CHECK-NEXT: Int64 b@428 = Patchpoint(b@329:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v117:FlattenString)
+# CHECK-NEXT: Void b@429 = Upsilon(b@428, ^433, WritesLocalState, v117:FlattenString)
+# CHECK-NEXT: Int64 b@430 = Load(b@428, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v117:FlattenString)
+# CHECK-NEXT: Void b@431 = Upsilon(b@430, ^434, WritesLocalState, v117:FlattenString)
+# CHECK-NEXT: Void b@432 = Jump(Terminal, v117:FlattenString)
+# CHECK-NEXT: Successors: #75
+# CHECK-NEXT: BB#68: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #65
+# CHECK-NEXT: Void b@375 = Patchpoint(b@352:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v105:StringOrderToCharacter)
+# CHECK-NEXT: Void b@407 = Patchpoint(b@352:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v103:StringOrderToCharacter)
+# CHECK-NEXT: Void b@409 = Jump(Terminal, v103:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #70
+# CHECK-NEXT: BB#63: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #55
+# CHECK-NEXT: Int64 b@347 = Patchpoint(b@329:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v118:FlattenString)
+# CHECK-NEXT: Void b@348 = Upsilon(b@347, ^352, WritesLocalState, v118:FlattenString)
+# CHECK-NEXT: Int64 b@349 = Load(b@347, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v118:FlattenString)
+# CHECK-NEXT: Void b@350 = Upsilon(b@349, ^353, WritesLocalState, v118:FlattenString)
+# CHECK-NEXT: Void b@351 = Jump(Terminal, v118:FlattenString)
+# CHECK-NEXT: Successors: #64
+# CHECK-NEXT: BB#48: ; frequency = 0.055363
+# CHECK-NEXT: Predecessors: #45
+# CHECK-NEXT: Int32 b@260 = Load16Z(b@242, offset = 2, ControlDependent|ReadsImmutable|Reads:characters16, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@261 = Patchpoint(b@240:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int32 b@265 = Const32(255, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int32 b@266 = BelowEqual(b@260, $255(b@265), v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@267 = Branch(b@266, Terminal, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: Then:#50, Else:Unlikely:#51
+# CHECK-NEXT: BB#50: ; frequency = 0.052107
+# CHECK-NEXT: Predecessors: #48
+# CHECK-NEXT: Int64 b@269 = ZExt32(b@260, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@654 = Shl(b@269, $3(b@327), v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@271 = Add(b@41, b@654, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Int64 b@272 = Load(b@271, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@504 = Upsilon(b@272, ^557, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@325 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #53
+# CHECK-NEXT: BB#53: ; frequency = 0.055363
+# CHECK-NEXT: Predecessors: #51, #50
+# CHECK-NEXT: Int64 b@557 = Phi(ReadsLocalState, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@300 = Patchpoint(b@240:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@305 = Branch(b@266, Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: Then:#58, Else:Unlikely:#60
+# CHECK-NEXT: BB#58: ; frequency = 0.052107
+# CHECK-NEXT: Predecessors: #53
+# CHECK-NEXT: Void b@389 = Upsilon(b@557, ^554, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@281 = Upsilon(b@260, ^395, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@638 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #59
+# CHECK-NEXT: BB#60: ; frequency = 0.003257
+# CHECK-NEXT: Predecessors: #53
+# CHECK-NEXT: Int64 b@313 = Patchpoint(b@260:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@314 = Upsilon(b@313, ^316, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@390 = Upsilon(b@557, ^476, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@315 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #61
+# CHECK-NEXT: BB#51: ; frequency = 0.003257
+# CHECK-NEXT: Predecessors: #48
+# CHECK-NEXT: Int64 b@275 = Patchpoint(b@260:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v17:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@656 = Upsilon(b@275, ^557, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@259 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #53
+# CHECK-NEXT: BB#54: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #44
+# CHECK-NEXT: Void b@319 = Upsilon($10(b@36), ^321, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@471 = Upsilon($10(b@36), ^473, WritesLocalState, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Void b@320 = Jump(Terminal, v19:StringRangeCharacterOrUndefined)
+# CHECK-NEXT: Successors: #55
+# CHECK-NEXT: BB#43: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #39
+# CHECK-NEXT: Int64 b@235 = Patchpoint(b@227:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v119:FlattenString)
+# CHECK-NEXT: Void b@236 = Upsilon(b@235, ^240, WritesLocalState, v119:FlattenString)
+# CHECK-NEXT: Int64 b@237 = Load(b@235, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v119:FlattenString)
+# CHECK-NEXT: Void b@238 = Upsilon(b@237, ^241, WritesLocalState, v119:FlattenString)
+# CHECK-NEXT: Void b@239 = Jump(Terminal, v119:FlattenString)
+# CHECK-NEXT: Successors: #44
+# CHECK-NEXT: BB#37: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #34
+# CHECK-NEXT: Void b@181 = Patchpoint(b@157:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v109:StringOrderToCharacter)
+# CHECK-NEXT: Void b@213 = Patchpoint(b@157:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v107:StringOrderToCharacter)
+# CHECK-NEXT: Void b@215 = Jump(Terminal, v107:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #39
+# CHECK-NEXT: BB#32: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #28
+# CHECK-NEXT: Int64 b@152 = Patchpoint(b@144:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v120:FlattenString)
+# CHECK-NEXT: Void b@153 = Upsilon(b@152, ^157, WritesLocalState, v120:FlattenString)
+# CHECK-NEXT: Int64 b@154 = Load(b@152, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v120:FlattenString)
+# CHECK-NEXT: Void b@155 = Upsilon(b@154, ^158, WritesLocalState, v120:FlattenString)
+# CHECK-NEXT: Void b@156 = Jump(Terminal, v120:FlattenString)
+# CHECK-NEXT: Successors: #33
+# CHECK-NEXT: BB#26: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #23
+# CHECK-NEXT: Void b@93 = Patchpoint(b@66:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v113:StringOrderToCharacter)
+# CHECK-NEXT: Void b@126 = Patchpoint(b@66:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v111:StringOrderToCharacter)
+# CHECK-NEXT: Void b@128 = Jump(Terminal, v111:StringOrderToCharacter)
+# CHECK-NEXT: Successors: #28
+# CHECK-NEXT: BB#21: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@61 = Patchpoint(b@52:Register(%rdi), resultConstraints = Register(%rdi), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v121:FlattenString)
+# CHECK-NEXT: Void b@62 = Upsilon(b@61, ^66, WritesLocalState, v121:FlattenString)
+# CHECK-NEXT: Int64 b@63 = Load(b@61, offset = 8, ControlDependent|Reads:JSRopeString_fiber0, v121:FlattenString)
+# CHECK-NEXT: Void b@64 = Upsilon(b@63, ^67, WritesLocalState, v121:FlattenString)
+# CHECK-NEXT: Void b@65 = Jump(Terminal, v121:FlattenString)
+# CHECK-NEXT: Successors: #22
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@18: range = [0,1]
+# CHECK-NEXT: b@19: range = [0,4294967295]
+# CHECK-NEXT: b@21: range = [0,1]
+# CHECK-NEXT: b@23: range = [0,4294967295]
+# CHECK-NEXT: b@24: range = [0,4294967295]
+# CHECK-NEXT: b@25: range = [0,1]
+# CHECK-NEXT: b@27: range = [0,4294967295]
+# CHECK-NEXT: b@28: range = [0,1]
+# CHECK-NEXT: b@30: range = [0,4294967295]
+# CHECK-NEXT: b@31: range = [0,1]
+# CHECK-NEXT: b@35: dereferenceableBytes = 8
+# CHECK-NEXT: b@46: dereferenceableBytes = 16
+# CHECK-NEXT: b@52: dereferenceableBytes = 16
+# CHECK-NEXT: b@66: dereferenceableBytes = 16
+# CHECK-NEXT: b@67: dereferenceableBytes = 20
+# CHECK-NEXT: b@141: range = [-1,1]
+# CHECK-NEXT: b@144: dereferenceableBytes = 16
+# CHECK-NEXT: b@157: dereferenceableBytes = 16
+# CHECK-NEXT: b@158: dereferenceableBytes = 20
+# CHECK-NEXT: b@227: dereferenceableBytes = 16
+# CHECK-NEXT: b@240: dereferenceableBytes = 16
+# CHECK-NEXT: b@241: dereferenceableBytes = 20
+# CHECK-NEXT: b@329: dereferenceableBytes = 16
+# CHECK-NEXT: b@352: dereferenceableBytes = 16
+# CHECK-NEXT: b@353: dereferenceableBytes = 20
+# CHECK-NEXT: b@433: dereferenceableBytes = 16
+# CHECK-NEXT: b@434: dereferenceableBytes = 20
+# CHECK-NEXT: b@514: dereferenceableBytes = 16
+# CHECK-NEXT: b@515: dereferenceableBytes = 20
+# CHECK-NEXT: b@595: dereferenceableBytes = 16
+# CHECK-NEXT: b@596: dereferenceableBytes = 20
+# CHECK-NEXT: b@701: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f0

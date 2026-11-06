@@ -1,0 +1,130 @@
+# A loop costs the same wherever it stands: at the top level of a module, the way a first benchmark is written, and in a function that is called once.
+# What a turn takes: calls into the run time, and instructions by the counter of the hardware, where that can be read. The file beside this one has the other place.
+# -- source: main.ts
+# declare const turns: string, given: string | undefined, report: (...values: unknown[]) => void;
+# function clamp(value: number, low: number, high: number): number {
+#   return value < low ? low : value > high ? high : value;
+# }
+# const count = Number(turns);
+# function main() {
+#   let sum = 0;
+#   for (let i = 0; i < count; i++) {
+#     sum = (sum + clamp(i & 255, 10, 200)) | 0;
+#   }
+#   report(sum);
+# }
+# main();
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0; loop = the_loop; most = 12.3
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows
+# END REPEAT
+# the loop
+# L0: 12163225
+# L0-NEXT: a turn: 0 calls into the run time, at most 12.3 instructions
+# L0-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=111 kind=Parameter
+typesite w1 module=m0 position=126 kind=Parameter
+typesite w2 module=m0 position=139 kind=Parameter
+typesite w3 module=m0 position=96 kind=Result
+typesite w4 module=m0 position=229 kind=Variable
+typesite w5 module=m0 position=237 kind=CallResult
+typesite w6 module=m0 position=276 kind=Variable
+typesite w7 module=m0 position=296 kind=Variable
+typesite w8 module=m0 position=338 kind=CallResult
+variable g0 name="clamp" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="count" module=m0 declared={type=number|absent site=w4} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Number
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="turns" [isFreeName]
+    v5 = Call v2, -, v4 calleeName="Number"
+    v6 = Convert v5 declared={type=number site=w5} illTypedCause=DeclarationWithoutBody
+    PutModuleVariable v6 variable=g1
+    v8 = Call v1 calleeName="main"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="clamp" module=m0 position=96 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Less v0, v1
+    Branch v3 -> taken b2(| 0, 1), notTaken b4(| 0, 1)
+  b2(v4, v5):
+    Jump -> next b3()
+  b3():
+    Jump -> next b10(v5)
+  b4(v6, v7):
+    Jump -> next b5()
+  b5():
+    v8 = Greater v6, v2
+    Branch v8 -> taken b6(| 0, 1), notTaken b8(| 0, 1)
+  b6(v9, v10):
+    Jump -> next b7()
+  b7():
+    Jump -> next b10(v10)
+  b8(v11, v12):
+    Jump -> next b9()
+  b9():
+    Jump -> next b10(v11)
+  b10(v13):
+    v14 = Convert v13 declared={type=number site=w3}
+    Return v14
+}
+function f2 name="main" module=m0 position=252 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w6}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w7}
+    Jump -> next b2(v1, v3)
+  b2(v4: number, v5: number):
+    LoopHint
+    v7 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v8 = GetModuleVariable variable=g1
+    v9 = CheckInitialized v8 name="count"
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v13 = GetModuleVariable variable=g0
+    v14 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    v15 = Integer integer=255
+    v16 = BitAnd v14, v15
+    v17 = Integer integer=10
+    v18 = Integer integer=200
+    v19 = Call v13, -, v16, v17, v18 calleeName="clamp"
+    v20 = Convert v19 declared={type=number site=w8}
+    v21 = Add v12, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w6}
+    Jump -> next b5()
+  b5():
+    v25 = Increment v14
+    v26 = Convert v25 declared={type=number site=w7}
+    Jump -> next b2(v24, v26)
+  b6(v27):
+    Jump -> next b7()
+  b7():
+    v28 = Builtin builtin=GlobalThis
+    v29 = PropGet v28 key="report" [isFreeName]
+    v30 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v31 = Call v29, -, v30 calleeName="report"
+    v32 = Undefined
+    Return v32
+}

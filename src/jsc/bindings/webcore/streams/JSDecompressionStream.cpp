@@ -142,6 +142,7 @@ template<> void JSDecompressionStreamConstructor::finishCreation(VM& vm, JSDOMGl
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(DecompressionStream, JSDecompressionStreamConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = uncheckedDowncast<JSDecompressionStreamConstructor>(callFrame->jsCallee());
@@ -151,6 +152,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     ASSERT(format.has_value());
     CodecOptions options = parseCodecOptions(lexicalGlobalObject, callFrame->argument(1), std::nullopt);
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (*format == CompressionFormat::Brotli && JSC::isFeatureRemoved(Bun::Feature::BrotliDecoder)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Bun__throwForRemovedFeature(lexicalGlobalObject, static_cast<uint16_t>(Bun::Feature::BrotliDecoder)));
 
     void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0);
     if (!coder) [[unlikely]] {

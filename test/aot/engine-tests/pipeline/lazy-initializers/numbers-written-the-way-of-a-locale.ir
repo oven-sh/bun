@@ -1,0 +1,300 @@
+# -- source: numbers-written-the-way-of-a-locale.ts
+# // Numbers written the way of a locale: with a name that is none, with options that run code, on what is no number.
+# const log: string[] = [];
+# const plain = { text: (1234567.891).toLocaleString(), pad: [1, 2, 3] };
+# const named = { text: (1234567.891).toLocaleString("de-DE"), other: (0.5).toLocaleString("en-US", undefined) };
+# let thrown = "none";
+# function bad(tag: string) { try { return (1).toLocaleString(tag); } catch (error) { thrown = (error as Error).name; return "bad"; } }
+# const invalid = { text: bad("not a tag") };
+# const options = { get maximumFractionDigits() { log.push("options read"); return 1; } };
+# const withOptions = { text: (1.25).toLocaleString("en-US", options) };
+# const odd = { toLocaleString() { log.push("own method"); return "odd"; } };
+# const onObject = { text: odd.toLocaleString() };
+# const big = { text: (12345678901234567890n).toLocaleString("en-US") };
+# log.push("start is over", thrown);
+# console.log(JSON.stringify([plain, named, invalid, withOptions, onObject, big, log]));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="numbers-written-the-way-of-a-locale.ts" displayPath="numbers-written-the-way-of-a-locale.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/models/Objects.ts" displayPath="/$bun/js/engine/models/Objects.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=122 kind=Variable
+typesite w1 module=m0 position=148 kind=Variable
+typesite w2 module=m0 position=220 kind=Variable
+typesite w3 module=m0 position=330 kind=Variable
+typesite w4 module=m0 position=487 kind=Variable
+typesite w5 module=m0 position=531 kind=Variable
+typesite w6 module=m0 position=620 kind=Variable
+typesite w7 module=m0 position=691 kind=Variable
+typesite w8 module=m0 position=767 kind=Variable
+typesite w9 module=m0 position=816 kind=Variable
+typesite w10 module=m0 position=360 kind=Parameter
+typesite w11 module=m0 position=347 kind=Result
+typesite w12 module=m0 position=164 kind=CallResult
+typesite w13 module=m0 position=236 kind=CallResult
+typesite w14 module=m0 position=282 kind=CallResult
+typesite w15 module=m0 position=505 kind=CallResult
+typesite w16 module=m0 position=543 kind=Result
+typesite w17 module=m0 position=642 kind=CallResult
+typesite w18 module=m0 position=699 kind=Result
+typesite w19 module=m0 position=786 kind=CallResult
+typesite w20 module=m0 position=830 kind=CallResult
+typesite w21 module=m0 position=881 kind=CallResult
+typesite w22 module=m0 position=928 kind=CallResult
+typesite w23 module=m0 position=388 kind=CallResult
+typesite w24 module=m0 position=440 kind=PropertyRead
+typesite w25 module=m0 position=573 kind=CallResult
+typesite w26 module=m0 position=718 kind=CallResult
+layout L0 module=m0 position=156 fields=[{key="pad" declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L2] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=228 fields=[{key="other" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L2] declaredOrder=[1, 0] ownFieldCount=2
+layout L2 module=m0 position=497 fields=[{key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=541 fields=[{key="maximumFractionDigits" declared={type=number} flags=[IsRequired]}] supertypes=[L5] ownFieldCount=1
+layout L4 module=m0 position=697 fields=[{key="toLocaleString" declared={type=undefined|null|function|f3 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L5 name="NumberFormatOptions" fields=[{key="compactDisplay" declared={type=undefined|null|"long"|"short" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="currency" declared={type=undefined|null|string flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="currencyDisplay" declared={type=undefined|null|"code"|"name"|"narrowSymbol"|"symbol" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="currencySign" declared={type=undefined|null|"accounting"|"standard" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="localeMatcher" declared={type=undefined|null|"best fit"|"lookup" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="maximumFractionDigits" declared={type=undefined|number}}, {key="maximumSignificantDigits" declared={type=undefined|number} flags=[IsNeverWritten]}, {key="minimumFractionDigits" declared={type=undefined|number} flags=[IsNeverWritten]}, {key="minimumIntegerDigits" declared={type=undefined|number} flags=[IsNeverWritten]}, {key="minimumSignificantDigits" declared={type=undefined|number} flags=[IsNeverWritten]}, {key="notation" declared={type=undefined|null|"compact"|"engineering"|"scientific"|"standard" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="numberingSystem" declared={type=undefined|null|string flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="roundingIncrement" declared={type=undefined|int[1, 5000]} flags=[IsNeverWritten]}, {key="roundingMode" declared={type=undefined|null|"ceil"|"expand"|"floor"|"halfCeil"|"halfEven"|"halfExpand"|"halfFloor"|"halfTrunc"|"trunc" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="roundingPriority" declared={type=undefined|null|"auto"|"lessPrecision"|"morePrecision" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="signDisplay" declared={type=undefined|null|"always"|"auto"|"exceptZero"|"negative"|"never" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="style" declared={type=undefined|null|"currency"|"decimal"|"percent"|"unit" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="trailingZeroDisplay" declared={type=undefined|null|"auto"|"stripIfInteger" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="unit" declared={type=undefined|null|string flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="unitDisplay" declared={type=undefined|null|"long"|"narrow"|"short" flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="useGrouping" declared={type=undefined|null|boolean|"always"|"auto"|"false"|"min2"|"true" flags=[OmitsNull]} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] declaredOrder=[4, 16, 1, 2, 20, 8, 7, 5, 9, 6, 11, 0, 10, 15, 18, 19, 3, 14, 12, 13, 17] ownFieldCount=21 flow={allocation=NeverAllocated}
+data d0 root=Array{contents=undefined|null|string} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+variable g0 name="log" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="thrown" module=m0 declared={type=undefined|null|string|absent site=w3 flags=[OmitsNull, OmitsUndefined]}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v3 variable=g0
+    v5 = Double number=1234567.891
+    v6 = PropGet v5 key="toLocaleString"
+    v7 = Call v6, v5 calleeKey="toLocaleString" calleeName="toLocaleString"
+    v8 = Convert v7 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v9 = Data data=d1
+    v10 = Convert v9 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v11 = NewObject -, v8, v10 layout=L0 fields=[1, 0]
+    v12 = FinishObject v11
+    v13 = Convert v12 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Double number=1234567.891
+    v15 = PropGet v14 key="toLocaleString"
+    v16 = String string="de-DE"
+    v17 = Call v15, v14, v16 calleeKey="toLocaleString" calleeName="toLocaleString"
+    v18 = Convert v17 declared={type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v19 = Double number=0.5
+    v20 = PropGet v19 key="toLocaleString"
+    v21 = String string="en-US"
+    v22 = Undefined
+    v23 = Call v20, v19, v21, v22 calleeKey="toLocaleString" calleeName="toLocaleString"
+    v24 = Convert v23 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v25 = NewObject -, v18, v24 layout=L1 fields=[1, 0]
+    v26 = FinishObject v25
+    v27 = Convert v26 declared={type=undefined|null|L1 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v28 = String string="none"
+    v29 = Convert v28 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v29 variable=g1
+    v31 = String string="not a tag"
+    v32 = Call v1, -, v31 calleeName="bad"
+    v33 = Convert v32 declared={type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}
+    v34 = NewObject -, v33 layout=L2 fields=[0]
+    v35 = FinishObject v34
+    v36 = Convert v35 declared={type=undefined|null|L0|L1|L2 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v37 = NewObject layout=L3
+    v38 = NewClosure function=f2
+    DefineGetter v37, v38 key="maximumFractionDigits"
+    v40 = FinishObject v37
+    v41 = Convert v40 declared={type=undefined|null|L3 site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v42 = Double number=1.25
+    v43 = PropGet v42 key="toLocaleString"
+    v44 = String string="en-US"
+    v45 = Call v43, v42, v44, v41 calleeKey="toLocaleString" calleeName="toLocaleString"
+    v46 = Convert v45 declared={type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v47 = NewObject -, v46 layout=L2 fields=[0]
+    v48 = FinishObject v47
+    v49 = Convert v48 declared={type=undefined|null|L0|L1|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v50 = NewClosure function=f3
+    v51 = Convert v50 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    v52 = NewObject -, v51 layout=L4 fields=[0]
+    v53 = FinishObject v52
+    v54 = Convert v53 declared={type=undefined|null|boolean|number|string|symbol|bigint|L4 site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v55 = PropGet v54 key="toLocaleString"
+    v56 = Call v55, v54 calleeKey="toLocaleString" calleeName="odd.toLocaleString"
+    v57 = Convert v56 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]}
+    v58 = NewObject -, v57 layout=L2 fields=[0]
+    v59 = FinishObject v58
+    v60 = Convert v59 declared={type=undefined|null|L0|L1|L2 site=w8 flags=[OmitsNull, OmitsUndefined]}
+    v61 = BigInt digits="12345678901234567890"
+    v62 = PropGet v61 key="toLocaleString"
+    v63 = String string="en-US"
+    v64 = Call v62, v61, v63 calleeKey="toLocaleString" calleeName="toLocaleString"
+    v65 = Convert v64 declared={type=undefined|null|string site=w20 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v66 = NewObject -, v65 layout=L2 fields=[0]
+    v67 = FinishObject v66
+    v68 = Convert v67 declared={type=undefined|null|L0|L1|L2 site=w9 flags=[OmitsNull, OmitsUndefined]}
+    v69 = PropGet v3 key="push"
+    v70 = String string="start is over"
+    v71 = GetModuleVariable variable=g1
+    v72 = CheckInitialized v71 name="thrown"
+    v73 = Call v69, v3, v70, v72 calleeKey="push" calleeName="log.push"
+    v74 = Convert v73 declared={type=number site=w21} illTypedCause=DeclarationWithoutBody
+    v75 = Builtin builtin=GlobalThis
+    v76 = PropGet v75 key="console" [isFreeName]
+    v77 = Convert v76 declared={type=builtin(Console) flags=[IsExpected]}
+    v78 = PropGet v77 key="log"
+    v79 = Convert v78 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v80 = Builtin builtin=JSON
+    v81 = PropGet v80 key="stringify"
+    v82 = Convert v81 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v83 = NewArray v13, v27, v36, v49, v60, v68, v3 contents=anything
+    v84 = Call v82, v80, v83 calleeKey="stringify" calleeName="JSON.stringify"
+    v85 = Convert v84 declared={type=undefined|null|string site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v86 = Call v79, v77, v85 calleeKey="log" calleeName="console.log"
+    v87 = Undefined
+    Return v87
+}
+function f1 name="bad" module=m0 position=347 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    Jump -> next b2()
+  b2() handler=b3():
+    v1 = Integer integer=1
+    v2 = PropGet v1 key="toLocaleString"
+    v3 = Call v2, v1, v0 calleeKey="toLocaleString" calleeName="toLocaleString"
+    v4 = Convert v3 declared={type=undefined|null|string site=w23 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="thrown"
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v9 = PropGet v8 key="name"
+    v10 = Convert v9 declared={type=undefined|null|string site=w24} illTypedCause=Assertion
+    PutModuleVariable v10 variable=g1
+    v12 = String string="bad"
+    v13 = Convert v12 declared={type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}
+    Return v13
+}
+function f2 name="maximumFractionDigits" module=m0 position=543 kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="log"
+    v2 = PropGet v1 key="push"
+    v3 = String string="options read"
+    v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
+    v5 = Convert v4 declared={type=number site=w25} illTypedCause=DeclarationWithoutBody
+    v6 = Integer integer=1
+    v7 = Convert v6 declared={type=number site=w16}
+    Return v7
+}
+function f3 name="toLocaleString" module=m0 position=699 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="log"
+    v2 = PropGet v1 key="push"
+    v3 = String string="own method"
+    v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
+    v5 = Convert v4 declared={type=number site=w26} illTypedCause=DeclarationWithoutBody
+    v6 = String string="odd"
+    v7 = Convert v6 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}
+    Return v7
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 name="toLocaleString" module=m1 position=1291 kind=Method role=Model flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=131086 thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="toString"
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v3 = Call v2, v0 calleeKey="toString" calleeName="this.toString"
+    ReturnCall v3
+}
+runtimefunction id=131086 function=f5
+# -- generated: f0 bad toLocaleString
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 2 = Integer integer=2
+# CHECK-NEXT: v1: Array = NewArray contents=anything capacity=v0 allocationSite=1
+# CHECK-NEXT: v2: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v2 variable=g0
+# CHECK-NEXT: v4: fractional = Double number=1234567.891
+# CHECK-NEXT: v5: string = CallBuiltin v4 overload=NumberPrototypeToLocaleString/0 accessSite=1
+# CHECK-NEXT: v6: Array<int[1, 3]> = Data data=d2 allocationSite=2
+# CHECK-NEXT: v7: Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: L0 = NewObject -, v5, v7 layout=L0 fields=[1, 0] allocationSite=3 allocationClass=0
+# CHECK-NEXT: v9: L0 = FinishObject v8
+# CHECK-NEXT: v10: fractional = Double number=1234567.891
+# CHECK-NEXT: v11: "de-DE" = String string="de-DE"
+# CHECK-NEXT: v12: string = CallBuiltin v10, v11 overload=NumberPrototypeToLocaleString/0 accessSite=3
+# CHECK-NEXT: v13: fractional = Double number=0.5
+# CHECK-NEXT: v14: "en-US" = String string="en-US"
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: string = CallBuiltin v13, v14, v15 overload=NumberPrototypeToLocaleString/0 accessSite=5
+# CHECK-NEXT: v17: L1 = NewObject -, v12, v16 layout=L1 fields=[1, 0] allocationSite=4 allocationClass=1
+# CHECK-NEXT: v18: L1 = FinishObject v17
+# CHECK-NEXT: v19: "none" = String string="none"
+# CHECK-NEXT: PutModuleVariable v19 variable=g1
+# CHECK-NEXT: v21: "not a tag" = String string="not a tag"
+# CHECK-NEXT: v22: string = CallDirect v21 function=f1 accessSite=6
+# CHECK-NEXT: v23: L2 = NewObject -, v22 layout=L2 fields=[0] allocationSite=5 allocationClass=2
+# CHECK-NEXT: v24: L2 = FinishObject v23
+# CHECK-NEXT: v25: L3 = NewObject layout=L3 allocationSite=6 allocationClass=3
+# CHECK-NEXT: v26: f2 = NewClosure function=f2 allocationSite=7
+# CHECK-NEXT: DefineGetter v25, v26 key="maximumFractionDigits"
+# CHECK-NEXT: v28: L3 = FinishObject v25
+# CHECK-NEXT: v29: fractional = Double number=1.25
+# CHECK-NEXT: v30: "en-US" = String string="en-US"
+# CHECK-NEXT: v31: string = CallBuiltin v29, v30, v28 overload=NumberPrototypeToLocaleString/1 accessSite=8
+# CHECK-NEXT: v32: L2 = NewObject -, v31 layout=L2 fields=[0] allocationSite=8 allocationClass=2
+# CHECK-NEXT: v33: L2 = FinishObject v32
+# CHECK-NEXT: v34: string = CallDirect function=f3 accessSite=10
+# CHECK-NEXT: v35: L2 = NewObject -, v34 layout=L2 fields=[0] allocationSite=11 allocationClass=2
+# CHECK-NEXT: v36: L2 = FinishObject v35
+# CHECK-NEXT: v37: bigint = BigInt digits="12345678901234567890"
+# CHECK-NEXT: v38: "en-US" = String string="en-US"
+# CHECK-NEXT: v39: string = CallBuiltin v37, v38 overload=BigIntPrototypeToLocaleString/0 accessSite=12
+# CHECK-NEXT: v40: L2 = NewObject -, v39 layout=L2 fields=[0] allocationSite=12 allocationClass=2
+# CHECK-NEXT: v41: L2 = FinishObject v40
+# CHECK-NEXT: v42: "start is over" = String string="start is over"
+# CHECK-NEXT: v43: anything ~ undefined|null|string = GetModuleVariable variable=g1
+# CHECK-NEXT: v44: int[0, 4294967295] = CallBuiltin v2, v42, v43 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: v45: Array<L0|L1|L2|Array<anything, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v9, v18, v24, v33, v36, v41, v2 contents=L0|L1|L2|Array<anything, proven, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v46: Array<L0|L1|L2|Array<anything, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v45 provenType=Array<L0|L1|L2|Array<anything, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v47: undefined = Undefined
+# CHECK-NEXT: v48: undefined|string = CallBuiltin -, v46, v47 overload=JSONStringify/0 accessSite=18
+# CHECK-NEXT: v49: undefined = CallBuiltin -, v48 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v50: undefined = Undefined
+# CHECK-NEXT: Return v50
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="bad"
+# CHECK: module=m0 position=347 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string) handler=b1():
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: string = CallBuiltin v1, v0 overload=NumberPrototypeToLocaleString/1 accessSite=21
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v3: anything = CatchValue
+# CHECK-NEXT: v4: anything ~ undefined|null|Error = Upcast v3 castType=anything
+# CHECK-NEXT: v5: anything = PropGet v4 key="name" accessSite=22
+# CHECK-NEXT: v6: anything ~ undefined|null|string = Expect v5 expectedType=undefined|null|string
+# CHECK-NEXT: PutModuleVariable v6 variable=g1
+# CHECK-NEXT: v8: "bad" = String string="bad"
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="toLocaleString"
+# CHECK: module=m0 position=699 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w18 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: Array<anything, proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "own method" = String string="own method"
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 accessSite=26
+# CHECK-NEXT: v3: "odd" = String string="odd"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="toLocaleString"
+# CHECK: module=m1 position=1291 kind=Method role=Model flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=131086 thisType={type=anything} results=[{type=anything}]

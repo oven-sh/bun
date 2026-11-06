@@ -24,6 +24,8 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
+JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
+
 class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

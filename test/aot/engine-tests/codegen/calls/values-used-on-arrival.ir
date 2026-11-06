@@ -1,0 +1,188 @@
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="values-used-on-arrival.ts" displayPath="values-used-on-arrival.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Point" module=m0 position=10 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y" value=Number{value=2}}, {key="label" value=String{value="one"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="x" value=Number{value=30}}, {key="y" value=Number{value=4.5}}, {key="label" value=String{value="two"}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="x" value=Number{value=-5}}, {key="y" value=Number{value=60}}, {key="label" value=String{value="three"}}]} module=m0
+variable g0 name="describe" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v8 = Data data=d1
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v10 = Data data=d2
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = Integer integer=1
+    v13 = Integer integer=2
+    v14 = Integer integer=300
+    v15 = Integer integer=4
+    v16 = Integer integer=50
+    v17 = Integer integer=6
+    v18 = Integer integer=7
+    v19 = Integer integer=8
+    v20 = Call v1, -, v12, v13, v14, v15, v16, v17, v18, v19 calleeName="eight"
+    v21 = Integer integer=-1
+    v22 = Integer integer=31
+    v23 = Integer integer=-300
+    v24 = Integer integer=33
+    v25 = Integer integer=-50
+    v26 = Integer
+    v27 = Integer integer=70000
+    v28 = Integer integer=80000
+    v29 = Call v1, -, v21, v22, v23, v24, v25, v26, v27, v28 calleeName="eight"
+    v30 = Integer integer=5
+    v31 = Integer integer=3
+    v32 = Integer integer=-77
+    v33 = Integer integer=1048576
+    v34 = Call v3, -, v30, v31, v32, v33 calleeName="shifts"
+    v35 = Integer integer=-5
+    v36 = Integer integer=33
+    v37 = Integer integer=77
+    v38 = Integer integer=-1
+    v39 = Call v3, -, v35, v36, v37, v38 calleeName="shifts"
+    v40 = NewArray v7, v9, v11 contents=undefined|null|L0
+    v41 = Integer integer=2
+    v42 = Double number=0.5
+    v43 = String string="L"
+    v44 = Call v5, -, v40, v41, v42, v43 calleeName="inALoop"
+    Jump -> next b1()
+  b1() handler=b3():
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v45 = Undefined
+    Return v45
+}
+function f1 name="describe" module=m0 position=1527 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="eight" module=m0 position=246 flags=[IsChecked, HasExplicitName] length=8 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="shifts" module=m0 position=659 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number, v3: number):
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    Jump -> next b1(v5, v7)
+  b1(v8: number, v9: number):
+    LoopHint
+    v11 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    v12 = Integer integer=5
+    v13 = Less v11, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v16 = LShift v0, v1
+    v17 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v18 = Add v1, v17
+    v19 = URShift v2, v18
+    v20 = BitXor v16, v19
+    v21 = RShift v3, v17
+    v22 = BitXor v20, v21
+    v23 = Add v15, v22
+    v24 = Integer
+    v25 = BitOr v23, v24
+    v26 = Convert v25 declared={type=number}
+    v27 = Increment v17
+    v28 = Convert v27 declared={type=number}
+    Jump -> next b1(v26, v28)
+  b3(v29):
+    v30 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v31 = Convert v30 declared={type=number}
+    Return v31
+}
+function f4 name="inALoop" module=m0 position=1906 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number, v2: number, v3: undefined|null|string):
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v4, v6)
+  b1(v7: undefined|null|string, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = PropGet v0 key="length"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Less v10, v12
+    v14 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v15 = ElemGet v0, v14
+    v16 = Convert v15 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v17 = PropGet v16 key="x"
+    v18 = Mul v17, v1
+    v19 = Add v18, v2
+    v20 = String string=","
+    v21 = Add v19, v20
+    v22 = Add v7, v21
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v24 = GetModuleVariable variable=g0
+    v25 = PropGet v16 key="y"
+    v26 = Call v24, -, v25 calleeName="describe"
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v28 = Add v23, v27
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v30 = Increment v14
+    v31 = Convert v30 declared={type=number}
+    Jump -> next b1(v29, v31)
+}
+# -- generated: shifts
+# CHECK-LABEL: function {{*}}name="shifts"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@19 = Trunc(b@18)
+# CHECK-NEXT: Int64 b@20 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int32 b@21 = Trunc(b@20)
+# CHECK-NEXT: Int64 b@22 = ArgumentReg(%rdx)
+# CHECK-NEXT: Int32 b@23 = Trunc(b@22)
+# CHECK-NEXT: Int64 b@24 = ArgumentReg(%rcx)
+# CHECK-NEXT: Int32 b@25 = Trunc(b@24)
+# CHECK-NEXT: Int32 b@30 = Shl(b@19, b@21, v6:LShift)
+# CHECK-NEXT: Int32 b@33 = ZShr(b@23, b@21, v8:URShift)
+# CHECK-NEXT: Int32 b@36 = BitXor(b@30, b@33, v9:BitXor)
+# CHECK-NEXT: Int32 b@39 = BitXor(b@25, b@36, v11:BitXor)
+# CHECK-NEXT: Int32 b@42 = Const32(1, v15:Integer)
+# CHECK-NEXT: Int32 b@45 = Add(b@21, $1(b@42), v17:Add)
+# CHECK-NEXT: Int32 b@47 = ZShr(b@23, b@45, v18:URShift)
+# CHECK-NEXT: Int32 b@50 = BitXor(b@30, b@47, v19:BitXor)
+# CHECK-NEXT: Int32 b@52 = SShr(b@25, $1(b@42), v20:RShift)
+# CHECK-NEXT: Int32 b@53 = BitXor(b@50, b@52, v21:BitXor)
+# CHECK-NEXT: Int32 b@17 = Add(b@39, b@53, v22:Add)
+# CHECK-NEXT: Int32 b@59 = Const32(2, v25:Integer)
+# CHECK-NEXT: Int32 b@62 = Add(b@21, $2(b@59), v27:Add)
+# CHECK-NEXT: Int32 b@64 = ZShr(b@23, b@62, v28:URShift)
+# CHECK-NEXT: Int32 b@67 = BitXor(b@30, b@64, v29:BitXor)
+# CHECK-NEXT: Int32 b@69 = SShr(b@25, $2(b@59), v30:RShift)
+# CHECK-NEXT: Int32 b@70 = BitXor(b@67, b@69, v31:BitXor)
+# CHECK-NEXT: Int32 b@16 = Add(b@17, b@70, v32:Add)
+# CHECK-NEXT: Int32 b@76 = Const32(3, v35:Integer)
+# CHECK-NEXT: Int32 b@79 = Add(b@21, $3(b@76), v37:Add)
+# CHECK-NEXT: Int32 b@81 = ZShr(b@23, b@79, v38:URShift)
+# CHECK-NEXT: Int32 b@84 = BitXor(b@30, b@81, v39:BitXor)
+# CHECK-NEXT: Int32 b@86 = SShr(b@25, $3(b@76), v40:RShift)
+# CHECK-NEXT: Int32 b@87 = BitXor(b@84, b@86, v41:BitXor)
+# CHECK-NEXT: Int32 b@15 = Add(b@16, b@87, v42:Add)
+# CHECK-NEXT: Int32 b@93 = Const32(4, v45:Integer)
+# CHECK-NEXT: Int32 b@96 = Add(b@21, $4(b@93), v47:Add)
+# CHECK-NEXT: Int32 b@98 = ZShr(b@23, b@96, v48:URShift)
+# CHECK-NEXT: Int32 b@101 = BitXor(b@30, b@98, v49:BitXor)
+# CHECK-NEXT: Int32 b@103 = SShr(b@25, $4(b@93), v50:RShift)
+# CHECK-NEXT: Int32 b@104 = BitXor(b@101, b@103, v51:BitXor)
+# CHECK-NEXT: Int32 b@14 = Add(b@15, b@104, v52:Add)
+# CHECK-NEXT: Void b@110 = Return(b@14, Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: range = [-5,5]
+# CHECK-NEXT: b@21: range = [3,33]
+# CHECK-NEXT: b@23: range = [-77,77]
+# CHECK-NEXT: b@25: range = [-1,1048576]
+# CHECK-NEXT: end of function f3

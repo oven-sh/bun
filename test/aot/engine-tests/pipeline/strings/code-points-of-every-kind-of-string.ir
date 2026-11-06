@@ -1,0 +1,148 @@
+# codePointAt, a loop over a string and a pattern that takes a string apart read code points: of narrow and wide texts, pairs and halves of pairs, ropes and pieces of other strings, at positions in and out of range.
+# FORM: AsRead
+# RUN: lower-to-air size f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="code-points-of-every-kind-of-string.ts" displayPath="code-points-of-every-kind-of-string.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}, String{value="two"}, String{value="\u{1f600}"}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="\u{4e16}"}]} module=m0
+data d3 root=Array{contents=anything elements=[Array{contents=number elements=[Number{value=1}, Number{value=2}]}]} module=m0
+data d4 root=Array{contents=undefined|null|string} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = String string="plain text"
+    v7 = Convert v6 declared={type=undefined|null|"plain text" flags=[OmitsNull, OmitsUndefined]}
+    v8 = String string="wide \u{4e16}\u{754c} text"
+    v9 = Convert v8 declared={type=undefined|null|"wide \u{4e16}\u{754c} text" flags=[OmitsNull, OmitsUndefined]}
+    v10 = String string="a\u{1f600}b\u{10ffff}\u{10000}"
+    v11 = Convert v10 declared={type=undefined|null|"a\u{1f600}b\u{10ffff}\u{10000}" flags=[OmitsNull, OmitsUndefined]}
+    v12 = String string="\u{d83d}"
+    v13 = String string="x"
+    v14 = Add v12, v13
+    v15 = String string="\u{de00}"
+    v16 = Add v14, v15
+    v17 = String string="\u{d83d}"
+    v18 = Add v16, v17
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v20 = String string="ab\u{d800}"
+    v21 = Convert v20 declared={type=undefined|null|"ab\u{d800}" flags=[OmitsNull, OmitsUndefined]}
+    v22 = String string="\u{d800}\u{10000}"
+    v23 = Convert v22 declared={type=undefined|null|"\u{d800}\u{10000}" flags=[OmitsNull, OmitsUndefined]}
+    v24 = String string=""
+    v25 = String string="x"
+    v26 = Call v5, -, v7, v7 calleeName="rope"
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v28 = Call v5, -, v7, v11 calleeName="rope"
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v30 = String string="-"
+    v31 = Call v5, -, v9, v30 calleeName="rope"
+    v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v33 = Call v5, -, v11, v19 calleeName="rope"
+    v34 = Convert v33 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v35 = Call v5, -, v32, v34 calleeName="rope"
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v37 = String string="\u{d83d}"
+    v38 = String string="\u{de00}"
+    v39 = Call v5, -, v37, v38 calleeName="rope"
+    v40 = Convert v39 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v41 = Add v7, v9
+    v42 = Add v41, v11
+    v43 = PropGet v42 key="slice"
+    v44 = Integer integer=3
+    v45 = Integer integer=24
+    v46 = Call v43, v42, v44, v45 calleeKey="slice" calleeName="slice"
+    v47 = Convert v46 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v48 = String string="plain textplain textplain text"
+    v49 = PropGet v48 key="substring"
+    v50 = Integer integer=5
+    v51 = Integer integer=27
+    v52 = Call v49, v48, v50, v51 calleeKey="substring" calleeName="substring"
+    v53 = Convert v52 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v54 = PropGet v11 key="slice"
+    v55 = Integer integer=2
+    v56 = Call v54, v11, v55 calleeKey="slice" calleeName="pairs.slice"
+    v57 = Convert v56 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v58 = NewArray v24, v25, v7, v9, v11, v19, v21, v23, v27, v29, v36, v40, v47, v53, v57 contents=undefined|null|string
+    v59 = Convert v58 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v60 = IteratorOpen v59
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v62 = IteratorResume v60
+    v63 = ResultAt v62
+    v64 = ResultAt v62 index=1
+    Branch v63 -> taken b2(), notTaken b3()
+  b2():
+    v65 = Data data=d0
+    v66 = Call v1, -, v65 calleeName="walk"
+    v67 = Data data=d1
+    v68 = Call v3, -, v67 calleeName="takeApart"
+    v69 = Builtin builtin=Set
+    v70 = Data data=d2
+    v71 = Construct v69, -, v70 calleeName="Set"
+    v72 = Convert v71 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v73 = Call v1, -, v72 calleeName="walk"
+    v74 = Builtin builtin=Map
+    v75 = Data data=d3
+    v76 = Construct v74, -, v75 calleeName="Map"
+    v77 = Convert v76 declared={type=undefined|null|Map<number, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v78 = PropGet v77 key="keys"
+    v79 = Call v78, v77 calleeKey="keys" calleeName="keys"
+    v80 = Convert v79 declared={type=undefined|null|object flags=[IsExpected]}
+    v81 = Call v3, -, v80 calleeName="takeApart"
+    v82 = Undefined
+    Return v82
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v83 = Convert v64 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v84 = Call v1, -, v83 calleeName="walk"
+    v85 = Call v3, -, v83 calleeName="takeApart"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v60:
+    v86 = CatchException
+    Rethrow v86
+}
+function f1 name="walk" module=m0 position=542 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Data data=d4
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Convert v0 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v4 = IteratorOpen v3
+    LoopHint
+    v6 = PropGet v2 key="join"
+    v7 = String string=","
+    v8 = Call v6, v2, v7 calleeKey="join" calleeName="parts.join"
+    ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f2 name="takeApart" module=m0 position=731 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v2 = IteratorOpen v1 elementCount=2 [isDestructuring, hasRest]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = IteratorResume v2 stepIndex=1
+    Jump -> next b2()
+  b2() handler=b3():
+    LoopHint
+    v6 = IteratorResume v2 stepIndex=2
+    Jump -> next b2()
+  b3() role=IterationCleanup subject=v2:
+    v7 = CatchException
+    Rethrow v7
+}
+function f3 name="rope" module=m0 position=1137 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: takeApart
+# CHECK-LABEL: function {{*}}name="takeApart"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 171, patchpoints: 26, rare instructions: 32, polls: 3
+# CHECK-NEXT: end of function f2

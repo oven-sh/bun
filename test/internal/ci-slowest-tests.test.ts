@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import { entryOfProgram, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -152,6 +154,8 @@ describe("phase-header boundary", () => {
     [true, `--- napi prebuild: 3 addon(s), 23.9s`],
     [true, `--- [52-257/829] 206 files in parallel (3\u00d7)`],
     [true, `--- Running 444 parallel-safe tests (3-wide)`],
+    [true, `--- Running 217 programs compiled ahead of time (3-wide)`],
+    [true, `--- Running 9 files that build many executables (3-wide)`],
     [true, `--- End`],
     [true, `--- Summary`],
     [true, `--- Received SIGTERM, exiting...`],
@@ -164,6 +168,19 @@ describe("phase-header boundary", () => {
   ])("%p %s", (expected, body) => {
     expect(isPhaseGroupHeader(body)).toBe(expected);
   });
+});
+
+test("what .buildkite/update-test-durations.yml runs with node imports no TypeScript", () => {
+  const root = join(import.meta.dir, "..", "..");
+  const importsOf = (file: string): string[] =>
+    [...readFileSync(file, "utf8").matchAll(/^import .* from "(\.[^"]+)";$/gm)].flatMap(([, path]) => {
+      const imported = join(dirname(file), path);
+      return /\.m?ts$/.test(imported) ? [imported] : [imported, ...importsOf(imported)];
+    });
+  const commands = readFileSync(join(root, ".buildkite", "update-test-durations.yml"), "utf8");
+  const scripts = [...commands.matchAll(/^ +node (scripts\/\S+)/gm)].map(([, script]) => script);
+  expect(scripts).toContain("scripts/update-parallel-allowlist.mjs");
+  expect(scripts.filter(script => importsOf(join(root, script)).some(file => /\.m?ts$/.test(file)))).toEqual([]);
 });
 
 describe("scripts/update-test-durations.mjs parseLog", () => {
@@ -192,5 +209,37 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
       ["test/js/node/test/parallel/p1.js", 3],
       ["test/js/node/test/parallel/p2.js", 500],
     ]);
+  });
+
+  test("does not charge the programs compiled ahead of time to the preceding test, and times them by what they say", () => {
+    // A program's line says what it took: its own build or its share of one, and its run.
+    const log = [
+      bk(0, `--- ${gray("[1/5]")} test/last-serial.test.ts`),
+      bk(700, `--- Running 3 programs compiled ahead of time (4-wide)`),
+      bk(90000, `${gray("[2/5]")} test/aot/parallel/a.ts ${gray("(compile 1400 ms, run 14 ms)")}`),
+      bk(90001, `${gray("[3/5]")} test/aot/parallel/b/main.ts ${gray("(compile 2990 ms, run 9 ms)")}`),
+      bk(90002, `${gray("[4/5]")} test/aot/parallel/workers/c.mjs ${gray("(compile 9400 ms, run 310 ms)")}`),
+      bk(90100, `--- ${gray("[5/5]")} vendor/x/package.json`),
+      bk(90300, `--- End`),
+    ].join("\r\r\n");
+
+    expect(parseDurations(log)).toEqual([
+      ["test/last-serial.test.ts", 700],
+      ["test/aot/parallel/a.ts", 1414],
+      ["test/aot/parallel/b/main.ts", 2999],
+      ["test/aot/parallel/workers/c.mjs", 9710],
+      ["vendor/x/package.json", 200],
+    ]);
+    expect(Object.fromEntries(parseLog(log))).toEqual({
+      "test/last-serial.test.ts": 700,
+      "vendor/x/package.json": 200,
+    });
+  });
+
+  test("a program compiled ahead of time has an entry once it took long, and keeps it", () => {
+    expect(entryOfProgram({ default: 400, asan: 2100 }, undefined)).toBeUndefined();
+    expect(entryOfProgram({ default: 900, asan: 4000 }, undefined)).toEqual({ default: 900, asan: 4000 });
+    // It shares a build since it has the entry, and takes little there.
+    expect(entryOfProgram({ default: 300, asan: 1200 }, { default: 900 })).toEqual({ default: 900 });
   });
 });

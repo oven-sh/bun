@@ -1,9 +1,27 @@
-const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+type DomainConversion = (domain: string) => string;
+const [domainToASCII, domainToUnicode, idnaToASCII]: [DomainConversion, DomainConversion, DomainConversion] = $cpp(
+  "NodeURL.cpp",
+  "Bun::createNodeURLBinding",
+);
 
-function urlToHttpOptions(url) {
-  const options = {
+interface HttpOptions {
+  __proto__: null;
+  protocol: string;
+  hostname: string;
+  hash: string;
+  search: string;
+  pathname: string;
+  path: string;
+  href: string;
+  port?: number;
+  auth?: string;
+}
+
+function urlToHttpOptions(url: URL) {
+  const options: HttpOptions = {
     __proto__: null,
-    ...url,
+    // Own properties only: the members of a URL are accessors of its prototype.
+    ...(url as object),
     protocol: url.protocol,
     hostname:
       typeof url.hostname === "string" && url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname,
@@ -18,7 +36,7 @@ function urlToHttpOptions(url) {
     options.port = Number(port);
   }
   const username = url.username;
-  let password;
+  let password: string | undefined;
   if (username || (password = url.password)) {
     options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password ?? url.password)}`;
   }

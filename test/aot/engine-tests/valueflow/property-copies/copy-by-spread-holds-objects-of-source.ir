@@ -1,0 +1,446 @@
+# What a copy holds is what the source holds: the same inner objects, arrays and closures, not copies of them and not places in the copy's own cell.
+# FORM: AsRead
+# RUN: lower-to-air size
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="copy-by-spread-holds-objects-of-source.js" displayPath="copy-by-spread-holds-objects-of-source.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=2211 fields=[{key="limits" declared={type=undefined|null|L6 flags=[IsExpected]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="retries" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="tags" declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[2, 1, 0, 3] ownFieldCount=4
+layout L1 module=m0 position=319 fields=[{key="deep" declared={type=undefined|null|L4 flags=[IsExpected]} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired]}, {key="inner" declared={type=undefined|null|L3 flags=[IsExpected]} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 2, 3, 0] ownFieldCount=4
+layout L2 module=m0 position=445 fields=[{key="add" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="get" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired]}, {key="make" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[2, 1, 0, 3] ownFieldCount=4
+layout L3 module=m0 position=335 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L4 module=m0 position=379 fields=[{key="deeper" declared={type=anything}}] ownFieldCount=1
+layout L5 module=m0 position=389 fields=[{key="deepest" declared={type=anything}}] ownFieldCount=1
+layout L6 module=m0 position=2250 fields=[{key="high" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="low" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L7 module=m0 position=2651 fields=[{key="extra" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L8 module=m0 position=527 fields=[{key="from" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L9
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Object{layout=L3 members=[{key="x" value=String{value="another"}}, {key="y" value=Number{}}]} module=m0
+data d3 root=Object{layout=L0 members=[{key="retries" value=Number{value=3}}, {key="name" value=String{value="default"}}, {key="limits" value=Object{layout=L6 members=[{key="low" value=Number{value=1}}, {key="high" value=Number{value=9}}]}}, {key="tags" value=Array{contents=undefined|null|string elements=[String{value="a"}, String{value="b"}]}}]} module=m0
+variable g0 name="defaults" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = Data data=d0
+    v13 = Convert v12 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|Array flags=[IsExpected]}
+    v15 = Data data=d1
+    v16 = Convert v15 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v17 = Convert v16 declared={type=undefined|null|Array flags=[IsExpected]}
+    v18 = Integer
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v19)
+  b1(v20):
+    LoopHint
+    v22 = Integer integer=5
+    v23 = Less v20, v22
+    Branch v23 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v24):
+    v25 = Call v5, -, v24 calleeName="nested"
+    v26 = Convert v25 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v27 = Call v1, -, v26 calleeName="copy"
+    v28 = Convert v27 declared={type=undefined|null|object flags=[IsExpected]}
+    v29 = String string="the same inner objects "
+    v30 = Add v29, v24
+    v31 = String string=": "
+    v32 = Add v30, v31
+    v33 = PropGet v28 key="inner"
+    v34 = PropGet v26 key="inner"
+    v35 = Convert v34 declared={type=undefined|null|L3 flags=[IsExpected]}
+    v36 = StrictEq v33, v35
+    v37 = Add v32, v36
+    v38 = String string=" "
+    v39 = Add v37, v38
+    v40 = PropGet v28 key="list"
+    v41 = PropGet v26 key="list"
+    v42 = Convert v41 declared={type=undefined|null|Array flags=[IsExpected]}
+    v43 = StrictEq v40, v42
+    v44 = Add v39, v43
+    v45 = String string=" "
+    v46 = Add v44, v45
+    v47 = PropGet v28 key="deep"
+    v48 = PropGet v26 key="deep"
+    v49 = Convert v48 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v50 = StrictEq v47, v49
+    v51 = Add v46, v50
+    v52 = String string=" "
+    v53 = Add v51, v52
+    v54 = PropGet v28 key="deep"
+    v55 = Convert v54 declared={type=undefined|null|number|string|symbol|bigint|L4 flags=[IsExpected]}
+    v56 = PropGet v55 key="deeper"
+    v57 = PropGet v26 key="deep"
+    v58 = Convert v57 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v59 = PropGet v58 key="deeper"
+    v60 = Convert v59 declared={type=undefined|null|L5 flags=[IsExpected]}
+    v61 = StrictEq v56, v60
+    v62 = Add v53, v61
+    v63 = PropGet v28 key="inner"
+    v64 = PropGet v26 key="list"
+    v65 = PropGet v26 key="deep"
+    v66 = Convert v65 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v67 = PropGet v66 key="deeper"
+    v68 = Convert v67 declared={type=undefined|null|L5 flags=[IsExpected]}
+    v69 = String string="deep"
+    PropSet v68, v69 key="deepest"
+    v71 = String string="seen on both sides "
+    v72 = Add v71, v24
+    v73 = String string=": "
+    v74 = Add v72, v73
+    v75 = PropGet v26 key="inner"
+    v76 = Convert v75 declared={type=undefined|null|L3 flags=[IsExpected]}
+    v77 = PropGet v76 key="x"
+    v78 = Add v74, v77
+    v79 = String string=" | "
+    v80 = Add v78, v79
+    v81 = PropGet v28 key="list"
+    v82 = Add v80, v81
+    v83 = PropGet v28 key="deep"
+    v84 = Convert v83 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v85 = PropGet v84 key="deeper"
+    v86 = Data data=d2
+    PropSet v28, v86 key="inner"
+    v88 = String string="replaced in the copy alone "
+    v89 = Add v88, v24
+    v90 = String string=": "
+    v91 = Add v89, v90
+    v92 = Builtin builtin=JSON
+    v93 = PropGet v92 key="stringify"
+    v94 = Convert v93 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v95 = PropGet v26 key="inner"
+    v96 = Convert v95 declared={type=undefined|null|L3 flags=[IsExpected]}
+    v97 = Call v94, v92, v96 calleeKey="stringify" calleeName="JSON.stringify"
+    v98 = Convert v97 declared={type=undefined|null|string flags=[IsExpected]}
+    v99 = Add v91, v98
+    v100 = Builtin builtin=JSON
+    v101 = PropGet v100 key="stringify"
+    v102 = Convert v101 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v103 = PropGet v28 key="inner"
+    v104 = Call v102, v100, v103 calleeKey="stringify" calleeName="JSON.stringify"
+    v105 = String string="replaced in the source alone "
+    v106 = Add v105, v24
+    v107 = String string=": "
+    v108 = Add v106, v107
+    v109 = Builtin builtin=JSON
+    v110 = PropGet v109 key="stringify"
+    v111 = Convert v110 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v112 = PropGet v28 key="deep"
+    v113 = Call v111, v109, v112 calleeKey="stringify" calleeName="JSON.stringify"
+    v114 = Convert v113 declared={type=undefined|null|string flags=[IsExpected]}
+    v115 = Add v108, v114
+    v116 = PropGet v17 key="push"
+    v117 = Convert v116 declared={type=undefined|null|function flags=[IsExpected]}
+    v118 = Call v3, -, v28, v24 calleeName="copyAndAdd"
+    v119 = Call v1, -, v28 calleeName="copy"
+    v120 = Convert v119 declared={type=undefined|null|object flags=[IsExpected]}
+    v121 = Call v1, -, v120 calleeName="copy"
+    v122 = Call v117, v17, v28, v118, v121 calleeKey="push" calleeName="kept.push"
+    v123 = Increment v24
+    v124 = Convert v123 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v124)
+  b3(v125):
+    v126 = Integer
+    v127 = Convert v126 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v127)
+  b4(v128):
+    LoopHint
+    v130 = Integer integer=5
+    v131 = Less v128, v130
+    Branch v131 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v132):
+    v133 = Call v7, -, v132 calleeName="withClosures"
+    v134 = Convert v133 declared={type=undefined|null|L2 flags=[IsExpected]}
+    v135 = Call v3, -, v134, v132 calleeName="copyAndAdd"
+    v136 = Convert v135 declared={type=undefined|null|object flags=[IsExpected]}
+    v137 = String string="closures "
+    v138 = Add v137, v132
+    v139 = String string=": "
+    v140 = Add v138, v139
+    v141 = PropGet v136 key="get"
+    v142 = Convert v141 declared={type=undefined|null|function flags=[IsExpected]}
+    v143 = PropGet v134 key="get"
+    v144 = Convert v143 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    v145 = StrictEq v142, v144
+    v146 = Add v140, v145
+    v147 = String string=" "
+    v148 = Add v146, v147
+    v149 = PropGet v136 key="add"
+    v150 = Convert v149 declared={type=undefined|null|function flags=[IsExpected]}
+    v151 = PropGet v134 key="add"
+    v152 = Convert v151 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v153 = StrictEq v150, v152
+    v154 = Add v148, v153
+    v155 = String string=" "
+    v156 = Add v154, v155
+    v157 = PropGet v136 key="get"
+    v158 = Convert v157 declared={type=undefined|null|function flags=[IsExpected]}
+    v159 = Call v158, v136 calleeKey="get" calleeName="made.get"
+    v160 = Add v156, v159
+    v161 = String string=" "
+    v162 = Add v160, v161
+    v163 = PropGet v136 key="add"
+    v164 = Convert v163 declared={type=undefined|null|function flags=[IsExpected]}
+    v165 = Integer integer=10
+    v166 = Call v164, v136, v165 calleeKey="add" calleeName="made.add"
+    v167 = Add v162, v166
+    v168 = String string=" "
+    v169 = Add v167, v168
+    v170 = Builtin builtin=JSON
+    v171 = PropGet v170 key="stringify"
+    v172 = Convert v171 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v173 = PropGet v136 key="make"
+    v174 = Convert v173 declared={type=undefined|null|function flags=[IsExpected]}
+    v175 = Call v174, v136 calleeKey="make" calleeName="made.make"
+    v176 = Call v172, v170, v175 calleeKey="stringify" calleeName="JSON.stringify"
+    v177 = Convert v176 declared={type=undefined|null|string flags=[IsExpected]}
+    v178 = Add v169, v177
+    v179 = Integer integer=100
+    PropSet v136, v179 key="id"
+    v181 = String string="this is the copy "
+    v182 = Add v181, v132
+    v183 = String string=": "
+    v184 = Add v182, v183
+    v185 = PropGet v136 key="add"
+    v186 = Convert v185 declared={type=undefined|null|function flags=[IsExpected]}
+    v187 = Integer integer=1
+    v188 = Call v186, v136, v187 calleeKey="add" calleeName="made.add"
+    v189 = PropGet v134 key="add"
+    v190 = Increment v132
+    v191 = Convert v190 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v191)
+  b6(v192):
+    v193 = Integer
+    v194 = Convert v193 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v194)
+  b7(v195):
+    LoopHint
+    v197 = Integer integer=5
+    v198 = Less v195, v197
+    Branch v198 -> taken b8(| 0), notTaken b12(| 0)
+  b8(v199):
+    v200 = Boolean boolean=true
+    v201 = ToBoolean v200
+    Branch v201 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v202):
+    v203 = Builtin builtin=GlobalThis
+    v204 = PropGet v203 key="Bun" [isFreeName]
+    Jump -> next b11()
+  b10(v205):
+    Jump -> next b11()
+  b11():
+    v206 = Increment v199
+    v207 = Convert v206 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v207)
+  b12(v208):
+    v209 = Builtin builtin=JSON
+    v210 = PropGet v209 key="stringify"
+    v211 = Convert v210 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v212 = Call v211, v209, v17 calleeKey="stringify" calleeName="JSON.stringify"
+    v213 = Data data=d3
+    v214 = Convert v213 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v214 variable=g0
+    v216 = Integer
+    v217 = Convert v216 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b13(v217)
+  b13(v218):
+    LoopHint
+    v220 = Integer integer=4
+    v221 = Less v218, v220
+    Branch v221 -> taken b14(| 0), notTaken b18(| 0)
+  b14(v222):
+    v223 = Call v11 calleeName="fresh"
+    v224 = Convert v223 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v225 = PropGet v224 key="retries"
+    v226 = Add v225, v222
+    v227 = Convert v226 declared={type=number flags=[IsExpected]}
+    PropSet v224, v227 key="retries"
+    v229 = PropGet v224 key="tags"
+    v230 = Convert v229 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v231 = PropGet v230 key="push"
+    v232 = Convert v231 declared={type=undefined|null|function flags=[IsExpected]}
+    v233 = String string="t"
+    v234 = Add v233, v222
+    v235 = Call v232, v230, v234 calleeKey="push" calleeName="one.tags.push"
+    v236 = PropGet v224 key="limits"
+    v237 = Convert v236 declared={type=undefined|null|L6 flags=[IsExpected]}
+    v238 = PropGet v237 key="high"
+    v239 = Add v238, v222
+    v240 = Convert v239 declared={type=number flags=[IsExpected]}
+    PropSet v237, v240 key="high"
+    v242 = String string="defaults "
+    v243 = Add v242, v222
+    v244 = String string=": "
+    v245 = Add v243, v244
+    v246 = Builtin builtin=JSON
+    v247 = PropGet v246 key="stringify"
+    v248 = Convert v247 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v249 = Call v248, v246, v224 calleeKey="stringify" calleeName="JSON.stringify"
+    v250 = Convert v249 declared={type=undefined|null|string flags=[IsExpected]}
+    v251 = Add v245, v250
+    v252 = String string=" "
+    v253 = Add v251, v252
+    v254 = Builtin builtin=JSON
+    v255 = PropGet v254 key="stringify"
+    v256 = Convert v255 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v257 = Call v256, v254, v214 calleeKey="stringify" calleeName="JSON.stringify"
+    v258 = Convert v257 declared={type=undefined|null|string flags=[IsExpected]}
+    v259 = Add v253, v258
+    v260 = String string=" "
+    v261 = Add v259, v260
+    v262 = Builtin builtin=JSON
+    v263 = PropGet v262 key="stringify"
+    v264 = Convert v263 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v265 = NewObject layout=L7
+    v266 = Convert v222 declared={type=number flags=[IsExpected]}
+    PropDefine v265, v266 key="extra"
+    v268 = FinishObject v265
+    v269 = Call v9, -, v268 calleeName="configure"
+    v270 = Call v264, v262, v269 calleeKey="stringify" calleeName="JSON.stringify"
+    v271 = Convert v270 declared={type=undefined|null|string flags=[IsExpected]}
+    v272 = Add v261, v271
+    v273 = Builtin builtin=JSON
+    v274 = PropGet v273 key="stringify"
+    v275 = Convert v274 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v276 = Integer integer=1
+    v277 = BitAnd v222, v276
+    v278 = ToBoolean v277
+    Branch v278 -> taken b15(| 0), notTaken b16(| 0)
+  b15(v279):
+    v280 = Undefined
+    Jump -> next b17(v280)
+  b16(v281):
+    v282 = Null
+    Jump -> next b17(v282)
+  b17(v283):
+    v284 = Call v9, -, v283 calleeName="configure"
+    v285 = Increment v222
+    v286 = Convert v285 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b13(v286)
+  b18(v287):
+    v288 = Builtin builtin=GlobalThis
+    v289 = PropGet v288 key="console" [isFreeName]
+    v290 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v291 = PropGet v290 key="join"
+    v292 = Undefined
+    Return v292
+}
+function f1 name="copy" module=m0 position=168 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = CopyObject v0
+    Return v1
+}
+function f2 name="copyAndAdd" module=m0 position=216 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = CopyObject v0
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    PropDefine v2, v3 key="added"
+    Return v2
+}
+function f3 name="nested" module=m0 position=291 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = NewObject layout=L3
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    PropDefine v2, v4 key="y"
+    v6 = FinishObject v2
+    v7 = Convert v6 declared={type=undefined|null|L3 flags=[IsExpected]}
+    v8 = NewObject -, v1 layout=L1 fields=[1]
+    PropDefine v8, v7 key="inner"
+    v10 = Integer integer=1
+    v11 = Add v1, v10
+    v12 = NewArray v1, v11 contents=anything
+    v13 = Convert v12 declared={type=undefined|null|Array flags=[IsExpected]}
+    PropDefine v8, v13 key="list"
+    v15 = NewObject -, v1 layout=L5 fields=[0]
+    v16 = FinishObject v15
+    v17 = NewObject layout=L4
+    PropDefine v17, v16 key="deeper"
+    v19 = FinishObject v17
+    v20 = Convert v19 declared={type=undefined|null|L4 flags=[IsExpected]}
+    PropDefine v8, v20 key="deep"
+    v22 = FinishObject v8
+    v23 = Convert v22 declared={type=undefined|null|L1 flags=[IsExpected]}
+    Return v23
+}
+function f4 name="withClosures" module=m0 position=411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = NewClosure v1 function=f7
+    v3 = Convert v2 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    v4 = NewObject -, v1 layout=L2 fields=[2]
+    PropDefine v4, v3 key="get"
+    v6 = NewClosure function=f8
+    v7 = Convert v6 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    PropDefine v4, v7 key="add"
+    v9 = NewClosure v1 function=f9
+    v10 = Convert v9 declared={type=undefined|null|function|f9 flags=[IsExpected]}
+    PropDefine v4, v10 key="make"
+    v12 = FinishObject v4
+    v13 = Convert v12 declared={type=undefined|null|L2 flags=[IsExpected]}
+    Return v13
+}
+function f5 name="configure" module=m0 position=2291 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="defaults"
+    v3 = NewObject layout=L9
+    CopyDataProperties v3, v2
+    CopyDataProperties v3, v0
+    v6 = FinishObject v3
+    Return v6
+}
+function f6 name="fresh" module=m0 position=2363 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="defaults"
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v1
+    v4 = FinishObject v2
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v5
+}
+function f7 name="get" module=m0 position=459 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    Return v1
+}
+function f8 name="add" module=m0 position=468 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=undefined|null|L2 flags=[IsExpected]}
+    v3 = PropGet v2 key="id"
+    v4 = Add v3, v1
+    Return v4
+}
+function f9 name="make" module=m0 position=506 captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|L8 flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = NewObject -, v1 layout=L8 fields=[0]
+    v3 = FinishObject v2
+    v4 = Convert v3 declared={type=undefined|null|L8 flags=[IsExpected]}
+    Return v4
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 configure
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 642, patchpoints: 68, rare instructions: 952, polls: 4
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="configure"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 36, patchpoints: 4, rare instructions: 2
+# CHECK-NEXT: end of function f5

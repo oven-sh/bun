@@ -1,0 +1,364 @@
+# Many shapes, made one after the other, asked for the same names, and one shape asked for many names: whatever remembers a shape and a key has to tell the pairs apart.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="megamorphic-key-reads.ts" displayPath="megamorphic-key-reads.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=934
+data d0 root=Array{contents=undefined|null|string} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=undefined|null|Map<anything, number>} module=m0
+data d3 root=Object{layout=L0} module=m0
+variable g0 name="names" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="symbols" module=m0 declared={type=undefined|null|absent|Array<undefined|null|symbol> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="wrong" module=m0 declared={type=number|absent}
+variable g3 name="asked" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Data data=d0
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v11 variable=g0
+    v13 = Integer
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v14)
+  b1(v15: number):
+    LoopHint
+    v17 = Integer integer=48
+    v18 = Less v15, v17
+    Branch v18 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v19):
+    v20 = PropGet v11 key="push"
+    v21 = String string="n"
+    v22 = Add v21, v19
+    v23 = Call v20, v11, v22 calleeKey="push" calleeName="names.push"
+    v24 = Increment v19
+    v25 = Convert v24 declared={type=number}
+    Jump -> next b1(v25)
+  b3(v26):
+    v27 = Builtin builtin=Symbol
+    v28 = String string="s0"
+    v29 = Call v27, -, v28 calleeName="Symbol" callNumber=1
+    v30 = Convert v29 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v31 = Builtin builtin=Symbol
+    v32 = String string="s1"
+    v33 = Call v31, -, v32 calleeName="Symbol" callNumber=2
+    v34 = Convert v33 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v35 = Builtin builtin=Symbol
+    v36 = String string="s2"
+    v37 = Call v35, -, v36 calleeName="Symbol" callNumber=3
+    v38 = Convert v37 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v39 = NewArray v30, v34, v38 contents=undefined|null|symbol
+    v40 = Convert v39 declared={type=undefined|null|Array<undefined|null|symbol> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v40 variable=g1
+    v42 = Integer
+    v43 = Convert v42 declared={type=number}
+    PutModuleVariable v43 variable=g2
+    v45 = Integer
+    v46 = Convert v45 declared={type=number}
+    PutModuleVariable v46 variable=g3
+    v48 = Integer integer=400
+    v49 = Convert v48 declared={type=400}
+    v50 = Data data=d1
+    v51 = Convert v50 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v52 = Data data=d2
+    v53 = Convert v52 declared={type=undefined|null|Array<undefined|null|Map<anything, number>> flags=[OmitsNull, OmitsUndefined]}
+    v54 = Integer
+    v55 = Convert v54 declared={type=number}
+    Jump -> next b4(v55)
+  b4(v56: number):
+    LoopHint
+    v58 = Less v56, v49
+    Branch v58 -> taken b5(| 0, 1), notTaken b6(| 0, 1)
+  b5(v59, v60):
+    v61 = PropGet v51 key="push"
+    v62 = Call v7, -, v59 calleeName="make"
+    v63 = Call v61, v51, v62 calleeKey="push" calleeName="objects.push"
+    v64 = PropGet v53 key="push"
+    v65 = Call v9, -, v59 calleeName="expected"
+    v66 = Convert v65 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]}
+    v67 = Call v64, v53, v66 calleeKey="push" calleeName="maps.push"
+    v68 = Increment v59
+    v69 = Convert v68 declared={type=number}
+    Jump -> next b4(v69)
+  b6(v70, v71):
+    v72 = NewArray contents=anything
+    AppendSpread v72, v11
+    AppendSpread v72, v40
+    v75 = Convert v72 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v76 = Integer
+    v77 = Convert v76 declared={type=number}
+    Jump -> next b7(v77)
+  b7(v78: number):
+    v79 = Integer
+    v80 = Convert v79 declared={type=number}
+    Jump -> next b8(v80)
+  b8(v81: number):
+    v82 = Convert v81 declared={type=i32 flags=[IsExpected]}
+    v83 = Less v82, v71
+    Branch v83 -> taken b9(| 0, 1), notTaken b15(| 0, 1)
+  b9(v84, v85):
+    v86 = IteratorOpen v75
+    Jump -> next b10()
+  b10():
+    LoopHint
+    v88 = IteratorResume v86
+    v89 = ResultAt v88
+    v90 = ResultAt v88 index=1
+    Branch v89 -> taken b11(), notTaken b12()
+  b11():
+    v91 = Increment v84
+    v92 = Convert v91 declared={type=number}
+    Jump -> next b8(v92)
+  b12():
+    Jump -> next b13()
+  b13() handler=b14():
+    v93 = String string="read"
+    v94 = Convert v84 declared={type=i32 flags=[IsExpected]}
+    v95 = ElemGet v51, v94
+    v96 = Call v1, -, v95, v90 calleeName="read"
+    v97 = ElemGet v53, v94
+    v98 = Convert v97 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v99 = PropGet v98 key="get"
+    v100 = Call v99, v98, v90 calleeKey="get" calleeName="maps[s].get"
+    v101 = Convert v100 declared={type=undefined|number} illTypedCause=FromLooseType
+    v102 = Call v5, -, v93, v96, v101 calleeName="expect"
+    v103 = String string="in"
+    v104 = ElemGet v51, v94
+    v105 = Call v3, -, v104, v90 calleeName="isIn"
+    v106 = Convert v105 declared={type=boolean}
+    v107 = ElemGet v53, v94
+    v108 = Convert v107 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v109 = PropGet v108 key="has"
+    v110 = Call v109, v108, v90 calleeKey="has" calleeName="maps[s].has"
+    v111 = Convert v110 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v112 = Call v5, -, v103, v106, v111 calleeName="expect"
+    Jump -> next b10()
+  b14() role=IterationCleanup subject=v86:
+    v113 = CatchException
+    Rethrow v113
+  b15(v114, v115):
+    v116 = IteratorOpen v75
+    Jump -> next b16()
+  b16():
+    v117 = IteratorResume v116
+    v118 = ResultAt v117
+    v119 = ResultAt v117 index=1
+    Branch v118 -> taken b17(), notTaken b31()
+  b17():
+    v120 = Integer
+    v121 = Convert v120 declared={type=number}
+    Jump -> next b18(v121)
+  b18(v122: number):
+    LoopHint
+    v124 = Convert v122 declared={type=i32 flags=[IsExpected]}
+    v125 = Less v124, v115
+    Branch v125 -> taken b19(| 0, 1), notTaken b30(| 0, 1)
+  b19(v126, v127):
+    v128 = Convert v126 declared={type=i32 flags=[IsExpected]}
+    v129 = Call v7, -, v128 calleeName="make"
+    v130 = Convert v129 declared={type=undefined|null|object flags=[IsExpected]}
+    v131 = Call v9, -, v128 calleeName="expected"
+    v132 = Convert v131 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]}
+    v133 = IteratorOpen v75
+    Jump -> next b20()
+  b20():
+    LoopHint
+    v135 = IteratorResume v133
+    v136 = ResultAt v135
+    v137 = ResultAt v135 index=1
+    Branch v136 -> taken b21(), notTaken b27()
+  b21():
+    v138 = String string="names of the twin"
+    v139 = Builtin builtin=Reflect
+    v140 = Builtin builtin=ReflectOwnKeys
+    v141 = Call v140, v139, v130 calleeName="Reflect.ownKeys"
+    v142 = Convert v141 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v143 = PropGet v142 key="length"
+    v144 = PropGet v75 key="length"
+    v145 = Convert v144 declared={type=number} illTypedCause=Assertion
+    v146 = Integer integer=1
+    v147 = Add v145, v146
+    v148 = Call v5, -, v138, v143, v147 calleeName="expect"
+    v149 = IteratorOpen v75
+    Jump -> next b22()
+  b22():
+    LoopHint
+    v151 = IteratorResume v149
+    v152 = ResultAt v151
+    v153 = ResultAt v151 index=1
+    Branch v152 -> taken b23(), notTaken b24()
+  b23():
+    v154 = Integer integer=3
+    v155 = Add v128, v154
+    v156 = Convert v155 declared={type=number}
+    Jump -> next b18(v156)
+  b24():
+    Jump -> next b25()
+  b25() handler=b26():
+    v157 = String string="untouched"
+    v158 = ElemGet v51, v128
+    v159 = Call v1, -, v158, v153 calleeName="read"
+    v160 = ElemGet v53, v128
+    v161 = Convert v160 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v162 = PropGet v161 key="get"
+    v163 = Call v162, v161, v153 calleeKey="get" calleeName="maps[s].get"
+    v164 = Convert v163 declared={type=undefined|number} illTypedCause=FromLooseType
+    v165 = Call v5, -, v157, v159, v164 calleeName="expect"
+    Jump -> next b22()
+  b26() role=IterationCleanup subject=v149:
+    v166 = CatchException
+    Rethrow v166
+  b27():
+    Jump -> next b28()
+  b28() handler=b29():
+    v167 = String string="stored"
+    v168 = Call v1, -, v130, v137 calleeName="read"
+    v169 = PropGet v132 key="get"
+    v170 = Call v169, v132, v137 calleeKey="get" calleeName="map.get"
+    v171 = Convert v170 declared={type=undefined|number} illTypedCause=FromLooseType
+    v172 = Call v5, -, v167, v168, v171 calleeName="expect"
+    Jump -> next b20()
+  b29() role=IterationCleanup subject=v133:
+    v173 = CatchException
+    Rethrow v173
+  b30(v174, v175):
+    v176 = Increment v78
+    v177 = Convert v176 declared={type=number}
+    Jump -> next b7(v177)
+  b31():
+    Jump -> next b32()
+  b32() handler=b36():
+    v178 = Integer
+    v179 = Convert v178 declared={type=number}
+    Jump -> next b33(v179)
+  b33(v180: number) handler=b36():
+    LoopHint
+    v182 = Convert v180 declared={type=i32 flags=[IsExpected]}
+    v183 = Less v182, v115
+    Branch v183 -> taken b34(| 0, 1), notTaken b35(| 0, 1)
+  b34(v184, v185) handler=b36():
+    v186 = String string="read by key"
+    v187 = Convert v184 declared={type=i32 flags=[IsExpected]}
+    v188 = ElemGet v51, v187
+    v189 = Call v1, -, v188, v119 calleeName="read"
+    v190 = ElemGet v53, v187
+    v191 = Convert v190 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v192 = PropGet v191 key="get"
+    v193 = Call v192, v191, v119 calleeKey="get" calleeName="maps[s].get"
+    v194 = Convert v193 declared={type=undefined|number} illTypedCause=FromLooseType
+    v195 = Call v5, -, v186, v189, v194 calleeName="expect"
+    v196 = String string="in by key"
+    v197 = ElemGet v51, v187
+    v198 = Call v3, -, v197, v119 calleeName="isIn"
+    v199 = Convert v198 declared={type=boolean}
+    v200 = ElemGet v53, v187
+    v201 = Convert v200 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v202 = PropGet v201 key="has"
+    v203 = Call v202, v201, v119 calleeKey="has" calleeName="maps[s].has"
+    v204 = Convert v203 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v205 = Call v5, -, v196, v199, v204 calleeName="expect"
+    v206 = Increment v187
+    v207 = Convert v206 declared={type=number}
+    Jump -> next b33(v207)
+  b35(v208, v209) handler=b36():
+    Jump -> next b16()
+  b36() role=IterationCleanup subject=v116:
+    v210 = CatchException
+    Rethrow v210
+}
+function f1 name="read" module=m0 position=170 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = ElemGet v2, v1
+    Return v3
+}
+function f2 name="isIn" module=m0 position=236 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="expect" module=m0 position=557 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g3
+    v4 = CheckInitialized v3 name="asked"
+    v5 = Increment v4
+    v6 = Convert v5 declared={type=number}
+    PutModuleVariable v6 variable=g3
+    v8 = StrictEq v1, v2
+    Branch v8 -> taken b1(| 0, 1), notTaken b2(| 0, 1)
+  b1(v9, v10):
+    Jump -> next b3()
+  b2(v11, v12):
+    v13 = GetModuleVariable variable=g2
+    v14 = CheckInitialized v13 name="wrong"
+    v15 = ToNumeric v14
+    v16 = Increment v15
+    v17 = Convert v16 declared={type=number}
+    PutModuleVariable v17 variable=g2
+    v19 = Builtin builtin=String
+    v20 = Call v19, -, v11 calleeName="String"
+    Jump -> next b3()
+  b3():
+    v21 = Undefined
+    Return v21
+}
+function f4 name="make" module=m0 position=878 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Data data=d3
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = Integer integer=7
+    v4 = Mod v0, v3
+    v5 = Convert v4 declared={type=number}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    LoopHint
+    v9 = GetModuleVariable variable=g1
+    v10 = CheckInitialized v9 name="symbols"
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="symbols"
+    v13 = PropGet v12 key="length"
+    v14 = Convert v13 declared={type=number} illTypedCause=Assertion
+    v15 = Mod v0, v14
+    v16 = ElemGet v10, v15
+    v17 = Convert v16 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v18 = Negate v0
+    ElemSet v2, v17, v18
+    Return v2
+}
+function f5 name="expected" module=m0 position=1209 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Map
+    v2 = Construct v1 calleeName="Map"
+    v3 = Convert v2 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v4 = Integer integer=7
+    v5 = Mod v0, v4
+    v6 = Convert v5 declared={type=number}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number}
+    LoopHint
+    v10 = PropGet v3 key="set"
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="symbols"
+    v13 = GetModuleVariable variable=g1
+    v14 = CheckInitialized v13 name="symbols"
+    v15 = PropGet v14 key="length"
+    v16 = Convert v15 declared={type=number} illTypedCause=Assertion
+    v17 = Mod v0, v16
+    v18 = ElemGet v12, v17
+    v19 = Convert v18 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v20 = Negate v0
+    v21 = Call v10, v3, v19, v20 calleeKey="set" calleeName="map.set"
+    Return v3
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 509, patchpoints: 67, rare instructions: 104, polls: 13
+# CHECK-NEXT: end of function f0

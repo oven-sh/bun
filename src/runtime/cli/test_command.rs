@@ -3623,6 +3623,35 @@ impl CommandLineReporter {
         }
     }
 
+    /// Writes the snapshot file of the test file that ran last. An error is printed under the name of that test file and counted.
+    #[optimize(size)]
+    pub(crate) fn end_snapshot_file(&mut self) {
+        if let Err(left) = self.jest.snapshots.end_file(&self.jest.files) {
+            self.snapshot_file_left_as_it_is(left);
+        }
+    }
+
+    #[cold]
+    fn snapshot_file_left_as_it_is(&mut self, left: LeftAsItIs) {
+        self.jest.current_file.print_if_needed();
+        let top_level_dir = FileSystem::instance().top_level_dir();
+        let quoted = |path: &[u8]| bun_fmt::quote(resolve_path::relative(top_level_dir, path));
+        match left {
+            LeftAsItIs::DoesNotParse(path) => pretty_error!(
+                "<r><red>error<r>: --update-snapshots left {} as it is: the file doesn't parse\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. A test that is skipped, filtered out, test.failing or a todo with a body does not.\n<blue>note<r><d>:<r> Fix the snapshot file, or delete it and run --update-snapshots again.\n",
+                quoted(&path)
+            ),
+            LeftAsItIs::NotWritable(err) => Output::err(
+                &err,
+                "Failed to remove the entries that no test uses from {}",
+                (quoted(&err.path),),
+            ),
+            LeftAsItIs::NotWritten(err) => Output::err(&err, "Failed to write {}", (quoted(&err.path),)),
+        }
+        Output::flush();
+        self.jest.unhandled_errors_between_tests += 1;
+    }
+
     /// `bun test --aot --coverage`: the files that ran as compiled code join those that JSC has counted.
     pub(crate) fn add_compiled_files_to_coverage(vm: &mut VirtualMachine) {
         let mut files: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
@@ -4818,7 +4847,6 @@ impl TestCommand {
         let runner = &mut reporter.jest;
         let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?
             && !left_by_workers.failed_to_write_inline_snapshots;
-        runner.snapshots.write_snapshot_file(&runner.files)?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
@@ -5563,24 +5591,7 @@ impl TestCommand {
                     .snapshots
                     .remove_obsolete(&reporter.jest.files, buntest)
                 {
-                    reporter.jest.current_file.print_if_needed();
-                    let top_level_dir = FileSystem::instance().top_level_dir();
-                    match left {
-                        LeftAsItIs::DoesNotParse(path) => pretty_error!(
-                            "<r><red>error<r>: --update-snapshots left {} as it is: the file doesn't parse\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. A test that is skipped, filtered out, test.failing or a todo with a body does not.\n<blue>note<r><d>:<r> Fix the snapshot file, or delete it and run --update-snapshots again.\n",
-                            bun_fmt::quote(resolve_path::relative(top_level_dir, &path))
-                        ),
-                        LeftAsItIs::NotWritable(err) => Output::err(
-                            &err,
-                            "Failed to remove the entries that no test uses from {}",
-                            (bun_fmt::quote(resolve_path::relative(
-                                top_level_dir,
-                                &err.path,
-                            )),),
-                        ),
-                    }
-                    Output::flush();
-                    reporter.jest.unhandled_errors_between_tests += 1;
+                    reporter.snapshot_file_left_as_it_is(left);
                 }
                 drop(buntest_strong);
             }
@@ -5642,6 +5653,8 @@ impl TestCommand {
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(Some(junit_file_name(file_path)), None);
         }
+        // After the last `exit_file`: no snapshot matcher of this test file can run anymore.
+        reporter.end_snapshot_file();
         Ok(())
     }
 }

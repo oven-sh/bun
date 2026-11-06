@@ -104,7 +104,7 @@ enum Ran {
     NotAllRegistered,
 }
 
-/// What the flush writes.
+/// What `end_file` writes.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Pending {
     Nothing,
@@ -113,11 +113,14 @@ enum Pending {
     WholeFile,
 }
 
-/// Why `--update-snapshots` left a snapshot file as it is.
+/// Why a snapshot file is not what the run of its test file asked for. Each error has the path of the snapshot file.
 pub(crate) enum LeftAsItIs {
-    /// Only a run of every test and hook to the end has all the entries that replace a file nobody can read. This has its path.
+    /// Only a run of every test and hook to the end has all the entries that replace a file nobody can read.
     DoesNotParse(Box<[u8]>),
+    /// `--update-snapshots` could not remove the entries that no test uses.
     NotWritable(bun_sys::Error),
+    /// The write after the tests failed.
+    NotWritten(bun_sys::Error),
 }
 
 pub(crate) enum Outcome {
@@ -147,6 +150,7 @@ pub(crate) struct Snapshots {
     /// The entries of the current file, in the order of the file, then the new ones.
     values: StringArrayHashMap<Entry>,
     counts: StringHashMap<usize>,
+    /// The snapshot file of the test file that runs, from its load to `end_file`. It never outlives its test file.
     _current_file: Option<File>,
     inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
@@ -301,7 +305,7 @@ fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
 
 impl Snapshots {
     /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
-    /// `writeSnapshotFile` tears them down on file switch.
+    /// `end_file` clears it.
     pub(crate) fn reset_counts(&mut self) {
         for v in self.counts.values_mut() {
             *v = 0;
@@ -375,16 +379,17 @@ impl Snapshots {
         })
     }
 
-    /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
+    /// Loads the running test's snapshot file at the first call of its test file. Never creates it.
     #[optimize(size)]
     pub(crate) fn format_of(&mut self, files: &FileList, expect: &Expect) -> Result<Format, Error> {
         let buntest_strong = expect.bun_test().ok_or(Error::SnapshotFailed)?;
         let buntest = buntest_strong.get();
         let file_id = buntest.file_id;
-        if let Some(file) = self._current_file.as_ref().filter(|file| file.id == file_id) {
+        if let Some(file) = self._current_file.as_ref() {
+            // `end_file` took the file of every test file before this one, and an `expect()` of those can't reach its test file anymore.
+            debug_assert!(file.id == file_id);
             return Ok(file.format);
         }
-        self.write_snapshot_file(files)?;
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let (_, _, len) =
@@ -480,7 +485,7 @@ impl Snapshots {
         }
 
         if let Some(file) = self._current_file.as_mut() {
-            // The flush opens the file again, after the tests. If it can't be opened now, the test that changes it fails.
+            // `end_file` opens the file again, after the tests. If it can't be opened now, the test that changes it fails.
             if file.pending == Pending::Nothing
                 && let Err(err) = Self::open(files, file.id)
             {
@@ -589,7 +594,8 @@ impl Snapshots {
 
     /// With `--update-snapshots`, drops the entries no test asked for. The entries of a test that did not run to the end stay.
     pub(crate) fn remove_obsolete(&mut self, files: &FileList, buntest: &BunTest) -> Result<(), LeftAsItIs> {
-        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return Ok(()) };
+        let Some(file) = self._current_file.as_mut() else { return Ok(()) };
+        debug_assert!(file.id == buntest.file_id);
         if !self.update_snapshots || (!file.unparsed && self.values.values().iter().all(|entry| entry.checked)) {
             return Ok(());
         }
@@ -793,13 +799,18 @@ impl Snapshots {
         }
     }
 
+    /// Writes what the run of a test file changed in its snapshot file, and forgets the file.
     #[optimize(size)]
-    pub(crate) fn write_snapshot_file(&mut self, files: &FileList) -> Result<(), Error> {
+    pub(crate) fn end_file(&mut self, files: &FileList) -> Result<(), LeftAsItIs> {
         let Some(file) = self._current_file.take() else { return Ok(()) };
         let result = self.write_pending(files, &file);
         self.values.clear();
         self.counts.clear();
-        result.map_err(|_| Error::FailedToWriteSnapshotFile)
+        result.map_err(|err| {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let len = snapshot_file_path(files, file.id, path_buf.0.as_mut_slice()).map_or(0, |(_, _, len)| len);
+            LeftAsItIs::NotWritten(err.with_path(&path_buf.0[..len]))
+        })
     }
 
     /// jest-snapshot's `saveSnapshotFile`. The text comes from `values` alone.
@@ -1303,7 +1314,7 @@ impl Snapshots {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let (_, dir_len, len) =
             snapshot_file_path(files, file_id, path_buf.0.as_mut_slice()).ok_or_else(Self::path_is_too_long)?;
-        // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
+        // Not O_TRUNC: a run that exits before `end_file` must leave the old contents.
         let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
         match bun_sys::open(ZStr::from_buf(&path_buf.0[..], len), flags, 0o644) {
             Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => {}

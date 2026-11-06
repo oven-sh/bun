@@ -754,3 +754,94 @@ describe.concurrent("a run without --update-snapshots", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The run writes the snapshot file of a test file when that test file ends. Nothing of it is left for a later test file.
+describe.concurrent("the snapshot file of a test file that ended", () => {
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+  const a = `test("a", () => { expect("a").toMatchSnapshot(); });`;
+  const ofA = header + '\nexports[`a 1`] = `"a"`;\n';
+
+  /** Runs `bun test` on the files. Returns every `.snap` file as it is after the run. */
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("snapshot-file-end", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const snapshots: Record<string, string> = {};
+    for (const name of fs.readdirSync(join(String(dir), "__snapshots__")).sort()) {
+      const path = join(String(dir), "__snapshots__", name);
+      snapshots[name] = fs.statSync(path).isDirectory() ? "<a directory>" : fs.readFileSync(path, "utf8");
+    }
+    return { snapshots, stderr, exitCode };
+  }
+
+  test.each([
+    ["calls process.exit()", `test("b", () => { process.exit(0); });`, [], 0],
+    ["fails, and --bail ends the run", `test("b", () => { throw new Error("boom"); });`, ["--bail"], 1],
+  ])("has its new entry when a later test file %s", async (_, b, args, exitCode) => {
+    const result = await run({ "a.test.js": a, "b.test.js": b }, ...args, "./a.test.js", "./b.test.js");
+    expect(result).toMatchObject({ snapshots: { "a.test.js.snap": ofA }, exitCode });
+  });
+
+  test("has what --update-snapshots changed and removed when a later test file calls process.exit()", async () => {
+    const result = await run(
+      {
+        "a.test.js": `test("a", () => { expect("new").toMatchSnapshot(); });`,
+        "b.test.js": `test("b", () => { process.exit(0); });`,
+        "__snapshots__/a.test.js.snap": header + '\nexports[`a 1`] = `"old"`;\n\nexports[`gone 1`] = `"g"`;\n',
+      },
+      "--update-snapshots",
+      "./a.test.js",
+      "./b.test.js",
+    );
+    expect(result).toMatchObject({
+      snapshots: { "a.test.js.snap": header + '\nexports[`a 1`] = `"new"`;\n' },
+      exitCode: 0,
+    });
+  });
+
+  // Each listing starts its count of the snapshots of a test at 1.
+  test("--isolate gives a test file that is listed twice one key for each snapshot", async () => {
+    const result = await run({ "a.test.js": a }, "--isolate", "./a.test.js", "./a.test.js");
+    expect(result).toMatchObject({
+      snapshots: { "a.test.js.snap": ofA },
+      stderr: expect.stringContaining("snapshots: 1 passed, 1 added\n"),
+      exitCode: 0,
+    });
+  });
+
+  // The open at the first change works. The one after the tests finds a directory.
+  test.each([[[]], [["--parallel=2"]]])(
+    "a write that fails is an error of its own test file, and the next one passes (%j)",
+    async args => {
+      const result = await run(
+        {
+          "a.test.js": `
+            import fs from "fs";
+            ${a}
+            test("a directory takes the place of the file", () => {
+              const file = import.meta.dir + "/__snapshots__/a.test.js.snap";
+              fs.rmSync(file);
+              fs.mkdirSync(file);
+            });
+          `,
+          "b.test.js": `test("b", () => { expect("b").toMatchSnapshot(); });`,
+        },
+        ...args,
+      );
+      expect(result.stderr).toContain(
+        `: Failed to write ${JSON.stringify(join("__snapshots__", "a.test.js.snap"))} (open)\n`,
+      );
+      expect(result.stderr).toContain(" 3 pass\n 0 fail\n 1 error\n");
+      expect(result).toMatchObject({
+        snapshots: { "a.test.js.snap": "<a directory>", "b.test.js.snap": header + '\nexports[`b 1`] = `"b"`;\n' },
+        exitCode: 1,
+      });
+    },
+  );
+});

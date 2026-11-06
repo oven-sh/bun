@@ -12,8 +12,6 @@ pub enum Error {
     WriteError,
     #[error("ParseError")]
     ParseError,
-    #[error("FailedToWriteSnapshotFile")]
-    FailedToWriteSnapshotFile,
     #[error("NoTest")]
     NoTest,
     #[error("TestNotActive")]
@@ -343,7 +341,6 @@ impl Error {
             Self::SnapshotCreationNotAllowedInCI => "SnapshotCreationNotAllowedInCI",
             Self::WriteError => "WriteError",
             Self::ParseError => "ParseError",
-            Self::FailedToWriteSnapshotFile => "FailedToWriteSnapshotFile",
             Self::NoTest => "NoTest",
             Self::TestNotActive => "TestNotActive",
             Self::SnapshotInConcurrentGroup => "SnapshotInConcurrentGroup",

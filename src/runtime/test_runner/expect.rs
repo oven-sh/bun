@@ -1392,9 +1392,6 @@ impl Expect {
             crate::Error::FailedToMakeSnapshotDirectory => {
                 global_this.throw(format_args!("Failed to make snapshot directory for test file: {test_file_path}"))
             }
-            crate::Error::FailedToWriteSnapshotFile => {
-                global_this.throw(format_args!("Failed write to snapshot file: {test_file_path}"))
-            }
             crate::Error::SyntaxError | crate::Error::ParseError => {
                 global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
             }

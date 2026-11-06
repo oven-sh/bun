@@ -1094,14 +1094,14 @@ fn worker_flush_aggregates(
     coverage: &CodeCoverageOptions,
     cmds: &mut WorkerCommands,
 ) {
-    // Snapshots flush lazily when the next file opens its snapshot file; the
-    // last file each worker ran has no successor to trigger that.
     let runner = &mut reporter.jest;
     let wrote_inline_snapshots = runner
         .snapshots
         .write_inline_snapshots(&runner.files)
         .unwrap_or(false);
-    let _ = runner.snapshots.write_snapshot_file(&runner.files);
+    // Each file's `.snap` is written when the file ends, so only a file that `--bail` stopped has one to write here.
+    reporter.end_snapshot_file();
+    let runner = &mut reporter.jest;
     if crate::cli::run_compiled::runs_compiled_code() {
         let counted = &runner.snapshots;
         let numbers = [

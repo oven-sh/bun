@@ -268,6 +268,9 @@ function ReadStream(
   }
 
   options = copyObject(getStreamOptions(options));
+  if (options.highWaterMark === undefined) {
+    options.highWaterMark = 64 * 1024;
+  }
 
   // Only buffers are supported.
   options.decodeStrings = true;

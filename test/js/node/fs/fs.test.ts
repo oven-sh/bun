@@ -4451,6 +4451,15 @@ describe("createReadStream", () => {
     });
   });
 
+  it("reads 64 KiB at a time unless told otherwise", async () => {
+    using dir = tempDir("fs-createReadStream-default-chunk", { "file.bin": Buffer.alloc(3 * 65536 + 1, "x") });
+    const stream = createReadStream(join(String(dir), "file.bin"));
+    expect(stream.readableHighWaterMark).toBe(65536);
+    const lengths: number[] = [];
+    for await (const chunk of stream) lengths.push(chunk.length);
+    expect(lengths).toEqual([65536, 65536, 65536, 1]);
+  });
+
   it("should emit open", done => {
     const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
     ws.on("open", data => {

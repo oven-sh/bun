@@ -2707,8 +2707,8 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
               expect(values()).toMatchInlineSnapshot(\`\n${olderBunURLValues}\n\`);
             });
             test("but for one line", () => {
-              expect(() => expect({ ...values(), more: 1 }).toMatchInlineSnapshot(\`\n${olderBunURLValues}\n\`)).toThrow();
-              expect(() => expect({ endpoint: new URL(address), more: 1 }).toMatchInlineSnapshot(\`\n{\n  "endpoint": URL {},\n}\n\`)).toThrow();
+              expect(() => expect({ ...values(), more: 1 }).toMatchInlineSnapshot(\`\n${olderBunURLValues}\n\`)).toThrow('"more": 1');
+              expect(() => expect({ endpoint: new URL(address), more: 1 }).toMatchInlineSnapshot(\`\n{\n  "endpoint": URL {},\n}\n\`)).toThrow('"more": 1');
             });
           `,
         "__snapshots__/a.test.js.snap": urlSnapshotFile("URL {}", olderBunURLValues),

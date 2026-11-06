@@ -253,7 +253,7 @@ exports[`snapshot with dynamic values 1`] = `
 `;
 ```
 
-A `URL` is stored as its whole href, with the username, the password and the query. If the address changes between runs, for example a server on a random port, match it with `expect.any(URL)`.
+A `URL` is stored as its whole href, with the username, the password and the query. If the address changes between runs, for example a server on a random port, match the whole value with `expect.any(URL)`. A matcher for one part of it, such as `{ href: expect.any(String) }`, does not change the stored text.
 
 ## Custom Serializers
 

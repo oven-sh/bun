@@ -41,8 +41,10 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Structure> m_stdioWriteStructure[2];
     PropertyOffset m_stdioWriteOffset[2] = { invalidOffset, invalidOffset };
 
-    // ConsoleObject.ts writeThroughStream, built on the first message that goes through a replaced `write`.
-    LazyProperty<Process, JSFunction> m_writeThroughStream;
+    // The one-shot 'error' listener and the write callbacks of the console's writes through a replaced `write`.
+    LazyProperty<Process, JSFunction> m_consoleNoop;
+    LazyProperty<Process, JSFunction> m_consoleStdoutWriteFailed;
+    LazyProperty<Process, JSFunction> m_consoleStderrWriteFailed;
 
     void installDefaultWarningListener(JSC::VM&);
     JSValue resolveStdioWrite(JSC::VM&, unsigned slot);
@@ -53,7 +55,9 @@ public:
     // Whether the `write` of the stream for fd is no longer the one it was built with. Runs no user code.
     bool isStdioWriteReplaced(JSC::VM&, int fd);
     JSObject* stdioWriteStream(int fd) { return m_stdioWriteStream[static_cast<unsigned>(fd) - 1].get(); }
-    JSFunction* writeThroughStream() { return m_writeThroughStream.getInitializedOnMainThread(this); }
+    JSFunction* consoleNoop() { return m_consoleNoop.getInitializedOnMainThread(this); }
+    JSFunction* consoleWriteFailed(int fd) { return (fd == 1 ? m_consoleStdoutWriteFailed : m_consoleStderrWriteFailed).getInitializedOnMainThread(this); }
+    void addNoopErrorListener(Zig::GlobalObject*, JSObject* stream);
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

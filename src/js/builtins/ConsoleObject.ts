@@ -138,37 +138,6 @@ export function write(this: Console & { $writer: $Node.FileSink | undefined }, i
   return wrote;
 }
 
-// src/jsc/ConsoleObject.rs: one console message to a replaced write, as [kWriteToConsole] does with ignoreErrors on.
-export function writeThroughStream(stream: $Node.Writable, string: string) {
-  function noop() {}
-  const errorHandler = (err: Error | null) => {
-    // An error the callback reports that the stream has not emitted yet arrives as an 'error' event.
-    if (err !== null && !stream._writableState?.errorEmitted && stream.listenerCount("error") === 0) {
-      stream.once("error", noop);
-    }
-  };
-  let hasCalledWrite = false;
-  try {
-    if (stream.listenerCount("error") === 0) stream.once("error", noop);
-    hasCalledWrite = true;
-    stream.write(string, errorHandler);
-  } catch (e) {
-    if (e != null && typeof e === "object" && (e as Partial<Error>).name === "RangeError") {
-      const message = (e as Partial<Error>).message;
-      if (message === "Maximum call stack size exceeded.") throw e;
-      // Some memory is free again once an out-of-memory error has been thrown.
-      if (!hasCalledWrite && typeof message === "string" && message.startsWith("Out of memory")) {
-        try {
-          if (stream.listenerCount("error") === 0) stream.once("error", noop);
-          stream.write(string, errorHandler);
-        } catch {}
-      }
-    }
-  } finally {
-    stream.removeListener("error", noop);
-  }
-}
-
 // This is the `console.Console` constructor. It is mostly copied from Node.
 // https://github.com/nodejs/node/blob/d2c7c367741bdcb6f7f77f55ce95a745f0b29fef/lib/internal/console/constructor.js
 // Some parts are copied from imported files and inlined here. Not too much of a performance issue

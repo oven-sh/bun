@@ -4132,7 +4132,67 @@ extern "C" bool Bun__Process__isStdioWriteReplaced(Zig::GlobalObject* globalObje
     return globalObject->processObject()->isStdioWriteReplaced(vm, fd);
 }
 
-// Hands one console message to the replaced `write` of the stream for fd. Zero means it threw.
+JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleNoop, (JSC::JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+// The callback of the console's write through a replaced `write`: node's createWriteErrorHandler. An error that the stream has not
+// emitted yet arrives as an 'error' event, which the one-shot listener keeps from becoming an uncaught exception.
+static EncodedJSValue consoleWriteFailed(JSC::JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, int fd)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue error = callFrame->argument(0);
+    auto* process = globalObject->processObject();
+    JSObject* stream = process->stdioWriteStream(fd);
+    if (error.isUndefinedOrNull() || !stream)
+        return JSValue::encode(jsUndefined());
+    JSValue state = stream->get(globalObject, Identifier::fromString(vm, "_writableState"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (state.isObject()) {
+        JSValue emitted = state.get(globalObject, Identifier::fromString(vm, "errorEmitted"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (emitted.toBoolean(globalObject))
+            return JSValue::encode(jsUndefined());
+    }
+    process->addNoopErrorListener(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleStdoutWriteFailed, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return consoleWriteFailed(globalObject, callFrame, 1);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleStderrWriteFailed, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return consoleWriteFailed(globalObject, callFrame, 2);
+}
+
+// if (stream.listenerCount("error") === 0) stream.once("error", noop)
+void Process::addNoopErrorListener(Zig::GlobalObject* globalObject, JSObject* stream)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer name;
+    name.append(jsString(vm, String("error"_s)));
+    JSValue count = callMethod(globalObject, stream, "listenerCount"_s, name);
+    RETURN_IF_EXCEPTION(scope, );
+    if (count.toNumber(globalObject) != 0)
+        return;
+    RETURN_IF_EXCEPTION(scope, );
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, String("error"_s)));
+    args.append(m_consoleNoop.getInitializedOnMainThread(this));
+    callMethod(globalObject, stream, "once"_s, args);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+// Hands one console message to the replaced `write` of the stream for fd, as node's kWriteToConsole does with ignoreErrors on:
+// an error from the write is dropped, except a stack overflow. Zero means it threw.
 extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::GlobalObject* globalObject, int32_t fd, JSC::EncodedJSValue text)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4141,20 +4201,23 @@ extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::Global
     JSObject* stream = process->stdioWriteStream(fd);
     if (!stream)
         return JSValue::encode(jsUndefined());
-    JSFunction* writeThrough = process->writeThroughStream();
-    JSC::MarkedArgumentBuffer args;
-    if (JSC::AOT::isNeededByNothingThatRuns(writeThrough)) {
-        // An executable without the function: the plain call, without the error listener of node's console.
-        JSValue write = stream->get(globalObject, builtinNames(vm).writePublicName());
-        RETURN_IF_EXCEPTION(scope, {});
+    process->addNoopErrorListener(globalObject, stream);
+    if (!scope.exception()) {
+        JSC::MarkedArgumentBuffer args;
         args.append(JSValue::decode(text));
-        JSC::call(globalObject, write, stream, args, "write is not a function"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsUndefined());
+        args.append(process->consoleWriteFailed(fd));
+        callMethod(globalObject, stream, "write"_s, args);
     }
-    args.append(stream);
-    args.append(JSValue::decode(text));
-    JSC::profiledCall(globalObject, ProfilingReason::API, writeThrough, JSC::getCallData(writeThrough), jsUndefined(), args);
+    if (auto* exception = scope.exception()) {
+        auto* error = dynamicDowncast<JSC::ErrorInstance>(exception->value());
+        if (vm.isTerminationException(exception) || (error && error->isStackOverflowError()))
+            return {};
+        (void)scope.tryClearException();
+    }
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, String("error"_s)));
+    args.append(process->consoleNoop());
+    callMethod(globalObject, stream, "removeListener"_s, args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -4954,7 +5017,9 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
-    thisObject->m_writeThroughStream.visit(visitor);
+    thisObject->m_consoleNoop.visit(visitor);
+    thisObject->m_consoleStdoutWriteFailed.visit(visitor);
+    thisObject->m_consoleStderrWriteFailed.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -6365,8 +6430,14 @@ void Process::finishCreation(JSC::VM& vm)
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
     });
-    m_writeThroughStream.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
-        init.set(JSFunction::create(init.vm, init.owner->globalObject(), consoleObjectWriteThroughStreamCodeGenerator(init.vm), init.owner->globalObject()));
+    m_consoleNoop.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 0, ""_s, Process_functionConsoleNoop, ImplementationVisibility::Private));
+    });
+    m_consoleStdoutWriteFailed.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 1, ""_s, Process_functionConsoleStdoutWriteFailed, ImplementationVisibility::Private));
+    });
+    m_consoleStderrWriteFailed.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 1, ""_s, Process_functionConsoleStderrWriteFailed, ImplementationVisibility::Private));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

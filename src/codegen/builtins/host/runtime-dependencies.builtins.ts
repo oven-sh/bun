@@ -4,6 +4,9 @@ import {
   asyncContextCell,
   closesChannelCell,
   coercesEnvironmentValueCell,
+  consoleNoopCell,
+  consoleStderrWriteFailedCell,
+  consoleStdoutWriteFailedCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
   emitsProcessEventCell,
@@ -149,12 +152,28 @@ const writtenByWarnings = b.memberOfValue(
   b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
 );
 
-// src/jsc/ConsoleObject.rs hands each console message to it once the program has replaced the stream's write().
-const consoleWritesThrough = (cell: string) =>
-  b.functionUsed(
-    b.functionIn("builtins/ConsoleObject", "writeThroughStream"),
-    b.calledByHost({ times: "Repeatedly", this: b.undefined, args: [b.nativeCell(cell), b.string], result: b.dropped }),
-  );
+// Once the program replaces write() of a whole stream, the native console (src/jsc/ConsoleObject.rs) writes each message
+// through it as node's kWriteToConsole does: a one-shot 'error' listener around write(), and a callback that adds one again.
+const writtenByConsole = (cell: string, failed: string) => {
+  const listener = { this: b.nativeCell(cell), args: [b.string, b.nativeCell(consoleNoopCell)], result: b.dropped };
+  return [
+    b.memberOfValue(
+      "listenerCount",
+      b.calledByHost({ times: "Repeatedly", this: b.nativeCell(cell), args: [b.string], result: [b.inspectedByHost] }),
+    ),
+    b.memberOfValue("once", b.calledByHost({ times: "Repeatedly", ...listener })),
+    b.memberOfValue("removeListener", b.calledByHost({ times: "Repeatedly", ...listener })),
+    b.memberOfValue(
+      "write",
+      b.calledByHost({
+        times: "Repeatedly",
+        this: b.nativeCell(cell),
+        args: [b.string, b.nativeCell(failed)],
+        result: b.dropped,
+      }),
+    ),
+  ];
+};
 
 // Whatever makes a standard stream, the property of `process` holds it from then on, and so does the one of `console`.
 const usesOfStandardStream: readonly (readonly b.HostUseSpec[])[] = [
@@ -192,7 +211,17 @@ const wholeOutputStream = (descriptor: 1 | 2) =>
       times: "Once",
       this: globalObject,
       args: [processObject, b.int(descriptor, descriptor), b.bool, kindOfDescriptor],
-      result: [b.memberOfValue(0, ...usesOfStandardStream[descriptor]), b.memberOfValue(1, b.inspectedByHost)],
+      result: [
+        b.memberOfValue(
+          0,
+          ...usesOfStandardStream[descriptor],
+          ...writtenByConsole(
+            descriptor === 1 ? standardOutputCell : standardErrorCell,
+            descriptor === 1 ? consoleStdoutWriteFailedCell : consoleStderrWriteFailedCell,
+          ),
+        ),
+        b.memberOfValue(1, b.inspectedByHost),
+      ],
     }),
   );
 
@@ -325,29 +354,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "WebAssembly.instantiateStreaming": streamedModuleFunctions,
   "bun:test": fakeTimerFunctions,
   "bun:test/vitest": fakeTimerFunctions,
-  ...Object.fromEntries(
-    [
-      "log",
-      "info",
-      "warn",
-      "error",
-      "debug",
-      "trace",
-      "dir",
-      "dirxml",
-      "table",
-      "assert",
-      "group",
-      "groupCollapsed",
-      "count",
-      "timeLog",
-      "timeEnd",
-      "clear",
-    ].map(name => [
-      `console.${name}`,
-      [consoleWritesThrough(standardOutputCell), consoleWritesThrough(standardErrorCell)],
-    ]),
-  ),
   // The getter calls it on `console`, with `console`, and what it answers takes the getter's place.
   "console.Console": [
     b.functionUsed(
@@ -832,6 +838,24 @@ export default b.declarations(
     reads: ["ExternalState"],
     implementation: b.hostCall,
   }),
+  b.hostFunction(consoleNoopCell, "BunProcess.cpp", "Process_functionConsoleNoop", {
+    returns: b.undefined,
+    capability: "none",
+    implementation: b.hostCall,
+  }),
+  [
+    [consoleStdoutWriteFailedCell, "Process_functionConsoleStdoutWriteFailed"],
+    [consoleStderrWriteFailedCell, "Process_functionConsoleStderrWriteFailed"],
+  ].flatMap(([cell, symbol]) =>
+    b.hostFunction(cell, "BunProcess.cpp", symbol, {
+      args: { error: b.any },
+      returns: b.undefined,
+      capability: "js",
+      throws: true,
+      uses: { error: b.inspected },
+      implementation: b.hostCall,
+    }),
+  ),
   // write() of the FileSink of the descriptor: what the row of %FileSink%.prototype.write says.
   b.hostFunction(writesToStandardSinkCell, "BunProcess.cpp", "Process_functionWriteToStandardSink", {
     args: { descriptor: b.any, data: b.any },

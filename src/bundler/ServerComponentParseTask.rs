@@ -69,11 +69,13 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
     // The bundle's `'a` is erased to `'static`: see `parse_task::task_callback`.
-    let task_ptr = unsafe {
-        bun_core::from_field_ptr!(ServerComponentParseTask<'static>, task, thread_pool_task)
+    let mut task: Box<ServerComponentParseTask<'static>> = unsafe {
+        bun_core::heap::take(bun_core::from_field_ptr!(
+            ServerComponentParseTask<'static>,
+            task,
+            thread_pool_task
+        ))
     };
-    // SAFETY: the pool runs a task once, so this is the only reference to the box.
-    let task: &mut ServerComponentParseTask<'static> = unsafe { &mut *task_ptr };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
     let ctx = task
@@ -87,13 +89,13 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // worker-owned bump arena; lives for the worker's lifetime.
     let arena: &Arena = worker.arena();
 
-    let value = match task_callback(task, &mut log, arena) {
+    let value = match task_callback(&mut task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
-    // SAFETY: the box from `enqueue_server_component_generated_file`. The result keeps arena copies, not the task.
-    unsafe { bun_core::heap::destroy(task_ptr) };
+    // The result keeps arena copies, not the task.
+    drop(task);
 
     let result = Box::new(parse_task::Result {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance

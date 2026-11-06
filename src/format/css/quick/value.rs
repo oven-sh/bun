@@ -235,10 +235,13 @@ fn is_start_of_term(byte: u8) -> bool {
         || matches!(byte, b'$' | b'@' | b'#' | b'"' | b'\'')
 }
 
-/// What's attached to the `}` of a `#{..}`, from `p` on. Returns its end. Dashes alone are an operator.
+/// What's attached to the `}` of a `#{..}`, from `p` on. Returns its end. Dashes alone are an operator, a number is
+/// printed like one, and `url` is a word of its own to `postcss`.
 fn end_of_tail(css: &[u8], p: usize) -> Option<usize> {
     let end = skip_long(css, p, NAME);
-    (end == p || skip(css, p, DASH) < end).then_some(end)
+    let first = skip(css, p, DASH);
+    let is_name = first < end && !css[first].is_ascii_digit() && !starts_with_url(css, p);
+    (end == p || is_name).then_some(end)
 }
 
 struct StringRead {

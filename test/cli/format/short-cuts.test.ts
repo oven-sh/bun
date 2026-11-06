@@ -1323,6 +1323,9 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "url-behind-a-comma.less": "a{b:c,url(/*);d:e;f:url(*/)}\ng{b:c,url(d)}\n",
     "url-behind-a-comma.scss": "a{b:c,url(/*);d:e;f:url(*/)}\ng{b:c,url(d)}\n",
     "bracket-in-a-url-behind-a-comma.css": "a{background:url(a.png),url(/i/[.png)}\n",
+    "url-behind-an-interpolation.scss": 'a {\n  b: #{$c}url;\n  @if ($d == ")") {\n    e: f;\n  }\n}\n',
+    "number-behind-an-interpolation.scss":
+      "a {\n  b: #{$c}1e03 #{$c}1q;\n  b: #{$c}1.50;\n  b: #{$c}-1e03 #{$c}--1q;\n  b: #{$c}px #{$c}e03 #{$c}-a1e03 #{$c}_1;\n  b: a-#{$c}-1 a-#{$c}1;\n}\n",
     "url-in-a-guard.less": '.a when ((@a) = url) {\n  @x: (a")");\n}\n',
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",

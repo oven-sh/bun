@@ -985,10 +985,8 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
-// Whether the module's own load, link or evaluation is in flight. A module that an importer loaded but never
-// evaluated (the importer failed to load, to link or to evaluate) is not: nothing is left to attach to its entry.
-// An importer whose load is pending keeps the record it loaded, through its own [[LoadedModules]], and the next
-// import() of the key loads the file again.
+// Whether the module's own load, link or evaluation is in flight. A module an importer loaded but never evaluated is not:
+// the importer keeps that record through its own [[LoadedModules]], and the next import() of the key loads the file again.
 static bool isModuleLoadPinned(JSC::JSGlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
 {
     switch (entry->status()) {

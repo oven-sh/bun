@@ -2342,10 +2342,12 @@ impl Quick {
         return false;
     }
 
-    /// In a declared module or namespace a component has no body, and a string at the start is a directive for some.
+    /// In a declared module or namespace a component has no body, a string at the start is a directive for some, and a class without `declare` is a declared
+    /// one for the long way, which prints it in ways of its own.
     fn flow_check_ambient_body(&self, body: i32) -> R<()> {
         let first = self.n.at(self.n.at(body + 5) + 1);
         if self.flow_has_statement_of_kind(body, k::ComponentDeclaration)
+            || self.flow_has_statement_of_kind(body, k::ClassDeclaration)
             || ((self.n.at(first) & 0xff) == k::ExpressionStatement
                 && (self.n.at(self.n.at(first + 4)) & 0xff) == k::StringLiteral)
         {
@@ -2422,10 +2424,6 @@ impl Quick {
             self.next()?;
             let id = self.parse_ident()?;
             let body = self.parse_block()?;
-            // (a class in there is declared, and printed in ways of its own)
-            if self.flow_has_statement_of_kind(body, k::ClassDeclaration) {
-                return Err(self.text_refuse());
-            }
             self.flow_check_ambient_body(body)?;
             result = self.node2(
                 k::ModuleDeclaration | ((MOD_DECLARE | MK_NAMESPACE) << SUB_SHIFT),

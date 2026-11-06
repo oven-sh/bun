@@ -258,10 +258,8 @@ impl Quick {
             if !may_be_empty {
                 return Err(self.text_refuse());
             }
-            // `A<B<>>`, `(a: B<>)`: the long way takes `B<>` for a simple type
-            if matches!(self.next_char(self.lexer.tok_start + 1), 62 | 41) {
-                return Err(self.rare(rare::UNLIKE_PRETTIER));
-            }
+            // The long way takes `B<>` for a type without arguments where it asks how simple a type is: `A<B<>>`, `(a: B<>)`, `B<> extends C ? D : E`.
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
         }
         while !self.starts_with_gt() {
             let v0 = self.ts_parse_type()?;

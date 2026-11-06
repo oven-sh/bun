@@ -7845,6 +7845,12 @@ describe("programs that are read as written", () => {
         "interface A { 'new'(): b }\n",
         "type A = (...this: T) => U;\n",
         "declare function f(...this: T): U;\n",
+        // a class without `declare` in a declared module
+        'declare module "a" { @b class A {} }\n',
+        'declare module "a" { @\n  declare class A {\n    b: number;\n  }\n}\n',
+        'declare module "a" { class A { @b c: T } }\n',
+        // type arguments without a type
+        "type A<T> = T<> extends (infer U)[] ? U : T extends (...args: any[]) => infer U ? SomeReallyLongThingThatBreaksTheLine<U> : T;\n",
         // what the long way prints in its own way
         "x = match (v) { a if (g, h) => r };\n",
         "match (v) { a.b[1] => {} }\n",

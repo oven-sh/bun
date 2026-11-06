@@ -202,7 +202,7 @@ impl<'a> Line<'_, 'a> {
                 // A template can have a line break in it, and a name is printed without escapes.
                 if !printed.iter().all(|byte| *byte >= b' ')
                     || (matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_))
-                        && printed.contains(&b'\\'))
+                        && bun_core::strings::contains_char(&printed, b'\\'))
                 {
                     return Err(Refused);
                 }

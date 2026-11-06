@@ -1885,7 +1885,7 @@ impl Run<'_> {
         };
         // Otherwise the files are put in order while they are formatted.
         if only.is_some() || self.modules.is_some() || options.list_files {
-            expansion.sort();
+            expansion.put_in_order();
         }
         if let Some(only) = &only {
             expansion.all.retain(|it| match it {
@@ -1982,7 +1982,7 @@ impl Run<'_> {
             }
             // These are named in the order in which their files come.
             if !expansion.is_sorted() && (left_for_plugins.1.len() > 1 || not_installed.len() > 1) {
-                expansion.sort();
+                expansion.put_in_order();
                 continue;
             }
             break (

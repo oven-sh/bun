@@ -1815,7 +1815,7 @@ impl<'a> Scanner<'_, 'a> {
         );
         // `code` ends where `all` does but for white space, so it starts here.
         let mut at = open_end + (all.trim_ascii_end().len() - code.len());
-        for line in code.split(|byte| *byte == b'\n') {
+        for line in bun_core::strings::split(code, b"\n") {
             let kept = line.get(dedent..).unwrap_or_default();
             let kept_len = kept.len()
                 - (kept.iter().rev())
@@ -3721,10 +3721,8 @@ impl<'a> Scanner<'_, 'a> {
             let rest = self.text.get(line_start..)?;
             let line = &rest[..bun_core::strings::index_of_char_usize(rest, b'\n')?];
             // The first word has not fitted on the line before.
-            let first_word = line
-                .iter()
-                .position(|&byte| byte == b' ')
-                .unwrap_or(line.len());
+            let first_word =
+                bun_core::strings::index_of_char_usize(line, b' ').unwrap_or(line.len());
             if line_len + 1 + first_word <= room || !is_plain_line(line) {
                 return None;
             }

@@ -2436,10 +2436,7 @@ impl<'t> Reader<'t> {
         if info.iter().any(is_decoded_or_no_info) || matches!(info.last(), Some(b' ' | b'\t')) {
             return None;
         }
-        let language_len = info
-            .iter()
-            .position(|byte| matches!(byte, b' ' | b'\t'))
-            .unwrap_or(info.len());
+        let language_len = bun_core::strings::index_of_any(info, b" \t").unwrap_or(info.len());
         if (language_len == 0 && !info.is_empty())
             || !matches!(info.get(language_len), None | Some(b' '))
             || matches!(info.get(language_len + 1), Some(b' ' | b'\t'))

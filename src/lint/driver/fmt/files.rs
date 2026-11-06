@@ -87,7 +87,7 @@ impl Expansion {
     }
 
     /// Puts `all` in that order.
-    pub(crate) fn sort(&mut self) {
+    pub(crate) fn put_in_order(&mut self) {
         for files in std::mem::take(&mut self.unsorted) {
             if let Some(part) = self.all.get_mut(files.range.clone()) {
                 index_sort::sort_slice_by_cached_key(part, |it| files.key(it));
@@ -213,7 +213,7 @@ impl Kind {
             return Some(Kind::Script);
         }
         // No name and no extension that the languages go by which are asked before theirs ends like one of these.
-        let dot = path.iter().rposition(|byte| *byte == b'.');
+        let dot = strings::last_index_of_char(path, b'.');
         match dot.map_or(&b""[..], |dot| &path[dot + 1..]) {
             b"vue" => return Some(Kind::Html(bun_format::html::Parser::Vue)),
             b"css" => return Some(Kind::Css(bun_format::css::Parser::Css)),

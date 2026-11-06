@@ -902,7 +902,7 @@ impl<'a> Parser<'a> {
             || is_ignore_comment(content.unwrap_or_default())
             // The printer sees the text that was parsed.
             || (is_inline && is_ignore_comment(self.css.get(start + 2..end).unwrap_or_default()))
-            || (!quick.takes_long_comments && text.contains(&b'\n'))
+            || (!quick.takes_long_comments && strings::contains_char(text, b'\n'))
             || !self.is_alone(end)
         {
             return false;
@@ -1325,7 +1325,7 @@ impl<'a> Parser<'a> {
     /// Is the statement whose colon is right before `at` a declaration? True if a `;` or a `}` comes before any `{`.
     fn is_declaration(&self, at: usize) -> bool {
         let rest = self.css.get(at..).unwrap_or_default();
-        let end = rest.iter().position(|it| matches!(it, b';' | b'{' | b'}'));
+        let end = strings::index_of_any(rest, b";{}");
         end.is_some_and(|end| rest[end] != b'{')
     }
 

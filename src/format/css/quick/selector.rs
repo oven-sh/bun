@@ -133,7 +133,8 @@ pub(super) fn end_of_standing_selectors(
     // See `break_selector`. `tail` is the width of what follows the line.
     let is_line_of_broken = |line: usize, end: usize, tail: usize, breaks: usize| {
         let column = (level + usize::from(breaks > 0)) * page.tab_width;
-        !css[line..end].contains(&b'(') || column + (end - line) + tail <= page.width
+        !bun_core::strings::contains_char(&css[line..end], b'(')
+            || column + (end - line) + tail <= page.width
     };
     let is_broken = |selector: usize, end: usize, tail: usize, compounds: usize, breaks: usize| {
         let flat_len = end - selector - breaks * page.indentation_len(level + 1);
@@ -687,7 +688,7 @@ pub(super) fn read(
             out.extend_from_slice(&css[segment..end]);
             segment = end;
             let selector = out.len() - width;
-            if out[selector..].iter().any(|it| matches!(it, b' ' | b'(')) {
+            if bun_core::strings::index_of_any(&out[selector..], b" (").is_some() {
                 break_selector(out, selector, page, level, tail)?;
                 has_lines = true;
             }

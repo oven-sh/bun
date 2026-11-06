@@ -1275,10 +1275,8 @@ impl<'o> Printer<'o> {
         if crate::is_too_long(self.out.len()) {
             self.failure = Some(FormatError::TooLong);
         }
-        let last_line_start = text
-            .iter()
-            .rposition(|it| *it == b'\n')
-            .map_or(0, |at| at + 1);
+        let last_line_start =
+            bun_core::strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
         let last_line = &text[last_line_start..];
         let tabs = last_line.iter().take_while(|it| **it == b'\t').count();
         tabs * self.tab_width + string_width(&last_line[tabs..])

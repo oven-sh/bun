@@ -101,7 +101,7 @@ impl<'a> Printer<'a> {
     /// Prints a `line`, or as many `hardline`s as `white_space` has line breaks, at most two. With `is_dedented`, each
     /// is wrapped in a `dedent`.
     fn breaks(&mut self, white_space: &[u8], is_dedented: bool) {
-        let new_lines = white_space.iter().filter(|byte| **byte == b'\n').count();
+        let new_lines = strings::count_char(white_space, b'\n');
         for _ in 0..new_lines.clamp(1, 2) {
             if is_dedented {
                 self.out.start_indent(IndentCommand::Dedent);
@@ -153,7 +153,7 @@ impl<'a> Printer<'a> {
 
     /// `text.replaceAll("{{", "\\{{")`: a mustache in a text must have been escaped in the source.
     fn escaped(&mut self, mut text: &[u8]) {
-        if text.len() < 32 && !text.contains(&b'{') {
+        if text.len() < 32 && !strings::contains_char(text, b'{') {
             return self.out.text(text);
         }
         while let Some(at) = strings::index_of(text, b"{{") {

@@ -476,3 +476,75 @@ try:
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def nested_star():')
 try: nested_star()
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: nested_star()')
+
+# The part that a clause caught stays the exception that is being handled until the next clause catches something: where that says what it catches.
+try:
+    def shown(e):
+        return None if e is None else '%s(%s)' % (type(e).__name__, ', '.join(map(repr, e.args[:1])) + (': ' + ', '.join(shown(x) for x in e.exceptions) if isinstance(e, BaseExceptionGroup) else ''))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def shown(e):')
+try:
+    def between1():
+        try:
+            try:
+                raise ExceptionGroup('g', [ValueError(1), TypeError(2)])
+            except* ValueError:
+                pass
+            except* 1 / 0:
+                pass
+        except BaseException as e:
+            print('between 1', shown(e), '| context', shown(e.__context__))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def between1():')
+try:
+    def between2():
+        try:
+            try:
+                raise ExceptionGroup('g', [ValueError(1), TypeError(2)])
+            except* KeyError:
+                pass
+            except* 1 / 0:
+                pass
+        except BaseException as e:
+            print('between 2', shown(e), '| context', shown(e.__context__))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def between2():')
+try:
+    def between3():
+        import sys
+        def f():
+            print('between 3 handled while the type is evaluated', shown(sys.exception()))
+            return TypeError
+        try:
+            raise ExceptionGroup('g', [ValueError(1), TypeError(2)])
+        except* ValueError:
+            print('between 3 in clause', shown(sys.exception()))
+        except* f():
+            print('between 3 in clause', shown(sys.exception()))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def between3():')
+try:
+    def between4():
+        try:
+            try:
+                raise ExceptionGroup('g', [ValueError(1), TypeError(2), KeyError(3)])
+            except* ValueError:
+                pass
+            except* TypeError:
+                pass
+            except* 1 / 0:
+                pass
+        except BaseException as e:
+            print('between 4', shown(e), '| context', shown(e.__context__))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def between4():')
+try:
+    def between5():
+        try:
+            try:
+                raise ExceptionGroup('g', [ValueError(1), TypeError(2)])
+            except* ValueError:
+                raise OSError(5)
+            except* 1 / 0:
+                pass
+        except BaseException as e:
+            print('between 5', shown(e), '| context', shown(e.__context__))
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def between5():')
+try:
+    for between in (between1, between2, between3, between4, between5): between()
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for between in (between1, between2, between3, between4, between5): be...')

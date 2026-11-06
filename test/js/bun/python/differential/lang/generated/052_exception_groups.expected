@@ -1,6 +1,6 @@
 status: 0
-script: a9d1bc528ac9b1b8
-source: a47af67dd2508ae2
+script: d8e871836dcc87d2
+source: ec17972a6d783a2c
 ---
 repr(g) => ExceptionGroup('msg', [ValueError(1), TypeError(2)])
 | str(g) => msg (2 sub-exceptions)
@@ -183,3 +183,10 @@ ok: async def f():\n try: await x\n except* ValueError: await y
 inner ExceptionGroup('g', [ValueError(1)])
 outer ExceptionGroup('g', [TypeError(2)])
 outer ExceptionGroup('g', [KeyError(3)])
+between 1 ZeroDivisionError('division by zero') | context ExceptionGroup('g': ValueError(1))
+between 2 ZeroDivisionError('division by zero') | context ExceptionGroup('g': ValueError(1), TypeError(2))
+between 3 in clause ExceptionGroup('g': ValueError(1))
+between 3 handled while the type is evaluated ExceptionGroup('g': ValueError(1))
+between 3 in clause ExceptionGroup('g': TypeError(2))
+between 4 ZeroDivisionError('division by zero') | context ExceptionGroup('g': TypeError(2))
+between 5 ZeroDivisionError('division by zero') | context ExceptionGroup('g': ValueError(1))

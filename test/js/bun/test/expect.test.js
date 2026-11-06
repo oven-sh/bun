@@ -5083,6 +5083,41 @@ describe("expect()", () => {
       }).toThrow(/*"You must provide an object to ObjectNotContaining, not 'number'."*/);
     });
 
+    test_skipIf(!isBun)("failure messages print the name of a matcher on the first line of its sample", () => {
+      const diffOf = (/** @type {() => unknown} */ fails) => {
+        try {
+          fails();
+        } catch (error) {
+          const message = stripVTControlCharacters(ANY(error).message);
+          return message.slice(message.indexOf("\n\n") + 2, message.indexOf("\n\n- Expected"));
+        }
+      };
+      const sample = () => expect.objectContaining({ b: 2 });
+
+      expect(diffOf(() => expect({ a: 1 }).toEqual(sample()))).toBe(
+        `- ObjectContaining {\n-   "b": 2,\n+ {\n+   "a": 1,\n  }`,
+      );
+      expect(diffOf(() => expect({ a: 1 }).toStrictEqual(expect.not.objectContaining({ a: 1 })))).toBe(
+        `- ObjectNotContaining {\n+ {\n    "a": 1,\n  }`,
+      );
+      expect(diffOf(() => expect({ a: 1 }).toEqual(expect.resolvesTo.objectContaining({ a: 1 })))).toBe(
+        `- promise resolved to ObjectContaining {\n+ {\n    "a": 1,\n  }`,
+      );
+      expect(diffOf(() => expect({ p: { a: 1 } }).toHaveProperty("p", sample()))).toBe(
+        `- ObjectContaining {\n-   "b": 2,\n+ {\n+   "a": 1,\n  }`,
+      );
+      expect(diffOf(() => expect("a\nc").toEqual(expect.stringContaining("a\nb")))).toBe(
+        `- StringContaining "a\n- b"\n+ "a\n+ c"`,
+      );
+      expect(diffOf(() => expect("a\nc").toEqual(expect.not.stringMatching("a\nc")))).toBe(
+        `- StringNotMatching "a\n+ "a\n  c"`,
+      );
+      // The matcher is the received value.
+      expect(diffOf(() => expect(sample()).toEqual({ a: 1 }))).toBe(
+        `- {\n-   "a": 1,\n+ ObjectContaining {\n+   "b": 2,\n  }`,
+      );
+    });
+
     test("StringContaining matches string against string", () => {
       expect(expect.stringContaining("en*")).toEqual("queen*");
       expect(expect.stringContaining("en")).not.toEqual("queue");

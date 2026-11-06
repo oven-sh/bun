@@ -94,7 +94,7 @@ pub(crate) fn print_in_snapshot(
     let out = printer.out;
     formatter.count_copied(out.len())?;
     let extra_line_breaks = indent == 0 && !format.is_pretty_format() && strings::contains_char(&out, b'\n');
-    if extra_line_breaks {
+    if extra_line_breaks && formatter.has_leading_line_break() {
         let _ = writer.write_all(b"\n");
     }
     let _ = writer.write_all(&out);

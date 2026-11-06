@@ -505,6 +505,12 @@ describe("a failing custom matcher's message is thrown unchanged", () => {
       "expect(received).toEqual(expected)",
     );
   });
+
+  test("a failing asymmetric matcher that is the whole expected value has its name on the line of the bracket", async () => {
+    expect(await messageOf(() => expect({ a: 1 }).toEqual(expect._toFailWith(1, "x")))).toBe(
+      'expect(received).toEqual(expected)\n\n- _toFailWith [\n-   1,\n-   "x",\n- ]\n+ {\n+   "a": 1,\n+ }\n\n- Expected  - 4\n+ Received  + 3\n',
+    );
+  });
 });
 
 describe("MatcherContext", () => {
@@ -721,6 +727,13 @@ describe("MatcherContext", () => {
         '-   "a": 1,',
         '+   "a": 2,',
         ...counts(1, 1),
+      ]);
+      expect(marked({ b: 2 }, expect.objectContaining({ a: 1 }))).toEqual([
+        "- {",
+        '-   "b": 2,',
+        "+ ObjectContaining {",
+        '+   "a": 1,',
+        ...counts(2, 2),
       ]);
       expect(Bun.stripANSI(utils.diff("color: blue;", "color: red;"))).toBe(
         "Expected: color: blue;\nReceived: color: red;",

@@ -2663,6 +2663,228 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   });
 });
 
+// Bun 1.4.4 and older wrote the name, a space and a line break, and then the sample: `ObjectContaining \n{\n  "a": 1,\n}\n`.
+describe.concurrent("an asymmetric matcher that is the whole value of a snapshot in Bun's format", () => {
+  // The name of a test, the value, the text that is stored for it, and the text that an older Bun stored.
+  type Row = [name: string, value: string, stored: string, older?: string];
+  const entry = (name: string, text: string) => `\nexports[\`${name} 1\`] = \`${text}\`;\n`;
+  const fileOf = (setup: string[], rows: Row[]) =>
+    [
+      ...setup,
+      ...rows.map(([name, value]) => `test(${JSON.stringify(name)}, () => { expect(${value}).toMatchSnapshot(); });`),
+    ].join("\n") + "\n";
+  const snapOf = (dir: string) => readFileSync(join(dir, "__snapshots__", "a.test.js.snap"), "utf8");
+  const resultsOf = (stderr: string) =>
+    stderr
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+  const extend = `expect.extend({ toBeFoo() { return { pass: true, message: () => "" }; } });`;
+
+  async function storedBy(setup: string[], rows: Row[]) {
+    using dir = tempDir("snapshot-whole-value-matcher", { "a.test.js": fileOf(setup, rows) });
+    const written = await runTests(String(dir), { CI: "false" });
+    const stored = snapOf(String(dir));
+    const read = await runTests(String(dir), { CI: "true" });
+    return { stored, readAs: snapOf(String(dir)), passed: read.pass, exitCodes: [written.exitCode, read.exitCode] };
+  }
+  const storedFor = (rows: Row[]) => {
+    const stored = headers.bun + rows.map(([name, , stored]) => entry(name, stored)).join("");
+    return { stored, readAs: stored, passed: rows.length, exitCodes: [0, 0] };
+  };
+
+  test("has its name on the first line of its sample, and the line breaks are around the two", async () => {
+    const setup = [
+      extend,
+      `class Foo { a = 1; }`,
+      `class Text { nodeType = 3; data = "words"; }`,
+      `class HTMLSpanElement { nodeType = 1; tagName = "SPAN"; attributes = []; childNodes = [new Text()]; }`,
+    ];
+    const rows: Row[] = [
+      ["an object", `expect.objectContaining({ a: 1 })`, `\nObjectContaining {\n  "a": 1,\n}\n`],
+      ["not", `expect.not.objectContaining({ a: 1 })`, `\nObjectNotContaining {\n  "a": 1,\n}\n`],
+      [
+        "resolvesTo",
+        `expect.resolvesTo.objectContaining({ a: 1 })`,
+        `\npromise resolved to ObjectContaining {\n  "a": 1,\n}\n`,
+      ],
+      [
+        "rejectsTo.not",
+        `expect.rejectsTo.not.objectContaining({ a: 1 })`,
+        `\npromise rejected to ObjectNotContaining {\n  "a": 1,\n}\n`,
+      ],
+      ["of expect.extend()", `expect.toBeFoo(1, "x")`, `\ntoBeFoo [\n  1,\n  "x",\n]\n`],
+      ["not, of expect.extend()", `expect.not.toBeFoo(1, "x")`, `\nnot toBeFoo [\n  1,\n  "x",\n]\n`],
+      ["stringContaining(), two lines", `expect.stringContaining("a\\nb")`, `\nStringContaining "a\nb"\n`],
+      ["stringMatching(), two lines", `expect.stringMatching("a\\nb")`, `\nStringMatching "a\nb"\n`],
+      [
+        "a String object",
+        `expect.stringContaining(new String("ab"))`,
+        `\nStringContaining String {\n  "0": "a",\n  "1": "b",\n}\n`,
+      ],
+      ["an object of a class", `expect.objectContaining(new Foo())`, `\nObjectContaining Foo {\n  "a": 1,\n}\n`],
+      [
+        "a DOM element",
+        `expect.objectContaining(new HTMLSpanElement())`,
+        `\nObjectContaining <span>\n  words\n</span>\n`,
+      ],
+      [
+        "a matcher in its sample",
+        `expect.objectContaining({ a: expect.objectContaining({ b: 1 }) })`,
+        `\nObjectContaining {\n  "a": ObjectContaining {\n    "b": 1,\n  },\n}\n`,
+      ],
+      // A sample on one line has no line breaks around it.
+      ["no properties", `expect.objectContaining({})`, `ObjectContaining {}`],
+      ["no arguments", `expect.toBeFoo()`, `toBeFoo []`],
+      ["one line", `expect.stringContaining("ab")`, `StringContaining "ab"`],
+      ["a RegExp", `expect.stringMatching(/a+/)`, `StringMatching /a+/`],
+      // These matchers are not the whole value, or their sample has a label of its own before the line break.
+      // An older Bun wrote the same text for them.
+      [
+        "in an object",
+        `({ m: expect.objectContaining({ a: 1 }) })`,
+        `\n{\n  "m": ObjectContaining {\n    "a": 1,\n  },\n}\n`,
+      ],
+      [
+        "two lines, in an object",
+        `({ s: expect.stringContaining("a\\nb") })`,
+        `\n{\n  "s": StringContaining \n"a\nb"\n,\n}\n`,
+      ],
+      [
+        "the key of a JSX element",
+        `({ $$typeof: Symbol.for("react.element"), type: "div", key: expect.objectContaining({ a: 1 }), props: {} })`,
+        `<div key=ObjectContaining \n{\n  "a": 1,\n}\n />`,
+      ],
+      [
+        "a Symbol.toStringTag",
+        `expect.objectContaining({ [Symbol.toStringTag]: "Tagged", a: 1 })`,
+        `ObjectContaining Tagged \nTagged {\n  [Symbol(Symbol.toStringTag)]: "Tagged",\n  "a": 1,\n}\n`,
+      ],
+    ];
+    expect(await storedBy(setup, rows)).toEqual(storedFor(rows));
+  });
+
+  test("the same when a snapshot serializer prints the sample, or does not take it", async () => {
+    const setup = [
+      `class Money { amount = 2; }`,
+      `class Lines { count = 2; }`,
+      `expect.addSnapshotSerializer({ test: value => value instanceof Money, serialize: value => "Money(" + value.amount + ")" });`,
+      `expect.addSnapshotSerializer({ test: value => value instanceof Lines, serialize: value => "Lines(\\n  " + value.count + "\\n)" });`,
+    ];
+    const rows: Row[] = [
+      ["several lines", `expect.objectContaining(new Lines())`, `\nObjectContaining Lines(\n  2\n)\n`],
+      ["one line", `expect.objectContaining(new Money())`, `ObjectContaining Money(2)`],
+      ["not taken", `expect.objectContaining({ a: 1 })`, `\nObjectContaining {\n  "a": 1,\n}\n`],
+      ["not taken, no properties", `expect.objectContaining({})`, `ObjectContaining {}`],
+    ];
+    expect(await storedBy(setup, rows)).toEqual(storedFor(rows));
+  });
+
+  test("an inline snapshot of it is indented, and no line of it ends in white space", async () => {
+    using dir = tempDir("snapshot-whole-value-matcher-inline", {
+      "a.test.js": [
+        extend,
+        `test("t", () => {`,
+        `  let reads = 0;`,
+        `  expect(expect.objectContaining({ get a() { return ++reads; } })).toMatchInlineSnapshot();`,
+        `  expect(expect.not.toBeFoo(1)).toMatchInlineSnapshot();`,
+        `  expect(expect.stringContaining("a\\nb")).toMatchInlineSnapshot();`,
+        `  expect(reads).toBe(1);`,
+        `});`,
+        ``,
+      ].join("\n"),
+    });
+    const path = join(String(dir), "a.test.js");
+    const written = await runTests(String(dir), { CI: "false" });
+    const source = readFileSync(path, "utf8");
+    expect(source.match(/`[^`]*`/g)).toEqual([
+      '`\n    ObjectContaining {\n      "a": 1,\n    }\n  `',
+      "`\n    not toBeFoo [\n      1,\n    ]\n  `",
+      '`\n    StringContaining "a\n    b"\n  `',
+    ]);
+    // An editor that trims trailing white space leaves the file as it is.
+    expect(source.split("\n").filter(line => /\s$/.test(line))).toEqual([]);
+
+    const read = await runTests(String(dir), { CI: "true" });
+    expect(resultsOf(read.stderr)).toEqual(["(pass) t"]);
+    expect(readFileSync(path, "utf8")).toBe(source);
+    expect([written.exitCode, read.exitCode]).toEqual([0, 0]);
+  });
+
+  test("what an older Bun wrote for it still passes, and --update-snapshots rewrites it once", async () => {
+    const rows: Row[] = [
+      [
+        "an object",
+        `expect.objectContaining({ a: 1 })`,
+        `\nObjectContaining {\n  "a": 1,\n}\n`,
+        `ObjectContaining \n{\n  "a": 1,\n}\n`,
+      ],
+      [
+        "resolvesTo.not",
+        `expect.resolvesTo.not.objectContaining({ a: 1 })`,
+        `\npromise resolved to ObjectNotContaining {\n  "a": 1,\n}\n`,
+        `promise resolved to ObjectNotContaining \n{\n  "a": 1,\n}\n`,
+      ],
+      [
+        "of expect.extend()",
+        `expect.not.toBeFoo(1, "x")`,
+        `\nnot toBeFoo [\n  1,\n  "x",\n]\n`,
+        `not toBeFoo \n[\n  1,\n  "x",\n]\n`,
+      ],
+      ["two lines", `expect.stringMatching("a\\nb")`, `\nStringMatching "a\nb"\n`, `StringMatching \n"a\nb"\n`],
+      [
+        "a String object",
+        `expect.stringContaining(new String("ab"))`,
+        `\nStringContaining String {\n  "0": "a",\n  "1": "b",\n}\n`,
+        `StringContaining \nString {\n  "0": "a",\n  "1": "b",\n}\n`,
+      ],
+      [
+        "an object of a class",
+        `expect.objectContaining(new Foo())`,
+        `\nObjectContaining Foo {\n  "a": 1,\n}\n`,
+        `ObjectContaining \nFoo {\n  "a": 1,\n}\n`,
+      ],
+    ];
+    const older = headers.bun + rows.map(([name, , , older]) => entry(name, older!)).join("");
+    const olderInline = `ObjectContaining \n{\n  "a": 1,\n}\n`;
+    const inlineOf = (sample: string, text: string) =>
+      `test("inline", () => { expect(expect.objectContaining(${sample})).toMatchInlineSnapshot(\`${text}\`); });\n`;
+    using dir = tempDir("snapshot-whole-value-matcher-older", {
+      "a.test.js": fileOf([extend, `class Foo { a = 1; }`], rows) + inlineOf("{ a: 1 }", olderInline),
+      "__snapshots__/a.test.js.snap": older,
+    });
+    // The older text passes for the sample that it was written for, and for no other.
+    using other = tempDir("snapshot-whole-value-matcher-other", { "a.test.js": inlineOf("{ a: 2 }", olderInline) });
+    const path = join(String(dir), "a.test.js");
+    const inline = () => readFileSync(path, "utf8").match(/`[^`]*`/g);
+    const passes = [...rows.map(([name]) => `(pass) ${name}`), "(pass) inline"];
+
+    const [inCI, notInCI, mismatch] = await Promise.all([
+      runTests(String(dir), { CI: "true" }),
+      runTests(String(dir), { CI: "false" }),
+      runTests(String(other), { CI: "true" }),
+    ]);
+    expect([resultsOf(inCI.stderr), resultsOf(notInCI.stderr)]).toEqual([passes, passes]);
+    expect(resultsOf(mismatch.stderr)).toEqual(["(fail) inline"]);
+    expect(snapOf(String(dir))).toBe(older);
+    expect(inline()).toEqual(["`" + olderInline + "`"]);
+    expect([inCI.exitCode, notInCI.exitCode, mismatch.exitCode]).toEqual([0, 0, 1]);
+
+    const first = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const updated = snapOf(String(dir));
+    expect(updated).toBe(headers.bun + rows.map(([name, , stored]) => entry(name, stored)).join(""));
+    expect(inline()).toEqual(['`\n  ObjectContaining {\n    "a": 1,\n  }\n`']);
+    const source = readFileSync(path, "utf8");
+
+    const second = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const read = await runTests(String(dir), { CI: "true" });
+    expect(resultsOf(read.stderr)).toEqual(passes);
+    expect(snapOf(String(dir))).toBe(updated);
+    expect(readFileSync(path, "utf8")).toBe(source);
+    expect([first.exitCode, second.exitCode, read.exitCode]).toEqual([0, 0, 0]);
+  });
+});
+
 describe.concurrent("what script hands to the printer of snapshots", () => {
   async function logOf(files: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("snapshot-hostile", files);

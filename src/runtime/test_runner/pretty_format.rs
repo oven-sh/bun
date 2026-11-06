@@ -323,6 +323,11 @@ pub(crate) struct Formatter<'a> {
     /// Set by `did_older_bun_print`. The cell turns true once the output has diverged, so printing can stop.
     like_older_bun: Option<&'a core::cell::Cell<bool>>,
     same_as_older_bun: bool,
+    /// True while the sample of an asymmetric matcher that is the whole value prints. The matcher's name is already written.
+    after_matcher_name: bool,
+    /// The sample left out the line break before it. `print_snapshot` writes it before the matcher's name.
+    /// A failure message needs none: `DiffFormatter` trims it.
+    owes_leading_line_break: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
     ancestors: ObjectList,
@@ -358,6 +363,8 @@ impl<'a> Formatter<'a> {
             snapshot_format: SnapshotFormat::Bun,
             like_older_bun: None,
             same_as_older_bun: true,
+            after_matcher_name: false,
+            owes_leading_line_break: false,
             output_length: None,
             ancestors: ObjectList::default(),
             copied: 0,
@@ -389,6 +396,17 @@ impl<'a> Formatter<'a> {
 
     pub(crate) fn add_for_new_line(&mut self, len: usize) {
         self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+    }
+
+    /// Whether a value at indent 0 that spans lines writes the line break before it. The sample of a matcher
+    /// does not: it starts on the line of the matcher's name, and the line break goes before that name.
+    /// Older versions wrote it after the name.
+    pub(crate) fn has_leading_line_break(&mut self) -> bool {
+        if self.after_matcher_name {
+            self.owes_leading_line_break = true;
+            self.same_as_older_bun = false;
+        }
+        !self.after_matcher_name
     }
 }
 
@@ -903,17 +921,20 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
+        let mut has_tag = false;
         if !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
             let name_str = value.get_name_property(global_this)?;
             if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                 writer.print(format_args!("{} ", name_str));
+                has_tag = true;
             } else {
                 let name_str = value
                     .get_prototype(global_this)?
                     .get_name_property(global_this)?;
                 if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                     writer.print(format_args!("{} ", name_str));
+                    has_tag = true;
                 }
             }
         }
@@ -921,7 +942,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         self.always_newline = true;
         self.formatter.estimated_line_length = (self.formatter.indent as usize) * 2 + 1;
 
-        if self.formatter.indent == 0 {
+        // `Tagged \nTagged {` prints the `Symbol.toStringTag` twice, so that text has to change once more.
+        // `did_older_bun_print` knows one older text. Until then the sample of a matcher keeps this line break too.
+        if self.formatter.indent == 0 && (has_tag || self.formatter.has_leading_line_break()) {
             let _ = self.writer.write_all(b"\n");
         }
         let classname = value.get_class_name(global_this)?;
@@ -1152,7 +1175,7 @@ impl<'a> Formatter<'a> {
                             writer.write_all(b"String {}");
                             return Ok(());
                         }
-                        if self.indent == 0 && str.len > 0 {
+                        if self.indent == 0 && str.len > 0 && self.has_leading_line_break() {
                             writer.write_all(b"\n");
                         }
                         writer.write_all(b"String {\n");
@@ -1191,7 +1214,9 @@ impl<'a> Formatter<'a> {
 
                         if str.index_of_any(b"\n\r").is_some() {
                             has_newline = true;
-                            writer.write_all(b"\n");
+                            if self.indent != 0 || self.has_leading_line_break() {
+                                writer.write_all(b"\n");
+                            }
                         }
 
                         writer.write_all(b"\"");
@@ -1449,7 +1474,7 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     }
 
-                    if self.indent == 0 {
+                    if self.indent == 0 && self.has_leading_line_break() {
                         writer.write_all(b"\n");
                     }
 
@@ -2786,7 +2811,15 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
         // The writer itself: an adapter around it for each matcher inside a matcher makes every
         // write as deep as they are nested, where nothing checks the stack.
         let global = self.global_this;
-        self.format::<W, C>(TagResult { tag: tag.into(), cell }, w, v, global)
+        let tag = TagResult { tag: tag.into(), cell };
+        // The first array, object, Map, Set or JSX element to print sets `map_node`. Without it the matcher is the whole value.
+        if self.indent != 0 || self.map_node.is_some() || self.like_older_bun.is_some() {
+            return self.format::<W, C>(tag, w, v, global);
+        }
+        self.after_matcher_name = true;
+        let result = self.format::<W, C>(tag, w, v, global);
+        self.after_matcher_name = false;
+        result
     }
 }
 
@@ -3555,8 +3588,12 @@ impl JestPrettyFormat {
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
             let tag = Tag::get(value, global)?;
+            let start = out.len();
             let mut bridge = AsFmt::new(out);
             formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
+            if formatter.owes_leading_line_break {
+                out.insert(start, b'\n');
+            }
             return Ok(formatter.same_as_older_bun && formatter.serializers.is_none());
         }
 
@@ -3762,6 +3799,14 @@ impl Formatter<'_> {
         }
         if self.indent > 0 {
             return self.print_with_serializer(out, value);
+        }
+        if self.after_matcher_name {
+            let is_printed = self.print_with_serializer(out, value)?;
+            // Several lines: the line break before them is left to go before the matcher's name.
+            if strings::contains_char(out, b'\n') && !self.has_leading_line_break() {
+                out.push(b'\n');
+            }
+            return Ok(is_printed);
         }
         out.push(b'\n');
         let is_printed = self.print_with_serializer(out, value)?;

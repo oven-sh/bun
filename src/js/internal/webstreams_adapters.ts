@@ -111,9 +111,10 @@ class ReadableFromWeb extends Readable {
     PromisePrototypeThen.$call(
       reader!.read(),
       chunk => {
-        if (this.#closed) return;
         if (chunk.done) {
-          this.#handleDone(reader!);
+          if (!this.#closed) this.#handleDone(reader!);
+          // Node ends the stream when destroy() cancels a read that waits: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L688-L690
+          else if (!this.#responseBody && !this.closed) this.push(null);
         } else {
           this.push(chunk.value);
         }

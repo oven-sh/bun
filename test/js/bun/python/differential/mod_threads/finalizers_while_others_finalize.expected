@@ -1,5 +1,5 @@
 status: 0
-script: 2a09ceb1bc57332d
+script: 98d4187103c32e72
 ---
 [(('1 A got it', True, 'A'), 1), (('1 B', 'B'), 1)]
 [('2', 100)]

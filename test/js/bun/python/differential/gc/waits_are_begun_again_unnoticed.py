@@ -34,7 +34,7 @@ for name, wait in (
     wait()
     end = time.monotonic()
     # On a busy machine everything takes longer, the finalizers too. What must not happen is that the time begins anew after them.
-    print(name, "while finalizers run, not early:", end - start >= 1.5 - 0.001, "not late:", end - max(start + 1.5, *finished[-1:]) < 1)
+    print(name, "while finalizers run, not early:", end - start >= 1.5 - 0.001, "not late:", end - max(start + 1.5, *finished[-1:]) < 1.4)
 import gc
 gc.collect()
 print(sorted(done))

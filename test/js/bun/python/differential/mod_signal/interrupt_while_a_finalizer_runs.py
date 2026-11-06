@@ -4,7 +4,7 @@
 import gc, os, signal, sys, threading, time
 
 is_asleep = False
-in_finalizer, sent = threading.Event(), threading.Event()
+in_finalizer, sent, in_try = threading.Event(), threading.Event(), threading.Event()
 
 
 class A:
@@ -15,17 +15,19 @@ class A:
 
 
 def sender():
-    in_finalizer.wait(1)   # Or there is no such finalizer.
+    in_try.wait()          # Thread.start() waits too, and a finalizer may run there.
+    in_finalizer.wait(5)   # Or there is no such finalizer. (Where there is, a slow build under load takes more than a second to come to it.)
     os.kill(os.getpid(), signal.SIGINT)
     sent.set()
 
 
 sys.unraisablehook = lambda unraisable: print("ignored:", type(unraisable.exc_value).__name__)
-a = A(); del a
 thread = threading.Thread(target=sender)
-is_asleep = True
 thread.start()
 try:
+    a = A(); del a
+    is_asleep = True
+    in_try.set()
     time.sleep(60)
     print("slept to the end")
 except KeyboardInterrupt:
@@ -47,12 +49,13 @@ def callback(reference):
         sent.wait(60)
 
 
-in_finalizer.clear(); sent.clear()
-b = B(); r = weakref.ref(b, callback); del b
+in_finalizer.clear(); sent.clear(); in_try.clear()
 thread = threading.Thread(target=sender)
-is_asleep = True
 thread.start()
 try:
+    b = B(); r = weakref.ref(b, callback); del b
+    is_asleep = True
+    in_try.set()
     threading.Event().wait(60)
     print("waited to the end")
 except KeyboardInterrupt:

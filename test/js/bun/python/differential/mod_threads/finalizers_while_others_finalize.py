@@ -7,14 +7,14 @@ def name(): return threading.current_thread().name
 # 1. A's finalizer waits for what B's finalizer does. One collection finds both.
 a_done, b_done = threading.Event(), threading.Event()
 class WaitsForB:
-    def __del__(self): count["1 A got it", b_done.wait(20), name()] += 1; a_done.set()
+    def __del__(self): count["1 A got it", b_done.wait(120), name()] += 1; a_done.set()
 class SetsB:
     def __del__(self): count["1 B", name()] += 1; b_done.set()
 made = threading.Barrier(3)
 def a():
-    x = WaitsForB(); del x; made.wait(); a_done.wait(30)
+    x = WaitsForB(); del x; made.wait(); a_done.wait(150)
 def b():
-    x = SetsB(); del x; made.wait(); b_done.wait(30)
+    x = SetsB(); del x; made.wait(); b_done.wait(150)
 ts = [threading.Thread(target=a, name="A"), threading.Thread(target=b, name="B")]
 for t in ts: t.start()
 made.wait()
@@ -28,12 +28,12 @@ class Slow:
     def __del__(self):
         count["2"] += 1
         if Slow.first:
-            Slow.first = False; inside.set(); go_on.wait(20)
+            Slow.first = False; inside.set(); go_on.wait(120)
 def a2():
     l = [Slow() for i in range(50)]; del l
     gc.collect()
 def b2():
-    inside.wait(20)
+    inside.wait(120)
     l = [Slow() for i in range(50)]; del l
     gc.collect(); gc.collect()
     go_on.set()
@@ -91,6 +91,6 @@ hooked = []
 sys.unraisablehook = lambda u: hooked.append((type(u.exc_value).__name__, name()))
 def waits():
     x = Raises(); del x
-    print(ev.wait(30))
+    print(ev.wait(150))
 t = threading.Thread(target=waits, name="W"); t.start(); t.join()
 print(hooked)

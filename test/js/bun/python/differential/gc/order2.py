@@ -15,6 +15,8 @@ class D(dict):
     def __del__(self): print("  del D")
 class T(tuple):
     def __del__(self): print("  del T")
+# A collection of the engine's own that ends between `del x` and gc.collect() would go by the order in which the objects were made. After a collection none is due for a long time.
+gc.collect()
 def case(name, make):
     print(name)
     x = make()

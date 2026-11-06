@@ -12,6 +12,16 @@ type ErrorCodeMapping = Array<
   ]
 >;
 
+/** The codes of the rows made with `plain()`. */
+export const plainErrorCodes = new Set<string>();
+
+// A row for an error that inherits Error.prototype.toString in Node. Node defines `name [code]: message` on the NodeError classes of makeNodeErrorWithCode: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L462-L464
+// A code without the ERR_ prefix is none of theirs and needs no mark.
+function plain(...row: ErrorCodeMapping[number]): ErrorCodeMapping[number] {
+  plainErrorCodes.add(row[0]);
+  return row;
+}
+
 const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_ACCESS_DENIED", Error],
@@ -199,7 +209,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MYSQL_CONNECTION_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_IDLE_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_LIFETIME_TIMEOUT", Error, "MySQLError"],
-  ["ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"],
+  plain("ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"),
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_METHOD", Error],
   ["ERR_S3_INVALID_PATH", Error],
@@ -227,7 +237,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_NULL_VALUES", TypeError],
   ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
-  ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+  plain("ERR_STREAM_RELEASE_LOCK", Error, "AbortError"),
   ["ERR_STREAM_UNABLE_TO_PIPE", Error],
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
   ["ERR_STREAM_WRAP", Error],

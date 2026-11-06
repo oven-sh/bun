@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import NodeErrors from "../jsc/bindings/ErrorCode.ts";
+import NodeErrors, { plainErrorCodes } from "../jsc/bindings/ErrorCode.ts";
 import { writeIfNotChanged } from "./helpers.ts";
 const outputDir = process.argv[2];
 const typesDir = process.argv[3];
@@ -47,11 +47,16 @@ listHeader = `
 
 struct ErrorCodeData {
     JSC::ErrorType type;
+    // The prototype of the code has the \`name [code]: message\` toString() of Node's NodeError. Without it the error inherits Error.prototype.toString.
+    bool hasNodeErrorToString;
     WTF::ASCIILiteral name;
     WTF::ASCIILiteral code;
 };
 static constexpr ErrorCodeData errors[${count}] = {
 `;
+
+// Every code that Node registers for makeNodeErrorWithCode starts with ERR_.
+const hasNodeErrorToString = (code: string) => code.startsWith("ERR_") && !plainErrorCodes.has(code);
 
 let i = 0;
 for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
@@ -61,7 +66,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   const codeWithoutPrefix = code === "ERR_MODULE_NOT_FOUND" ? code : code.replace(/^ERR_/, "");
 
   enumHeader += `    ${code} = ${i},\n`;
-  listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
+  listHeader += `    { JSC::ErrorType::${constructor.name}, ${hasNodeErrorToString(code)}, "${name}"_s, "${code}"_s },\n`;
   rustConsts += `    /// \`${code}\` (instanceof ${constructor.name})\n`;
   rustConsts += `    pub const ${codeWithoutPrefix}: ErrorCode = ErrorCode(${i});\n`;
   if (codeWithoutPrefix !== code) {
@@ -74,7 +79,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
     if (con == null) continue;
     if (name == null) name = con.name;
     enumHeader += `    ${code}_${con.name} = ${i},\n`;
-    listHeader += `    { JSC::ErrorType::${con.name}, "${con.name}"_s, "${code}"_s },\n`;
+    listHeader += `    { JSC::ErrorType::${con.name}, ${hasNodeErrorToString(code)}, "${con.name}"_s, "${code}"_s },\n`;
     rustConsts += `    /// \`${code}\` (instanceof ${con.name})\n`;
     rustConsts += `    pub const ${codeWithoutPrefix}_${con.name}: ErrorCode = ErrorCode(${i});\n`;
     rustCodeStr += `    "${code}",\n`;

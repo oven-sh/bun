@@ -107,11 +107,13 @@ namespace Bun {
 using namespace JSC;
 using namespace WTF;
 
-static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+#include "ErrorCode+Data.h"
+
+static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ErrorCodeData& data)
 {
     JSC::JSObject* prototype;
 
-    switch (type) {
+    switch (data.type) {
     case JSC::ErrorType::TypeError:
         prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
         break;
@@ -141,18 +143,13 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
         break;
     }
 
-    prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
-    prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
-    // Node's `name [code]: message` toString() belongs to the ERR_* errors of lib/internal/errors.js.
-    // The other codes in ErrorCode.ts (ABORT_ERR, HPE_*, ...) are plain Errors carrying a `code` in
-    // Node and stringify through Error.prototype.toString.
-    if (StringView(code).startsWith("ERR_"_s))
+    prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(data.name)), 0);
+    prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(data.code)), 0);
+    if (data.hasNodeErrorToString)
         prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), 0);
 
     return prototype;
 }
-
-#include "ErrorCode+Data.h"
 
 const ClassInfo ErrorCodeCache::s_info = { "ErrorCodeCache"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ErrorCodeCache) };
 
@@ -199,9 +196,9 @@ static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
 }
 
 // clang-format on
-static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, const ErrorCodeData& data)
 {
-    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code);
+    auto* prototype = createErrorPrototype(vm, globalObject, data);
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
@@ -211,7 +208,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
-        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+        auto* structure = createErrorStructure(vm, globalObject, data);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
@@ -258,7 +255,7 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
+    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)]);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
     if (scope.exception() && !vm.hasPendingTerminationException())
@@ -1336,7 +1333,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     auto message = builder.finish(globalObject, throwScope);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
+    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(ErrorCode::ERR_INVALID_ARG_VALUE_RangeError)]);
     auto error = JSC::ErrorInstance::create(vm, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
     throwScope.throwException(globalObject, error);
     throwScope.release();

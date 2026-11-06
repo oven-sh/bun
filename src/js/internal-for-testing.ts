@@ -892,6 +892,8 @@ export const privateGlobalFunctions: Record<string, (...operands: any[]) => unkn
   "makeErrorWithCode ERR_UNKNOWN_ENCODING": encoding => $ERR_UNKNOWN_ENCODING(encoding),
   "makeErrorWithCode ERR_TLS_CERT_ALTNAME_INVALID": (reason, host, cert) =>
     $ERR_TLS_CERT_ALTNAME_INVALID(reason, host, cert),
+  // No module makes this one yet.
+  "makeErrorWithCode ERR_STREAM_RELEASE_LOCK": message => $ERR_STREAM_RELEASE_LOCK(message),
   makeAbortError: (message, options) => $makeAbortError(message, options),
   peekPromiseStatus: promise => $peekPromiseStatus(promise),
   peekPromiseSettledValue: promise => $peekPromiseSettledValue(promise),

@@ -5162,7 +5162,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[inline]
     pub(crate) fn declare_binding(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        binding: &mut BindingNodeIndex,
+        opts: &ParseStatementOptions,
+    ) -> Result<(), crate::Error> {
+        self.declare_binding_impl::<false>(kind, binding, opts)
+    }
+
+    /// `declare_binding` for a `let`, `const` or `using` pattern: it reports each name `let`.
+    #[inline]
+    pub(crate) fn declare_lexical_binding(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        binding: &mut BindingNodeIndex,
+        opts: &ParseStatementOptions,
+    ) -> Result<(), crate::Error> {
+        self.declare_binding_impl::<true>(kind, binding, opts)
+    }
+
+    fn declare_binding_impl<const FORBID_LET: bool>(
         &mut self,
         kind: js_ast::symbol::Kind,
         binding: &mut BindingNodeIndex,
@@ -5172,27 +5193,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
                 if !opts.is_typescript_declare || (opts.scope.is_namespace() && opts.is_export) {
-                    bind.r#ref = self.declare_symbol(
-                        kind,
-                        binding.loc,
-                        self.load_name_from_ref(bind.r#ref),
-                    )?;
+                    let name = self.load_name_from_ref(bind.r#ref);
+                    if FORBID_LET && name == b"let" {
+                        self.report_let_as_lexical_name(binding.loc);
+                    }
+                    bind.r#ref = self.declare_symbol(kind, binding.loc, name)?;
                 }
             }
             js_ast::b::B::BArray(bind) => {
                 for item in bind.items_mut().iter_mut() {
-                    self.declare_binding(kind, &mut item.binding, opts)
+                    self.declare_binding_impl::<FORBID_LET>(kind, &mut item.binding, opts)
                         .expect("unreachable");
                 }
             }
             js_ast::b::B::BObject(bind) => {
                 for prop in bind.properties_mut().iter_mut() {
-                    self.declare_binding(kind, &mut prop.value, opts)
+                    self.declare_binding_impl::<FORBID_LET>(kind, &mut prop.value, opts)
                         .expect("unreachable");
                 }
             }
         }
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_let_as_lexical_name(&mut self, loc: bun_ast::Loc) {
+        let r = js_lexer::range_of_identifier(self.source, loc);
+        // `parse_property_binding` takes the name of `{...1}` from the previous identifier token.
+        if r.len == 0 {
+            return;
+        }
+        self.log().add_range_error(
+            Some(self.source),
+            r,
+            b"Cannot use \"let\" as an identifier here",
+        );
     }
 
     pub(crate) fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {

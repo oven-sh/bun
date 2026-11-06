@@ -56,6 +56,24 @@ function expectSame(name: string, texts: string[], options: string[][]) {
   );
 }
 
+/** How much time of the processor formatting `text` takes, as a multiple of what it takes without the short cuts. */
+async function cpuTimeOfShortCuts(name: string, text: string) {
+  using dir = tempDir("format-short-cuts", { [name]: text });
+  const cpu = async (own: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    // (Windows counts in ticks of 1/64 s)
+    return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+  };
+  return (await cpu([])) / (await cpu(["--no-short-cuts"]));
+}
+
 /** The most memory that formatting `text` takes at any time. */
 async function memoryInMegabytes(name: string, text: string, flags: string[]) {
   using dir = tempDir("format-short-cuts", { [name]: text });
@@ -696,6 +714,12 @@ describe("GraphQL", () => {
     const [short, long] = await format(formatted.texts, []);
     expect(short.texts).toEqual(long.texts);
     expect(short.said).toEqual(long.said);
+  });
+
+  test.skipIf(!hasFlag)("long names with nothing but a `$` between them take linear time", async () => {
+    const variables = `$${Buffer.alloc(70, "a")}`.repeat(isDebug ? 4_000 : 60_000);
+    // 0.5 in a release build, and 65 when each name looked for the end of all of them.
+    expect(await cpuTimeOfShortCuts("a.graphql", `{\n  a(b: [${variables}])\n}\n`)).toBeLessThan(3);
   });
 
   test("an indentation that is too long for a string is not written", async () => {

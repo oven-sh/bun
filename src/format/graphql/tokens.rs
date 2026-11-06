@@ -152,17 +152,14 @@ pub(super) fn end_of_number(text: &[u8], start: usize) -> Option<usize> {
 
 /// Returns the end of the name at `start`.
 fn end_of_long_name(stops: ScannerStops<'_>, start: usize) -> usize {
-    let end = stops.after_name.next(start);
-    // A `$` ends it earlier. The next stop of `in_string` can be as far away as the end of the text, so it's only
-    // looked for in the name.
     let mut at = start;
-    while at < end {
-        match stops.in_string.run(at) as usize {
-            run @ ..57 => return end.min(at + run),
-            _ => at += 56,
+    loop {
+        // To `after_name` a `$` is part of a name. `in_string` stops at it, and at nothing else in a name.
+        match stops.after_name.window(at) | stops.in_string.window(at) {
+            0 => at += 56,
+            not_name => return at + not_name.trailing_zeros() as usize,
         }
     }
-    end
 }
 
 /// Returns the end of the block string at `start`, and how many blanks or tabs are in front of the quotes at its end if

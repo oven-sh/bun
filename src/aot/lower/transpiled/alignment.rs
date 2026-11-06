@@ -331,9 +331,7 @@ impl<'a, 's> Alignment<'a, 's> {
         self.align_pending();
     }
 
-    /// The class prints the value of a field at the position of its name. It prints none there for a field that is assigned elsewhere:
-    /// `this.name = initializer` in the constructor, `Class.name = initializer` behind the class. That statement stands at the position of the name.
-    /// So does the body of the setter of an `accessor #x` field, which assigns no initializer.
+    /// The value the class prints at the name comes first: a statement there assigns a field printed without one, or is the setter of an `accessor #x`.
     fn align_field_initializer(&mut self, initializer: ExprId, name_position: u32) {
         let in_class = find_by_position(self.printed.initializers, name_position);
         let printed = in_class.or_else(|| {

@@ -15,5 +15,11 @@ bun_ast.workspace = true
 bun_core.workspace = true
 rustc-hash = "2"
 
+[dev-dependencies]
+bun_sema.workspace = true
+bun_sema_parser.workspace = true
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../../sema/standalone" }
+
 [lints]
 workspace = true

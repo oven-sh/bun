@@ -12,7 +12,6 @@ Local<BigInt> BigInt::New(Isolate* isolate, int64_t value)
 {
     auto* globalObject = isolate->globalObject();
     NapiUngatedScope ungated { isolate->vm() };
-    // Always heap-allocate (not makeHeapBigIntOrBigInt32) so createLocal sees a cell.
     JSC::JSBigInt* bigint = JSC::JSBigInt::createFrom(globalObject, value);
     return isolate->currentHandleScope()->createLocal<BigInt>(isolate->vm(), bigint);
 }

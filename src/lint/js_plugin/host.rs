@@ -606,7 +606,8 @@ impl<'e> Host<'e> {
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
-            | (u32::from(ast::shortens_nodes(file)) << 8);
+            | (u32::from(ast::shortens_nodes(file)) << 8)
+            | (u32::from(crate::estree::has_start_end(file)) << 9);
         wire::words(
             &mut message,
             &[

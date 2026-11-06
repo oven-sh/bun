@@ -22,6 +22,7 @@ bun_ast = { path = "../ast" }
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
+bun_removable_features.workspace = true
 bun_threading.workspace = true
 rustc-hash = "2"
 enumset.workspace = true

@@ -67,11 +67,11 @@ describe("bun.intFromFloat function", () => {
     expect(normalizeCSSOutput(output)).toMatchInlineSnapshot(`
       "/* [path] */
       .test-large {
-        border-radius: 3.40282e+38px;
+        border-radius: 3.40282e38px;
       }
 
       .test-negative-large {
-        border-radius: -3.40282e+38px;
+        border-radius: -3.40282e38px;
       }"
     `);
   });

@@ -1,0 +1,19 @@
+# print(typeof Buffer.from), in the shell, which is a realm without the host.
+# Buffer.from is a function of the host's library: a call of it may enter compiled code whatever its cell holds, so the realm does not refuse the cell.
+# Compiled code reads through the cell without a test: once it was null and a signal ended the shell.
+# FORM: AsRead
+# RUN: run-in-shell
+# CHECK: function
+# CHECK-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Builtin builtin=BufferFrom
+    v3 = TypeOf v2
+    v4 = Call v1, -, v3
+    Return
+}

@@ -3,19 +3,19 @@ use bun_lint::prelude::*;
 /// Disallow comparing against `-0`.
 pub struct NoCompareNegZero;
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Do not use the '{{operator}}' operator to compare against -0.",
 );
-const SUGGEST_REMOVE_MINUS: Message = Message::new(
+const SUGGEST_REMOVE_MINUS: &Message = &Message::new(
     "suggestRemoveMinus",
     "Replace '-0' with '0' (keeps the current comparison behavior).",
 );
-const SUGGEST_OBJECT_IS: Message = Message::new(
+const SUGGEST_OBJECT_IS: &Message = &Message::new(
     "suggestObjectIs",
     "Replace with 'Object.is()' (changes the comparison to distinguish -0 from +0).",
 );
-const SUGGEST_NOT_OBJECT_IS: Message = Message::new(
+const SUGGEST_NOT_OBJECT_IS: &Message = &Message::new(
     "suggestNotObjectIs",
     "Replace with '!Object.is()' (changes the comparison to distinguish -0 from +0).",
 );
@@ -88,7 +88,11 @@ impl Rule for NoCompareNegZero {
         let report = cx
             .report(e, UNEXPECTED)
             .data("operator", bin_op_text(op))
-            .hint("-0 and 0 compare as equal. Use Object.is(x, -0) to tell them apart.");
+            .hint(match op {
+                BinOp::EqEq | BinOp::EqEqEq => "-0 === 0 is true. Use Object.is(x, -0).",
+                BinOp::NotEq | BinOp::NotEqEq => "-0 === 0 is true. Use !Object.is(x, -0).",
+                _ => "-0 compares like 0. Write 0.",
+            });
         // oxlint suggests `Object.is` for `===`. For every other operator, it removes the `-` from the first `-0`.
         if cx.language().is_oxlint {
             let (neg_zero, other) = if left_is_neg_zero { (left, right) } else { (right, left) };

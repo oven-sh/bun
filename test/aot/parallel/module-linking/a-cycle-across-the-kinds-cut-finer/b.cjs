@@ -1,0 +1,10 @@
+const t = f => { try { return f(); } catch (e) { return e.constructor.name; } };
+const out = [];
+let a;
+out.push("require: " + t(() => { a = require("./a.mjs"); return typeof a; }));
+out.push("hoisted: " + t(() => a.hoisted()));
+out.push("var: " + t(() => a.v));
+out.push("const: " + t(() => a.a));
+out.push("keys: " + t(() => Object.keys(a).join()));
+out.push("ownKeys: " + t(() => Reflect.ownKeys(a).map(String).join()));
+exports.seen = out.join(" | ");

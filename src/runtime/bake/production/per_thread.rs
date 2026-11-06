@@ -1,6 +1,7 @@
 //! `PerThread`: what each rendering thread needs from the bundle.
 
 use super::*;
+use bun_bundler::output_file::Value as OutputFileValue;
 
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
@@ -15,7 +16,8 @@ pub(crate) struct PerThread {
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) module_keys: Vec<BunString>,
     /// Unordered
-    pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
+    /// Each source owns its chunk's bytes, moved out of `bundled_outputs`: JavaScriptCore keeps it longer than `PerThread` lives.
+    pub(crate) module_map: StringArrayHashMap<BunString>,
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
@@ -75,25 +77,34 @@ impl PerThread {
 
     /// After initializing, call `attach`
     pub(crate) fn init(
-        vm: *mut VirtualMachine,
+        vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
         entry_points: EntryPointMap,
-        bundled_outputs: Vec<OutputFile>,
+        mut bundled_outputs: Vec<OutputFile>,
         module_keys: Vec<BunString>,
-        module_map: StringArrayHashMap<OutputFileIndex>,
+        module_indexes: &StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {
         let n = entry_points.files.count();
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
-        // (non-null, write provenance); outlives PerThread.
-        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,
             global,
         ));
+
+        let mut module_map = StringArrayHashMap::with_capacity(module_indexes.count());
+        for (key, index) in module_indexes.keys().iter().zip(module_indexes.values()) {
+            let value = &mut bundled_outputs[index.get() as usize].value;
+            let source = match core::mem::replace(value, OutputFileValue::Noop) {
+                OutputFileValue::Buffer { bytes } => {
+                    BunString::create_external_globally_allocated_latin1(bytes.into_vec())
+                }
+                _ => BunString::EMPTY,
+            };
+            module_map.put_assume_capacity(key, source);
+        }
 
         Ok(PerThread {
             entry_points,

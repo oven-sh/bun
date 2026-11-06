@@ -1,9 +1,9 @@
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
-  var stream = Bun.stdin.stream();
+  var stream: ReadableStream<Uint8Array> = Bun.stdin.stream();
 
   var decoder = new TextDecoder("utf-8", { fatal: false });
-  var indexOf = Bun.indexOfLine;
+  var indexOf: (buffer: Uint8Array, offset: number) => number = Bun.indexOfLine;
   var actualChunk: Uint8Array;
   var i: number = -1;
   var idx: number;
@@ -115,17 +115,15 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
-interface ConsoleWriter extends Bun.FileSink {
-  flush(wait?: boolean): number | Promise<number>;
-}
+type ConsoleWriteInput = string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
 
-export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
+export function write(this: Console & { $writer: $Node.FileSink | undefined }, input: ConsoleWriteInput) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
-  var writer = $getByIdDirectPrivate(this, "writer");
+  var writer: $Node.FileSink | undefined = $getByIdDirectPrivate(this, "writer");
   if (!writer) {
-    var length = $toLength(input?.length ?? 0);
-    writer = Bun.stdout.writer({ highWaterMark: length > 65536 ? length : 65536 });
+    var length = $toLength((input as string | Uint8Array)?.length ?? 0);
+    writer = Bun.stdout.writer({ highWaterMark: length > 65536 ? length : 65536 }) as $Node.FileSink;
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
@@ -145,19 +143,21 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
 // Some parts are copied from imported files and inlined here. Not too much of a performance issue
 // to do extra work at startup, since most people do not need `console.Console`.
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
-export function createConsoleConstructor(console: typeof globalThis.console) {
+export function createConsoleConstructor(console: Console) {
   const { inspect, formatWithOptions } = require("node:util");
-  const { isBuffer } = require("node:buffer");
+  require("node:buffer");
   const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
 
   const StringPrototypeIncludes = String.prototype.includes;
-  const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace];
+  const RegExpPrototypeSymbolReplace: (this: RegExp, string: string, replaceValue: string) => string =
+    RegExp.prototype[Symbol.replace];
   const ArrayPrototypeUnshift = Array.prototype.unshift;
   const StringPrototypeRepeat = String.prototype.repeat;
   const StringPrototypeSlice = String.prototype.slice;
+  const StringPrototypeStartsWith = String.prototype.startsWith;
   const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
@@ -165,12 +165,16 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
   const kCounts = Symbol("counts");
 
-  const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
+  const internalGetStringWidth: (input: string, options?: unknown) => number = $newCppFunction(
+    "stringWidth.cpp",
+    "jsFunctionBunStringWidth",
+    1,
+  );
 
   /**
    * Returns the number of columns required to display the given string.
    */
-  var getStringWidth = function getStringWidth(str, removeControlChars = true) {
+  var getStringWidth = function getStringWidth(str: string, removeControlChars = true) {
     return internalGetStringWidth(str, removeControlChars);
   };
 
@@ -190,7 +194,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     middle: " │ ",
   };
 
-  const renderRow = (row, columnWidths) => {
+  const renderRow = (row: string[], columnWidths: number[]) => {
     let out = tableChars.left;
     for (let i = 0; i < row.length; i++) {
       const cell = row[i];
@@ -198,18 +202,17 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       const needed = (columnWidths[i] - len) / 2;
       // round(needed) + ceil(needed) will always add up to the amount
       // of spaces we need while also left justifying the output.
-      out +=
-        (StringPrototypeRepeat as any).$call(" ", needed) + cell + StringPrototypeRepeat.$call(" ", Math.ceil(needed));
+      out += StringPrototypeRepeat.$call(" ", needed) + cell + StringPrototypeRepeat.$call(" ", Math.ceil(needed));
       if (i !== row.length - 1) out += tableChars.middle;
     }
     out += tableChars.right;
     return out;
   };
 
-  const table = (head, columns) => {
+  const table = (head: string[], columns: string[][]) => {
     const columnWidths = ArrayPrototypeMap.$call(head, h => getStringWidth(h)) as number[];
-    const longestColumn = Math.max(...(ArrayPrototypeMap as any).$call(columns, a => a.length));
-    const rows: any = $newArrayWithSize(longestColumn);
+    const longestColumn = Math.max(...(ArrayPrototypeMap.$call(columns, a => a.length) as number[]));
+    const rows: string[][] = $newArrayWithSize(longestColumn);
 
     for (let i = 0; i < head.length; i++) {
       const column = columns[i];
@@ -261,9 +264,73 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kUseStdout = Symbol("kUseStdout");
   const kUseStderr = Symbol("kUseStderr");
 
-  const optionsMap = new WeakMap<any, any>();
-  function Console(this: any, ...args: unknown[]): void;
-  function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */): void {
+  type StreamSymbol = typeof kUseStdout | typeof kUseStderr;
+  type ColorMode = "auto" | boolean;
+
+  interface ConsoleStream extends $Node.Writable {
+    isTTY?: boolean;
+    getColorDepth?(): number;
+  }
+
+  /** The options of `util.inspect`. */
+  interface ConsoleInspectOptions {
+    colors?: boolean;
+  }
+
+  interface ConsoleOptions {
+    stdout: ConsoleStream;
+    stderr?: ConsoleStream;
+    ignoreErrors?: boolean;
+    colorMode?: ColorMode;
+    inspectOptions?: ConsoleInspectOptions | Map<ConsoleStream, ConsoleInspectOptions>;
+    groupIndentation?: number;
+    /** A stream has it: `new Console(stdout, stderr, ignoreErrors)`. */
+    write?: undefined;
+  }
+
+  interface ConsolePrototype {
+    [kBindStreamsEager](this: ConsoleInstance, stdout: ConsoleStream, stderr: ConsoleStream): void;
+    [kBindStreamsLazy](this: ConsoleInstance, object: { stdout: ConsoleStream; stderr: ConsoleStream }): void;
+    [kBindProperties](
+      this: ConsoleInstance,
+      ignoreErrors: boolean,
+      colorMode: ColorMode,
+      groupIndentation?: number,
+    ): void;
+    [kWriteToConsole](this: ConsoleInstance, streamSymbol: StreamSymbol, string: string): boolean | undefined;
+    [kGetInspectOptions](this: ConsoleInstance, stream: ConsoleStream): ConsoleInspectOptions;
+    [kFormatForStdout](this: ConsoleInstance, args: unknown[]): string;
+    [kFormatForStderr](this: ConsoleInstance, args: unknown[]): string;
+    log(this: ConsoleInstance, ...args: unknown[]): void;
+    debug(this: ConsoleInstance, ...args: unknown[]): void;
+    info(this: ConsoleInstance, ...args: unknown[]): void;
+    dirxml(this: ConsoleInstance, ...args: unknown[]): void;
+    warn(this: ConsoleInstance, ...args: unknown[]): void;
+    error(this: ConsoleInstance, ...args: unknown[]): void;
+    group(this: ConsoleInstance, ...data: unknown[]): void;
+    groupCollapsed(this: ConsoleInstance, ...data: unknown[]): void;
+  }
+
+  interface ConsoleInstance extends ConsolePrototype {
+    _stdout: ConsoleStream;
+    _stderr: ConsoleStream;
+    _stdoutErrorHandler: $Node.ErrorCallback;
+    _stderrErrorHandler: $Node.ErrorCallback;
+    _ignoreErrors: boolean;
+    _times: Map<string, [number, number]>;
+    [kCounts]: Map<string, number>;
+    [kColorMode]: ColorMode;
+    [kIsConsole]: true;
+    [kGroupIndent]: string;
+    [kGroupIndentationWidth]: number;
+  }
+
+  const optionsMap = new WeakMap<ConsoleInstance, NonNullable<ConsoleOptions["inspectOptions"]>>();
+  function Console(this: ConsoleInstance, ...args: any[]): void;
+  function Console(
+    this: ConsoleInstance,
+    options: ConsoleOptions | ConsoleStream /* or: stdout, stderr, ignoreErrors = true */,
+  ): void {
     // We have to test new.target here to see if this function is called
     // with new, because we need to define a custom instanceof to accommodate
     // the global console.
@@ -339,7 +406,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
   // Fixup global.console instanceof global.console.Console
   Object.defineProperty(Console, Symbol.hasInstance, {
-    value(instance) {
+    value(instance: ConsoleInstance | Console) {
       return instance[kIsConsole] || instance === console;
     },
   });
@@ -347,11 +414,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kColorInspectOptions = { colors: true };
   const kNoColorInspectOptions = {};
 
-  Object.defineProperties((Console.prototype = {}), {
+  Object.defineProperties((Console.prototype = {} as ConsolePrototype), {
     [kBindStreamsEager]: {
       ...consolePropAttributes,
       // Eager version for the Console constructor
-      value: function (stdout, stderr) {
+      value: function (this: ConsoleInstance, stdout: ConsoleStream, stderr: ConsoleStream) {
         Object.defineProperties(this, {
           "_stdout": { ...consolePropAttributes, value: stdout },
           "_stderr": { ...consolePropAttributes, value: stderr },
@@ -362,9 +429,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       ...consolePropAttributes,
       // Lazily load the stdout and stderr from an object so we don't
       // create the stdio streams when they are not even accessed
-      value: function (object) {
-        let stdout;
-        let stderr;
+      value: function (this: ConsoleInstance, object: { stdout: ConsoleStream; stderr: ConsoleStream }) {
+        let stdout: ConsoleStream | undefined;
+        let stderr: ConsoleStream | undefined;
         Object.defineProperties(this, {
           "_stdout": {
             enumerable: false,
@@ -373,7 +440,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
               if (!stdout) stdout = object.stdout;
               return stdout;
             },
-            set(value) {
+            set(value: ConsoleStream) {
               stdout = value;
             },
           },
@@ -386,7 +453,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
               }
               return stderr;
             },
-            set(value) {
+            set(value: ConsoleStream) {
               stderr = value;
             },
           },
@@ -395,7 +462,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
     [kBindProperties]: {
       ...consolePropAttributes,
-      value: function (ignoreErrors, colorMode, groupIndentation = 2) {
+      value: function (this: ConsoleInstance, ignoreErrors: boolean, colorMode: ColorMode, groupIndentation = 2) {
         Object.defineProperties(this, {
           "_stdoutErrorHandler": {
             ...consolePropAttributes,
@@ -430,7 +497,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
     [kWriteToConsole]: {
       ...consolePropAttributes,
-      value: function (streamSymbol, string) {
+      value: function (this: ConsoleInstance, streamSymbol: StreamSymbol, string: string) {
         const ignoreErrors = this._ignoreErrors;
         const groupIndent = this[kGroupIndent];
 
@@ -441,7 +508,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         if (groupIndent.length !== 0) {
           if (StringPrototypeIncludes.$call(string, "\n")) {
             // ?!
-            string = (RegExpPrototypeSymbolReplace.$call as any)(/\n/g, string, `\n${groupIndent}`);
+            string = RegExpPrototypeSymbolReplace.$call(/\n/g, string, `\n${groupIndent}`);
           }
           string = groupIndent + string;
         }
@@ -452,21 +519,31 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         // There may be an error occurring synchronously (e.g. for files or TTYs
         // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
         // handle both situations.
+        let hasCalledWrite = false;
         try {
           // Add and later remove a noop error handler to catch synchronous
           // errors.
           if (stream.listenerCount("error") === 0) stream.once("error", noop);
+          hasCalledWrite = true;
           stream.write(string, errorHandler);
         } catch (e) {
-          // Console is a debugging utility, so it swallowing errors is not
-          // desirable even in edge cases such as low stack space.
-          if (
-            e != null &&
-            typeof e === "object" &&
-            (e as Partial<Error>).name === "RangeError" &&
-            (e as Partial<Error>).message === "Maximum call stack size exceeded."
-          )
-            throw e;
+          if (e != null && typeof e === "object" && (e as Partial<Error>).name === "RangeError") {
+            const message = (e as Partial<Error>).message;
+            // Console is a debugging utility, so it swallowing errors is not
+            // desirable even in edge cases such as low stack space.
+            if (message === "Maximum call stack size exceeded.") throw e;
+            // Some memory is free again once an out-of-memory error has been thrown.
+            if (
+              !hasCalledWrite &&
+              typeof message === "string" &&
+              StringPrototypeStartsWith.$call(message, "Out of memory")
+            ) {
+              try {
+                if (stream.listenerCount("error") === 0) stream.once("error", noop);
+                stream.write(string, errorHandler);
+              } catch {}
+            }
+          }
           // Sorry, there's no proper way to pass along the error here.
         } finally {
           stream.removeListener("error", noop);
@@ -475,8 +552,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
     [kGetInspectOptions]: {
       ...consolePropAttributes,
-      value: function (stream) {
-        let color = this[kColorMode];
+      value: function (this: ConsoleInstance, stream: ConsoleStream) {
+        let color: ColorMode | undefined = this[kColorMode];
         if (color === "auto") {
           if (Bun.env["FORCE_COLOR"] !== undefined) {
             color = Bun.enableANSIColors;
@@ -489,7 +566,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         const options = $isMap(inspectOptions) ? inspectOptions.$get(stream) : inspectOptions;
         if (options) {
           if (options.colors === undefined) {
-            options.colors = color;
+            options.colors = color as boolean | undefined;
           }
           return options;
         }
@@ -499,14 +576,14 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
     [kFormatForStdout]: {
       ...consolePropAttributes,
-      value: function (args) {
+      value: function (this: ConsoleInstance, args: unknown[]) {
         const opts = this[kGetInspectOptions](this._stdout);
         return formatWithOptions(opts, ...args);
       },
     },
     [kFormatForStderr]: {
       ...consolePropAttributes,
-      value: function (args) {
+      value: function (this: ConsoleInstance, args: unknown[]) {
         const opts = this[kGetInspectOptions](this._stderr);
         return formatWithOptions(opts, ...args);
       },
@@ -514,7 +591,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   });
 
   // Make a function that can serve as the callback passed to `stream.write()`.
-  function createWriteErrorHandler(instance, streamSymbol) {
+  function createWriteErrorHandler(instance: ConsoleInstance, streamSymbol: StreamSymbol): $Node.ErrorCallback {
     return err => {
       // This conditional evaluates to true if and only if there was an error
       // that was not already emitted (which happens when the _write callback
@@ -533,16 +610,16 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     };
   }
 
-  const consoleMethods: any = {
-    log(...args) {
+  const consoleMethods = {
+    log(this: ConsoleInstance, ...args: unknown[]) {
       this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
     },
 
-    warn(...args) {
+    warn(this: ConsoleInstance, ...args: unknown[]) {
       this[kWriteToConsole](kUseStderr, this[kFormatForStderr](args));
     },
 
-    dir(object, options) {
+    dir(this: ConsoleInstance, object: unknown, options?: ConsoleInspectOptions) {
       this[kWriteToConsole](
         kUseStdout,
         inspect(object, {
@@ -553,7 +630,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       );
     },
 
-    time(label = "default") {
+    time(this: ConsoleInstance, label = "default") {
       // Coerces everything other than Symbol to a string
       label = `${label}`;
       if (this._times.has(label)) {
@@ -564,7 +641,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       this._times.set(label, process.hrtime());
     },
 
-    timeEnd(label = "default") {
+    timeEnd(this: ConsoleInstance, label = "default") {
       // Coerces everything other than Symbol to a string
       label = `${label}`;
       const found = timeLogImpl(this, "timeEnd", label);
@@ -574,14 +651,14 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       }
     },
 
-    timeLog(label = "default", ...data) {
+    timeLog(this: ConsoleInstance, label = "default", ...data: unknown[]) {
       // Coerces everything other than Symbol to a string
       label = `${label}`;
       timeLogImpl(this, "timeLog", label, data);
       // trace(kTraceInstant, kTraceConsoleCategory, `time::${label}`, 0);
     },
 
-    trace: function trace(...args) {
+    trace: function trace(this: ConsoleInstance, ...args: unknown[]) {
       const err: Error = {
         name: "Trace",
         message: this[kFormatForStderr](args),
@@ -590,7 +667,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       this.error(err.stack);
     },
 
-    assert(expression, ...args) {
+    assert(this: ConsoleInstance, expression: unknown, ...args: unknown[]) {
       if (!expression) {
         args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
         // The arguments will be formatted in warn() again
@@ -599,7 +676,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
 
     // Defined by: https://console.spec.whatwg.org/#clear
-    clear() {
+    clear(this: ConsoleInstance) {
       // It only makes sense to clear if _stdout is a TTY.
       // Otherwise, do nothing.
       if (this._stdout.isTTY && Bun.env["TERM"] !== "dumb") {
@@ -608,7 +685,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
 
     // Defined by: https://console.spec.whatwg.org/#count
-    count(label = "default") {
+    count(this: ConsoleInstance, label = "default") {
       // Ensures that label is a string, and only things that can be
       // coerced to strings. e.g. Symbol is not allowed
       label = `${label}`;
@@ -622,7 +699,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
 
     // Defined by: https://console.spec.whatwg.org/#countreset
-    countReset(label = "default") {
+    countReset(this: ConsoleInstance, label = "default") {
       const counts = this[kCounts];
       if (!counts.has(label)) {
         process.emitWarning(`Count for '${label}' does not exist`);
@@ -632,14 +709,14 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       counts.delete(`${label}`);
     },
 
-    group(...data) {
+    group(this: ConsoleInstance, ...data: unknown[]) {
       if (data.length > 0) {
         this.log.$apply(this, data);
       }
       this[kGroupIndent] += StringPrototypeRepeat.$call(" ", this[kGroupIndentationWidth]);
     },
 
-    groupEnd() {
+    groupEnd(this: ConsoleInstance) {
       this[kGroupIndent] = StringPrototypeSlice.$call(
         this[kGroupIndent],
         0,
@@ -648,15 +725,15 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
 
     // https://console.spec.whatwg.org/#table
-    table(tabularData, properties) {
+    table(this: ConsoleInstance, tabularData, properties?: string[]) {
       if (properties !== undefined) {
         validateArray(properties, "properties");
       }
 
       if (tabularData === null || typeof tabularData !== "object") return this.log(tabularData);
-      const final = (k, v) => this.log(table(k, v));
+      const final = (k: string[], v: string[][]) => this.log(table(k, v));
 
-      const _inspect = v => {
+      const _inspect = (v: unknown): string => {
         const depth = v !== null && typeof v === "object" && !isArray(v) && Object.keys(v).length > 2 ? -1 : 0;
         const opt = {
           depth,
@@ -666,15 +743,15 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         };
         return inspect(v, opt);
       };
-      const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
+      const getIndexArray = (length: number) => Array.from({ length }, (_, i) => _inspect(i));
 
       const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
 
       if (isKeyValue || $isMap(tabularData)) {
-        const keys = [];
-        const values = [];
+        const keys: string[] = [];
+        const values: string[] = [];
         let length = 0;
         if (mapIter) {
           for (; i < tabularData.length / 2; ++i) {
@@ -697,7 +774,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {
-        const values = [];
+        const values: string[] = [];
         let length = 0;
         for (const v of tabularData as Set<any>) {
           ArrayPrototypePush.$call(values, _inspect(v));
@@ -706,9 +783,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         return final([iterKey, valuesKey], [getIndexArray(length), values]);
       }
 
-      const map = Object.create(null);
+      const map: Record<string, string[]> = Object.create(null);
       let hasPrimitives = false;
-      const valuesKeyArray: any = [];
+      const valuesKeyArray: string[] = [];
       const indexKeyArray = Object.keys(tabularData);
 
       for (; i < indexKeyArray.length; i++) {
@@ -741,7 +818,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   };
 
   // Returns true if label was found
-  function timeLogImpl(self, name, label, data?) {
+  function timeLogImpl(self: ConsoleInstance, name: string, label: string, data?: unknown[]) {
     const time = self._times.get(label);
     if (time === undefined) {
       process.emitWarning(`No such label '${label}' for console.${name}()`);
@@ -767,7 +844,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const indexKey = "(index)";
   const iterKey = "(iteration index)";
 
-  const isArray = v => $isJSArray(v) || $isTypedArrayView(v) || isBuffer(v);
+  const isArray = (v: unknown) => $isJSArray(v) || $isTypedArrayView(v);
 
   function noop() {}
 

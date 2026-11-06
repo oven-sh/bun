@@ -1,0 +1,106 @@
+// Reads a property of Bun by a computed name.
+//@ args color semver
+const names = process.argv.slice(2);
+function show(value) { console.log(typeof value, typeof value === "function" ? value.name : Object.keys(value).join()); }
+//// bracket-argv
+for (const name of names) show(Bun[name]);
+//// bracket-concat
+console.log(Bun["col" + "or"]("red", "hex"));
+//// bracket-literal
+console.log(Bun["color"]("red", "hex"));
+//// alias
+const b = Bun;
+for (const name of names) show(b[name]);
+//// globalThis-Bun
+for (const name of names) show(globalThis.Bun[name]);
+//// import-default
+import bun from "bun";
+for (const name of names) show(bun[name]);
+//// import-namespace
+import * as bun from "bun";
+for (const name of names) show(bun[name]);
+//// import-named
+import { color } from "bun";
+console.log(color("red", "hex"));
+//// import-named-renamed
+import { color as paint } from "bun";
+console.log(paint("red", "hex"));
+//// require-bun
+//@ ext cjs
+const bun = require("bun");
+for (const name of names) show(bun[name]);
+//// dynamic-import-literal
+const bun = await import("bun");
+for (const name of names) show(bun[name]);
+//// dynamic-import-destructured
+const { color } = await import("bun");
+console.log(color("red", "hex"));
+//// destructure
+const { color } = Bun;
+console.log(color("red", "hex"));
+//// destructure-computed
+for (const name of names) { const { [name]: value } = Bun; show(value); }
+//// destructure-rest
+const { version, ...rest } = Bun;
+for (const name of names) show(rest[name]);
+//// spread
+const copy = { ...Bun };
+for (const name of names) show(copy[name]);
+//// Reflect-get
+for (const name of names) show(Reflect.get(Bun, name));
+//// Reflect-ownKeys
+console.log(Reflect.ownKeys(Bun).map(String).sort().join());
+//// keys
+console.log(Object.keys(Bun).sort().join());
+//// getOwnPropertyNames
+console.log(Object.getOwnPropertyNames(Bun).sort().join());
+//// entries
+for (const [name, value] of Object.entries(Bun)) if (names.includes(name)) show(value);
+//// values
+console.log(Object.values(Bun).length);
+//// for-in
+const seen = [];
+for (const name in Bun) seen.push(name);
+console.log(seen.sort().join());
+//// in
+for (const name of names) console.log(name in Bun);
+//// in-literal
+console.log("color" in Bun, "semver" in Bun, "nothing" in Bun);
+//// hasOwn
+for (const name of names) console.log(Object.hasOwn(Bun, name), Bun.hasOwnProperty(name));
+//// typeof-literal
+console.log(typeof Bun.color, typeof Bun.semver, typeof Bun.nothing);
+//// descriptor
+for (const name of names) show(Object.getOwnPropertyDescriptor(Bun, name).value ?? Object.getOwnPropertyDescriptor(Bun, name).get.call(Bun));
+//// descriptors
+const all = Object.getOwnPropertyDescriptors(Bun);
+console.log(Object.keys(all).sort().join());
+//// parameter
+function read(object, name) { return object[name]; }
+for (const name of names) show(read(Bun, name));
+//// proxy
+const proxy = new Proxy(Bun, {});
+for (const name of names) show(proxy[name]);
+//// object-create
+const child = Object.create(Bun);
+for (const name of names) show(child[name]);
+//// optional
+for (const name of names) show(Bun?.[name]);
+//// inspect-Bun
+console.log(Bun.inspect(Bun).split("\n").length > 10);
+//// console-log-Bun
+//@ todo printed whole, Bun shows `bufferedAmount: undefined` and no `connected` for a member that --trim removed, where the untrimmed executable shows 0 and false
+console.log(Bun);
+//// JSON-stringify-Bun
+console.log(Object.keys(JSON.parse(JSON.stringify(Bun))).sort().join());
+//// structuredClone-Bun
+try { console.log(Object.keys(structuredClone(Bun)).length); } catch (error) { console.log(error.name, error.message); }
+//// deepEquals-Bun
+console.log(Bun.deepEquals(Bun, Bun));
+//// method-this
+const o = { f() { return this; } };
+for (const name of names) show(o.f.call(Bun)[name]);
+//// typed-key
+//@ ext ts
+const key = (process.argv[2] ?? "color") as "color" | "semver";
+console.log(typeof Bun[key]);

@@ -507,10 +507,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for_await_range = await_range;
                 // Module-scope `for await` in a non-ESM target is accepted
                 // here; the visit pass errors if it survives DCE.
-                let at_module_scope = p.is_at_module_scope();
                 let tolerate_top_level = p.fn_or_arrow_data_parse.allow_await
                     == AwaitOrYield::AllowIdent
-                    && at_module_scope;
+                    && p.is_at_module_scope();
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr
                     && !tolerate_top_level
                 {
@@ -524,7 +523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     // TODO: improve error handling here
                     //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
-                    if p.fn_or_arrow_data_parse.is_top_level || at_module_scope {
+                    if p.fn_or_arrow_data_parse.is_top_level || tolerate_top_level {
                         p.top_level_await_keyword = await_range;
                         // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
                     }

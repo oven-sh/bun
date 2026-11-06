@@ -1,12 +1,14 @@
 // https://github.com/oven-sh/bun/issues/29243
 //
 // Bun was rejecting unreachable top-level `await` at parse time when
-// targeting a non-ESM output format. esbuild parses the `await`, lets DCE
-// drop the unreachable branch, and only then reports the CJS / TLA
-// incompatibility. This test locks in the same behaviour for `bun build`.
+// targeting a non-ESM output format. esbuild parses the `await`, removes it
+// where the code never runs, and reports the CJS / TLA incompatibility only
+// for an `await` that can run. This test locks in the same behaviour for
+// `bun build`.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Each test spawns `bun build` in its own tempDir with no shared state.
 // Run concurrently so the independent bun-build invocations don't serialise
@@ -525,122 +527,6 @@ module.exports = 1;`,
   expect(exitCode).not.toBe(0);
 });
 
-// `switch`/`with` in dead branches used to be kept wholesale, leaking their
-// await-bearing test expressions into non-async CJS output.
-test.concurrent("bun build --format=cjs drops a dead switch/with statement holding an await", async () => {
-  using dir = tempDir("issue-29243-dead-switch-with", {
-    "entry.js": `if (false) {
-  switch (await a()) {
-    case 1:
-      var fromSwitch = 1;
-  }
-  with (await b()) {
-    var fromWith = 1;
-  }
-}
-module.exports = 1;`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-
-  expect(stdout).not.toContain("await");
-  expect(stdout).toContain("var fromSwitch");
-  expect(stdout).toContain("var fromWith");
-  expect(exitCode).toBe(0);
-});
-
-// Async/generator function declarations are block-scoped (no Annex B hoist),
-// so a dead switch/with body holding one must still drop with its await husk.
-test.concurrent("bun build --format=cjs drops a dead switch/with holding an async function declaration", async () => {
-  using dir = tempDir("issue-29243-dead-async-fn", {
-    "entry.js": `if (false) {
-  switch (await a()) {
-    case 1:
-      async function fromSwitch() {}
-  }
-  with (await b()) {
-    function* fromWith() {}
-  }
-  while (await c()) {
-    async function fromWhile() {}
-  }
-}
-module.exports = 1;`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-
-  expect(stdout).not.toContain("await");
-  expect(exitCode).toBe(0);
-});
-
-// A dead module-level async function still hoists; it must not be trimmed.
-test.concurrent("bun build --format=cjs keeps a hoisted async function after a top-level return", async () => {
-  using dir = tempDir("issue-29243-hoisted-async-fn", {
-    "entry.js": `f();
-return;
-async function f() {}`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.js", "--format=cjs", "--minify-syntax"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-
-  expect(stdout).toContain("async function f()");
-  expect(exitCode).toBe(0);
-});
-
-// A value-less `var` in a for-init is fully relocated; the init slot must be
-// cleared so a dead loop drops instead of keeping its await-bearing test.
-test.concurrent("bun build --format=cjs drops a dead for loop with awaits and a var init", async () => {
-  using dir = tempDir("issue-29243-dead-for-var-init", {
-    "entry.js": `if (false) {
-  for (var x; await a(); await b()) {}
-}
-module.exports = 1;`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-
-  expect(stdout).not.toContain("await");
-  expect(stdout).toContain("var x");
-  expect(exitCode).toBe(0);
-});
-
 // The diagnostic points at the outermost live `await`, not a nested one.
 test.concurrent("bun build --format=cjs points a nested await diagnostic at the outer await", async () => {
   using dir = tempDir("issue-29243-nested-await-range", {
@@ -665,36 +551,123 @@ module.exports = v;`,
   expect(exitCode).not.toBe(0);
 });
 
-// A `var` in a brace-less dead body at module scope is not inside a block
-// scope, so it must still move out and let the await-bearing husk drop.
-test.concurrent(
-  "bun build --format=cjs drops dead brace-less if/while/do bodies holding an await and a var",
-  async () => {
-    using dir = tempDir("issue-29243-dead-braceless-var", {
-      "entry.js": `if (false) if (await a()) var fromIf;
+// A statement that never runs can still have to stay: it hoists a `var`, or
+// the dead-code pass keeps it whole. It loses only its `await`.
+test.concurrent.each([
+  [
+    "a switch and a with",
+    `if (false) {
+  switch (await a()) {
+    case 1:
+      var fromSwitch = 1;
+  }
+  with (await b()) {
+    var fromWith = 1;
+  }
+}`,
+    ["switch (a())", "with (b())", "var fromSwitch", "var fromWith"],
+  ],
+  [
+    "function declarations in a block",
+    `if (false) {
+  switch (await a()) {
+    case 1:
+      async function fromSwitch() {}
+  }
+  while (await b()) {
+    function* fromWhile() {}
+  }
+}`,
+    ["switch (a())", "async function fromSwitch()", "while (b())", "function* fromWhile()"],
+  ],
+  [
+    "a for loop with a var head",
+    `if (false) {
+  for (var x; await a(); await b()) {}
+}`,
+    ["for (var x;a(); b())"],
+  ],
+  [
+    "brace-less bodies",
+    `if (false) if (await a()) var fromIf;
 if (false) while (await b()) var fromWhile;
-if (false) do var fromDo; while (await c());
-module.exports = 1;`,
-    });
+if (false) do var fromDo; while (await c());`,
+    ["if (a())", "while (b())", "while (c())", "var fromIf", "var fromWhile", "var fromDo"],
+  ],
+  [
+    "a loop that holds a legal comment",
+    `if (false) { while (await a()) { /*! legal */ } }`,
+    ["while (a())", "/*! legal */"],
+  ],
+  ["a for await loop", `if (false) { for await (var x of a()) { /*! legal */ } }`, ["for (x of a())", "/*! legal */"]],
+])("bun build --format=cjs removes only the await from dead code: %s", async (_, dead, kept) => {
+  using dir = tempDir("issue-29243-dead-statement", {
+    "entry.js": `${dead}\nconsole.log("loaded");`,
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+  const [built, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).toBe("");
+  expect(built).not.toContain("await");
+  for (const text of kept) expect(built).toContain(text);
+  expect(buildExit).toBe(0);
 
-    expect(stdout).not.toContain("await");
-    expect(stdout).not.toContain("a()");
-    expect(stdout).not.toContain("b()");
-    expect(stdout).not.toContain("c()");
-    expect(stdout).toContain("var fromIf");
-    expect(stdout).toContain("var fromWhile");
-    expect(stdout).toContain("var fromDo");
-    expect(exitCode).toBe(0);
-  },
-);
+  await Bun.write(join(String(dir), "out.cjs"), built);
+  await using run = Bun.spawn({
+    cmd: [bunExe(), "out.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("loaded\n");
+  expect(exitCode).toBe(0);
+});
+
+// Removing the whole statement would also remove what the engine has to
+// refuse in it.
+test.concurrent.each([
+  ["an invalid regular expression", `if (false) { with (await a(/(/)) {} }`],
+  ["a class with two constructors", `if (false) { switch (await a(class { constructor() {} constructor() {} })) {} }`],
+])("bun build --format=cjs leaves %s in a dead statement for the engine to refuse", async (_, dead) => {
+  using dir = tempDir("issue-29243-dead-verdict", {
+    "entry.js": `${dead}\nconsole.log("loaded");`,
+  });
+
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [built, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).toBe("");
+  expect(built).not.toContain("await");
+  expect(buildExit).toBe(0);
+
+  await Bun.write(join(String(dir), "out.cjs"), built);
+  await using run = Bun.spawn({
+    cmd: [bunExe(), "out.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("SyntaxError");
+  expect(exitCode).toBe(1);
+});

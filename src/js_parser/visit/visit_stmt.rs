@@ -2018,10 +2018,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         local.decls.slice(),
                         RelocateVarsMode::Normal,
                     );
-                    // `ok` with no statement means the decls were fully
-                    // relocated; the init slot must be cleared, not kept.
-                    if relocate.ok {
-                        data.init = relocate.stmt;
+                    if let Some(relocated) = relocate.stmt {
+                        data.init = Some(relocated);
                     }
                 }
             }
@@ -2087,17 +2085,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::ForOf,
     ) -> Result<(), Error> {
-        // A live module-scope `for await` counts as top-level await;
-        // point the diagnostic at its own `await` keyword.
-        if data.is_await
-            && !p.is_control_flow_dead
-            && p.fn_or_arrow_data_visit.is_outside_fn_or_arrow
-            && !p.has_live_top_level_await
-        {
-            if data.await_range.len > 0 {
-                p.top_level_await_keyword = data.await_range;
+        if data.is_await && p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
+            if !p.is_control_flow_dead {
+                // A live module-scope `for await` is a top-level await, reported at its own keyword.
+                if !p.has_live_top_level_await {
+                    if data.await_range.len > 0 {
+                        p.top_level_await_keyword = data.await_range;
+                    }
+                    p.has_live_top_level_await = true;
+                }
+            } else if !p.options.features.top_level_await {
+                // The output format has no top-level await, and this loop never runs.
+                data.is_await = false;
             }
-            p.has_live_top_level_await = true;
         }
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)

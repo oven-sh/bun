@@ -191,16 +191,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // At module scope in a non-ESM target, parse unambiguous
                 // `await <expr>` as an await expression so DCE can drop dead
                 // branches; the visit pass rejects any await that survives.
-                let at_module_scope = p.is_at_module_scope();
                 let should_upgrade_to_await_expr = p.fn_or_arrow_data_parse.allow_await
                     == AwaitOrYield::AllowIdent
-                    && at_module_scope
                     // Declare-enum bodies push no scope; this flag marks
                     // TS namespace/enum bodies the scope walk can't see.
                     && !p.fn_or_arrow_data_parse.is_this_disallowed
                     && !p.lexer.has_newline_before
                     && AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAwait
-                    && token_starts_await_expr(p);
+                    && token_starts_await_expr(p)
+                    && p.is_at_module_scope();
                 let effective_allow_await = if should_upgrade_to_await_expr {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -223,7 +222,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 b"The keyword \"await\" cannot be escaped",
                             );
                         } else {
-                            if p.fn_or_arrow_data_parse.is_top_level || at_module_scope {
+                            if p.fn_or_arrow_data_parse.is_top_level || should_upgrade_to_await_expr
+                            {
                                 p.top_level_await_keyword = name_range;
                             }
 

@@ -11,6 +11,7 @@ use crate::ast::{
     VA_IN, VA_MINUS, VA_OUT, VA_PLUS, VA_READONLY, VA_WRITEONLY, k, type_keyword,
 };
 use crate::lexer::{C_START, C_STRIDE, kw, tk};
+use crate::parse::core::SCOPE_FUNCTION;
 use crate::words::w;
 use crate::{Quick, R, Words, rare};
 
@@ -1167,10 +1168,10 @@ impl Quick {
                         if self.eat(tk::Question)? {
                             flags |= F_OPTIONAL;
                         }
-                        self.next()?;
+                        self.expect(tk::Colon)?;
                     }
                 }
-                let type_ = self.flow_parse_type()?;
+                let type_ = self.flow_parse_type_fresh()?;
                 let v0 = self.node2(
                     k::ComponentTypeParameter | flags,
                     param_start,
@@ -1179,6 +1180,10 @@ impl Quick {
                     type_,
                 );
                 self.list_push(v0);
+                // the last one, without a comma
+                if self.lexer.tok != tk::ParenR {
+                    return Err(self.unexpected());
+                }
             } else {
                 let name = if self.lexer.tok == tk::String {
                     self.string_literal()?
@@ -1191,7 +1196,7 @@ impl Quick {
                     0
                 };
                 self.expect(tk::Colon)?;
-                let type_ = self.flow_parse_type()?;
+                let type_ = self.flow_parse_type_fresh()?;
                 let v1 = self.node2(
                     k::ComponentTypeParameter | flags,
                     param_start,
@@ -1832,6 +1837,9 @@ impl Quick {
                     return Err(self.unexpected());
                 }
                 self.next()?;
+                if self.lexer.tok == tk::This {
+                    return Err(self.unexpected());
+                }
                 let local = self.parse_binding_element()?;
                 let v1 = self.node2(
                     k::ComponentParameter,
@@ -1842,6 +1850,9 @@ impl Quick {
                 );
                 self.list_push(v1);
             } else {
+                if self.lexer.tok == tk::This {
+                    return Err(self.unexpected());
+                }
                 let name = self.node0(k::Identifier, self.lexer.tok_start, self.lexer.tok_end);
                 let local = self.parse_binding_element()?;
                 let v2 = self.node2(
@@ -1859,6 +1870,31 @@ impl Quick {
         }
         self.expect(tk::ParenR)?;
         return Ok(self.list_finish(list_mark));
+    }
+
+    /// Is each of the parameters of a component a name with a type, as in the type of a component? To the long way those of a
+    /// declared component are types: no other name for the inside, no pattern, no default value.
+    fn flow_are_declared_parameters(&self, params: i32) -> bool {
+        let mut i: i32 = 1;
+        while i <= self.n.at(params) {
+            let parameter = self.n.at(params + i);
+            let head = self.n.at(parameter);
+            let local = match head & 0xff {
+                k::ComponentParameter if (head & F_SHORTHAND) != 0 => self.n.at(parameter + 5),
+                k::RestElement => self.n.at(parameter + 4),
+                _ => return false,
+            };
+            if (self.n.at(local) & (0xff | F_EXT)) != (k::Identifier | F_EXT) {
+                return false;
+            }
+            // (the type of a function is laid out like that of a parameter by one way and like that of a property by the other)
+            let annotation = self.n.at(local + 4);
+            if (self.n.at(self.n.at(annotation + 4)) & 0xff) == k::FunctionType {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
     }
 
     pub(crate) fn peek_is_as(&mut self) -> R<bool> {
@@ -1882,7 +1918,12 @@ impl Quick {
         } else {
             0
         };
+        let suspensions = self.parse.suspensions;
         let params = self.flow_parse_component_params()?;
+        // `await` and `yield` among the parameters
+        if self.parse.suspensions != suspensions {
+            return Err(self.text_refuse());
+        }
         let renders = if self.word() == w::Renders {
             self.flow_parse_renders()?
         } else {
@@ -1890,10 +1931,22 @@ impl Quick {
         };
         let mut body: i32 = 0;
         if kind == k::ComponentDeclaration && self.lexer.tok == tk::BraceL {
+            let outer_scope = self.parse.place.scope;
+            self.parse.place.scope = SCOPE_FUNCTION;
             body = self.parse_function_body(head & F_ASYNC)?;
+            self.parse.place.scope = outer_scope;
+            if self.n.at(self.n.at(body + 4)) != 0
+                && self.has_use_strict(body)
+                && !self.flow_are_declared_parameters(params)
+            {
+                return Err(self.text_refuse());
+            }
         } else {
             // without a body it is declared, with or without the word
             kind = k::DeclareComponent;
+            if !self.flow_are_declared_parameters(params) {
+                return Err(self.text_refuse());
+            }
             self.semicolon()?;
         }
         return Ok(self.function_node(
@@ -2074,6 +2127,9 @@ impl Quick {
             let mut exported: i32 = 0;
             if self.is_kw(kw::As) {
                 self.next()?;
+                if self.is_default_name() && self.is_second_default_export(self.lexer.tok_start) {
+                    return Err(self.text_refuse());
+                }
                 exported = self.parse_ident_name()?;
             }
             if !self.is_kw(kw::From) {
@@ -2100,14 +2156,19 @@ impl Quick {
             while self.lexer.tok != tk::BraceR {
                 let spec_start = self.lexer.tok_start;
                 needs_from |= self.lexer.tok != tk::Name || self.is_kw(kw::Enum);
+                let mut is_default = self.is_default_name();
                 let local = self.parse_ident_name()?;
                 let exported: i32;
                 if self.is_kw(kw::As) {
                     self.next()?;
+                    is_default = self.is_default_name();
                     exported = self.parse_ident_name()?;
                 } else {
                     exported =
                         self.node0(self.n.at(local), self.n.at(local + 1), self.n.at(local + 2));
+                }
+                if is_default && self.is_second_default_export(self.n.at(exported + 1)) {
+                    return Err(self.text_refuse());
                 }
                 let v0 = self.node2(
                     k::ExportSpecifier,
@@ -2190,6 +2251,36 @@ impl Quick {
         Ok(())
     }
 
+    fn flow_has_statement_of_kind(&self, body: i32, kind: i32) -> bool {
+        let list = self.n.at(body + 5);
+        let mut i: i32 = 1;
+        while i <= self.n.at(list) {
+            let mut statement = self.n.at(list + i);
+            if (self.n.at(statement) & 0xff) == k::ExportNamedDeclaration
+                || (self.n.at(statement) & 0xff) == k::ExportDefaultDeclaration
+            {
+                statement = self.n.at(statement + 4);
+            }
+            if (self.n.at(statement) & 0xff) == kind {
+                return true;
+            }
+            i += 1;
+        }
+        return false;
+    }
+
+    /// In a declared module or namespace a component has no body, and a string at the start is a directive for some.
+    fn flow_check_ambient_body(&self, body: i32) -> R<()> {
+        let first = self.n.at(self.n.at(body + 5) + 1);
+        if self.flow_has_statement_of_kind(body, k::ComponentDeclaration)
+            || ((self.n.at(first) & 0xff) == k::ExpressionStatement
+                && (self.n.at(self.n.at(first + 4)) & 0xff) == k::StringLiteral)
+        {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
     /// The current token is `declare`. 0 if it is just a name here.
     pub(crate) fn flow_parse_declare(&mut self, start: i32) -> R<i32> {
         let m = self.mark();
@@ -2243,6 +2334,7 @@ impl Quick {
                 if self.mode.is_babel_flow {
                     self.flow_check_declare_module_body(body)?;
                 }
+                self.flow_check_ambient_body(body)?;
                 result = self.node2(
                     k::ModuleDeclaration | ((MOD_DECLARE | MK_MODULE) << SUB_SHIFT),
                     start,
@@ -2253,18 +2345,15 @@ impl Quick {
             }
         } else if self.word() == w::Namespace {
             self.not_in_babel()?;
+            self.flow_check_same_line()?;
             self.next()?;
             let id = self.parse_ident()?;
             let body = self.parse_block()?;
             // (a class in there is declared, and printed in ways of its own)
-            let list = self.n.at(body + 5);
-            let mut i: i32 = 1;
-            while i <= self.n.at(list) {
-                if (self.n.at(self.n.at(list + i)) & 0xff) == k::ClassDeclaration {
-                    return Err(self.text_refuse());
-                }
-                i += 1;
+            if self.flow_has_statement_of_kind(body, k::ClassDeclaration) {
+                return Err(self.text_refuse());
             }
+            self.flow_check_ambient_body(body)?;
             result = self.node2(
                 k::ModuleDeclaration | ((MOD_DECLARE | MK_NAMESPACE) << SUB_SHIFT),
                 start,
@@ -2322,12 +2411,17 @@ impl Quick {
             if self.eat(tk::Mul)? {
                 head |= F_GENERATOR;
             }
+            if self.lexer.tok == tk::BracketL || self.lexer.tok == tk::PrivateName {
+                return Err(self.unexpected());
+            }
             let key = self.parse_property_name()?;
             if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
                 let v0 = self.parse_method_rest(k::ClassMethod | head, member_start, key, 0)?;
                 self.list_push(v0);
-                self.eat(tk::Comma)?;
                 continue;
+            }
+            if (head & (F_ASYNC | F_GENERATOR)) != 0 {
+                return Err(self.unexpected());
             }
             let annotation_start = self.lexer.tok_start;
             self.expect(tk::Colon)?;
@@ -2338,11 +2432,7 @@ impl Quick {
                 self.lexer.prev_end,
                 type_,
             );
-            let value = if self.eat(tk::Eq)? {
-                self.parse_maybe_assign()?
-            } else {
-                0
-            };
+            let value = self.parse_class_property_value()?;
             let v1 = self.node3(
                 k::RecordDeclarationProperty | head,
                 member_start,
@@ -2421,7 +2511,6 @@ impl Quick {
         while self.lexer.tok != tk::BraceR {
             if self.lexer.tok == tk::Ellipsis {
                 rest = self.flow_parse_match_rest()?;
-                self.eat(tk::Comma)?;
                 break;
             }
             let property_start = self.lexer.tok_start;
@@ -2535,7 +2624,6 @@ impl Quick {
                 while self.lexer.tok != tk::BracketR {
                     if self.lexer.tok == tk::Ellipsis {
                         rest = self.flow_parse_match_rest()?;
-                        self.eat(tk::Comma)?;
                         break;
                     }
                     let v10 = self.flow_parse_match_pattern()?;
@@ -2567,31 +2655,15 @@ impl Quick {
         let id = self.parse_ident()?;
         let mut pattern = self.node1(k::MatchIdentifierPattern, start, self.lexer.prev_end, id);
         loop {
+            // (`a.b.c`, `a[1]`: the long way breaks them like the members of an expression)
+            if (self.lexer.tok == tk::Dot && (self.n.at(pattern) & 0xff) == k::MatchMemberPattern)
+                || self.lexer.tok == tk::BracketL
+            {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             if self.lexer.tok == tk::Dot {
                 self.next()?;
                 let property = self.parse_ident_name()?;
-                pattern = self.node2(
-                    k::MatchMemberPattern,
-                    start,
-                    self.lexer.prev_end,
-                    pattern,
-                    property,
-                );
-            } else if self.lexer.tok == tk::BracketL {
-                self.next()?;
-                let property = if self.lexer.tok == tk::String {
-                    self.string_literal()?
-                } else {
-                    if self.lexer.tok != tk::BigInt && self.lexer.tok != tk::Num {
-                        return Err(self.unexpected());
-                    }
-                    self.leaf(if self.lexer.tok == tk::BigInt {
-                        k::BigIntLiteral
-                    } else {
-                        k::NumericLiteral
-                    })?
-                };
-                self.expect(tk::BracketR)?;
                 pattern = self.node2(
                     k::MatchMemberPattern,
                     start,
@@ -2685,6 +2757,12 @@ impl Quick {
         if !is_match {
             return Ok(0);
         }
+        // a call behind `new` and `extends`
+        if self.parse.is_operand
+            || self.text_is(self.lexer.prev_end - 3, self.lexer.prev_end, b"new")
+        {
+            return Err(self.text_refuse());
+        }
         self.next()?;
         self.next()?;
         let argument = self.parse_expression()?;
@@ -2698,6 +2776,10 @@ impl Quick {
             if self.eat(tk::If)? {
                 self.expect(tk::ParenL)?;
                 guard = self.parse_expression()?;
+                // (`if (a, b)`: Prettier gives it parentheses of its own)
+                if (self.n.at(guard) & 0xff) == k::SequenceExpression {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
                 self.expect(tk::ParenR)?;
             }
             self.expect(tk::Arrow)?;

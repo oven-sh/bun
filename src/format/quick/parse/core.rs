@@ -6227,7 +6227,7 @@ impl Quick {
     }
 
     /// Is the current token, a name that is exported, `default` or "default"?
-    fn is_default_name(&self) -> bool {
+    pub(crate) fn is_default_name(&self) -> bool {
         self.lexer.tok == tk::Default
             || (self.lexer.tok == tk::String
                 && self.text_is(self.lexer.tok_start + 1, self.lexer.tok_end - 1, b"default"))
@@ -6672,6 +6672,10 @@ impl Quick {
                         declaration = 0;
                     } else {
                         self.unmark(m);
+                        // (behind `default`, the long way knows `async` in front of `function` only)
+                        if (self.n.at(declaration) & F_ASYNC) != 0 && k != k::EnumDeclaration {
+                            return Err(self.text_refuse());
+                        }
                     }
                 }
                 if declaration == 0 && self.is_kw(kw::Async) {

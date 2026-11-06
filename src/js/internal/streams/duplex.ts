@@ -24,11 +24,9 @@ const enum Flag {
 // Object lists a member from when it is first read: the third is read for that alone.
 const {
   keys: ObjectKeys,
-  defineProperties: _ObjectDefineProperties,
+  defineProperties: ObjectDefineProperties,
   getOwnPropertyDescriptor: _ObjectGetOwnPropertyDescriptor,
 } = Object;
-// Named as readable.ts and writable.ts name it: a compiler that reads this text sees which names are laid on Duplex.prototype.
-const ObjectDefineProperties = Object.defineProperties;
 
 declare global {
   namespace $Node {

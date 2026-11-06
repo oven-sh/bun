@@ -642,7 +642,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
-    if (didDrainFirstNextTickQueueOfThread)
+    if (didDrainFirstNextTickQueueOfThread && vm->hasCompiledCode())
         return;
     newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);

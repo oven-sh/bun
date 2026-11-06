@@ -65,30 +65,6 @@ describe("bundler", () => {
     },
   });
 
-  // `{ __proto__ }` and `{ ["__proto__"]: v }` define a property and `{ __proto__: v }` sets the prototype.
-  itBundled("react-compiler/ProtoInObjectLiteral", {
-    files: {
-      "/entry.jsx": /* jsx */ `
-        export function Card({ __proto__ }) {
-          const shorthand = { __proto__, a: 1 };
-          const computed = { ["__proto__"]: __proto__, b: 1 };
-          const setter = { __proto__: __proto__, c: 1 };
-          return <div x={shorthand} y={computed} z={setter} />;
-        }
-      `,
-    },
-    reactCompiler: true,
-    backend: "cli",
-    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js").replace(/\s+/g, " ");
-      expect(out).toMatch(/\b_c\(\d+\)/);
-      expect(out).toContain('{ ["__proto__"]: __proto__, a: 1 }');
-      expect(out).toContain('{ ["__proto__"]: __proto__, b: 1 }');
-      expect(out).toContain("{ __proto__: __proto__, c: 1 }");
-    },
-  });
-
   itBundled("react-compiler/ObjectPatternRestInProps", {
     files: {
       "/entry.tsx": /* tsx */ `

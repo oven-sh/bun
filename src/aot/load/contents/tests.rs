@@ -21,7 +21,9 @@ use super::{
     FileContents, FoundBecause, FoundEntryPoint, PlaceOfName, ProgramContents, WorkerNameForm,
     WorkerStart,
 };
-use crate::builtins::RuntimeModule::{self, BunWrap, NodeDgram, NodeOs, NodeV8, NodeVm, NodeZlib};
+use crate::builtins::RuntimeModule::{
+    self, BunWrap, NodeDgram, NodeOs, NodeTty, NodeV8, NodeVm, NodeZlib,
+};
 use crate::builtins::{BuiltinId, Mutability, Resolved};
 use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, run_build};
 use crate::compile::{Build, LoadedBuild};
@@ -1990,6 +1992,28 @@ console.log(held.member(["node:d", "gram"].join("")));"#;
         assert!(loaded.contents.loads_by_unknown_name);
         assert!(holds_library_module(loaded, NodeDgram));
     });
+}
+
+#[test]
+fn text_in_a_data_file_is_written_as_a_value_and_its_keys_are_not() {
+    let main = r#"import { createRequire } from "node:module";
+import names from "./names.json";
+console.log(createRequire(import.meta.url)(names.list[JSON.parse("1")]));"#;
+    let names = r#"{ "list": ["node:os", "node:zlib"], "dgram": 1, "deep": { "one": "tty" } }"#;
+    load(
+        &executable(&[("main.mjs", main), ("names.json", names)]),
+        |loaded| {
+            let mut written = [NodeOs, NodeZlib, NodeTty];
+            written.sort_unstable_by_key(|module| module.registry_id());
+            let spelled = &contents_of(files_of(loaded), "names.json").names;
+            assert_eq!(spelled.written_as_values, written);
+            assert!(
+                written
+                    .iter()
+                    .all(|&module| holds_library_module(loaded, module))
+            );
+        },
+    );
 }
 
 #[test]

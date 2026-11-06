@@ -479,7 +479,10 @@ impl<'a, 's> Text<'a, 's> {
         let kind = hir[function].kind;
         let flags = self.bound.function_flags(function);
         let reads_this = || {
-            let positions = self.this_positions.get_or_init(|| ThisPositions::of(hir));
+            let jsx_takes_this = self.analysis.jsx_takes_this();
+            let positions = self
+                .this_positions
+                .get_or_init(|| ThisPositions::of(hir, jsx_takes_this));
             positions.evaluates_own_this(hir, function)
         };
         let may_name_super = || {

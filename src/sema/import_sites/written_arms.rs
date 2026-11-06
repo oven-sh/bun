@@ -2,8 +2,40 @@ use crate::atom::Atom;
 use crate::bind::{Binding, BindingInitializer, Bound, SymbolId};
 use crate::fold::{Constant, Decisions, FoldedValue};
 use crate::hir::{BinOp, Branches, ExprId, ExprKind, File};
-use crate::import_sites::{ImportSite, ImportSiteKind};
+use crate::import_sites::{ImportSite, ImportSiteKind, is_name_read_by_transpiler};
 use smallvec::{SmallVec, smallvec};
+
+pub fn find_names_read_by_transpiler(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    site: &ImportSite,
+) -> SmallVec<[Atom; 2]> {
+    let mut names = SmallVec::new();
+    if site.specifier_node.is_none()
+        || !is_name_read_by_transpiler(hir, bound, decisions, site.kind)
+    {
+        return names;
+    }
+    let mut pending: SmallVec<[ExprId; 4]> = smallvec![site.specifier_node];
+    while let Some(expression) = pending.pop() {
+        let expression = hir.skip_type_assertions(expression);
+        if !decisions.is_constant_under_minify_syntax(hir, expression) {
+            if let ExprKind::Cond { branches, .. } = hir[expression].kind {
+                let Branches { yes, no } = hir.branches(branches);
+                pending.extend([yes, no]);
+            }
+            continue;
+        }
+        if let FoldedValue::Constant(Constant::String(text))
+        | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) =
+            decisions.constant(hir, expression)
+        {
+            names.push(text);
+        }
+    }
+    names
+}
 
 pub fn find_written_arms(
     hir: &File<'_>,

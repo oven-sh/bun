@@ -110,6 +110,7 @@ const responseRoad: {
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
   flushSocketHeldChunk?: (socket: object | null | undefined) => void;
+  noChunks?: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[];
 } = {};
 
 // node:_http_server registers its pipelined-response machinery here at module

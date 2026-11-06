@@ -185,9 +185,9 @@ pub(crate) struct RunContents {
     pub modules_replaced_in_text: Vec<Atom>,
     pub exports_spied_in_text: Vec<(Atom, Atom)>,
     pub mocks_any_module: bool,
+    pub loader_functions_answer_requires: bool,
     pub names_added: Vec<(BuiltinId, Atom)>,
     pub members_written_as_reads: Arc<[u32]>,
-    pub members_that_library_looks_up: Arc<[u32]>,
     pub loads: LoadsOfRun,
     pub counts: CountsOfScan,
 }
@@ -254,7 +254,7 @@ fn may_be_replaced_by_tests(place: BuiltinId) -> bool {
         }
 }
 
-fn list_members_written_as_reads(replaced: &[u32], with_globals: bool) -> Arc<[u32]> {
+fn list_members_written_as_reads(replaced: &[u32]) -> Arc<[u32]> {
     let mut is_listed = vec![false; BuiltinId::COUNT as usize];
     for &number in replaced {
         if let Some(is_listed) = is_listed.get_mut(number as usize) {
@@ -263,10 +263,6 @@ fn list_members_written_as_reads(replaced: &[u32], with_globals: bool) -> Arc<[u
     }
     let places = (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
     for place in places.filter(|&place| may_be_replaced_by_tests(place)) {
-        let kind = table::entry(place).kind;
-        if !with_globals && matches!(kind, BuiltinKind::Constructor | BuiltinKind::Namespace) {
-            continue;
-        }
         is_listed[place.to_wire() as usize] = true;
         is_listed[table::canonical_id(place).to_wire() as usize] = true;
         for &member in table::members(table::canonical_id(place)) {
@@ -419,11 +415,7 @@ pub(crate) fn collect_run_contents(
     let mut run = RunContents {
         whose,
         loads_compiled_files_alone,
-        members_written_as_reads: list_members_written_as_reads(input.replaced_builtins, true),
-        members_that_library_looks_up: list_members_written_as_reads(
-            input.replaced_builtins,
-            false,
-        ),
+        members_written_as_reads: list_members_written_as_reads(input.replaced_builtins),
         loads: collect_loads_of_run(files, input.options),
         ..RunContents::default()
     };

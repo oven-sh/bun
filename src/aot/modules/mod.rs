@@ -466,6 +466,16 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         let files = modules.compiled_files.iter();
         mocked_modules.extend(files.map(|&file| ModuleRef::File(file)));
     }
+    let of_library = |&module: &ModuleRef| match module {
+        ModuleRef::Runtime(module) => Some(module),
+        _ => None,
+    };
+    let mut mocked_library_modules: Vec<RuntimeModule> =
+        mocked_modules.iter().filter_map(of_library).collect();
+    mocked_library_modules.shared_sort_unstable();
+    let answered_for = imports.iter();
+    let answered_for = answered_for.flat_map(|file| &file.library_modules_answered_for);
+    mocked_modules.extend(answered_for.map(|&module| ModuleRef::Runtime(module)));
     let mocked_files = mocked_modules.iter();
     for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
         for &(_, resolved) in tables.names(file) {
@@ -715,7 +725,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         {
             plan.set_originals_beside_mocks_may_run();
         }
-        if input.runs_tests && mocks_any_module {
+        if input.runs_tests && (mocks_any_module || input.run.loader_functions_answer_requires) {
             plan.set_test_runner_hands_out_every_runtime_module();
         }
         for &file in modules.compiled_files.iter().filter(|_| input.runs_tests) {
@@ -791,12 +801,6 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
     );
     drop(names_handed_on);
     let (errors, failures) = failures.into_lists();
-    let mocked_library_modules = mocked_modules.iter().filter_map(|&module| match module {
-        ModuleRef::Runtime(module) => Some(module),
-        _ => None,
-    });
-    let mut mocked_library_modules: Vec<RuntimeModule> = mocked_library_modules.collect();
-    mocked_library_modules.shared_sort_unstable();
     let leaves_out_names = |file: &&FileId| tables.leaves_out_names(**file);
     let star_names_left_out = StarNamesLeftOut {
         names: tables.names_left_out().clone(),

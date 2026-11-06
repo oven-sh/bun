@@ -6,6 +6,7 @@
 # -- end of source
 # OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
 # RUN: features
+# DIAGNOSTIC: ModuleNamedAtRunTimeIsRefused 1
 # CHECK: CreateJSSQLStatementConstructor named
 # RUN(NEVER): features
 # NEVER-NOT: CreateJSSQLStatementConstructor named-at-run-time

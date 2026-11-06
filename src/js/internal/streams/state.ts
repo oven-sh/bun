@@ -104,7 +104,7 @@ interface Internals {
         push: $Node.Readable["push"];
         resume: $Node.Readable["resume"];
         removeAllListeners: $Node.Readable["removeAllListeners"];
-        removeListener: $Node.Readable["removeListener"];
+        removeListener: $Node.Readable["removeListener"] | undefined;
       }
     | undefined;
   destroyMethods:

@@ -20,6 +20,15 @@ const passedOver = new Set([
   "globalThis.process.mainModule",
   "globalThis.ShadowRealm",
 ]);
+// The bundler of plain Bun's library gives these functions names of its own ("Cipheriv2", "$"). A compiled program says what is written, as Node does:
+// parallel/builtin-modules/functions-that-the-bundler-of-the-library-renames.js.
+const renamedByBundler = new Set([
+  "@vercel/fetch",
+  "node:_http_server.ServerResponse.prototype.setTimeout",
+  "node:crypto.Cipheriv",
+  "node:crypto.Decipheriv",
+]);
+const describeAt = (path, fn, key) => (key === "name" && renamedByBundler.has(path) ? "by the bundler" : describe(fn, key));
 const visit = (value, path) => {
   if (Object(value) !== value || found.has(value) || passedOver.has(path)) return;
   found.add(value);
@@ -108,7 +117,7 @@ while (queue.length) {
   const [value, path] = queue.shift();
   if (path.split(".").length > 7) continue;
   if (typeof value === "function")
-    lines.push([path, ...["name", "length", "prototype"].map(key => key + " " + describe(value, key))].join("  "));
+    lines.push([path, ...["name", "length", "prototype"].map(key => key + " " + describeAt(path, value, key))].join("  "));
   if (Array.isArray(value) || ArrayBuffer.isView(value)) continue;
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key);

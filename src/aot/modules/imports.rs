@@ -89,6 +89,7 @@ pub(super) struct FileImports {
     pub spies_on_unknown_objects: SpiesOnUnknownObjects,
     pub mocked_modules: Vec<ModuleRef>,
     pub mocks_any_module: bool,
+    pub library_modules_answered_for: Vec<RuntimeModule>,
     pub failures: Vec<PendingFailure>,
     pub fails_where_it_is_linked: bool,
 }
@@ -383,6 +384,41 @@ impl MockedModules {
     }
 }
 
+pub(super) fn find_modules_that_program_may_answer_for(
+    files: &Files<'_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    file: FileId,
+) -> Vec<ModuleRef> {
+    let (analysis, scan) = (files.analysis(file), scans.of(file));
+    let is_commonjs = modules.interop(ModuleRef::File(file)).kind == ModuleKind::CommonJs;
+    let mut found: Vec<ModuleRef> = Vec::new();
+    for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+        let asks = match site.kind {
+            ImportSiteKind::Require(_)
+            | ImportSiteKind::RequireByTestRunner(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+            | ImportSiteKind::ImportEquals(_) => true,
+            ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage => is_commonjs,
+            _ => false,
+        };
+        match answer {
+            _ if !asks => {}
+            &ScannedSite::Module(module) => found.push(module),
+            ScannedSite::Candidates(spelled) => found.extend(scan.modules_spelled_in(spelled)),
+            ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => {}
+        }
+    }
+    found.retain(|&module| match module {
+        ModuleRef::File(_) | ModuleRef::Face(_) => true,
+        ModuleRef::Runtime(module) => {
+            !matches!(module, RuntimeModule::Bun | RuntimeModule::BunTest)
+        }
+        _ => false,
+    });
+    found
+}
+
 pub(super) fn find_mocked_modules(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -433,6 +469,14 @@ pub(super) fn find_mocked_modules(
                 }
                 ScannedSite::AllModules => mocked.is_every_module = true,
                 ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
+    if input.run.loader_functions_answer_requires {
+        for &file in &modules.compiled_files {
+            let named = find_modules_that_program_may_answer_for(input.files, scans, modules, file);
+            for module in named {
+                mocked.insert_with_forms(modules, module);
             }
         }
     }

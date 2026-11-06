@@ -1,0 +1,303 @@
+// What the compiler reads in place of src/js/bun/ffi.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 c39560f5a254c7cf80c4be1328f77df473b40123dbe3d5f6fa0f47089f6e8d71.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
+const FFIType = {
+  "0": 0,
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "9": 9,
+  "10": 10,
+  "11": 11,
+  "12": 12,
+  "13": 13,
+  "14": 14,
+  "15": 15,
+  "16": 16,
+  "17": 17,
+  bool: 11,
+  c_int: 5,
+  c_uint: 6,
+  char: 0,
+  "char*": 12,
+  double: 9,
+  f32: 10,
+  f64: 9,
+  float: 10,
+  i16: 3,
+  i32: 5,
+  i64: 7,
+  i8: 1,
+  int: 5,
+  int16_t: 3,
+  int32_t: 5,
+  int64_t: 7,
+  int8_t: 1,
+  isize: 7,
+  u16: 4,
+  u32: 6,
+  u64: 8,
+  u8: 2,
+  uint16_t: 4,
+  uint32_t: 6,
+  uint64_t: 8,
+  uint8_t: 2,
+  usize: 8,
+  "void*": 12,
+  ptr: 12,
+  pointer: 12,
+  void: 13,
+  cstring: 14,
+  i64_fast: 15,
+  u64_fast: 16,
+  function: 17,
+  callback: 17,
+  fn: 17,
+  napi_env: 18,
+  napi_value: 19,
+  buffer: 20,
+  buffer_length: 21,
+  buffer_bytelength: 21,
+};
+
+const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
+
+var ffi: $Node.FFIObject = globalThis.Bun.FFI;
+const ptr = (arg1: ArrayBufferView | ArrayBufferLike, arg2?: number) =>
+  typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
+const toBuffer = ffi.toBuffer;
+const toArrayBuffer = ffi.toArrayBuffer;
+// These throw the errors that the `Bun.FFI` functions of the same name return. Those that load machine code are asked for where they are called.
+const makeCallback: (options: object, callback: unknown) => object = $bindgen("ffi.bind.ts", "makeCallback");
+const printSource: (symbols: object, isCallback?: boolean) => string | string[] = $bindgen(
+  "ffi.bind.ts",
+  "printSource",
+);
+const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
+// A compiled executable that holds no code of this module runs it from its text, and `Bun.FFI` is read-only there: it keeps the three.
+try {
+  delete ffi.callback;
+  delete ffi.closeCallback;
+  delete ffi.cfunction;
+} catch (error) {
+  if (!(error instanceof TypeError)) throw error;
+}
+
+class JSCallback {
+  declare readonly ptr: number | null;
+
+  constructor(cb: (...args: any[]) => unknown, options: object) {
+    const cell = makeCallback(options, cb);
+    Object.setPrototypeOf(cell, (new.target ?? JSCallback).prototype);
+    return cell as JSCallback;
+  }
+
+  [Symbol.toPrimitive]() {
+    const { ptr } = this;
+    return typeof ptr === "number" ? ptr : 0;
+  }
+
+  close() {
+    if (!(this instanceof JSCallback)) {
+      throw new TypeError("JSCallback.prototype.close called on an incompatible receiver");
+    }
+    closeCallback(this);
+  }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
+}
+
+const CString = ffi.CString;
+
+function toCString(v: number) {
+  return v ? new CString(v) : null;
+}
+
+function FFIBuilder(params: unknown[], functionToCall: $Node.FFIFunction, name: string) {
+  // variadic arguments can be expensive
+  // most FFI functions are going to be < 5 arguments
+  // so we just inline it
+  var wrap: $Node.FFIFunction;
+  switch (params.length) {
+    case 0:
+      wrap = () => toCString(functionToCall());
+      break;
+    case 1:
+      wrap = arg1 => toCString(functionToCall(arg1));
+      break;
+    case 2:
+      wrap = (arg1, arg2) => toCString(functionToCall(arg1, arg2));
+      break;
+    case 3:
+      wrap = (arg1, arg2, arg3) => toCString(functionToCall(arg1, arg2, arg3));
+      break;
+    case 4:
+      wrap = (arg1, arg2, arg3, arg4) => toCString(functionToCall(arg1, arg2, arg3, arg4));
+      break;
+    case 5:
+      wrap = (arg1, arg2, arg3, arg4, arg5) => toCString(functionToCall(arg1, arg2, arg3, arg4, arg5));
+      break;
+    case 6:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6));
+      break;
+    case 7:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) =>
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7));
+      break;
+    case 8:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) =>
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
+      break;
+    case 9:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) =>
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9));
+      break;
+    default: {
+      wrap = (...args) => toCString(functionToCall(...args));
+      break;
+    }
+  }
+  Object.defineProperty(wrap, "name", {
+    value: name,
+  });
+  wrap.native = functionToCall;
+  wrap.ptr = functionToCall.ptr;
+  return wrap;
+}
+
+const native = {
+  dlopen: ffi.dlopen,
+  callback: () => {
+    throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
+  },
+};
+
+function normalizePath(path: string | URL | Bun.BunFile | undefined) {
+  if (typeof path === "string" && path?.startsWith?.("file:")) {
+    // import.meta.url returns a file: URL
+    // https://github.com/oven-sh/bun/issues/10304
+    path = Bun.fileURLToPath(path);
+  } else if (typeof path === "object" && path) {
+    if ($inheritsBlob(path)) {
+      // must be a Bun.file() blob
+      // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
+      path = path.name;
+    } else {
+      // This is mostly for import.meta.resolve()
+      // https://github.com/oven-sh/bun/issues/10304
+      path = require("internal/url").toPathIfFileURL(path) as string;
+    }
+  }
+
+  return path;
+}
+
+function dlopen(path: string | URL | Bun.BunFile | undefined, options: object) {
+  path = normalizePath(path);
+
+  const openLibrary: (path: unknown, symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "openLibrary");
+  const result = openLibrary(path, options);
+
+  // Bind it because it's a breaking change to not do so
+  // Previously, it didn't need to be bound
+  result.close = result.close.bind(result);
+
+  return result;
+}
+
+function cc(options) {
+  if (!$isObject(options)) {
+    throw new Error("Expected options to be an object");
+  }
+
+  let path = options?.source;
+  if (!path) {
+    throw new Error("Expected source to be a string to a file path");
+  }
+  if ($isJSArray(path)) {
+    for (let i = 0; i < path.length; i++) {
+      path[i] = normalizePath(path[i]);
+    }
+  } else {
+    path = normalizePath(path);
+  }
+  options.source = path;
+
+  const ccFn: (options: object) => $Node.FFILibrary | Error = $bindgen("ffi.bind.ts", "cc");
+  const result = ccFn(options);
+  if (Error.isError(result)) throw result;
+
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    const desc = options.symbols?.[key];
+    if (FFIType[desc?.returns as string] === FFIType.cstring) {
+      result.symbols[key] = FFIBuilder(
+        desc.args ?? [],
+        symbol,
+        // in stacktraces:
+        // instead of
+        //    "/usr/lib/sqlite3.so"
+        // we want
+        //    "sqlite3_get_version() - sqlit3.so"
+        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+      );
+    } else {
+      // consistentcy
+      result.symbols[key].native = result.symbols[key];
+    }
+  }
+
+  // Bind it because it's a breaking change to not do so
+  // Previously, it didn't need to be bound
+  result.close = result.close.bind(result);
+
+  return result;
+}
+
+function viewSource(symbols: object, isCallback?: boolean) {
+  var result = printSource(symbols, isCallback);
+  return result;
+}
+
+function linkSymbols(options: object) {
+  const linkLibrary: (symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "linkLibrary");
+  var result = linkLibrary(options);
+  return result;
+}
+
+var cFunctionI = 0;
+function closeJSCFFICFunction() {}
+function CFunction(options: object) {
+  const identifier = `CFunction${cFunctionI++}`;
+
+  const makeFunction: (options: object, name: string) => $Node.FFIFunction = $bindgen("ffi.bind.ts", "makeFunction");
+  const fn = makeFunction(options, identifier);
+  fn.close = closeJSCFFICFunction;
+  return fn;
+}
+
+const read = ffi.read;
+
+export default {
+  CFunction,
+  CString,
+  FFIType,
+  JSCallback,
+  dlopen,
+  linkSymbols,
+  native,
+  ptr,
+  read,
+  suffix,
+  toArrayBuffer,
+  toBuffer,
+  viewSource,
+  cc,
+};

@@ -1,5 +1,8 @@
 use super::bindings::ImportBinding;
-use super::imports::{FileBinder, PendingBinding, find_modules_of_alternatives};
+use super::imports::{
+    FileBinder, PendingBinding, find_modules_of_alternatives,
+    find_modules_that_program_may_answer_for,
+};
 use super::interop::ImportPhase;
 use super::namespace_members::{StandsFor, find_outermost_type_assertion, imported_module};
 use super::plan::{ModuleRef, View};
@@ -323,6 +326,18 @@ impl FileBinder<'_, '_> {
             }
             for &module in &context.mocked.out_of_sight {
                 self.mock(module);
+            }
+        }
+        if context.input.run.loader_functions_answer_requires {
+            let (files, scans, modules) = (context.files, context.scans, context.modules);
+            for module in find_modules_that_program_may_answer_for(files, scans, modules, self.file)
+            {
+                match module {
+                    ModuleRef::Runtime(module) => {
+                        self.imports.library_modules_answered_for.push(module);
+                    }
+                    module => self.mock_with_forms(module),
+                }
             }
         }
         let (analysis, scan) = (self.analysis, self.scan);

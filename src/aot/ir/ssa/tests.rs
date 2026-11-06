@@ -1,7 +1,10 @@
 use super::*;
 use crate::ir::builder::{IS_PARAMETER, NO_VALUE};
 use crate::ir::ids::optional_id_from_word;
-use crate::ir::testing::{create_blocks, create_builder, create_catch_handler, enter_block};
+use crate::ir::testing::{
+    build_function, create_blocks, create_builder, create_catch_handler, enter_block,
+};
+use crate::ir::tests::Generator;
 use crate::ir::types::TypeTable;
 
 struct Diamond {
@@ -798,6 +801,7 @@ fn walk_without_shortcut_finds_same_definition() {
     const CHAIN_LENGTH: usize = 100;
     let mut builder = create_builder(&[]);
     let variable = builder.create_variable(None);
+    builder.ssa.steps_through_every_join = true;
     let block_count = MAX_SHORTCUT_DEFINITION_BLOCKS + 1;
     let stored = write_in_successive_blocks(&mut builder, variable, block_count);
     let last = enter_blocks(&mut builder, CHAIN_LENGTH);
@@ -814,12 +818,132 @@ fn walk_without_shortcut_finds_same_definition() {
 }
 
 #[test]
-fn definition_blocks_are_recorded_up_to_one_past_shortcut_limit() {
+fn shortcut_of_variable_stored_in_many_blocks_leads_to_last_store() {
+    const CHAIN_LENGTH: usize = 100;
+    let mut builder = create_builder(&[]);
+    let variable = builder.create_variable(None);
+    let block_count = MAX_SHORTCUT_DEFINITION_BLOCKS + 1;
+    let stored = write_in_successive_blocks(&mut builder, variable, block_count);
+    let holder = builder.current_block();
+    let last = enter_blocks(&mut builder, CHAIN_LENGTH);
+    assert!(matches!(
+        builder.ssa.find_shortcut(variable, last),
+        Shortcut::To(found) if found == holder
+    ));
+    let definition_count = builder.ssa.definitions.0.len();
+    assert_eq!(builder.read_variable(variable), stored);
+    assert!(builder.ssa.definitions.0.len() <= definition_count + 3);
+}
+
+#[test]
+fn parameter_of_loop_declared_before_the_jump_into_it_is_not_stepped_over() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN]);
+    let condition = builder.parameter(0);
+    let variable = builder.create_variable(None);
+    write_in_successive_blocks(&mut builder, variable, MAX_SHORTCUT_DEFINITION_BLOCKS + 1);
+    let [header, body, after] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[variable]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(after));
+    builder.seal(body);
+    builder.switch_to(body);
+    write_diamond(&mut builder, condition, variable, [None, None]);
+    assert_eq!(
+        [builder.read_variable(variable)],
+        variable_parameters(&builder, header)
+    );
+}
+
+#[test]
+fn store_in_a_block_that_ends_behind_the_join_it_leads_to_is_not_stepped_over() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN]);
+    let condition = builder.parameter(0);
+    let variable = builder.create_variable(None);
+    let block_count = MAX_SHORTCUT_DEFINITION_BLOCKS + 1;
+    let stored = write_in_successive_blocks(&mut builder, variable, block_count);
+    let before = enter_block(&mut builder, None);
+    let [join, late] = create_blocks(&mut builder);
+    builder.branch(condition, Edge::to(join), Edge::to(late));
+    builder.switch_to(join);
+    let chain: [BlockId; 5] = create_blocks(&mut builder);
+    for block in chain {
+        builder.jump(Edge::to(block));
+        builder.switch_to(block);
+    }
+    builder.seal(late);
+    builder.switch_to(late);
+    let other = builder.integer(-1);
+    builder.write_variable(variable, other);
+    builder.jump(Edge::to(join));
+    builder.seal(join);
+    for block in chain {
+        builder.seal(block);
+    }
+    builder.switch_to(chain[4]);
+    let read = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, join), [read]);
+    assert_eq!(variable_arguments(&builder, before, 0), [stored]);
+    assert_eq!(variable_arguments(&builder, late, 0), [other]);
+}
+
+#[test]
+fn join_entered_out_of_a_loop_that_nobody_enters_keeps_its_parameter() {
+    let mut builder = create_builder(&[]);
+    let variable = builder.create_variable(None);
+    let block_count = MAX_SHORTCUT_DEFINITION_BLOCKS + 1;
+    let stored = write_in_successive_blocks(&mut builder, variable, block_count);
+    let before = enter_block(&mut builder, None);
+    let [header, body, join] = create_blocks(&mut builder);
+    builder.jump(Edge::to(join));
+    builder.declare_loop_header(header, &[]);
+    builder.switch_to(header);
+    builder.jump(Edge::to(body));
+    builder.seal(body);
+    builder.switch_to(body);
+    builder.jump(Edge::to(join));
+    builder.seal(header);
+    builder.seal(join);
+    builder.switch_to(join);
+    let read = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, join), [read]);
+    assert_eq!(variable_arguments(&builder, before, 0), [stored]);
+}
+
+#[test]
+fn arm_that_does_not_store_finds_the_store_far_above_without_a_definition_for_each_join() {
+    const JOIN_COUNT: usize = 100;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN]);
+    let condition = builder.parameter(0);
+    let [variable, other] = [(); 2].map(|()| builder.create_variable(None));
+    let block_count = MAX_SHORTCUT_DEFINITION_BLOCKS + 1;
+    let above = write_in_successive_blocks(&mut builder, variable, block_count);
+    for constant in 0..JOIN_COUNT {
+        let value = builder.integer(constant as i64);
+        write_diamond(&mut builder, condition, other, [Some(value), None]);
+    }
+    let late = builder.integer(-1);
+    let definition_count = builder.ssa.definitions.0.len();
+    let diamond = write_diamond(&mut builder, condition, variable, [Some(late), None]);
+    let read = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, diamond.join), [read]);
+    assert_eq!(variable_arguments(&builder, diamond.arms[0], 0), [late]);
+    assert_eq!(variable_arguments(&builder, diamond.arms[1], 0), [above]);
+    assert!(builder.ssa.definitions.0.len() <= definition_count + 8);
+}
+
+#[test]
+fn definition_blocks_past_shortcut_limit_are_listed_in_the_order_of_their_ends() {
     let mut builder = create_builder(&[]);
     let variable = builder.create_variable(None);
     write_in_successive_blocks(&mut builder, variable, MAX_SHORTCUT_DEFINITION_BLOCKS + 4);
     let definition_blocks = builder.ssa.variables[variable.0 as usize].definition_blocks;
-    assert_eq!(definition_blocks.len(), MAX_SHORTCUT_DEFINITION_BLOCKS + 1);
+    let definition_blocks = definition_blocks.items(&builder.ssa.listed_blocks);
+    assert_eq!(definition_blocks.len(), MAX_SHORTCUT_DEFINITION_BLOCKS + 3);
+    assert!(!definition_blocks.contains(&builder.current_block()));
+    let ends = definition_blocks.iter();
+    let ends = ends.map(|block| builder.ssa.states[block.index()].ended_at);
+    assert!(ends.clone().all(|end| end != 0) && ends.is_sorted());
 
     let rewritten = builder.create_variable(None);
     for constant in 0..3 {
@@ -942,6 +1066,11 @@ fn removed_handler_parameter_pops_handler_arguments() {
     let second = builder.current_block();
     assert_ne!(second, first);
     builder.return_value(None);
+    let dead = builder.create_block(None);
+    builder.seal(dead);
+    builder.switch_to(dead);
+    builder.write_variable(unchanged, other);
+    builder.unreachable();
     builder.seal(handler.block());
     builder.switch_to(handler.block());
     let value_count = builder.values.len();
@@ -951,4 +1080,126 @@ fn removed_handler_parameter_pops_handler_arguments() {
     assert!(handler_arguments(&builder, first).is_empty());
     assert!(handler_arguments(&builder, second).is_empty());
     assert_eq!(builder.values.len(), value_count);
+}
+
+fn fill_nested(
+    builder: &mut FunctionBuilder,
+    generator: &mut Generator,
+    all: &[LocalVariable],
+    written: &[LocalVariable],
+    exits: &[BlockId],
+    depth: usize,
+) {
+    for _ in 0..1 + generator.below(5) {
+        let condition = builder.parameter(0);
+        let kind = generator.below(if depth == 0 { 2 } else { 7 });
+        if kind == 0 {
+            let value = builder.integer(generator.below(1000) as i64);
+            builder.write_variable(written[generator.below(written.len())], value);
+            continue;
+        }
+        if kind == 1 {
+            let value = builder.read_variable(all[generator.below(all.len())]);
+            builder.type_of(value);
+            continue;
+        }
+        let covering = builder.handler_of(builder.current_block());
+        let create = |builder: &mut FunctionBuilder| builder.create_block(covering);
+        let enter = |builder: &mut FunctionBuilder, block: BlockId| {
+            builder.seal(block);
+            builder.switch_to(block);
+        };
+        let after = create(builder);
+        match kind {
+            2 => {
+                let arms = [create(builder), create(builder)];
+                builder.branch(condition, Edge::to(arms[0]), Edge::to(arms[1]));
+                for arm in arms {
+                    enter(builder, arm);
+                    fill_nested(builder, generator, all, written, exits, depth - 1);
+                    builder.jump(Edge::to(after));
+                }
+            }
+            3 => {
+                let (header, body) = (create(builder), create(builder));
+                let inner = &written[..1 + generator.below(written.len())];
+                builder.declare_loop_header(header, inner);
+                builder.jump(Edge::to(header));
+                builder.switch_to(header);
+                builder.branch(condition, Edge::to(body), Edge::to(after));
+                enter(builder, body);
+                fill_nested(builder, generator, all, inner, &[after, header], depth - 1);
+                builder.jump(Edge::to(header));
+                builder.seal(header);
+            }
+            4 => {
+                let leaving = create(builder);
+                builder.branch(condition, Edge::to(leaving), Edge::to(after));
+                enter(builder, leaving);
+                fill_nested(builder, generator, all, written, exits, depth - 1);
+                match exits.get(generator.below(3)) {
+                    Some(&exit) => builder.jump(Edge::to(exit)),
+                    None => builder.return_value(None),
+                }
+            }
+            5 => {
+                let handler = builder.create_handler(BlockRole::CatchHandler, None, covering);
+                let inside = builder.create_block(Some(handler));
+                builder.jump(Edge::to(inside));
+                enter(builder, inside);
+                builder.type_of(condition);
+                fill_nested(builder, generator, all, written, exits, depth - 1);
+                builder.jump(Edge::to(after));
+                enter(builder, handler.block());
+                builder.catch_value();
+                fill_nested(builder, generator, all, written, exits, depth - 1);
+                builder.jump(Edge::to(after));
+            }
+            _ => {
+                builder.return_value(None);
+                let dead = create(builder);
+                enter(builder, dead);
+                fill_nested(builder, generator, all, written, exits, depth - 1);
+            }
+        }
+        enter(builder, after);
+    }
+}
+
+#[test]
+fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
+    let mut definition_counts = [0, 0];
+    let mut ordered_variable_count = 0;
+    for seed in 1..=300 {
+        let bodies = [false, true].map(|steps_through_every_join| {
+            let function = build_function(&[TypeTable::BOOLEAN], |builder| {
+                builder.ssa.steps_through_every_join = steps_through_every_join;
+                let all = [(); 4].map(|()| builder.create_variable(None));
+                let mut generator = Generator::new(seed);
+                for variable in all {
+                    let value = builder.integer(-1);
+                    builder.write_variable(variable, value);
+                }
+                fill_nested(builder, &mut generator, &all, &all, &[], 5);
+                for variable in all {
+                    let value = builder.read_variable(variable);
+                    builder.type_of(value);
+                }
+                builder.return_value(None);
+                let definition_count = builder.ssa.definitions.0.len();
+                definition_counts[usize::from(steps_through_every_join)] += definition_count;
+                let variables = builder.ssa.variables.iter();
+                let ordered = variables.filter(|variable| variable.are_definitions_ordered);
+                ordered_variable_count += ordered.count();
+            });
+            (
+                function.body.code,
+                function.body.block_count,
+                function.body.value_count,
+            )
+        });
+        assert_eq!(bodies[0], bodies[1], "seed {seed}");
+    }
+    assert!(ordered_variable_count > 300);
+    assert!(definition_counts[0] < definition_counts[1]);
 }

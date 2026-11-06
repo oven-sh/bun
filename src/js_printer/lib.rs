@@ -4830,21 +4830,6 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Whether `value` is printed as the identifier `name` and nothing else, so that
-        /// `{ name: value }` can be printed as `{ name }`.
-        fn is_printed_as_identifier(&self, value: &Expr, name: &[u8]) -> bool {
-            match &value.data {
-                ExprData::EIdentifier(e) => name == self.name_for_symbol(e.ref_),
-                ExprData::EImportIdentifier(e) => {
-                    let symbol = self.symbols().get_const(self.symbols().follow(e.ref_));
-                    self.options.input_files_for_dev_server.is_none()
-                        && symbol.is_some_and(|symbol| symbol.namespace_alias.is_none())
-                        && name == self.name_for_symbol(e.ref_)
-                }
-                _ => false,
-            }
-        }
-
         pub(crate) fn print_property(&mut self, item_in: &G::Property) {
             // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
@@ -4967,24 +4952,6 @@ pub(crate) mod __gated_printer {
 
             let key = item.key.expect("infallible: prop has key");
 
-            // "{ __proto__: x }" sets the prototype and "{ __proto__ }" defines a property
-            let is_proto = !IS_JSON
-                && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::EString(name) if name.eql_comptime(b"__proto__"));
-            let was_shorthand = item.flags.contains(js_ast::flags::Property::WasShorthand);
-            let allow_shorthand = was_shorthand || !is_proto;
-
-            if is_proto
-                && was_shorthand
-                && !item
-                    .value
-                    .as_ref()
-                    .is_some_and(|value| self.is_printed_as_identifier(value, b"__proto__"))
-            {
-                // "{ __proto__ }" renamed to "x" must be printed as "{ ["__proto__"]: x }"
-                set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
-            }
-
             // Automatically print keys that would cause a syntax error as computed properties
             if !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
@@ -5032,23 +4999,47 @@ pub(crate) mod __gated_printer {
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
                         self.add_source_mapping(key.loc);
-                        let is_identifier = !IS_JSON && lexer::is_identifier(key_str.slice8());
-                        if is_identifier {
+                        let mut allow_shorthand = true;
+                        if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
                         } else {
+                            allow_shorthand = false;
                             self.print_string_literal_e_string(&key_str, false);
                         }
 
                         // Use a shorthand property if the names are the same
-                        if is_identifier
-                            && allow_shorthand
-                            && let Some(val) = &item.value
-                            && self.is_printed_as_identifier(val, key_str.slice8())
-                        {
-                            if let Some(initial) = &item.initializer {
-                                self.print_initializer(*initial);
+                        if let Some(val) = &item.value {
+                            match &val.data {
+                                ExprData::EIdentifier(e) => {
+                                    if key_str.slice8() == self.name_for_symbol(e.ref_) {
+                                        if let Some(initial) = &item.initializer {
+                                            self.print_initializer(*initial);
+                                        }
+                                        if allow_shorthand {
+                                            return;
+                                        }
+                                    }
+                                }
+                                ExprData::EImportIdentifier(e) => 'inner: {
+                                    let ref_ = self.symbols().follow(e.ref_);
+                                    if self.options.input_files_for_dev_server.is_some() {
+                                        break 'inner;
+                                    }
+                                    if let Some(symbol) = self.symbols().get_const(ref_) {
+                                        if symbol.namespace_alias.is_none()
+                                            && key_str.slice8() == self.name_for_symbol(e.ref_)
+                                        {
+                                            if let Some(initial) = &item.initializer {
+                                                self.print_initializer(*initial);
+                                            }
+                                            if allow_shorthand {
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
-                            return;
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
@@ -5057,10 +5048,10 @@ pub(crate) mod __gated_printer {
                             .expect("unreachable");
 
                         // Use a shorthand property if the names are the same
-                        if allow_shorthand && let Some(val) = &item.value {
+                        if let Some(val) = &item.value {
                             match &val.data {
                                 ExprData::EIdentifier(e) => {
-                                    if was_shorthand
+                                    if item.flags.contains(js_ast::flags::Property::WasShorthand)
                                         || strings::utf16_eql_string(
                                             key_str.slice16(),
                                             self.name_for_symbol(e.ref_),

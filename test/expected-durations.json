@@ -444,6 +444,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-test-run-is-not-warned-of-workers-that-only-an-executable-could-not-load.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-test-stores-an-entry-in-require-cache-under-a-key-that-it-puts-together.test.ts": {
     "default": 23500,
     "asan": 94000
@@ -505,6 +509,10 @@
     "asan": 37200
   },
   "aot/an-accessor-on-a-request-itself-is-asked-as-often-as-plain-bun-asks-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/an-accessor-under-get-color-depth-hears-one-store.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -716,6 +724,10 @@
     "default": 900,
     "asan": 3600
   },
+  "aot/compiler/the-benchmark-runs-the-scenarios-that-are-named.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/computed-load-1.test.ts": {
     "default": 27600,
     "asan": 110400
@@ -767,6 +779,10 @@
   "aot/dot-folder-paths.test.ts": {
     "default": 23000,
     "asan": 92000
+  },
+  "aot/duplex-reads-define-properties-once-while-it-loads.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/engine/allocation-fuzzer.test.ts": {
     "default": 2100,
@@ -991,6 +1007,10 @@
   "aot/import-settled.test.ts": {
     "default": 3400,
     "asan": 13600
+  },
+  "aot/isip-tests-with-one-object-for-each-pattern.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/isolate-doors.test.ts": {
     "default": 2600,
@@ -1268,6 +1288,10 @@
     "default": 300,
     "asan": 1200
   },
+  "aot/parallel-test-runs/a-hook-of-the-loader-laid-through-an-object-that-was-handed-on/a-package-that-only-hands-the-module-of-the-loader-on-leaves-the-imports-of-the-run-as-they-are/a.test.js": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/part-warnings.test.ts": {
     "default": 900,
     "asan": 3600
@@ -1297,6 +1321,10 @@
     "asan": 1600
   },
   "aot/perf/members-under-keys.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/plain-bun-lets-go-of-the-remove-listener-of-streams.test.ts": {
     "default": 60000,
     "asan": 240000
   },

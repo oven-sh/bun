@@ -394,6 +394,23 @@ fn find_module(input: &ScanInput<'_>, atoms: &Interner<'_>, name: Atom) -> Optio
     }
 }
 
+pub(super) fn find_modules_spelled_in_data(
+    request: &FinishedFile<'_, '_>,
+    input: &ScanInput<'_>,
+) -> Vec<RuntimeModule> {
+    let expressions = (0..).map(ExprId).zip(request.hir.exprs.iter());
+    let mut modules: Vec<RuntimeModule> = expressions
+        .filter_map(|(expression, node)| match node.kind {
+            ExprKind::String(text) if is_written_as_value(request, expression) => {
+                find_module(input, request.atoms, text)
+            }
+            _ => None,
+        })
+        .collect();
+    sort_modules(&mut modules);
+    modules
+}
+
 fn is_path_that_program_may_write(importer: &[u8], specifier: &[u8]) -> bool {
     (specifier.starts_with(b"./") || specifier.starts_with(b"../") || specifier.starts_with(b"/"))
         && !is_in_node_modules(importer)

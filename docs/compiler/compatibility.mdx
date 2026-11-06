@@ -537,6 +537,8 @@ Neither quotes one kind of text whole: a function or an arrow with statements in
 
 A member of an enum is quoted as you wrote it, `table[Kind.Closed].title`. `bun run` quotes the value that its transpiler put there, `table[1 /* Closed */].title`.
 
+Where a function of Bun or of a `node:` module refuses an argument for its type, the text behind `Received` for an object without a constructor is Node's: `Received [Object: null prototype]`. `bun run` prints what the object holds.
+
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 
 ## Garbage collection
@@ -575,6 +577,13 @@ Few programs notice these.
 | `new Below()` after `Object.setPrototypeOf(Below, CString)`, of `bun:ffi`         | The string that `new CString()` returns                                      | Throws a `TypeError`: `this` has to be an object |
 | A name imported from a CommonJS file that was still running, after a later import | What the file had exported when that import was linked                       | What the file had exported when it ended         |
 | `res.write()` after `req.socket._writableState = copy`, in `node:http`            | Goes by the `highWaterMark` of the copy                                      | Goes by the one that the socket had              |
+| `{ [key]: value }`, where `key` has a `toString()` that you can watch             | The value is evaluated, then the key is converted                            | The key is converted first, as the language says |
+| `using x = value`, where a getter for `Symbol.dispose` reads `x`                  | `x` already holds the value                                                  | A `ReferenceError`, as the language says         |
+| `let [a = late] = iterator; let late`, which throws a `ReferenceError`            | The iterator's `return()` isn't called                                       | It is called first, as the language says         |
+| `for (name of list)` or `for (name in object)`, above `let name`                  | Stores into `name` and runs the loop                                         | A `ReferenceError`, as the language says         |
+| `Object.keys({ get a() {}, set a(v) {}, b: 1, get a() {} })`, or of such a class  | `b`, `a`                                                                     | `a`, `b`, as the language says                   |
+| A function declared in a later `case`, called while an earlier `case` runs        | A `ReferenceError`                                                           | It is called, as the language says               |
+| `typeof Later` above a `class Later {}` that stands behind a `return`             | `"undefined"`: the transpiler drops the class                                | A `ReferenceError`, as the language says         |
 
 `Bun.$` is compiled into an executable if your code can reach it: it writes `Bun.$`, reads `Bun[name]`, hands `Bun` on as a value, or reads `globalThis` under a key that is put together while it runs. Asking only whether the name is there, as in `"$" in Bun` or `Object.hasOwn(Bun, "$")`, answers `true` and keeps nothing. Text that the compiler never saw, such as a string handed to `eval`, can still ask for the shell in a program that doesn't use it. Reading `Bun.$` then throws `Bun.$ was not compiled into this executable`. Write `Bun.$` once anywhere in your program to keep it.
 

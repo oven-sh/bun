@@ -528,6 +528,27 @@ fn pattern_site_lists_candidates() {
 }
 
 #[test]
+fn name_for_the_transpiler_alone_is_a_spelling_only_where_it_reads_the_name() {
+    let spellings_of = |argument: &str| {
+        let main = format!("const flag = process.argv.length; exports.it = require({argument});");
+        let mut spellings = Vec::new();
+        with_program(&[("main.cjs", main.as_str())], |program| {
+            let spelled = program.only_candidates("main.cjs").iter();
+            spellings.extend(spelled.map(|it| program.text_of(it.spelling).to_string()));
+        });
+        spellings.sort();
+        spellings
+    };
+    assert_eq!(spellings_of("['bun:url', 'os'][flag]"), ["os"]);
+    assert_eq!(spellings_of("['node:url', 'os'][flag]"), ["node:url", "os"]);
+    assert_eq!(spellings_of("{ a: 'bun:url', b: 'os' }[flag]"), ["os"]);
+    assert_eq!(
+        spellings_of("flag ? 'bun:os' : ['bun:url', 'path'][flag]"),
+        ["bun:os", "path"]
+    );
+}
+
+#[test]
 fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
     const PLUGIN: &str = r#"Bun.plugin({ name: "p", setup() {} });"#;
     const CHOICE: &str = r#"(flag ? "./pages/home.js" : "./pages/about.js")"#;

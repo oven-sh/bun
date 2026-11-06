@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, PatParent};
-use bun_sema::hir::{ExprFlags, ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
+use bun_sema::hir::{ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
 use smallvec::SmallVec;
 
 use super::{DefaultHolder, PatternNode};
@@ -208,10 +208,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 let position = self.hir[identifier].pos;
                 let is_named = self.names_assigned_function(target)
                     || (holder == DefaultHolder::ArrayPattern
-                        && !self
-                            .hir
-                            .expr_flags(target)
-                            .contains(ExprFlags::PARENTHESIZED)
+                        && !self.is_parenthesized_for_the_engine(target)
                         && self.is_class_named_by_its_declaration(default));
                 is_named.then_some((binding, name, position))
             }

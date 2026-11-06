@@ -1380,7 +1380,8 @@ impl<'a, 's> Walk<'a, 's> {
         let tree = self.input.library.tree(file);
         tree.is_some_and(|LibraryTree { hir, bound, .. }| {
             hir.runtime_function_kind(function) != FnKind::Arrow
-                && (bound.fns[function.idx()].contains_this || evaluates_own_this(hir, function))
+                && (bound.fns[function.idx()].contains_this
+                    || evaluates_own_this(hir, function, false))
         })
     }
 

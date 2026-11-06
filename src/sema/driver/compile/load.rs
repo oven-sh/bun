@@ -4,7 +4,8 @@ use super::{
     WithoutBunTypes,
 };
 use crate::{
-    Libs, default_compiler_options, diagnostic_from_config_error, host, use_dedicated_pool,
+    Libs, default_compiler_options, diagnostic_from_config_error, give_pool_stack_for_lowering,
+    host, use_dedicated_pool,
 };
 use bun_sema::check::Program;
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
@@ -33,6 +34,7 @@ pub fn load_program<'s>(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
+    give_pool_stack_for_lowering();
     use_dedicated_pool("Bun Compile");
     let mut steps = LoggedSteps::begin(host);
     let entry_paths = match request.entry_points {

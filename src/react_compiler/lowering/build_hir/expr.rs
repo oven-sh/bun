@@ -148,9 +148,7 @@ pub(crate) fn lower_expression(
                     .key
                     .as_ref()
                     .ok_or_else(|| cold_todo("object property without key", loc))?;
-                // `{ __proto__ }` defines a property, as `{ ["__proto__"]: v }` does.
-                let computed =
-                    prop.flags.contains(PF::IsComputed) || prop.flags.contains(PF::WasShorthand);
+                let computed = prop.flags.contains(PF::IsComputed);
                 let key = match lower_object_property_key(builder, key_expr, computed)? {
                     Some(k) => k,
                     None => continue,

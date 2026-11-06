@@ -7,7 +7,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, PrivateNameId, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, PrivateNameId, SymbolId,
+};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
@@ -60,6 +62,7 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub counts_executions: bool,
     pub any_file_is_named_at_run_time: bool,
     pub files_are_named_out_of_sight: bool,
+    pub admits_inspector: bool,
     pub isolates_code_from_disk: bool,
     pub mocks_any_module: bool,
     pub files_started_by_runner: &'a [FileId],
@@ -2010,7 +2013,8 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn scan(mut self, asks_what_files_spell: bool) -> FileUnits {
-        self.units.this_positions = ThisPositions::of(self.hir);
+        let jsx_takes_this = self.input.files.analysis(self.file).jsx_takes_this();
+        self.units.this_positions = ThisPositions::of(self.hir, jsx_takes_this);
         self.find_sites();
         self.collect_units();
         let region_count = self.units.units.len() + 1;
@@ -2389,9 +2393,15 @@ impl<'a, 's> Walk<'a, 's> {
             return false;
         }
         bound.fns[function.idx()].contains_this
+            || bound
+                .function_flags(function)
+                .contains(FunctionFlags::HAS_DIRECT_EVAL)
             || match &self.files[file.idx()] {
                 Some(units) => units.this_positions.evaluates_own_this(hir, function),
-                None => evaluates_own_this(hir, function),
+                None => {
+                    let jsx_takes_this = self.input.files.analysis(file).jsx_takes_this();
+                    evaluates_own_this(hir, function, jsx_takes_this)
+                }
             }
     }
 
@@ -2553,6 +2563,11 @@ impl<'a, 's> Walk<'a, 's> {
             for file in input.graph.importers_of_uncompiled_code() {
                 loads.hand_on_files_found(&mut reacher, file, None);
             }
+        }
+        if input.admits_inspector
+            && let Some(&entry_point) = input.files.entry_points().first()
+        {
+            loads.hand_on_files_found(&mut reacher, entry_point, None);
         }
         for &file in input.files.compiled_files() {
             if self.loads_by_unknown_name_outside_units(file) {

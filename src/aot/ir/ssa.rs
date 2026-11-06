@@ -49,6 +49,8 @@ struct BlockState {
     is_loop_header: bool,
     incomplete_variables: ListInArena,
     dominator: Option<DominatorLink>,
+    ended_at: u32,
+    defined_variables: ListInArena,
 }
 
 #[derive(Copy, Clone)]
@@ -57,6 +59,7 @@ struct DominatorLink {
     jump: BlockId,
     depth: u32,
     root: BlockId,
+    ordered_from: u32,
 }
 
 impl DominatorLink {
@@ -66,6 +69,7 @@ impl DominatorLink {
             jump: block,
             depth: 0,
             root: block,
+            ordered_from: 0,
         }
     }
 }
@@ -88,6 +92,7 @@ struct VariableState {
     stores: StoreCount,
     definition_blocks: ListInArena,
     is_narrowed: bool,
+    are_definitions_ordered: bool,
 }
 
 struct NarrowedName {
@@ -121,6 +126,9 @@ pub(super) struct SsaState {
     observed_values: FxHashSet<ValueId>,
     variables: Vec<VariableState>,
     narrowed_from: FxHashMap<ValueId, NarrowedName>,
+    ended_block_count: u32,
+    #[cfg(test)]
+    steps_through_every_join: bool,
 }
 
 impl SsaState {
@@ -143,6 +151,7 @@ impl SsaState {
             listed_variables: recycle_vector(self.listed_variables, MAX_SPARE_VARIABLES),
             pending_reads: recycle_vector(self.pending_reads, MAX_SPARE_PENDING_READS),
             variables: recycle_vector(self.variables, MAX_SPARE_VARIABLES),
+            ended_block_count: 0,
             ..self
         }
     }
@@ -187,17 +196,114 @@ impl SsaState {
             stores: StoreCount::Never,
             definition_blocks: ListInArena::default(),
             is_narrowed: false,
+            are_definitions_ordered: false,
         });
         variable
     }
 
     #[inline]
     fn record_definition_block(&mut self, variable: LocalVariable, block: BlockId) {
-        let definition_blocks = &mut self.variables[variable.0 as usize].definition_blocks;
-        let is_tracked = definition_blocks.len() <= MAX_SHORTCUT_DEFINITION_BLOCKS;
-        let recorded = definition_blocks.items(&self.listed_blocks);
-        if is_tracked && !recorded.contains(&block) {
-            definition_blocks.push(&mut self.listed_blocks, block);
+        let state = &mut self.variables[variable.0 as usize];
+        if state.are_definitions_ordered {
+            return self.record_ordered_definition(variable, block);
+        }
+        let recorded = state.definition_blocks.items(&self.listed_blocks);
+        if recorded.contains(&block) {
+            return;
+        }
+        state.definition_blocks.push(&mut self.listed_blocks, block);
+        if state.definition_blocks.len() > MAX_SHORTCUT_DEFINITION_BLOCKS {
+            state.are_definitions_ordered = true;
+            let recorded = state.definition_blocks.items(&self.listed_blocks);
+            let mut blocks: SmallVec<[BlockId; 16]> = SmallVec::from_slice(recorded);
+            state.definition_blocks.clear();
+            blocks.sort_unstable_by_key(|block| self.states[block.index()].ended_at);
+            for block in blocks {
+                self.record_ordered_definition(variable, block);
+            }
+        }
+    }
+
+    fn record_ordered_definition(&mut self, variable: LocalVariable, block: BlockId) {
+        let state = &mut self.states[block.index()];
+        let ended_at = state.ended_at;
+        if ended_at == 0 {
+            let defined = state.defined_variables.items(&self.listed_variables);
+            if defined.last() != Some(&variable) {
+                let defined = &mut state.defined_variables;
+                defined.push(&mut self.listed_variables, variable);
+            }
+            return;
+        }
+        let mut blocks = self.variables[variable.0 as usize].definition_blocks;
+        let (items, states) = (blocks.items(&self.listed_blocks), &self.states);
+        let place = match items.last() {
+            Some(last) if states[last.index()].ended_at >= ended_at => {
+                items.partition_point(|listed| states[listed.index()].ended_at < ended_at)
+            }
+            _ => items.len(),
+        };
+        if items.get(place) != Some(&block) {
+            blocks.push(&mut self.listed_blocks, block);
+            blocks.items_mut(&mut self.listed_blocks)[place..].rotate_right(1);
+            self.variables[variable.0 as usize].definition_blocks = blocks;
+        }
+    }
+
+    #[inline]
+    pub(super) fn end_block(&mut self, block: BlockId) {
+        self.ended_block_count += 1;
+        let state = &mut self.states[block.index()];
+        state.ended_at = self.ended_block_count;
+        let defined = core::mem::take(&mut state.defined_variables);
+        for index in 0..defined.len() {
+            let variable = defined.items(&self.listed_variables)[index];
+            self.record_ordered_definition(variable, block);
+        }
+    }
+
+    fn find_shortcut_in_order_of_ends(
+        &self,
+        definition_blocks: &[BlockId],
+        block: BlockId,
+        current: DominatorLink,
+    ) -> Shortcut {
+        #[cfg(test)]
+        if self.steps_through_every_join {
+            return Shortcut::No;
+        }
+        let ended_at = |block: BlockId| self.states[block.index()].ended_at;
+        let end = match ended_at(block) {
+            0 => u32::MAX,
+            end => end,
+        };
+        let is_earlier = |other: &BlockId| ended_at(*other) < end;
+        let last = match definition_blocks.last() {
+            Some(last) if !is_earlier(last) => {
+                definition_blocks[..definition_blocks.partition_point(is_earlier)].last()
+            }
+            last => last,
+        };
+        let last_end = last.map_or(0, |last| ended_at(*last));
+        let (mut found, mut link) = (block, current);
+        while link.depth > current.ordered_from && ended_at(link.parent) >= last_end {
+            found = match self.states[link.jump.index()].dominator {
+                Some(jump)
+                    if jump.depth >= current.ordered_from && ended_at(link.jump) >= last_end =>
+                {
+                    link.jump
+                }
+                _ => link.parent,
+            };
+            let Some(next) = self.states[found.index()].dominator else {
+                return Shortcut::No;
+            };
+            link = next;
+        }
+        if found == block {
+            Shortcut::No
+        } else {
+            Shortcut::To(found)
         }
     }
 
@@ -286,13 +392,16 @@ impl SsaState {
     }
 
     fn find_shortcut(&self, variable: LocalVariable, block: BlockId) -> Shortcut {
-        let definition_blocks = self.variables[variable.0 as usize].definition_blocks;
-        let is_tracked = definition_blocks.len() <= MAX_SHORTCUT_DEFINITION_BLOCKS;
-        let (true, Some(current)) = (is_tracked, self.states[block.index()].dominator) else {
+        let Some(current) = self.states[block.index()].dominator else {
             return Shortcut::No;
         };
+        let state = &self.variables[variable.0 as usize];
+        let definition_blocks = state.definition_blocks.items(&self.listed_blocks);
+        if state.are_definitions_ordered {
+            return self.find_shortcut_in_order_of_ends(definition_blocks, block, current);
+        }
         let mut nearest: Option<(u32, bool)> = None;
-        for &definition_block in definition_blocks.items(&self.listed_blocks) {
+        for &definition_block in definition_blocks {
             let dominator = self.states[definition_block.index()].dominator;
             if dominator.is_none_or(|dominator| dominator.root != current.root) {
                 continue;
@@ -413,11 +522,17 @@ impl SsaState {
     fn find_link_below(&self, block: BlockId, predecessors: &[BlockId]) -> DominatorLink {
         let mut parent = None;
         let mut is_first = true;
+        let (mut is_ordered, mut last_end, mut ordered_from) = (true, 0, 0);
         for &predecessor in predecessors {
-            let dominator = self.states[predecessor.index()].dominator;
+            let state = &self.states[predecessor.index()];
+            let dominator = state.dominator;
             if dominator.is_some_and(|dominator| self.is_never_entered(dominator.root)) {
+                is_ordered &= dominator.is_some_and(|dominator| dominator.root == predecessor);
                 continue;
             }
+            is_ordered &= state.ended_at != 0;
+            last_end = last_end.max(state.ended_at);
+            ordered_from = ordered_from.max(dominator.map_or(u32::MAX, |link| link.ordered_from));
             parent = if is_first {
                 dominator.map(|_| predecessor)
             } else {
@@ -433,11 +548,20 @@ impl SsaState {
             let jump = self.states[dominator.jump.index()].dominator?;
             let next_jump = self.states[jump.jump.index()].dominator?;
             let is_even = dominator.depth - jump.depth == jump.depth - next_jump.depth;
+            let own_end = self.states[block.index()].ended_at;
+            let is_in_order = is_ordered
+                && ordered_from <= dominator.depth
+                && (own_end == 0 || last_end < own_end);
             Some(DominatorLink {
                 parent,
                 jump: if is_even { jump.jump } else { parent },
                 depth: dominator.depth + 1,
                 root: dominator.root,
+                ordered_from: if is_in_order {
+                    dominator.ordered_from
+                } else {
+                    dominator.depth + 1
+                },
             })
         });
         link.unwrap_or_else(|| DominatorLink::root(block))
@@ -795,8 +919,11 @@ impl FunctionBuilder {
             self.ssa.definitions.insert(block, variable, value);
             return value;
         }
-        self.ssa.variables[variable.0 as usize].stores = StoreCount::Many;
-        self.ssa.record_definition_block(variable, block);
+        let state = &mut self.ssa.variables[variable.0 as usize];
+        state.stores = StoreCount::Many;
+        if !state.are_definitions_ordered {
+            self.ssa.record_definition_block(variable, block);
+        }
         parameter
     }
 

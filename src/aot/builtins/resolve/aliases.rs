@@ -1,8 +1,10 @@
 use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BuiltinPath, ResolveInput};
-use crate::builtins::table::{self, BuiltinId, BuiltinKind};
+use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, Scope};
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingInitializer, BindingStability, Decl, InitialState, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, BindingStability, Decl, InitialState, Parent, SymbolId,
+};
 use bun_sema::hir::{
     BinOp, ExprId, ExprKind, Flags, ImportEqualsId, ImportEqualsTarget, NodeData, PatId, PatKind,
 };
@@ -42,7 +44,11 @@ impl Resolver<'_, '_> {
     pub(super) fn find_alias_source(&self, symbol: SymbolId) -> Option<AliasSource> {
         let input = self.input;
         if !self.is_stable(symbol) {
-            return None;
+            let initializer = self.find_only_value_stored_to(symbol)?;
+            return Some(AliasSource::Initializer {
+                initializer,
+                members: SmallVec::new(),
+            });
         }
         match input.bound.binding_initializer(input.hir, symbol) {
             BindingInitializer::Expression(initializer) => Some(AliasSource::Initializer {
@@ -58,6 +64,64 @@ impl Resolver<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    fn find_only_value_stored_to(&self, symbol: SymbolId) -> Option<ExprId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        if bound.binding_stability(symbol) != BindingStability::Stored
+            || bound.initializing_declaration(symbol).is_some()
+            || bound.initial_state(symbol) == InitialState::Initialized
+        {
+            return None;
+        }
+        let [store] = bound.stores_to(symbol) else {
+            return None;
+        };
+        let Parent::Expr(assignment) = bound.parent_of_expr(store.target) else {
+            return None;
+        };
+        match hir[assignment].kind {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } if target == store.target => Some(value),
+            _ => None,
+        }
+    }
+
+    fn is_filled_by_a_store(&self, symbol: SymbolId) -> bool {
+        self.input.bound.binding_stability(symbol) == BindingStability::Stored
+            && !self.is_stable(symbol)
+    }
+
+    pub(super) fn is_followed_through_a_store(&self, value: ResolvedValue) -> bool {
+        let id = value.path.id;
+        let entry = table::entry(table::canonical_id(id));
+        value.kind == HolderKind::Object
+            && entry.scope == Scope::Realm
+            && entry.kind == BuiltinKind::Namespace
+            && !table::is_of_test_runner(id)
+            && !table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT)
+            && !super::module_cache::is_module_cache(id)
+            && !super::module_cache::is_table_of_loaders(id)
+    }
+
+    pub(super) fn is_local_alias_filled_by_a_store(&self, target: ExprId) -> bool {
+        let bound = self.input.bound;
+        let Binding::Symbol(symbol) = bound.binding(target) else {
+            return false;
+        };
+        matches!(self.input.hir[target].kind, ExprKind::Ident(_))
+            && self.is_filled_by_a_store(symbol)
+            && matches!(
+                self.aliases.get(&symbol),
+                Some(AliasSource::Initializer { .. })
+            )
+            && !self.is_exported(symbol)
+            && !bound.is_visible_to_eval(symbol)
+            && bound.dynamic_lookup_scope(NodeData::Expr(target)).is_none()
+            && !self.is_named_outside(symbol)
     }
 
     pub(super) fn collect_declared_aliases(&mut self) {
@@ -218,12 +282,19 @@ impl Resolver<'_, '_> {
         let Some(value) = self.resolve_alias(symbol) else {
             return ExprState::Unresolved;
         };
+        let is_filled_by_a_store = self.is_filled_by_a_store(symbol);
+        if is_filled_by_a_store && !self.is_followed_through_a_store(value) {
+            return ExprState::Unresolved;
+        }
         let bound = self.input.bound;
         if bound.dynamic_lookup_scope(NodeData::Expr(expr)).is_some() {
             self.expose(value.path.id);
             return ExprState::Unresolved;
         }
-        match self.may_still_be_undefined(symbol, value) || self.only_holds_its_object(symbol) {
+        let is_held = is_filled_by_a_store
+            || self.may_still_be_undefined(symbol, value)
+            || self.only_holds_its_object(symbol);
+        match is_held {
             true => ExprState::Held(value),
             false => ExprState::Builtin(value),
         }
@@ -232,7 +303,7 @@ impl Resolver<'_, '_> {
     pub(super) fn collect_symbol_paths(&self) -> Vec<(SymbolId, BuiltinPath)> {
         let mut paths = Vec::new();
         for (&symbol, source) in &self.aliases {
-            if self.is_source_of_object_only_held(source) {
+            if self.is_source_of_object_only_held(source) || self.is_filled_by_a_store(symbol) {
                 continue;
             }
             match self.resolve_alias_source(source) {

@@ -2,7 +2,7 @@
 //
 //   bun bench/compiler/run.ts                                  every scenario at 10,000, 100,000, 1,000,000 and 5,000,000 lines, three runs each: the table
 //   bun bench/compiler/run.ts --sizes=10000 --runs=1           smaller
-//   bun bench/compiler/run.ts --scenarios=typed,go-cold        some of them
+//   bun bench/compiler/run.ts --scenarios=typed,go-cold        some of them, by their names in the table. A name that is not among them ends the run
 //   bun bench/compiler/run.ts --bun=<path>                     another Bun than the one that runs this script
 //   bun bench/compiler/run.ts --check                          builds every program at the smallest size, runs it, and fails unless every one was built, ended with 0 and printed the same number
 //   bun bench/compiler/run.ts --json=<file>                    every number of every run, too
@@ -59,9 +59,14 @@ const open = `\nif (process.argv.length > 90) await import(process.argv[90]);\n`
 const evaluates = `\nif (process.argv.length > 90) eval(process.argv[90]);\n`;
 const scenarios: Scenario[] = [
   { name: "typed", dress: "typed", command: () => aot("main.ts"), executable: "app" },
-  { name: "typed, one thread", dress: "typed", command: () => aot("main.ts", "--aot-threads=1"), executable: "app" },
+  { name: "typed on one thread", dress: "typed", command: () => aot("main.ts", "--aot-threads=1"), executable: "app" },
   { name: "erased", dress: "erased", command: () => aot("main.js"), executable: "app" },
-  { name: "erased, one thread", dress: "erased", command: () => aot("main.js", "--aot-threads=1"), executable: "app" },
+  {
+    name: "erased on one thread",
+    dress: "erased",
+    command: () => aot("main.js", "--aot-threads=1"),
+    executable: "app",
+  },
   { name: "mixed", dress: "mixed", command: () => aot("main.ts"), executable: "app" },
   {
     name: "bundled",
@@ -71,7 +76,7 @@ const scenarios: Scenario[] = [
     executable: "app",
   },
   {
-    name: "bundled, minified",
+    name: "bundled and minified",
     dress: "typed",
     prepare: () => [[bun, "build", "--target=bun", "--minify", "main.ts", "--outfile", "bundle.js"]],
     command: () => aot("bundle.js"),
@@ -80,28 +85,28 @@ const scenarios: Scenario[] = [
   { name: "packages with declarations", dress: "packages-typed", command: () => aot("main.ts"), executable: "app" },
   { name: "packages without types", dress: "packages-untyped", command: () => aot("main.js"), executable: "app" },
   {
-    name: "typed, open world",
+    name: "typed in an open world",
     dress: "typed",
     entry: text => text + open,
     command: () => aot("main.ts", "--aot-allow-code-from-disk"),
     executable: "app",
   },
   {
-    name: "erased, open world",
+    name: "erased in an open world",
     dress: "erased",
     entry: text => text + open,
     command: () => aot("main.js", "--aot-allow-code-from-disk"),
     executable: "app",
   },
   {
-    name: "typed, direct eval",
+    name: "typed with direct eval",
     dress: "typed",
     entry: text => text + evaluates,
     command: () => aot("main.ts"),
     executable: "app",
   },
   {
-    name: "bun build --compile, no --aot",
+    name: "bun build --compile without --aot",
     dress: "typed",
     command: () => [bun, "build", "--compile", "main.ts", "--outfile", "app"],
     executable: "app",
@@ -144,6 +149,15 @@ const scenarios: Scenario[] = [
     executable: "target/release/application",
   },
 ];
+
+const unknown = wanted ? wanted.split(",").filter(name => !scenarios.some(scenario => scenario.name === name)) : [];
+if (unknown.length) {
+  const quoted = unknown.map(name => JSON.stringify(name)).join(", ");
+  console.error(
+    `--scenarios: there is no ${quoted}. The scenarios:\n${scenarios.map(({ name }) => `  ${name}`).join("\n")}`,
+  );
+  process.exit(1);
+}
 
 function countLines(
   folder: string,

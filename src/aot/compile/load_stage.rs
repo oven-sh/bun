@@ -736,7 +736,7 @@ impl<'a> Build<'a> {
                 builtin_names: shared.builtin_names,
                 platform: self.platform,
                 replaced_builtins: &contents.replaced_builtins,
-                unlocked_builtins: &contents.run.members_that_library_looks_up,
+                unlocked_builtins: &contents.run.members_written_as_reads,
                 messages: shared.messages,
                 unreadable: Default::default(),
                 manifest: shared.manifest,

@@ -362,10 +362,19 @@ impl Drop for RunsHere<'_> {
 static DEDICATED_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
 
 /// The parser nests as deep as on a thread of Bun's pool. The binder, the checker, hundreds of rules and the printers
-/// then walk the tree recursively, each with its own frame size, so their threads get eight times that stack. Whoever lowers
-/// walks the tree too and asks the checker from wherever it stands, so there is as much again for a question. Untouched
+/// then walk the tree recursively, each with its own frame size, so their threads get eight times that stack. Untouched
 /// stack costs no memory.
-pub const WORKER_STACK_SIZE: u32 = 16 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+pub const WORKER_STACK_SIZE: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+
+/// Whoever lowers walks the tree too and asks the checker from wherever it stands, so there is as much again for a question.
+pub const LOWERING_STACK_SIZE: u32 = 2 * WORKER_STACK_SIZE;
+
+static POOL_STACK_SIZE: AtomicU32 = AtomicU32::new(WORKER_STACK_SIZE);
+
+/// The threads of the pool that `use_dedicated_pool` makes will lower. Call this before it.
+pub fn give_pool_stack_for_lowering() {
+    POOL_STACK_SIZE.store(LOWERING_STACK_SIZE, Ordering::Relaxed);
+}
 
 static INLINE_REGION_THREADS: Guarded<Vec<ThreadId>> = Guarded::new(Vec::new());
 
@@ -418,7 +427,7 @@ pub fn use_dedicated_pool(name: &'static str) {
         };
         let pool = bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
             max_threads,
-            stack_size: WORKER_STACK_SIZE,
+            stack_size: POOL_STACK_SIZE.load(Ordering::Relaxed),
             ..Default::default()
         })
         .named(name)

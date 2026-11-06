@@ -103,6 +103,26 @@ fn store_under_a_name_that_nobody_reads_goes_with_what_it_alone_names() {
     );
 }
 
+#[test]
+fn nothing_is_left_out_under_the_inspector() {
+    let files = [
+        (
+            "main.cjs",
+            "const a = require('./a.cjs'); console.log(a.c);",
+        ),
+        ("a.cjs", LIBRARY),
+    ];
+    let aot = AotOptions {
+        admits_inspector: true,
+        ..AotOptions::default()
+    };
+    let described = describe_with_options(&files, aot);
+    assert!(
+        described.iter().all(|line| line.ends_with(" []")),
+        "{described:?}"
+    );
+}
+
 #[derive(Copy, Clone)]
 enum CodeFromDisk {
     Refused,

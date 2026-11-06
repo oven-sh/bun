@@ -56,17 +56,20 @@ fn folder_of(path: &[u8]) -> &[u8] {
 pub(super) fn collect_program_file_paths(
     files: &Files<'_>,
     sources: &Sources,
-) -> Vec<EntryPointPaths> {
+) -> Vec<(FileId, EntryPointPaths)> {
     let compiled = files.compiled_files().iter();
     compiled
         .filter(|&&file| sources.kind(file) == SourceKind::Program)
         .filter(|&&file| !is_host_path(files.module(file).file_name()))
-        .map(|&file| EntryPointPaths {
-            public_path: sources.module_paths(file).public_path.to_vec(),
-            source_path: with_separators_of_host(
-                to_native(files.module(file).file_name()),
-                cfg!(windows),
-            ),
+        .map(|&file| {
+            let paths = EntryPointPaths {
+                public_path: sources.module_paths(file).public_path.to_vec(),
+                source_path: with_separators_of_host(
+                    to_native(files.module(file).file_name()),
+                    cfg!(windows),
+                ),
+            };
+            (file, paths)
         })
         .collect()
 }
@@ -75,6 +78,7 @@ pub(super) fn collect_names_followed(
     files: &Files<'_>,
     sources: &Sources,
     graph: &ModuleGraph,
+    left_out: &[FileId],
 ) -> Vec<FollowedName> {
     let mut names = Vec::new();
     for &file in files.compiled_files() {
@@ -82,7 +86,9 @@ pub(super) fn collect_names_followed(
         let folder =
             &importer[..bun_core::strings::last_index_of_char(importer, b'/').unwrap_or(0)];
         for (spelled, is_required) in graph.names_left_to_loader(file) {
-            if let ModuleRef::File(target) = spelled.module {
+            if let ModuleRef::File(target) = spelled.module
+                && left_out.binary_search(&target).is_err()
+            {
                 let found = || Some(sources.public_path(target).to_vec());
                 let name = files.atoms.bytes(spelled.spelling);
                 names.push(FollowedName {

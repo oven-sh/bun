@@ -6913,8 +6913,13 @@ impl<'p, 's> Checker<'p, 's> {
             None if !is_object_literal_kind(td) => self.declared_by_unlisted_class(source),
             _ => None,
         };
+        // The members of an intersection are its properties alone, and they are not handed back in `both`.
+        let asks_for_properties_alone = |tm: Members<'p>| match tm.shape().properties_of() {
+            Some(_) => matches!(td, TypeData::Intersection(_)),
+            None => tm.index_infos().is_empty(),
+        };
         let (by_name, sm, tm) = match (unlisted, unlisted.and_then(|_| self.members(target))) {
-            (Some(_), Some(tm)) if tm.index_infos().is_empty() => {
+            (Some(_), Some(tm)) if asks_for_properties_alone(tm) => {
                 (Some(source), unlisted, Some(tm))
             }
             (Some(_), tm) => (by_name, self.members(has_properties), tm),
@@ -6927,6 +6932,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.provisional_shapes.len() == provisional
             && !self.is_intersection(has_properties)
             && !matches!(td, TypeData::Intersection(_))
+            && tm.shape().properties_of().is_none()
         {
             *both = Some((sm, tm));
         }

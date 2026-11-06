@@ -37,6 +37,7 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `TS100014: this assignment always throws`       | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
 | `TS100053: Macros are disabled`                 | [Not supported](/compiler/compatibility#not-supported). Pass `--no-aot`           |
 | `TS100064: this import path isn't a constant`   | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `TS100064: this call loads a module`            | [Import the module by name](/compiler/compatibility#dynamic-imports)              |
 | `TS100064: the program hands a require() to`    | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `TS100078: ... runs from source, not compiled`  | [None needed](/compiler/compatibility#under-bun-test---aot)                       |
 | `TS100079: ... any file ... may load again`     | Move that line out of the test run, or run its test file on its own               |
@@ -45,7 +46,7 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `TS100089: The executable doesn't embed ...`    | [Write the extension](/compiler/compatibility#dynamic-imports)                    |
 | `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
 | `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
-| `can't run code compiled by this Bun`           | Pass a `bun` of the same revision                                                 |
+| `can't run code compiled by this Bun`           | Pass a `bun` built from the same sources with the same configuration              |
 | `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                           |
 
 A build looks for type errors in your own files. It doesn't report the ones in `node_modules`, in a package's TypeScript or in its `.d.ts` files. `bun check --all ./app.ts` lists them. Nor does a build stop where TypeScript gives up on a very long function (`TS2563`).

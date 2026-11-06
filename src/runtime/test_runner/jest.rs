@@ -603,7 +603,7 @@ pub(crate) fn jest(
         }
     }
 
-    if own_globals {
+    if own_globals && bun_jsc::compiled_program::compiled_program().is_some() {
         let left_alone = vm.transpiler.options.own_test_globals;
         return Ok(JSValue::js_number(f64::from(left_alone)));
     }

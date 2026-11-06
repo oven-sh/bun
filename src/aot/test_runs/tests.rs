@@ -1355,6 +1355,46 @@ fn bind_takes_the_file_that_a_text_mocks_for_mocked() {
 }
 
 #[test]
+fn bind_takes_what_a_require_names_for_mocked_where_a_loader_function_may_be_stored() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { test } from 'bun:test';\nimport { far } from './src/far';\nimport asks from './src/asks.cjs';\nimport hands from './src/hands.cjs';\ntest('a', () => { far(); asks(); hands(); });\n",
+        ),
+        ("src/far.ts", "export const far = () => 1;\n"),
+        (
+            "src/asks.cjs",
+            "module.exports = () => require('./asked.cjs');\n",
+        ),
+        ("src/asked.cjs", "module.exports = 1;\n"),
+        ("src/hands.cjs", "HANDS"),
+        MANIFEST,
+    ];
+    for (hands, is_asked) in [
+        (
+            "const install = require('./asked.cjs');\nmodule.exports = () => install(require('node:module'));\n",
+            true,
+        ),
+        (
+            "module.exports = () => require('node:module').builtinModules;\n",
+            false,
+        ),
+    ] {
+        let mut files = files;
+        files[4].1 = hands;
+        with_bound_run(&files, (1, 0), |files, graph| {
+            let module = |name: &str| ModuleRef::File(file_at(files, name));
+            assert_eq!(
+                graph.may_be_mocked(module("src/asked.cjs")),
+                is_asked,
+                "{hands}"
+            );
+            assert!(!graph.may_be_mocked(module("src/far.ts")), "{hands}");
+        });
+    }
+}
+
+#[test]
 fn what_a_file_of_the_product_writes_on_a_built_in_opens_nothing_and_a_text_goes_by_its_file() {
     let files = [
         (

@@ -460,7 +460,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         &all.replaced_members,
         &all.opened_holders,
     );
-    let run = match whose_files {
+    let mut run = match whose_files {
         Some(whose_files) => collect_run_contents(
             RunInput {
                 replaced_builtins: &replaced_builtins,
@@ -470,6 +470,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         ),
         None => RunContents::default(),
     };
+    run.loader_functions_answer_requires = is_test_run && all.stores_loader_functions;
     all.names_added.extend_from_slice(&run.names_added);
     sort_names_added(&mut all.names_added, files);
     let fixed_builtins = FixedBuiltins::default();
@@ -488,9 +489,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         replaced_builtins,
         fixed_builtins,
         names_added_to_builtins: all.names_added,
-        mocks_any_module: all.mocks_any_module
-            || run.mocks_any_module
-            || all.stores_loader_functions,
+        mocks_any_module: all.mocks_any_module || run.mocks_any_module,
         stores_loader_functions: all.stores_loader_functions,
         process_reaches_code_on_its_prototypes: all.process_reaches_code_on_its_prototypes,
         inspects_prototype_chain_of_process: all.inspects_prototype_chain_of_process,

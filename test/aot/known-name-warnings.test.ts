@@ -54,6 +54,11 @@ const warned: [string, string, string][] = [
     "environment.cjs",
     `console.log(require(process.env.NAME_OF_MODULE ?? "./lib/a.js"));\n`,
   ],
+  [
+    "process.getBuiltinModule() of a name out of the environment",
+    "asked.cjs",
+    `console.log(typeof process.getBuiltinModule(process.env.NAME_OF_MODULE ?? "node:path"));\n`,
+  ],
 ];
 
 const loadsEach = (rows: string[][]) => rows.map(([, file]) => `await import("./${file}");\n`).join("");

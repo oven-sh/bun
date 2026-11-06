@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e1c581ed5a367a01593d170660aa05096742b0983b7a0a420206704b8d020592.
+// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -149,7 +149,7 @@ const kBoundOnAbort = Symbol("kBoundOnAbort");
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
-// - `$pipelinedResponses` on the socket: array of queued ServerResponses, in arrival order
+// - under a symbol on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
 //   is queued (undefined once it owns the socket)
 const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
@@ -613,7 +613,7 @@ declare global {
       _requestCount?: number;
       [kHandedOff]?: boolean;
       [kUpgradeIncoming]?: IncomingMessage;
-      /** In the order of their requests. */
+      /** Not undefined once a list was stored under the symbol of the pipelined responses. The list is read under the symbol. */
       $pipelinedResponses?: PipelinedResponse[];
       [kOutgoingData]?: number;
       [kPipelineKickScheduled]?: boolean;
@@ -667,7 +667,7 @@ declare global {
       [kEnableStreaming](enable: boolean): void;
     }
 
-    /** A native response in `$pipelinedResponses`: it holds the turn of a request whose `ServerResponse` is not made yet. */
+    /** A native response among the pipelined responses: it holds the turn of a request whose `ServerResponse` is not made yet. */
     interface PipelinedTurn extends NodeHTTPResponse {
       /** Never there, which tells it from a `ServerResponse` that waits. */
       [kPipelinedQueuedState]?: undefined;
@@ -1419,7 +1419,7 @@ Server.prototype[kRealListen] = function (
         // Node.js, this response is queued (res.socket === null) and its
         // writes are buffered until the in-flight response finishes and the
         // pipeline assigns it the socket (advanceResponsePipeline).
-        socket.$pipelinedResponses?.pop(); // the turn that the native handle held
+        pipelinedResponsesIfAny(socket)?.pop(); // the turn that the native handle held
         queuePipelinedResponse(socket, http_res, !!isAncientHTTP);
         // A pipelined dispatch can arrive after the previous response finished and detached
         // (bytes still flushing keep it pending), leaving nothing in flight to advance the
@@ -1601,7 +1601,7 @@ Server.prototype[kRealListen] = function (
         http_res[kCloseCallback] = undefined;
         http_res.$exchange.detachedFrom = http_res[kDetachedFrom] = socket;
         http_res.detachSocket(socket);
-        if (socket.$pipelinedResponses !== undefined) {
+        if (pipelinedResponsesIfAny(socket) !== undefined) {
           advanceResponsePipeline(server, socket);
         }
         return;
@@ -2310,7 +2310,7 @@ function onSocketTimeoutTimerExpired(socket: $Node.HttpServerSocket) {
     if (remaining > 0) {
       const existingTimer = socket[kSocketTimeoutTimer];
       if (existingTimer !== undefined) clearTimeout(existingTimer);
-      const timer: $Node.Timeout = globalThis.setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
+      const timer: $Node.Timeout = setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
       timer.unref();
       socket[kSocketTimeoutTimer] = timer;
       socket.$armedTimeout = remaining;
@@ -2970,7 +2970,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
           existingTimer.refresh();
         } else {
           if (existingTimer) clearTimeout(existingTimer);
-          const timer: $Node.Timeout = globalThis.setTimeout(onSocketTimeoutTimerExpired, msecs, this);
+          const timer: $Node.Timeout = setTimeout(onSocketTimeoutTimerExpired, msecs, this);
           timer.unref();
           this[kSocketTimeoutTimer] = timer;
           this.$armedTimeout = msecs;
@@ -3134,7 +3134,7 @@ function _writeHead(
     if (readBack !== statusMessageLastChecked) {
       ("unlikely");
       if (checkInvalidHeaderChar(readBack)) throw $ERR_INVALID_CHAR("statusMessage");
-      statusMessageLastChecked = readBack;
+      if (typeof readBack === "string") statusMessageLastChecked = readBack;
     }
     obj ??= reason;
   }
@@ -3252,6 +3252,10 @@ const enum RequestKind {
 const noResponseEvents: $Node.HttpResponseEvents = { __proto__: null, finish: undefined };
 const noChunks: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[] = [];
 const noCallbacks: $Node.HttpWriteCallback[] = [];
+// All responses share the two: what is written into one of them would come out of another response. A list without elements that may not grow refuses every write.
+Object.$defineProperty(noChunks, "length", { __proto__: null, writable: false });
+Object.$defineProperty(noCallbacks, "length", { __proto__: null, writable: false });
+http.responseRoad.noChunks = noChunks;
 // Every response begins with those two, and the library puts nothing into either. Whoever looks under the symbol of one with a key that is a value may: the response gets lists of its own first.
 function showListsOfItsOwn(this: $Node.ServerResponse): void {
   if (this[kChunkedBuffer] === noChunks) this[kChunkedBuffer] = [];
@@ -3577,7 +3581,7 @@ const enum AutoHeaders {
 const kMaxNativeKeepAliveSecs = 0x7fffffff;
 let renderedAutoHeaders = 0;
 let renderedKeepAliveSecs = 0;
-let lastKeepAliveTimeout = -1;
+let lastKeepAliveTimeout = 0;
 let lastKeepAliveSecs = 0;
 
 // Every response without a header has one and the same array.
@@ -3849,7 +3853,7 @@ function onResponseFinishHandleSocket(
   }
   // Pipelined responses are still queued behind this one: the connection is
   // not idle, so do not arm the keep-alive idle timeout yet.
-  if (socket.$pipelinedResponses?.length) {
+  if (pipelinedResponsesIfAny(socket)?.length) {
     return;
   }
   const rawKeepAliveTimeout = server!.keepAliveTimeout;
@@ -3956,7 +3960,7 @@ function kickPipelineIfIdle(server: $Node.HttpServer, socket: $Node.HttpServerSo
 }
 function advancePipelineIfIdleNT(server: $Node.HttpServer, socket: $Node.HttpServerSocket) {
   socket[kPipelineKickScheduled] = false;
-  if (socket._httpMessage == null && socket.$pipelinedResponses?.length) {
+  if (socket._httpMessage == null && pipelinedResponsesIfAny(socket)?.length) {
     advanceResponsePipeline(server, socket);
   }
 }
@@ -3965,11 +3969,14 @@ function advancePipelineIfIdleNT(server: $Node.HttpServer, socket: $Node.HttpSer
 // outgoing queue: park the response behind the connection's in-flight one.
 // Its write()/end() buffer (kPipelinedQueuedState) until
 // advanceResponsePipeline assigns it the socket and replays them.
-// Whoever lists the symbols of a connection that was pipelined on finds the list, as with the other text.
+// The list is read under the symbol alone, as with the other text. Few connections are pipelined on: the private field spares the others the look.
 const kPipelinedResponses = Symbol("kPipelinedResponses");
+function pipelinedResponsesIfAny(socket: $Node.HttpSocket): $Node.PipelinedResponse[] | undefined {
+  return socket.$pipelinedResponses !== undefined ? (socket as any)[kPipelinedResponses] : undefined;
+}
 function pipelinedResponsesOf(socket: $Node.HttpSocket): $Node.PipelinedResponse[] {
-  let list = socket.$pipelinedResponses;
-  if (list === undefined) {
+  let list = pipelinedResponsesIfAny(socket);
+  if (list == null) {
     list = socket.$pipelinedResponses = [];
     storeRarely(socket, kPipelinedResponses, list);
   }
@@ -3994,7 +4001,7 @@ function queuePipelinedResponse(socket: $Node.HttpSocket, res: $Node.ServerRespo
 
 // Like Node.js's socketOnEnd: the response that gets `_last` after the client's FIN is the last one in the queue.
 function lastPipelinedResponse(socket: $Node.HttpSocket) {
-  const queue = socket.$pipelinedResponses;
+  const queue = pipelinedResponsesIfAny(socket);
   return queue?.[queue.length - 1];
 }
 
@@ -4003,10 +4010,9 @@ function lastPipelinedResponse(socket: $Node.HttpSocket) {
 // (abortIncoming). Runs from the native socket's close path and from the
 // http1 fallback's socket 'close' listener.
 function abortQueuedPipelinedResponses(socket: $Node.HttpSocket, error: Error = $ERR_STREAM_DESTROYED("write")) {
-  const pipelined = socket.$pipelinedResponses;
+  const pipelined = pipelinedResponsesIfAny(socket);
   const pipelinedLength = pipelined ? pipelined.length : 0;
   if (pipelinedLength) {
-    socket.$pipelinedResponses = undefined;
     storeRarely(socket, kPipelinedResponses, undefined);
     for (let i = 0; i < pipelinedLength; i++) {
       const queuedRes = pipelined![i];
@@ -4063,7 +4069,7 @@ function advanceResponsePipeline(
   if (!socket || socket.writableEnded || socket.destroyed) {
     return;
   }
-  const queue = socket.$pipelinedResponses;
+  const queue = pipelinedResponsesIfAny(socket);
   if (!queue || queue.length === 0) {
     return;
   }

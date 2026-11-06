@@ -1081,13 +1081,15 @@ function isInstanceof(object: unknown, proto) {
 // Special-case for some builtin prototypes in case their `constructor` property has been tampered.
 let wellKnownPrototypes:
   Map<unknown, { name: string; constructor: (new (...args: never[]) => unknown) | undefined }> | undefined;
-const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+let wellKnownFunction: FunctionConstructor;
+const ObjectPrototypeIsPrototypeOf = IS_COMPILED_AHEAD_OF_TIME ? Object.prototype.isPrototypeOf : undefined;
 function initializeWellKnownPrototypes() {
   wellKnownPrototypes = new SafeMap();
   wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
   wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
   wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: undefined });
-  // Function itself is kept nowhere: whoever prints an object would hold an evaluator. Its record has no constructor, and `obj` is Function.prototype where that record is found.
+  // Compiled, Function itself is kept nowhere: whoever prints an object would hold an evaluator. `obj` is Function.prototype where its record is found.
+  if (!IS_COMPILED_AHEAD_OF_TIME) wellKnownFunction = Function;
   wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
   wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
   wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
@@ -1102,7 +1104,13 @@ function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?
     const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes!.get(obj);
     if (wellKnownPrototypeNameAndConstructor != null) {
       const { name, constructor } = wellKnownPrototypeNameAndConstructor;
-      if (constructor === undefined ? ObjectPrototypeIsPrototypeOf.$call(obj, tmp) : tmp instanceof constructor) {
+      if (
+        constructor === undefined
+          ? IS_COMPILED_AHEAD_OF_TIME
+            ? ObjectPrototypeIsPrototypeOf!.$call(obj, tmp)
+            : tmp instanceof wellKnownFunction
+          : tmp instanceof constructor
+      ) {
         if (protoProps !== undefined && firstProto !== obj) {
           addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
         }

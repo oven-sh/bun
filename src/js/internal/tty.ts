@@ -202,16 +202,4 @@ function getColorDepth(env: Record<string, string | undefined>) {
   return COLORS_2;
 }
 
-// The method has no name, and a store to a member gives it none.
-const methods: { getColorDepth?: (env?: Record<string, string | undefined>) => number } = {};
-methods.getColorDepth = function (env: Record<string, string | undefined> = process.env) {
-  return getColorDepth(env);
-};
-
-export default {
-  getColorDepth,
-  // What tty.WriteStream.prototype has for getColorDepth. It lies here so that the light streams of a compiled program (builtins/stdio.ts) hand it out without node:tty.
-  getColorDepthOfStream: methods.getColorDepth,
-  /** Stored by node:tty when it makes the object: from then on a program can replace the method there. */
-  prototypeOfWriteStream: undefined as undefined | { getColorDepth: unknown },
-};
+export default { getColorDepth };

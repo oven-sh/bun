@@ -2,6 +2,7 @@
 // A test run compiles what an executable compiles. So a file that names `Symbol.iterator` has taken `Symbol` for what it was, and `Symbol` stays locked in that run unless a file of the tests spells a store
 // to it: then the build looks `Symbol.iterator` up. A store that the build cannot read used to replace `Symbol` for some readers alone: "fake iterator fake iterator" under `bun test`,
 // "Symbol(Symbol.iterator) Symbol(Symbol.iterator)" compiled. It throws now, names the member and says what to write. `Map.prototype` is a value, which the engine folds where nobody replaces `Map`.
+// Bun's own JavaScript is a reader like any other: `util.getSystemErrorMap()` says `new Map()` at each call, and makes what the test has laid there, however the test reached the global object.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
@@ -18,6 +19,11 @@ const namesPrototype = `export function look() {
 const namesMapAlone = `export function look() {
   const made: any = new Map();
   return typeof made.mine + " " + typeof made.get;
+}
+`;
+const asksLibrary = `import util from "node:util";
+export function look() {
+  return new Map().constructor.name + " " + util.getSystemErrorMap().constructor.name;
 }
 `;
 const namesSymbol = `export function look() {
@@ -65,6 +71,22 @@ const cases: Record<string, Case> = {
     lay: `(typeof window !== "undefined" ? window : globalThis).Map = Fake`,
     plain: "function undefined true",
     // `Map.prototype` is looked up with `Map`.
+  },
+  "a root behind a choice, and Bun's own code makes one": {
+    product: asksLibrary,
+    name: "Map",
+    value: "Wider",
+    lay: `(typeof window !== "undefined" ? window : globalThis).Map = Wider`,
+    beside: `class Wider extends Map {}`,
+    plain: "Wider Wider",
+  },
+  "a key that arrives, and Bun's own code makes one": {
+    product: asksLibrary,
+    name: "Map",
+    value: "Wider",
+    lay: `globalThis[JSON.parse('"Map"')] = Wider`,
+    beside: `class Wider extends Map {}`,
+    plain: "Wider Wider",
   },
   "Symbol, whose iterator is a key": {
     product: namesSymbol,

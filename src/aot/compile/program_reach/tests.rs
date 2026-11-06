@@ -362,6 +362,7 @@ fn assert_same_on_any_number_of_threads(
             counts_executions: false,
             any_file_is_named_at_run_time: false,
             files_are_named_out_of_sight: false,
+            admits_inspector: false,
             isolates_code_from_disk: false,
             mocks_any_module: false,
             files_started_by_runner: &[],

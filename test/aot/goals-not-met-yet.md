@@ -4,9 +4,9 @@ This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of th
 
 4 wrong answers in 3 files stand under a mark. They are no goals, and are not counted among them.
 
-235 goals in 133 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 50 on other things.
+236 goals in 134 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 51 on other things.
 
-74 of them are a yes or a no. Of the others 38 are held to what is reached today by a case beside them, 2 could be, 2 cannot grow worse, 68 are counted at every run and compared between runs, 51 move with the platform and with every change, and 0 say no measured number.
+75 of them are a yes or a no. Of the others 38 are held to what is reached today by a case beside them, 2 could be, 2 cannot grow worse, 68 are counted at every run and compared between runs, 51 move with the platform and with every change, and 0 say no measured number.
 
 57 cases in 18 files are declared `todo` and never run.
 
@@ -100,6 +100,7 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/library-modules-by-computed-name.test.ts | modules of Bun's own by a computed name > the example of docs/compiler/compatibility.mdx: require(name) adds no built-in module: node:dgram is found, and is to be refused | no | yes | no number: the goal is a yes or a no |
 | test/aot/loader-access-in-unreachable-code.test.ts | a load by name in a function that only a function nobody calls calls brings no built-in module along: 80 KB for at most 32 KB | 80 KB | 32 KB | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/missing-bun-types.test.ts | without Bun's type declarations > a build sees all that can run where Reflect.get() reads Bun off the global object: 13 lines say what blocks it, for 0 | 13 | 0 | nothing yet: one more case beside it could hold it to this number |
+| test/aot/parallel/a-for-await-over-what-is-sync/who-catches-what-rejects-under-a-delegating-yield.mjs | it answers as plain Bun: "b" \| "f": a `for await` over an object whose method under Symbol.asyncIterator is a generator is stepped as a loop over the generator itself, where the language calls next() and awaits in the loop's own context. | no | yes | no number: the goal is a yes or a no |
 | test/aot/parallel/builtin-modules/bun-ffi-dlopen-image-size.js | ImageFunctionsEmitted <= 100: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 100 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/builtin-modules/function-node-path-called-function-proxy.ts | NativeFunctionsCalledDirectly >= 1: path.parse is not entered by its direct binding; the tests that the line above counts are those of Bun's library in the image | printed by the run | >= 1 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/builtin-modules/members-compiled-module-read-object-body.ts | NativeFunctionTestsEmitted = 0: the count takes in the functions of Bun's library that come into this executable | printed by the run | = 0 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |

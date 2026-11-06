@@ -26,7 +26,7 @@ use bun_sema::atom::Atom;
 use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{self, ExportId, ExprId, ExprKind, ImportId, NodeData, StmtId, StmtKind};
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, is_name_read_by_transpiler,
+    ImportSite, ImportSiteKind, ImportSpecifier, find_names_read_by_transpiler,
 };
 use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTarget, ComputedTargets, FileId, Files,
@@ -573,7 +573,12 @@ impl FileScanner<'_, '_> {
                     .extend(runtime_modules.map(ModuleRef::Runtime));
                 let start = self.spellings.len() as u32;
                 let spelled = spellings.iter().filter_map(find_spelled_module);
+                let unread = self.find_names_for_transpiler_alone_that_it_does_not_read(
+                    site,
+                    spelled.clone().map(|it| it.spelling),
+                );
                 let spelled: Vec<SpelledModule> = spelled
+                    .filter(|it| !unread.contains(&it.spelling))
                     .map(|spelled| SpelledModule {
                         is_left_to_loader: (asks_loader && self.is_file_that_loader_finds(spelled))
                             || self.is_library_name_asked_of_plugins(site, spelled),
@@ -595,15 +600,33 @@ impl FileScanner<'_, '_> {
         }
     }
 
+    fn find_names_for_transpiler_alone_that_it_does_not_read(
+        &self,
+        site: &ImportSite,
+        names: impl Iterator<Item = Atom>,
+    ) -> Vec<Atom> {
+        let is_prefixed =
+            |name: &Atom| Alias::bun_prefixed_builtin(self.files.atoms.bytes(*name)).is_some();
+        let mut prefixed: Vec<Atom> = names.filter(is_prefixed).collect();
+        if !prefixed.is_empty() {
+            let (bound, decisions) = (
+                self.files.bound(self.file),
+                &self.compiled.analysis.decisions,
+            );
+            let read = find_names_read_by_transpiler(self.hir, bound, decisions, site);
+            prefixed.retain(|name| !read.contains(name));
+        }
+        prefixed
+    }
+
     fn add_spellings_named_in(&mut self, site: &ImportSite, start: u32) {
-        let (bound, decisions) = (
-            self.files.bound(self.file),
-            &self.compiled.analysis.decisions,
+        let named = modules_named_in(self.named_in_choices, site.specifier_node);
+        let unread = self.find_names_for_transpiler_alone_that_it_does_not_read(
+            site,
+            named.iter().map(|it| it.name),
         );
-        let is_read = is_name_read_by_transpiler(self.hir, bound, decisions, site.kind);
-        for named in modules_named_in(self.named_in_choices, site.specifier_node) {
-            let name = self.files.atoms.bytes(named.name);
-            if !is_read && Alias::bun_prefixed_builtin(name).is_some() {
+        for named in named {
+            if unread.contains(&named.name) {
                 continue;
             }
             let mut spelled = self.spellings[start as usize..].iter();

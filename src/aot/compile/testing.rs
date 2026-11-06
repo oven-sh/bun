@@ -508,7 +508,9 @@ fn with_loaded_bind_input<R>(
             ignores_declared_side_effects: false,
             mocks_any_module: contents.mocks_any_module,
             mocked_library_modules: &[],
-            hands_on_any_module: contents.loads_by_unknown_name || contents.loads_by_unknown_path,
+            hands_on_any_module: contents.loads_by_unknown_name
+                || contents.loads_by_unknown_path
+                || contents.run.loader_functions_answer_requires,
             any_module_loads_again: runs_tests && contents.any_module_loads_again,
             runs_tests,
             runner_starts_entry_points: runs_tests,

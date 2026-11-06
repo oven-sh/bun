@@ -8,6 +8,7 @@ use bun_sema::resolve::FinishedFile;
 use bun_sema::util::SharedSort;
 
 use super::FileContents;
+use super::load_names::find_modules_spelled_in_data;
 use crate::builtins::table::{self, ExportLookup};
 use crate::builtins::{BuiltinId, ResolvedBuiltins};
 use crate::load::runtime_modules::RuntimeModules;
@@ -175,7 +176,9 @@ pub(crate) fn scan_file(
         ..
     } = request;
     if is_made_from_data(hir) {
-        return FileContents::default();
+        let mut found = FileContents::default();
+        found.names.written_as_values = find_modules_spelled_in_data(request, input);
+        return found;
     }
     debug_assert_eq!(analysis.import_sites.len(), resolutions.len());
     let mut scan = ContentsScan {

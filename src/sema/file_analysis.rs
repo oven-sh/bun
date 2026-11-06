@@ -13,8 +13,8 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet,
-    JsxMode, ResolvedForm, ResolvedFrom,
+    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImport,
+    JsxImportSet, JsxMode, ResolvedForm, ResolvedFrom,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -69,6 +69,10 @@ const _: fn() = || {
 };
 
 impl FileAnalysis<'_> {
+    pub fn jsx_takes_this(&self) -> bool {
+        self.jsx_imports.contains(JsxImport::JsxDev)
+    }
+
     pub fn alternatives_of<'a>(&'a self, specifier: &'a ImportSpecifier) -> &'a [ImportSpecifier] {
         match *specifier {
             ImportSpecifier::OneOf(range) => {

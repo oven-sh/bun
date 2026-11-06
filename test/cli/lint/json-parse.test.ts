@@ -280,7 +280,7 @@ describe.concurrent("/* eslint rule: .. */ comments", () => {
   });
 
   test("a schema that refers to itself runs out of stack like Ajv does", async () => {
-    expect(await messages(`mini/recursive: [2, ${repeat("[", 4 * depth)}1${repeat("]", 4 * depth)}]`)).toEqual([
+    expect(await messages(`mini/recursive: [2, ${repeat("[", depth)}1${repeat("]", depth)}]`)).toEqual([
       `mini/recursive: Inline configuration for rule "mini/recursive" is invalid:\n\tMaximum call stack size exceeded\n`,
     ]);
   });

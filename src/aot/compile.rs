@@ -710,6 +710,9 @@ impl<'a> Build<'a> {
 
     fn finish_started_workers(&mut self, engine: &EngineResult, output: &FrontEndOutput) {
         let options = self.options;
+        if options.load.runs_tests {
+            return;
+        }
         if starts_workers_out_of_sight(engine) {
             self.started_workers.code = CodeOfWorkers::Unseen;
         }

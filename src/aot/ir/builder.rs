@@ -151,6 +151,16 @@ impl ListInArena {
     }
 
     #[inline]
+    pub(super) fn items_mut<T>(self, arena: &mut [T]) -> &mut [T] {
+        &mut arena[self.start as usize..][..self.length as usize]
+    }
+
+    #[inline]
+    pub(super) fn clear(&mut self) {
+        self.length = 0;
+    }
+
+    #[inline]
     pub(super) fn push<T: Copy>(&mut self, arena: &mut Vec<T>, item: T) {
         if self.length == self.capacity {
             self.move_to_end(arena, item);
@@ -630,6 +640,7 @@ impl FunctionBuilder {
         let block = self.current_block;
         if self.is_unreachable() {
             self.blocks[block.index()].terminator = Some(PendingTerminator::unreachable());
+            self.ssa.end_block(block);
             return;
         }
         let first_target = self.targets.len() as u32;
@@ -647,6 +658,7 @@ impl FunctionBuilder {
             fields,
             targets: first_target..self.targets.len() as u32,
         });
+        self.ssa.end_block(block);
     }
 
     #[inline]

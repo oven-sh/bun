@@ -8,6 +8,7 @@
 #include "headers.h"
 #include "helpers.h"
 #include "ZigGlobalObject.h"
+#include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
@@ -1392,7 +1393,8 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         arguments.append(JSC::JSBoundFunction::create(vm, globalObject, importOriginal, this, ArgList(), 0, nullptr, makeSource("importOriginal"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted)));
         RETURN_IF_EXCEPTION(scope, {});
         // The context survives the factory's awaits, so an import() it makes later can still be traced back to it.
-        globalObject->setAsyncContextTrackingEnabled(true);
+        Bun::beginTrackingAsyncContexts(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto* asyncContext = globalObject->m_asyncContextData.get();
         JSValue previous = asyncContext->getInternalField(0);
         asyncContext->putInternalField(vm, 0, Bun::createAsyncContextFrame(globalObject, this, previous));
@@ -2359,14 +2361,12 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             // Two mocks may patch one variable, which two modules export. The last patch is undone first, as above.
             if (!mock->patchOrder)
                 mock->patchOrder = ++patches;
-            JSObject* whatRequireAnswers = exports;
+            JSValue whatRequireAnswers = exports;
             if (commonJSExports) {
-                JSValue moduleExports = commonJSExports->exportsObject();
+                whatRequireAnswers = commonJSExports->exportsObject();
                 RETURN_IF_EXCEPTION(scope, );
-                if (moduleExports.isObject())
-                    whatRequireAnswers = moduleExports.getObject();
             }
-            JSC::AOT::willMockModule(globalObject, *loaded.compiledModule, whatRequireAnswers, whatRequireAnswers != exports);
+            JSC::AOT::willMockModule(globalObject, *loaded.compiledModule, whatRequireAnswers, !!commonJSExports);
             RETURN_IF_EXCEPTION(scope, );
         }
 #endif
@@ -3370,9 +3370,11 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     RETURN_IF_EXCEPTION(scope, false);
     // Nothing was loaded when the mock was made. Since then the host has answered a require(): of a name that the build does not know, or from code outside the image.
     mock->keepsModuleObject = !!loaded.commonJSModule;
-    // A file of a `__mocks__` folder may await at its top: an import waits for it, and a require() refuses it, as in `bun test`.
-    bool requiresFileOfFolder = mock->factory.get() && mock->factory.get().isString() && JSC::AOT::requireRunsMocks(vm);
-    JSC::JSPromise* pendingFactory = mock->run(globalObject, !mock->factory.get() || requiresFileOfFolder);
+    // A file of a `__mocks__` folder may await at its top, and so may the file that a mock without a factory is made of: an import waits for it, and a require() refuses it, as in `bun test`.
+    bool requiresFile = (!mock->factory.get() || mock->factory.get().isString()) && JSC::AOT::requireRunsMocks(vm);
+    // Behind an ES module that awaits nothing the loader makes such a mock in the same evaluation, ahead of the jobs that the body has queued.
+    bool followsBodyAtOnce = !mock->factory.get() && JSC::AOT::isESModuleThatWaitsForNothing(globalObject, module);
+    JSC::JSPromise* pendingFactory = mock->run(globalObject, requiresFile || followsBodyAtOnce);
     if (!scope.exception()) [[likely]] {
         // The factory may have require()d the module itself: `() => ({ ...require("./m"), extra })`.
         findLoadedCommonJSModule(globalObject, mock->specifier.get(), loaded);

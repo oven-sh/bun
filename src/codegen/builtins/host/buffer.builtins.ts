@@ -265,7 +265,7 @@ const allocated: b.FunctionField[] = [
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
-    uses: { fill: converted, encoding: converted },
+    uses: { fill: converted, encoding: [...converted, b.printedByFormatter("constructor")] },
     implementation: b.hostCall,
   },
 ];
@@ -440,7 +440,7 @@ export default b.declarations(
         uses: {
           this: writesBytes,
           value: [b.readsContents(), b.runs("ToPrimitive")],
-          encoding: converted,
+          encoding: [...converted, b.printedByFormatter("constructor")],
         },
         reads: viewHeaps,
         implementation: b.hostCall,

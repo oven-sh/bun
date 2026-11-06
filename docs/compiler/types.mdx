@@ -106,6 +106,6 @@ class Cursor {
 }
 ```
 
-The build has to prove that every value you store in an `int32` is a whole number in range. Where it can't, it stops, and the error says what to write. That's usually `| 0`, which gives the same value in every JavaScript engine. `int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`. It pays off in the fields of objects that you create by the million.
+The build has to prove that every value you store in an `int32` is a whole number in range. It checks this in every function that the program can reach. Where it can't prove it, it stops, and the error says what to write. That's usually `| 0`, which gives the same value in every JavaScript engine. `int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`. It pays off in the fields of objects that you create by the million.
 
 The proof covers what you store through a type that says `int32`. TypeScript also lets you pass an object typed `{ x: number }`, an instance of `class Pixel { x: number }` or an object with a getter for `x` where `{ x: int32 }` is expected, and the build doesn't stop there. Reading `x` from such an object checks the value first, so you get the same number as under `bun run`.

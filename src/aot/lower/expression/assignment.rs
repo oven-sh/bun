@@ -1,7 +1,9 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::Binding;
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp};
+use bun_sema::hir::{
+    BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp, find_transpiled_mark,
+};
 
 use super::ResultUsage;
 use super::logical::LogicalOperator;
@@ -24,12 +26,13 @@ impl FileLowering<'_, '_, '_, '_> {
         self.find_assigned_function_name(target).is_some()
     }
 
+    pub(in crate::lower) fn is_parenthesized_for_the_engine(&self, target: ExprId) -> bool {
+        let is_parenthesized = (self.hir.expr_flags(target)).contains(ExprFlags::PARENTHESIZED);
+        is_parenthesized && find_transpiled_mark(&self.hir.text).is_some()
+    }
+
     fn find_assigned_function_name(&self, target: ExprId) -> Option<(Binding, Atom)> {
-        if self
-            .hir
-            .expr_flags(target)
-            .contains(ExprFlags::PARENTHESIZED)
-        {
+        if self.is_parenthesized_for_the_engine(target) {
             return None;
         }
         let AssignmentTarget::Identifier { identifier, name } =

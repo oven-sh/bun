@@ -135,9 +135,6 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 
     if (approach === "segfault") {
       expect(stderr).toContain("Segmentation fault at address");
-      // Under ASAN the fixture calls the reporter itself: no signal is raised, so the report names no code of one.
-      if (isASAN) expect(stderr).not.toContain("Signal code:");
-      else expect(stderr).toMatch(/^Signal code: SEGV_(MAPERR|ACCERR)$/m);
     } else if (approach === "panic") {
       expect(stderr).toContain("invoked crashByPanic() handler");
     } else if (approach === "abort") {

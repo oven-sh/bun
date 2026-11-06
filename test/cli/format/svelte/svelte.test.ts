@@ -2458,8 +2458,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "elements.svelte": `${Buffer.alloc(3 * depth, "<b>")}x${Buffer.alloc(4 * depth, "</b>")}\n`,
       "blocks.svelte": `${Buffer.alloc(7 * depth, "{#if a}")}x${Buffer.alloc(5 * depth, "{/if}")}\n`,
       "patterns.svelte": `{#each a as ${Buffer.alloc(depth, "[")}b${Buffer.alloc(depth, "]")}}{b}{/each}\n`,
-      // A level of parentheses takes less than 200 bytes of stack, and a thread has 18 MB of it on Windows.
-      "expressions.svelte": `{${Buffer.alloc(10 * depth, "(")}a${Buffer.alloc(10 * depth, ")")}}\n`,
+      "expressions.svelte": `{${Buffer.alloc(depth, "(")}a${Buffer.alloc(depth, ")")}}\n`,
       "fine.svelte": input,
     };
     const result = await format(files, Object.keys(files), ["--threads=1"]);

@@ -30,6 +30,7 @@
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -718,6 +719,8 @@ struct RequireHandedToLoaderOfProgram {
     JSCommonJSModule* target { nullptr };
     const String* path { nullptr };
     uint32_t module { 0 };
+    // The engine has taken `target` for the file's `module`.
+    bool isModuleOfFile { false };
 };
 static constinit thread_local RequireHandedToLoaderOfProgram s_requireHandedToLoaderOfProgram;
 
@@ -769,7 +772,7 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
             RETURN_IF_EXCEPTION(scope, false);
             AOT::takeModuleObject(globalObject, *module, objects);
         }
-        SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index() });
+        SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index(), traits.has_value() });
         MarkedArgumentBuffer arguments;
         arguments.append(target);
         arguments.append(key);
@@ -850,6 +853,30 @@ JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const Strin
     RELEASE_AND_RETURN(scope, AOT::moduleNamespace(globalObject, *module));
 }
 
+// The object that the default loader is handed is the file's `module`, as in `bun run`. Where the loader of the program hands on another object, or names another file, the one that require() has made is an object like any other again.
+static void takeForModuleObjectOfFile(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, const String& path)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RequireHandedToLoaderOfProgram handed = s_requireHandedToLoaderOfProgram;
+    if (handed.target && (handed.target == target || handed.module == module.index())) {
+        s_requireHandedToLoaderOfProgram = {};
+        if (handed.isModuleOfFile)
+            AOT::giveBackModuleObject(globalObject, AOT::ModuleID(handed.module));
+    }
+    // A file that has run, or is running, keeps its `module`, also where nothing has asked for the object yet.
+    if (AOT::refusesToRunFileForDefaultLoader(globalObject, module) || !AOT::traitsOfModuleObjectYetToBeMade(globalObject, module))
+        return;
+    AOT::ModuleObjects objects;
+    objects.module = target;
+    objects.require = attachRequireFunction(vm, globalObject, target, jsString(vm, path));
+    RETURN_IF_EXCEPTION(scope, void());
+    target->compiledModule = module.index();
+    // Its parent is what the program made it with, and not whoever asks for the file first.
+    target->m_isParentStored = true;
+    AOT::takeModuleObject(globalObject, module, objects);
+}
+
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader)
 {
     if (!hasCompiledModules() || target->moduleGraph() || target->m_overriddenCompile) [[likely]]
@@ -867,6 +894,8 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    takeForModuleObjectOfFile(globalObject, target, *module, path);
+    RETURN_IF_EXCEPTION(scope, false);
     // `bun run` runs the text once more, into `target`. The image has the file once, so what has run cannot run beside itself.
     bool readsExportsOffVariable = layExportsVariableIfModuleObjectOfFile(globalObject, target, *module);
     RETURN_IF_EXCEPTION(scope, false);
@@ -1372,7 +1401,22 @@ static JSValue resolveSpecifier(JSGlobalObject* realm, JSObject* holder, JSValue
 
 static JSObject* captureRuntimeModuleExports(JSGlobalObject* globalObject, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
-    if (JSObject* object = value.getObject())
+    JSObject* object = value.getObject();
+    if (auto* namespaceObject = object ? dynamicDowncast<JSModuleNamespaceObject>(object) : nullptr) {
+        auto& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        PropertyNameArrayBuilder exported(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, globalObject, exported, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        for (const Identifier& name : exported) {
+            JSValue exportedValue = namespaceObject->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            names.append(name);
+            values.append(exportedValue);
+        }
+        return nullptr;
+    }
+    if (object)
         return appendInternalModuleExports(uncheckedDowncast<Zig::GlobalObject>(globalObject), object, names, values);
     names.append(getVM(globalObject).propertyNames->defaultKeyword);
     values.append(value);

@@ -1,5 +1,6 @@
-use bun_sema::bind::{FnOwner, ScopeId, ScopeKind};
+use bun_sema::bind::{FnOwner, FunctionFlags, ScopeId, ScopeKind};
 use bun_sema::hir::{FnId, FnKind};
+use bun_sema::module_format::evaluates_own_this;
 
 use crate::ir::generated::{HomeObjectKind, ModuleKind, RuntimeErrorKind};
 use crate::ir::{TypeTable, ValueId};
@@ -71,7 +72,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn judges_say_that_this_is_read(&self) -> bool {
+        let LexicalOwner::Function(_, function) = self.find_lexical_owner() else {
+            return true;
+        };
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        !matches!(
+            hir.runtime_function_kind(function),
+            FnKind::Decl | FnKind::Expr
+        ) || bound.fns[function.idx()].contains_this
+            || bound
+                .function_flags(function)
+                .contains(FunctionFlags::HAS_DIRECT_EVAL)
+            || evaluates_own_this(hir, function, self.file.compiled.analysis.jsx_takes_this())
+    }
+
     pub(crate) fn get_this(&mut self) -> ValueId {
+        debug_assert!(
+            self.judges_say_that_this_is_read(),
+            "the lowering takes `this` in a function that reads none by the judges of `this`"
+        );
         match self.find_lexical_owner() {
             LexicalOwner::Generated => self.get_entry_this(),
             LexicalOwner::File(scope) => match self.file.inputs.modules.kind(self.file.file) {

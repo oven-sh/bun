@@ -2070,7 +2070,13 @@ function write_(
   if (msg.chunkedEncoding && chunk.length !== 0) {
     len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
     if (msg[kCorked] && msg._headerSent) {
-      msg[kChunkedBuffer].push(chunk, encoding, callback);
+      let held = msg[kChunkedBuffer];
+      // Every response of the native server begins with one shared empty list. Whoever holds chunks back lays a list of the response's own first.
+      if (held === http.responseRoad.noChunks) {
+        ("unlikely");
+        (msg.$exchange?.response ?? msg)[kChunkedBuffer] = held = [];
+      }
+      held.push(chunk, encoding, callback);
       msg[kChunkedLength] += len!;
       ret = msg[kChunkedLength] < msg[kHighWaterMark];
     } else {

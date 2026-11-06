@@ -294,7 +294,10 @@ impl Build<'_> {
             ignores_declared_side_effects: self.options.code.ignores_declared_side_effects,
             mocks_any_module: project == ProjectId::Application && contents.mocks_any_module,
             mocked_library_modules,
-            hands_on_any_module: contents.loads_by_unknown_name || contents.loads_by_unknown_path,
+            hands_on_any_module: contents.loads_by_unknown_name
+                || contents.loads_by_unknown_path
+                || (project == ProjectId::Application
+                    && contents.run.loader_functions_answer_requires),
             any_module_loads_again: self.options.load.runs_tests && contents.any_module_loads_again,
             runs_tests: self.options.load.runs_tests,
             runner_starts_entry_points: project == ProjectId::Application
@@ -377,10 +380,12 @@ impl Build<'_> {
                     removable: self.options.removable,
                     counts_executions: self.options.aot.counts_executions,
                     any_file_is_named_at_run_time: files_are_named_out_of_sight
+                        || self.options.aot.admits_inspector
                         || (!self.stays_in_compiled_files && self.options.load.runs_tests),
                     files_are_named_out_of_sight,
+                    admits_inspector: self.options.aot.admits_inspector,
                     isolates_code_from_disk: self.options.aot.isolates_code_from_disk,
-                    mocks_any_module: contents.mocks_any_module,
+                    mocks_any_module: contents.mocks_any_module || contents.stores_loader_functions,
                     files_started_by_runner: &files_started_by_runner,
                     starts_of_workers: &starts_of_workers,
                     beside: &beside,
@@ -397,10 +402,12 @@ impl Build<'_> {
                     },
                     || find_left_out_code(&input, &in_parallel),
                 );
-                self.started_workers.program_files = program_files;
+                let held = program_files.into_iter();
+                let held = held.filter(|(file, _)| left_out.files.binary_search(file).is_err());
+                self.started_workers.program_files = held.map(|(_, paths)| paths).collect();
                 if !self.options.aot.runs_in_place {
                     self.started_workers.names_followed =
-                        collect_names_followed(view.files(), view.sources, &graph);
+                        collect_names_followed(view.files(), view.sources, &graph, &left_out.files);
                 }
                 for &module in &reached.looked_at {
                     if let crate::modules::ModuleRef::File(file) = module {

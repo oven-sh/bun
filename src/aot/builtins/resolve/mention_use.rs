@@ -163,6 +163,7 @@ impl Resolver<'_, '_> {
             ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } if node == target => return ControlFlow::Continue(parent),
             ExprKind::Assign { target, .. } if node == target => MentionUse::Inspected,
             ExprKind::Assign { op: None, target, value } if hir.skip_type_assertions(value) == e && self.is_kept_for_unlisted_members(e, target) => MentionUse::Inspected,
+            ExprKind::Assign { op: None, target, value } if hir.skip_type_assertions(value) == e && self.is_kept_to_be_read_by_name(e, target, parent) => MentionUse::Aliased,
             ExprKind::Template { .. } if self.is_tagged_template(parent) => MentionUse::Exposed,
             ExprKind::Unary { .. } | ExprKind::Template { .. } => MentionUse::Inspected,
             ExprKind::Call(call) | ExprKind::New(call) => self.classify_operand(call, node),
@@ -178,6 +179,43 @@ impl Resolver<'_, '_> {
             _ => return ControlFlow::Continue(parent),
         };
         ControlFlow::Break(mention_use)
+    }
+
+    fn is_kept_to_be_read_by_name(&self, e: ExprId, target: ExprId, assignment: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        if !self
+            .value_of(e)
+            .is_some_and(|object| self.is_followed_through_a_store(object))
+            || !self.is_local_alias_filled_by_a_store(target)
+        {
+            return false;
+        }
+        let whole = self.outermost_assertion_of(assignment);
+        let is_nothing = |other: ExprId| match hir[hir.skip_type_assertions(other)].kind {
+            ExprKind::Null => true,
+            ExprKind::Unary {
+                op: UnOp::Void,
+                operand,
+            } => matches!(hir[operand].kind, ExprKind::Number(_)),
+            _ => false,
+        };
+        match bound.parent_of_expr(whole) {
+            Parent::Stmt(statement) => matches!(hir[statement].kind, StmtKind::Expr(_)),
+            Parent::Expr(user) => match hir[user].kind {
+                ExprKind::Binary {
+                    op: BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq,
+                    left,
+                    right,
+                } => is_nothing(if left == whole { right } else { left }),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    ..
+                } => left == whole,
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     fn is_kept_for_unlisted_members(&self, e: ExprId, target: ExprId) -> bool {

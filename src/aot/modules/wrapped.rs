@@ -252,7 +252,10 @@ impl Finder<'_, '_> {
             && record.this_param.is_none()
             && matches!(record.body, FnBody::Block(_));
         let reads_this = bound.fns[callback.idx()].contains_this || {
-            let positions = self.this_positions.get_or_init(|| ThisPositions::of(hir));
+            let jsx_takes_this = self.files.analysis(self.file).jsx_takes_this();
+            let positions = self
+                .this_positions
+                .get_or_init(|| ThisPositions::of(hir, jsx_takes_this));
             positions.evaluates_own_this(hir, callback)
         };
         if !is_plain || has_own_name || sees_its_call || reads_this {

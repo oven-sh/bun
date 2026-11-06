@@ -225,8 +225,9 @@ Object.defineProperty(WriteStream, "prototype", {
     // The `getColorDepth` API got inspired by multiple sources such as
     // https://github.com/chalk/supports-color,
     // https://github.com/isaacs/color-support.
-    WriteStream.prototype.getColorDepth = require("internal/tty").getColorDepthOfStream;
-    require("internal/tty").prototypeOfWriteStream = Prototype;
+    WriteStream.prototype.getColorDepth = function (env: Environment = process.env) {
+      return require("internal/tty").getColorDepth(env);
+    };
 
     WriteStream.prototype.getWindowSize = function (this: $Node.TTYWriteStream) {
       return [this.columns, this.rows];

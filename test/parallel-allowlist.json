@@ -1510,6 +1510,11 @@
     "aot/a-store-between-two-reads-of-one-list-is-seen-by-the-second-read.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
     "aot/files-above-the-entry-point-start-workers-from-code.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts",
+    "aot/a-test-run-is-not-warned-of-workers-that-only-an-executable-could-not-load.test.ts",
+    "aot/an-accessor-under-get-color-depth-hears-one-store.test.ts",
+    "aot/duplex-reads-define-properties-once-while-it-loads.test.ts",
+    "aot/isip-tests-with-one-object-for-each-pattern.test.ts",
+    "aot/plain-bun-lets-go-of-the-remove-listener-of-streams.test.ts"
   ]
 }

@@ -341,6 +341,7 @@ const aotTestsThatAskTheSystem = [
   "aot/exit-hooks-of-an-executable",
   "aot/time-zone-at-start",
   "aot/raw-mode-of-a-terminal",
+  "aot/the-listener-for-the-size-of-a-terminal",
   "aot/a-busy-caller-unbinds-no-child",
   "aot/programs-that-died-in-the-shell-on-one-platform",
   "aot/back-end-options-from-environment",

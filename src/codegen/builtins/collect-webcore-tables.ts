@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { Declaration, MemberDeclaration, Problems, Source, SourcedDeclaration } from "./declarations.ts";
 import * as b from "./lib.ts";
+import { compareBytes } from "./paths.ts";
 import type { BuiltinPath, CppClassRef } from "./vocabulary.ts";
 
 const bindingsDirectory = join("src", "jsc", "bindings");
@@ -39,7 +40,8 @@ export function findWebCoreClasses(bunRoot: string): WebCoreClass[] {
   const withGetter = new Set(
     Array.from(globalObject.matchAll(/^WEBCORE_GENERATED_CONSTRUCTOR_GETTER\((\w+)\)/gm), match => match[1]),
   );
-  const files = new Map(listSourceFiles(join(bunRoot, bindingsDirectory)).map(path => [path.split(sep).at(-1), path]));
+  const paths = listSourceFiles(join(bunRoot, bindingsDirectory)).sort(compareBytes);
+  const files = new Map(paths.map(path => [path.split(sep).at(-1), path]));
   const classes: WebCoreClass[] = [];
   for (const [, global, name] of readFileSync(join(bunRoot, globalTableFile), "utf8").matchAll(
     /^\s+(\w+)\s+(\w+)ConstructorCallback\s+\S*PropertyCallback\S*\s*$/gm,

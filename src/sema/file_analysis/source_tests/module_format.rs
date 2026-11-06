@@ -1240,7 +1240,7 @@ fn positions_of_this_answer_as_the_walk_does() {
         this;
     "#;
     analyzed("a.js", text, |s| {
-        let positions = ThisPositions::of(&s.hir);
+        let positions = ThisPositions::of(&s.hir, false);
         let names_of = |test: &dyn Fn(FnId) -> bool| -> Vec<String> {
             let functions = (0..s.hir.fns.len() as u32).map(FnId).filter(|&it| test(it));
             let declared = functions.filter(|&it| s.hir[it].kind == FnKind::Decl);
@@ -1249,7 +1249,7 @@ fn positions_of_this_answer_as_the_walk_does() {
                 .collect()
         };
         for function in (0..s.hir.fns.len() as u32).map(FnId) {
-            let by_walk = evaluates_own_this(&s.hir, function);
+            let by_walk = evaluates_own_this(&s.hir, function, false);
             assert_eq!(
                 positions.evaluates_own_this(&s.hir, function),
                 by_walk,
@@ -1270,6 +1270,42 @@ fn positions_of_this_answer_as_the_walk_does() {
             "in_constructor_parameter_decorator",
         ];
         assert_eq!(by_positions, expected);
+    });
+}
+
+#[test]
+fn an_element_is_a_place_of_this_where_jsx_takes_this() {
+    use bun_sema::module_format::{ThisPositions, evaluates_own_this};
+    let text = r#"
+        function plain() { return 1; }
+        function own() { return <a />; }
+        function in_arrow() { return () => <a />; }
+        function in_attribute() { return [<a b={<c />} />]; }
+        function of_inner_function() { return function () { return <a />; }; }
+        function of_method() { return { a() { return <a />; } }; }
+        function of_field() { return class { a = <a />; }; }
+    "#;
+    analyzed("a.jsx", text, |s| {
+        let declared = |test: &dyn Fn(FnId) -> bool| -> Vec<String> {
+            let functions = (0..s.hir.fns.len() as u32).map(FnId).filter(|&it| test(it));
+            let declared = functions.filter(|&it| s.hir[it].kind == FnKind::Decl);
+            declared
+                .map(|it| s.workspace.text(s.hir[it].name).to_owned())
+                .collect()
+        };
+        let taking = ThisPositions::of(&s.hir, true);
+        let expected = ["own", "in_arrow", "in_attribute"];
+        assert_eq!(
+            declared(&|it| taking.evaluates_own_this(&s.hir, it)),
+            expected
+        );
+        assert_eq!(
+            declared(&|it| evaluates_own_this(&s.hir, it, true)),
+            expected
+        );
+        let leaving = ThisPositions::of(&s.hir, false);
+        assert!(declared(&|it| leaving.evaluates_own_this(&s.hir, it)).is_empty());
+        assert!(declared(&|it| evaluates_own_this(&s.hir, it, false)).is_empty());
     });
 }
 

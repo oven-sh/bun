@@ -1149,8 +1149,7 @@ pub(super) fn lower_object_property_key(
 ) -> Result<Option<ObjectPropertyKey>, CompilerError> {
     match &key.data {
         // A rope, as in `{ ["a" + "b"]: x }`, is lowered like any other computed key.
-        // So is `{ ["__proto__"]: x }`: without the brackets it would set the prototype.
-        Data::EString(s) if s.next.is_none() && !(computed && s.eql_comptime(b"__proto__")) => {
+        Data::EString(s) if s.next.is_none() => {
             let name = if s.is_utf16 {
                 arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
             } else {

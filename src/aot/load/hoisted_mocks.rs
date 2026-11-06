@@ -220,8 +220,8 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
     fn runs_imports_in_turn(&self, body: &[StmtId]) -> bool {
         let imports = body.iter().filter(|&&it| match self.hir[it].kind {
             StmtKind::Import(import) => {
-                let import = self.hir[import];
-                !import.type_only && !is_test_module(text_of(self.atoms, import.spec))
+                !self.hir.is_type_only_import(import)
+                    && !is_test_module(text_of(self.atoms, self.hir[import].spec))
             }
             _ => false,
         });
@@ -819,6 +819,31 @@ mod tests {
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe(name, text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn imports_run_in_turn_where_two_are_left_beside_those_of_types_alone() {
+        let rows = [
+            (
+                r#"import { test } from "vitest"; import { value } from "./mod"; import { captured } from "./side"; test("a", () => console.log(value, captured));"#,
+                "import 1 | const = await import ./mod | import type 1 | const = await import ./side | import type 1 | test()",
+            ),
+            (
+                r#"import { test } from "vitest"; import { value } from "./mod"; import { Unused } from "./side"; let a: Unused; test("a", () => console.log(value, a));"#,
+                "import 1 | const = await import ./mod | import type 1 | import 1 | declaration | test()",
+            ),
+            (
+                r#"import { test } from "vitest"; import { value } from "./mod"; import { type Unused } from "./side"; let a: Unused; test("a", () => console.log(value, a));"#,
+                "import 1 | import 1 | import 1 | declaration | test()",
+            ),
+            (
+                r#"import { test } from "vitest"; import { value } from "./mod"; import type { Unused } from "./side"; let a: Unused; test("a", () => console.log(value, a));"#,
+                "import 1 | import 1 | import type 1 | declaration | test()",
+            ),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(describe("a.test.ts", text), expected, "{text}");
         }
     }
 

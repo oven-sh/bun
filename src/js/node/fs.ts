@@ -476,9 +476,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
-  existsSync = function existsSync(path: string) {
+  existsSync = function existsSync(_path: string) {
     try {
-      return fs.existsSync(path);
+      return IS_COMPILED_AHEAD_OF_TIME ? fs.existsSync(_path) : fs.existsSync.$apply(fs, arguments);
     } catch {
       return false;
     }
@@ -1446,7 +1446,7 @@ var exports = {
 };
 export default exports;
 
-// Preserve the names. Dirent and Stats have theirs from native code.
+// Preserve the names
 function setName(fn, value) {
   Object.$defineProperty(fn, "name", {
     value,
@@ -1454,6 +1454,8 @@ function setName(fn, value) {
     configurable: true,
   });
 }
+if (!IS_COMPILED_AHEAD_OF_TIME) setName(Dirent, "Dirent");
+if (!IS_COMPILED_AHEAD_OF_TIME) setName(Stats, "Stats");
 setName(_toUnixTimestamp, "_toUnixTimestamp");
 setName(access, "access");
 setName(accessSync, "accessSync");

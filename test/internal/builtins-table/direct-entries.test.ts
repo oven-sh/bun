@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { checkDirectEntries } from "../../../src/codegen/builtins/check-direct-entries.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
+import { hashOfHostBindings } from "../../../src/codegen/builtins/emit-cpp-bindings.ts";
 import type {
   ModelBuiltin,
   ModelCode,
@@ -8,6 +9,7 @@ import type {
   ModelOverload,
   ModelParameter,
   ModelType,
+  TableModel,
 } from "../../../src/codegen/builtins/model.ts";
 import {
   realmParameter,
@@ -106,6 +108,21 @@ function problemsOf({ builtin, code, ...columns }: Columns): readonly string[] {
 const problem = (text: string) => `x.bind.ts: overload 0 of f: ${text}`;
 const problemsOfOperands = (direct: readonly DirectParameterSpec[], parameters: readonly ModelParameter[]) =>
   problemsOf({ parameters, code: { directEntry: entryTaking(...direct) } });
+
+test("the description of the table tells apart two tables whose direct functions have other numbers or other parameters", () => {
+  const rows = ["Bun__first", "Bun__second", "Bun__third"].map((symbol, id) => ({
+    id,
+    builtin: { kind: "Function" },
+    code: { implementation: hostCall, directEntry: { ...entryTaking(value), symbol } as DirectEntrySpec | null },
+  }));
+  const hashOf = (overloads: typeof rows) =>
+    hashOfHostBindings({ overloads, builtins: [], classes: [] } as unknown as TableModel);
+  const withFirstEntry = (directEntry: DirectEntrySpec | null) =>
+    rows.map(row => (row.id === 0 ? { ...row, code: { ...row.code, directEntry } } : row));
+  expect(hashOf(withFirstEntry(rows[0].code.directEntry))).toBe(hashOf(rows));
+  expect(hashOf(withFirstEntry(null))).not.toBe(hashOf(rows));
+  expect(hashOf(withFirstEntry({ ...entryTaking(asDouble), symbol: "Bun__first" }))).not.toBe(hashOf(rows));
+});
 
 test("a call of native code of the host may have a direct entry", () => {
   expect(problemsOf({})).toEqual([]);

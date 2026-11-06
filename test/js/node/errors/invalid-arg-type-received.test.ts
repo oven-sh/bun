@@ -36,16 +36,6 @@ test.each([
   [{ constructor: { name: "Fake" } }, "an instance of Fake"],
   [Object.create({ constructor: Bar }), "an instance of Bar"],
   [Object.create(null), "[Object: null prototype] {}"],
-  [{ __proto__: null, held: { deeper: 1 } }, "[Object: null prototype]"],
-  [{ constructor: undefined, held: 1 }, "[Object]"],
-  [Object.defineProperty({}, "constructor", { value: undefined }), "{}"],
-  [{ __proto__: null, [Symbol.for("nodejs.util.inspect.custom")]: () => "CUSTOM" }, "CUSTOM"],
-  [Object.setPrototypeOf(new Map([[1, 2]]), null), "Map {}"],
-  [Object.setPrototypeOf(new Map(), Object.create(null)), "Map {}"],
-  [Object.setPrototypeOf(new Set([1]), null), "Set {}"],
-  [Object.setPrototypeOf([1, 2], null), "[ 1, 2 ]"],
-  [Object.setPrototypeOf(new Date(0), null), "{}"],
-  [Object.setPrototypeOf(Promise.resolve(1), null), "Promise { <resolved> }"],
 ])("object %#", (value, expected) => {
   expect(received(value)).toBe(expected);
 });

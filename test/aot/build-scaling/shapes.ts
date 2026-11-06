@@ -3821,46 +3821,6 @@ console.log(typeof outmost.inner);
       ...Object.fromEntries(upTo(size, index => [`m${index}.ts`, `export const x = ${index};\n`])),
     }),
   },
-  // What the React compiler moves out of a component is declared in the innermost scope around the component. That place was looked for anew for each such function, in passes
-  // over all the statements and functions of the file, which grows with each component that is written back: functions x statements.
-  {
-    name: "components at the top of one module, out of each of which the React compiler moves a function",
-    counted: "components",
-    size: 2000,
-    entry: "main.js",
-    flags: ["--react-compiler"],
-    write: size => ({
-      "main.js":
-        lines(size, index => `export function Part${index}(given) { "use memo"; return given.items.map(n => n * 2).join("+"); }`) + `console.log(${size});\n`,
-    }),
-  },
-  // There the declaration goes into the list of the function around, and the whole list was written anew for each: in memory too.
-  {
-    name: "components in one function, out of each of which the React compiler moves a function",
-    counted: "components",
-    size: 2000,
-    entry: "main.js",
-    flags: ["--react-compiler"],
-    write: size => ({
-      "main.js":
-        `function parts(rate) {\n` +
-        lines(size, index => `  function Part${index}(given) { "use memo"; return given.items.map(n => n * rate).join("+"); }`) +
-        `  return [${upTo(size, index => `Part${index}`).join(", ")}];\n}\nconsole.log(parts(3).length);\n`,
-    }),
-  },
-  // Such an arrow is given a list of statements first, and the place where its body begins was laid into a sorted list by moving all that stand behind it.
-  {
-    name: "arrows with an expression body that each hold a component, out of which the React compiler moves a function",
-    counted: "arrows",
-    size: 2000,
-    entry: "main.js",
-    flags: ["--react-compiler"],
-    write: size => ({
-      "main.js":
-        lines(size, index => `export const make${index} = rate => function (given) { "use memo"; return given.items.map(n => n * rate).join("+"); };`) +
-        `console.log(${size});\n`,
-    }),
-  },
   {
     name: "stores to a variable that is declared int32, each of the value in front and one more",
     counted: "stores",
@@ -3877,6 +3837,39 @@ console.log(typeof outmost.inner);
     entry: "main.ts",
     write: size => ({
       "main.ts": `function chain(seed: number, loud: boolean): Bun.int32 {\n  let at: Bun.int32 = seed & 1;\n${lines(size, () => `  if (loud) console.log(at);\n  at = at + 1;`)}  return at;\n}\nconsole.log(chain(1, false));\n`,
+    }),
+  },
+  // A read of a local that is stored in more than eight blocks went up through every join between it and the store, made a parameter at each, took it back and left four entries a join
+  // behind: locals x joins, in time and in memory. 250 | 500 | 1,000 | 2,000 locals took 1,244 | 2,597 | 7,494 | 26,107 M instructions and 112 | 200 | 541 | 1,886 MB.
+  {
+    name: "locals of one function that are each stored on five ways, all read at the end",
+    counted: "locals",
+    size: 250,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function run(n) {\n` +
+        lines(size, index => `  let v${index} = ${index & 7}; ` + upTo(5, way => `if (n & ${1 << way}) v${index} = (v${index} + ${way + 1}) | 0;`).join(" ")) +
+        `  let sum = 0;\n` +
+        lines(size, index => `  sum = (sum + v${index}) | 0;`) +
+        `  return sum;\n}\nconsole.log(run(JSON.parse("21")));\n`,
+    }),
+  },
+  // The same locals, each stored on one way in each of twelve rounds: the arm that does not store looks for the store of the round before, past the joins of all the other locals. One time of
+  // the last store a local would not do: the search goes on from a block that ended in front of that store. 125 | 250 | 500 | 1,000 locals took 1,333 | 2,653 | 7,224 | 23,915 M instructions, and 1,898 MB at the last.
+  {
+    name: "locals of one function that are each stored on one way in each of twelve rounds",
+    counted: "locals",
+    size: 250,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function run(n) {\n` +
+        lines(size, index => `  let v${index} = ${index & 7};`) +
+        upTo(12, round => lines(size, index => `  if (n & ${1 << round % 5}) v${index} = (v${index} + ${round + 1}) | 0;`)).join("") +
+        `  let sum = 0;\n` +
+        lines(size, index => `  sum = (sum + v${index}) | 0;`) +
+        `  return sum;\n}\nconsole.log(run(JSON.parse("21")));\n`,
     }),
   },
 ];

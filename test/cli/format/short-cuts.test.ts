@@ -5204,6 +5204,16 @@ describe("TypeScript that the long way rejects", () => {
     "x = a<b<keyof<d>>>(e);\n",
     "f(a < import(b), 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, c > (d));\n",
     "x = a?.b<T>`c`;\n",
+    // `await` and a line break in the value of a field, in an object on several lines
+    "class A {\n  a = {\n    e: await\n a,\n  };\n}\n",
+    "class h{e(){}\na={\ne:await \na}}\n",
+    // a modifier and a name: a parameter, an index signature
+    "(out satisfies T)\n",
+    "(static satisfies T)\n",
+    "x = (declare satisfies T);\n",
+    "type A = { [declare as a]: T }\n",
+    "interface A { [static as a]: T }\n",
+    "class A { [abstract as a]: T }\n",
   ]);
   expectRejected("a.tsx", [
     // a comment directly behind the `<` of type arguments in a tag
@@ -6736,6 +6746,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "a = async ((x) => x: any);\n",
     "x = a as const < b\n",
     "x = a as const\n< b;\n",
+    // a modifier and a name: an index signature
+    "class A {\n  [declare as a]: T;\n}\n",
   ]);
   expectRejected("a.d.ts", "a.d.ts", [
     // ts-shared
@@ -6757,6 +6769,28 @@ describe("programs that are read as written", () => {
         // type arguments that end far away
         "f(a < b!, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, c > (d));\n",
         "f(a < !b, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, c > (d));\n",
+        // `await` and `yield` in a computed key of a type
+        "type A = { [await(x).y]: B }\n",
+        "type A = { [await (x)]: B }\n",
+        // `await of`
+        "await\nof;\n",
+        // an operator with `=` in a pattern
+        "({ a: b += 1 } = c)\n",
+        "({ a: { b: c *= 1 } } = d);\n",
+        // tuples and index signatures that the long way prints as they are written
+        "type A = [(Foo<a,b>?)];\n",
+        "type A = [...(b)?];\n",
+        "type A = [...a?:  typeof string[]];\n",
+        "interface A {\n  [b: {\n    c: d }]: e;\n}\n",
+      ],
+      [[]],
+    ));
+  describe("JavaScript", () =>
+    expectSame(
+      "a.js",
+      [
+        // `await of`
+        "await\nof;\n",
       ],
       [[]],
     ));

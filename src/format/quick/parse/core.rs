@@ -1415,7 +1415,7 @@ impl Quick {
         let head_has_lines = self.fast.ready_last_length != self.fast.ready_length;
         // where the blocks are, as the parser would know if it had read the head
         let asks = self.parse.typed != TYPED_TS;
-        let is_field = asks && is_class_member && kind == k::ClassProperty;
+        let is_field = is_class_member && kind == k::ClassProperty;
         let mut outer_scope = 0;
         let outer_function = (
             self.parse.in_function,
@@ -4435,6 +4435,10 @@ impl Quick {
                 {
                     let saved = self.save();
                     self.next()?;
+                    // `await of`: an operand, or the head of a loop
+                    if self.is_kw(kw::Of) {
+                        return Err(self.text_refuse());
+                    }
                     // `await` alone, or before something that cannot start an operand, is a name
                     let is_operand = self.starts_expression()
                         && self.lexer.tok != tk::Eq
@@ -6281,9 +6285,11 @@ impl Quick {
                 return Ok(());
             }
             k::AssignmentExpression => {
-                if ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Eq {
-                    self.set_kind(n, k::AssignmentPattern);
+                // `[a += 1] = b`, which TypeScript's parser takes
+                if ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 != tk::Eq {
+                    return Err(self.text_refuse());
                 }
+                self.set_kind(n, k::AssignmentPattern);
                 return Ok(());
             }
             k::ParenthesizedExpression

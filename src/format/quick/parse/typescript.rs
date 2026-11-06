@@ -998,6 +998,10 @@ impl Quick {
             } else {
                 0
             };
+            // (`[...a?: A]`: the long way prints it as it is written)
+            if is_rest && flags != 0 {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             self.expect(tk::Colon)?;
             let type_ = self.ts_parse_type()?;
             if (self.n.at(type_) & 0xff) == k::OptionalType {
@@ -1015,6 +1019,10 @@ impl Quick {
             element = self.ts_parse_type()?;
             if (self.n.at(element) & 0xff) == k::OptionalType {
                 self.parse_typescript.stray_optional_types -= 1;
+                // (`[(A?)]`, `[...(A)?]`: the long way prints what is in the brackets as it is written)
+                if is_rest || self.t.at(self.lexer.prev_end - 1) != 63 {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
             }
         }
         if is_rest {
@@ -1267,7 +1275,7 @@ impl Quick {
             result = true;
         } else {
             let mut is_name = self.lexer.tok == tk::Name;
-            if is_name && is_parameter_modifier(self.word()) {
+            if is_name && is_modifier_word(self.word()) {
                 self.next()?;
                 if self.lexer.tok == tk::Name {
                     result = true;
@@ -1297,6 +1305,10 @@ impl Quick {
         let odd = self.parse_typescript.odd_parameters;
         while self.lexer.tok != tk::BracketR {
             let v0 = self.parse_binding_element()?;
+            // (`[a: { b: c }]: d`: the long way does not look at where the first line of the object ends)
+            if self.t.at(self.lexer.prev_end - 1) == 125 {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             self.list_push(v0);
             if self.lexer.tok != tk::BracketR {
                 self.expect(tk::Comma)?;
@@ -1407,10 +1419,15 @@ impl Quick {
         if self.lexer.tok == tk::BracketL && method == M_METHOD && self.is_index_signature()? {
             return self.parse_index_signature(start, head);
         }
+        let suspensions = self.parse.suspensions;
         if self.lexer.tok == tk::BracketL {
             head |= F_COMPUTED;
         }
         let key = self.parse_property_name()?;
+        // `[await (a).b]`: in a type the word is a name
+        if self.parse.suspensions != suspensions {
+            return Err(self.text_refuse());
+        }
         if self.lexer.tok == tk::Question && method == M_METHOD {
             self.next()?;
             head |= F_OPTIONAL;
@@ -1735,11 +1752,11 @@ impl Quick {
         if self.lexer.tok == tk::BracketL
             && method == M_METHOD
             && (head & F_GENERATOR) == 0
-            && is_ts
             && self.is_index_signature()?
         {
-            // `static` and `readonly` are all that can stand before it
-            if (head & !(F_STATIC | (MOD_READONLY << SUB_SHIFT))) != 0 || decorators != 0 {
+            // `static` and `readonly` are all that can stand before it. (In Flow the long way looks for one, and there is none.)
+            if (head & !(F_STATIC | (MOD_READONLY << SUB_SHIFT))) != 0 || decorators != 0 || !is_ts
+            {
                 return Err(self.text_refuse());
             }
             return self.parse_index_signature(start, head);
@@ -2605,6 +2622,12 @@ impl Quick {
         // a name in this place can need parentheses: see needs_parens()
         if (self.n.at(left) & 0xff) == k::Identifier {
             self.n.put(left, self.n.at(left) | F_EXTRA);
+            // `(out satisfies A)`: a modifier and the name of a parameter
+            if kind == k::SatisfiesExpression
+                && is_modifier_word(self.word_at(self.n.at(left + 1), self.n.at(left + 2)))
+            {
+                return Err(self.text_refuse());
+            }
         }
         return Ok(self.node2(kind, start, self.lexer.prev_end, left, type_));
     }

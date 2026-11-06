@@ -1646,6 +1646,46 @@ describe.concurrent("execFile() maxBuffer against a fast writer", () => {
   });
 });
 
+describe("failed spawn cwd in node:child_process", () => {
+  it("spawn reports the executable in the error event", async () => {
+    using dir = tempDir("child-process-missing-cwd", {});
+    const file = bunExe();
+    const cwd = path.join(String(dir), "missing");
+    const child = spawn(file, ["--version"], { cwd });
+    const [error] = await once(child, "error");
+    expect(error).toMatchObject({
+      code: "ENOENT",
+      path: file,
+      message: `spawn ${file} ENOENT`,
+      syscall: `spawn ${file}`,
+      spawnargs: ["--version"],
+    });
+  });
+
+  it("spawnSync reports the executable in its error result", () => {
+    using dir = tempDir("child-process-sync-missing-cwd", {});
+    const file = bunExe();
+    const cwd = path.join(String(dir), "missing");
+    const { error } = spawnSync(file, ["--version"], { cwd });
+    expect(error).toMatchObject({
+      code: "ENOENT",
+      path: file,
+      message: `spawnSync ${file} ENOENT`,
+      syscall: `spawnSync ${file}`,
+      spawnargs: ["--version"],
+    });
+  });
+
+  // Windows may report ENOENT for a non-directory cwd, which is delivered via the error event.
+  it.skipIf(isWindows)("spawn throws ENOTDIR synchronously for a non-directory cwd", () => {
+    using dir = tempDir("child-process-nondirectory-cwd", { "file.txt": "" });
+    const cwd = path.join(String(dir), "file.txt");
+    expect(() => spawn(bunExe(), ["--version"], { cwd })).toThrow(
+      expect.objectContaining({ code: "ENOTDIR", syscall: "spawn", message: "spawn ENOTDIR" }),
+    );
+  });
+});
+
 // When spawn fails (ENOENT, bad cwd, etc.) the ChildProcess emits 'error' and
 // 'close' but never 'exit'. The abort listener on options.signal was only
 // removed on 'exit', so every failed spawn against a shared AbortSignal leaked

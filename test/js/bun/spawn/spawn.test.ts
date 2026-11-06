@@ -610,6 +610,37 @@ for (let [gcTick, label] of [
   });
 }
 
+describe.each([
+  ["Bun.spawn", spawn],
+  ["Bun.spawnSync", spawnSync],
+] as const)("%s", (_, run) => {
+  it.each(["absolute", "relative"])("failed spawn cwd names the missing %s directory", form => {
+    using dir = tempDir("spawn-missing-cwd", {});
+    const missing = join(String(dir), "missing");
+    const cwd = form === "relative" ? path.relative(process.cwd(), missing) : missing;
+    expect(() => run({ cmd: [bunExe(), "--version"], cwd })).toThrow(
+      expect.objectContaining({ code: "ENOENT", path: cwd, message: expect.stringContaining(cwd) }),
+    );
+  });
+
+  it("failed spawn cwd names the file supplied as cwd", () => {
+    using dir = tempDir("spawn-nondirectory-cwd", { "file.txt": "" });
+    const cwd = join(String(dir), "file.txt");
+    expect(() => run({ cmd: [bunExe(), "--version"], cwd })).toThrow(
+      expect.objectContaining({ path: cwd, message: expect.stringContaining(cwd) }),
+    );
+  });
+
+  it("failed spawn cwd keeps the executable path when cwd exists", () => {
+    using dir = tempDir("spawn-missing-executable", {});
+    // Use an explicit executable path so the failure comes from the spawn call.
+    const executable = join(String(dir), "missing.exe");
+    expect(() => run({ cmd: [executable], cwd: String(dir) })).toThrow(
+      expect.objectContaining({ code: "ENOENT", path: executable }),
+    );
+  });
+});
+
 // The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
 // kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
 // loop has no wakeup for processes appended after it starts.

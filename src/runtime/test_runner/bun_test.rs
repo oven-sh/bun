@@ -1,5 +1,6 @@
 use core::fmt;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
@@ -1963,7 +1964,16 @@ pub(crate) enum Flavor {
     Vitest,
 }
 
+/// Only a filter for `Flavor::any_entry_is_vitest`: a stale `true` costs a lookup and changes no answer.
+static ANY_VITEST_ENTRY: AtomicBool = AtomicBool::new(false);
+
 impl Flavor {
+    /// False until this process makes an entry whose flavor is Vitest. Until then `Flavor::of` is `Jest` for every entry.
+    #[inline]
+    pub(crate) fn any_entry_is_vitest() -> bool {
+        ANY_VITEST_ENTRY.load(Ordering::Relaxed)
+    }
+
     /// Whose rules a callback follows: its test's module. A hook that runs for no test, such as `beforeAll`, follows its own.
     pub(crate) fn of(
         test: Option<NonNull<ExecutionEntry>>,
@@ -2412,6 +2422,9 @@ impl ExecutionEntry {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {
+        if cfg.flavor == Flavor::Vitest {
+            ANY_VITEST_ENTRY.store(true, Ordering::Relaxed);
+        }
         let mut entry = Box::new(ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,

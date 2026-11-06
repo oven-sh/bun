@@ -216,6 +216,110 @@ describe("expect()", () => {
       kept.not.toRecordIsNot();
       expect(seen).toEqual([true, true]);
     });
+
+    test(".not read twice before a matcher negates both times", () => {
+      const kept = expect(1);
+      const first = kept.not;
+      const second = kept.not;
+      first.toBe(2);
+      second.toBe(2);
+      expect(() => first.toBe(1)).toThrow();
+      expect(() => second.toBe(1)).toThrow();
+    });
+
+    // The tests below: Vitest keeps a modifier on the expect() it was read on. Jest gives each chain its own object.
+    test_skipIf(isVitest)("a matcher without .not is not negated after .not was read", () => {
+      const kept = expect(1);
+      kept.not.toBe(2);
+      kept.toBe(1);
+      expect(() => kept.toBe(2)).toThrow();
+
+      const onlyRead = expect(1);
+      void onlyRead.not;
+      onlyRead.toBe(1);
+      expect(() => onlyRead.toBe(2)).toThrow();
+
+      const base = expect({ a: 1 });
+      const negated = base.not;
+      negated.toEqual({ a: 2 });
+      base.toEqual({ a: 1 });
+      expect(() => base.toEqual({ a: 2 })).toThrow();
+      negated.toEqual({ a: 2 });
+
+      // Two helpers that are given one expect().
+      const isNot = (/** @type {any} */ expectation, /** @type {unknown} */ value) => expectation.not.toBe(value);
+      const is = (/** @type {any} */ expectation, /** @type {unknown} */ value) => expectation.toBe(value);
+      const shared = expect(1);
+      isNot(shared, 2);
+      is(shared, 1);
+      expect(() => is(shared, 2)).toThrow();
+    });
+
+    test_skipIf(isVitest)("a custom matcher without .not sees isNot false after .not was read", () => {
+      /** @type {boolean[]} */
+      const seen = [];
+      expect.extend({
+        toRecordIsNot() {
+          seen.push(this.isNot);
+          return { pass: !this.isNot, message: () => "" };
+        },
+      });
+      const kept = ANY(expect(1));
+      kept.not.toRecordIsNot();
+      kept.toRecordIsNot();
+      kept.not.toRecordIsNot();
+      expect(seen).toEqual([true, false, true]);
+    });
+
+    test_skipIf(isVitest)("a matcher without .resolves or .rejects gets the promise after they were read", async () => {
+      const resolved = Promise.resolve(1);
+      const fulfilled = expect(resolved);
+      await fulfilled.resolves.toBe(1);
+      fulfilled.toBe(resolved);
+      fulfilled.toBeInstanceOf(Promise);
+      expect(() => fulfilled.toBe(1)).toThrow();
+
+      const failed = Promise.reject(1);
+      const rejected = expect(failed);
+      await rejected.rejects.toBe(1);
+      rejected.toBe(failed);
+      rejected.toBeInstanceOf(Promise);
+      expect(() => rejected.toBe(1)).toThrow();
+    });
+
+    test_skipIf(isVitest)(".resolves and .rejects are not negated after .resolves.not and .rejects.not", async () => {
+      const fulfilled = expect(Promise.resolve(1));
+      await fulfilled.resolves.not.toBe(2);
+      await fulfilled.resolves.toBe(1);
+      await expect((async () => fulfilled.resolves.toBe(2))()).rejects.toThrow();
+
+      const resolves = expect(Promise.resolve(1)).resolves;
+      await resolves.not.toBe(2);
+      await resolves.toBe(1);
+      await expect((async () => resolves.toBe(2))()).rejects.toThrow();
+
+      const rejected = expect(Promise.reject(1));
+      await rejected.rejects.not.toBe(2);
+      await rejected.rejects.toBe(1);
+      await expect((async () => rejected.rejects.toBe(2))()).rejects.toThrow();
+
+      const rejects = expect(Promise.reject(1)).rejects;
+      await rejects.not.toBe(2);
+      await rejects.toBe(1);
+      await expect((async () => rejects.toBe(2))()).rejects.toThrow();
+    });
+
+    test_skipIf(isVitest)(".rejects can be read after .resolves, and .resolves after .rejects", async () => {
+      const fulfilled = expect(Promise.resolve(1));
+      await fulfilled.resolves.toBe(1);
+      await expect((async () => fulfilled.rejects.toBe(1))()).rejects.toThrow("resolved");
+      await fulfilled.resolves.toBe(1);
+
+      const rejected = expect(Promise.reject(1));
+      await rejected.rejects.toBe(1);
+      await expect((async () => rejected.resolves.toBe(1))()).rejects.toThrow("rejected");
+      await rejected.rejects.toBe(1);
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/18857

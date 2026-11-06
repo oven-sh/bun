@@ -2831,6 +2831,46 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  // Jest's `.not`, `.resolves` and `.rejects` are objects of their own. chai's modifiers change the object they are read on.
+  test("a modifier that was read on an expect() kept in a variable", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = async fn => { try { await fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, async () => {
+            const kept = expect(1);
+            kept.not.toBe(2);
+            console.log(name, "after .not:", await outcome(() => kept.toBe(1)), await outcome(() => kept.toBe(2)));
+            const onlyRead = expect(1);
+            void onlyRead.not;
+            console.log(name, "after .not was only read:", await outcome(() => onlyRead.toBe(1)), await outcome(() => onlyRead.toBe(2)));
+            const fulfilled = expect(Promise.resolve(1));
+            await fulfilled.resolves.toBe(1);
+            console.log(name, "after .resolves:", await outcome(() => fulfilled.toBe(1)), await outcome(() => fulfilled.toBeInstanceOf(Promise)));
+            const rejected = expect(Promise.reject(1));
+            await rejected.rejects.toBe(1);
+            console.log(name, "after .rejects:", await outcome(() => rejected.toBe(1)), await outcome(() => rejected.toBeInstanceOf(Promise)));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "bun after .not: passes fails",
+        "bun after .not was only read: passes fails",
+        "bun after .resolves: fails passes",
+        "bun after .rejects: fails passes",
+        "vitest after .not: fails passes",
+        "vitest after .not was only read: fails passes",
+        "vitest after .resolves: passes fails",
+        "vitest after .rejects: passes fails",
+      ],
+      exitCode: 0,
+    });
+  });
+
   // An around hook's callback gets Vitest's parameters in both modules. Whose matchers it gets is a different question.
   test("a hook follows the module of the test it runs for, and its own module if it runs for none", async () => {
     const { log, exitCode } = await runTests({

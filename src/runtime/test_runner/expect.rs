@@ -45,15 +45,16 @@ pub(crate) mod expect_deferred;
 // To support async tests, we need to track the test ID
 // Every JS-exposed method takes `&self`; the only
 // fields mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
-// chaining getters, and `matcher_ran`) are `Cell`-wrapped. `parent` and `custom_label` are
+// chaining getters of a Vitest test) are `Cell`-wrapped. `parent` and `custom_label` are
 // read-only after `call()` constructs the wrapper.
 pub(crate) struct Expect {
     pub(crate) flags: Cell<Flags>,
-    /// A matcher has run since `.not` was last read, so the next `.not` is a new chain on a kept `expect()`, not `.not.not`.
-    pub(crate) matcher_ran: Cell<bool>,
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
 }
+
+// Every `expect()` and, in `bun:test`, every modifier read allocates one cell of this payload.
+const _: () = assert!(core::mem::size_of::<Expect>() == 40);
 
 
 // Stored packed inside `Flags(u8)` bits 0..2, so `repr(u8)` here only
@@ -203,14 +204,6 @@ impl Flags {
 }
 
 impl Expect {
-    /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
-    #[inline]
-    pub(crate) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
-        let mut v = self.flags.get();
-        f(&mut v);
-        self.flags.set(v);
-    }
-
     pub(crate) fn increment_expect_call_counter(&self) {
         self.add_to_expect_call_counter(1);
     }
@@ -398,46 +391,72 @@ impl Expect {
         }
     }
 
-    pub(crate) fn get_not<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        let is_new_chain = self.matcher_ran.replace(false);
+    /// `copy_result` is for `expect.poll()`, which keeps its times in `resultValue`, and for a matcher call in progress.
+    fn copy_with_flags(&self, global: &JSGlobalObject, this_value: JSValue, flags: Flags, copy_result: bool) -> JSValue {
+        let copy = Expect {
+            flags: Cell::new(flags),
+            parent: self.parent.clone(),
+            custom_label: self.custom_label.clone(),
+        }
+        .to_js(global);
+        if let Some(received) = super::expect::js::captured_value_get_cached(this_value) {
+            super::expect::js::captured_value_set_cached(copy, global, received);
+        }
+        if copy_result && let Some(result) = super::expect::js::result_value_get_cached(this_value) {
+            super::expect::js::result_value_set_cached(copy, global, result);
+        }
+        copy
+    }
+
+    /// In `bun:test` a modifier gives the chain an `Expect` of its own, as in Jest. Vitest's stays on the object it is read on.
+    fn modified(&self, this_value: JSValue, heap: &JsHeap<'_>, flags: Flags, is_vitest: bool) -> JSValue {
+        if is_vitest {
+            self.flags.set(flags);
+            return this_value;
+        }
+        // SAFETY: allocates a cell and stores to its internal fields.
+        self.copy_with_flags(unsafe { heap.global() }, this_value, flags, flags.poll())
+    }
+
+    pub(crate) fn get_not<'a>(&self, this_value: JsWrapper<'a, Self>, heap: &JsHeap<'a>) -> JSValue {
+        let is_vitest = self.is_vitest();
+        let mut flags = self.flags.get();
         // Vitest's `.not` only turns negation on, so its `.not.not` is still negated.
-        let not = !self.flags.get().not() || is_new_chain || self.is_vitest();
-        self.update_flags(|f| f.set_not(not));
-        this_value
+        flags.set_not(is_vitest || !flags.not());
+        self.modified(this_value.to_js(), heap, flags, is_vitest)
     }
 
     pub(crate) fn get_resolves<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        if self.flags.get().poll() {
-            return Err(heap.error(format_args!("expect.poll() does not support .resolves")));
-        }
-        match self.flags.get().promise() {
-            Promise::Resolves | Promise::None => self.update_flags(|f| f.set_promise(Promise::Resolves)),
-            Promise::Rejects => {
-                return Err(heap.error(format_args!("Cannot chain .resolves() after .rejects()")));
-            }
-        }
-        Ok(this_value)
+    ) -> bindgen::Result<'a, JSValue> {
+        self.awaiting(this_value.to_js(), heap, Promise::Resolves)
     }
 
     pub(crate) fn get_rejects<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        if self.flags.get().poll() {
-            return Err(heap.error(format_args!("expect.poll() does not support .rejects")));
+    ) -> bindgen::Result<'a, JSValue> {
+        self.awaiting(this_value.to_js(), heap, Promise::Rejects)
+    }
+
+    fn awaiting<'a>(&self, this_value: JSValue, heap: &JsHeap<'a>, promise: Promise) -> bindgen::Result<'a, JSValue> {
+        let name = |promise| if promise == Promise::Rejects { "rejects" } else { "resolves" };
+        let mut flags = self.flags.get();
+        if flags.poll() {
+            return Err(heap.error(format_args!("expect.poll() does not support .{}", name(promise))));
         }
-        match self.flags.get().promise() {
-            Promise::None | Promise::Rejects => self.update_flags(|f| f.set_promise(Promise::Rejects)),
-            Promise::Resolves => {
-                return Err(heap.error(format_args!("Cannot chain .rejects() after .resolves()")));
+        match flags.promise() {
+            Promise::None => {}
+            same if same == promise => return Ok(this_value),
+            other => {
+                return Err(heap.error(format_args!("Cannot chain .{}() after .{}()", name(promise), name(other))));
             }
         }
-        Ok(this_value)
+        flags.set_promise(promise);
+        Ok(self.modified(this_value, heap, flags, self.is_vitest()))
     }
 
     pub(crate) fn get_value(
@@ -681,7 +700,8 @@ impl Expect {
 
     /// Whether to side with Vitest where it and Jest disagree: the running test was registered through `"vitest"`.
     pub(crate) fn is_vitest(&self) -> bool {
-        self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()))
+        bun_test::Flavor::any_entry_is_vitest()
+            && self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()))
     }
 
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
@@ -714,7 +734,6 @@ impl Expect {
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
-            matcher_ran: Cell::new(false),
             custom_label,
             parent: active_execution_entry_ref,
         };
@@ -734,7 +753,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let expect_js_value = Self::call_in(global_this, value, message, state)?;
         if let Some(expect) = expect_js_value.as_class_ref::<Expect>() {
-            expect.update_flags(|f| f.0 |= flags);
+            expect.flags.set(Flags(flags));
         }
         Ok(expect_js_value)
     }

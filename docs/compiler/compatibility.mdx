@@ -57,6 +57,8 @@ bun compile ./strings.ts && ./strings
 
 `ShadowRealm` isn't supported. An executable has no such global, so code that uses it throws a `ReferenceError` when it runs, and the build warns. Use a `node:vm` context.
 
+Code from a string answers `#x in obj` with `false` for an `accessor #x` field of an instance until that field has its value. Compiled code and `bun run` answer `true` from the first field initializer of the class.
+
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
 
 - zod 4: call `z.config({ jitless: true })` before you create a schema.
@@ -229,6 +231,8 @@ bun compile  TypeError: null is not an object (evaluating 'null.c')  without the
 `bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, `const r = f(x); return r.y` reads `f(x).y`, and a callback in the arguments of a call is reformatted. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source, without its types and without what `bun build` removes: a branch that never runs, such as `if (false)`, is empty, and a name that `--define` replaces reads as its value. It keeps your line breaks, spaces and parentheses, and isn't laid out as the bundler prints it. The quote is shorter or missing where what's called isn't a name or a path of names, such as `f()()`, `o["a" + "b"]()` or a tagged template. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
+
+One error has another line. A read of an `accessor #x` field before the field has its value throws a `TypeError`, and so does a store to it. `bun run` throws it in the getter or setter that its transpiler writes for the field, so it reports the line of `class` and a frame named `#x`. An executable reports the line of the read or the store.
 
 ## Garbage collection
 

@@ -8,7 +8,7 @@ use bun_sema::program::FileRole;
 use crate::ir::generated::{FunctionFlags, FunctionKind, TypeSiteKind};
 use crate::ir::{DeclaredType, Id, LayoutId, Mapped, PositionFlags, TypeId, TypeTable, ValueId};
 use crate::lower::positions::SiteOrigin;
-use crate::lower::private_names::PrivateHolder;
+use crate::lower::private_names::StoredValue;
 use crate::lower::types::{has_layout_in_every_value, lists_int32, lists_only_integers};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression, function};
 
@@ -217,14 +217,14 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_private_slot(&mut self, access: ExprId) -> Option<(LayoutId, u32)> {
         let name = self.bound.private_name_of_reference(access)?;
         let binding = self.resolve_private_name(name);
-        let is_read_from_slot = match binding.members {
-            PrivateMembers::Field(_) => true,
-            PrivateMembers::AutoAccessor(_) => !binding.is_decorated,
-            PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => false,
-        };
-        match binding.holder {
-            PrivateHolder::Instance { layout, field } if is_read_from_slot => Some((layout, field)),
-            PrivateHolder::Instance { .. } | PrivateHolder::ClassObject => None,
+        match binding.members {
+            PrivateMembers::Field(member) => StoredValue::of_name(binding, member).instance_slot(),
+            PrivateMembers::AutoAccessor(member) if !binding.is_decorated => {
+                self.resolve_accessor_storage(member).instance_slot()
+            }
+            PrivateMembers::AutoAccessor(_)
+            | PrivateMembers::Method(_)
+            | PrivateMembers::Accessor { .. } => None,
         }
     }
 

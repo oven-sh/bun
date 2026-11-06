@@ -1,7 +1,7 @@
 use bun_sema::bind::{PrivateMembers, PrivateNameId};
 use bun_sema::hir::{Flags, MemberId};
 
-use super::{PrivateBinding, PrivateHolder, StoredValue};
+use super::{PrivateBinding, PrivateHolder, StoredValue, Written};
 use crate::lower::{FileLowering, class, layouts};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -9,16 +9,23 @@ impl FileLowering<'_, '_, '_, '_> {
         let declared = *self.bound.private_name(name);
         let transform = self.class_plan(declared.class).transform;
         let is_decorated = class::is_decorated_private_name(self.hir, transform, &declared);
-        let holder = if declared.is_static {
+        let presence = if declared.is_static {
             PrivateHolder::ClassObject
         } else {
             let layout = self.own_class_layout(declared.class);
             let own = layouts::own_fields(self, layout);
             let field = match declared.members {
-                PrivateMembers::Field(_) | PrivateMembers::AutoAccessor(_) => {
+                PrivateMembers::Field(_) => {
                     own.find(layouts::private_key(self, layout, declared.name))
                 }
-                PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => own.brand(),
+                // Its lowering defines the name with the value.
+                PrivateMembers::AutoAccessor(_) if is_decorated => {
+                    own.find(layouts::private_key(self, layout, declared.name))
+                }
+                // A getter and a setter: on the object before its first field.
+                PrivateMembers::AutoAccessor(_)
+                | PrivateMembers::Method(_)
+                | PrivateMembers::Accessor { .. } => own.brand(),
             };
             let field = field.expect("the layout lists the private state of its class");
             PrivateHolder::Instance { layout, field }
@@ -26,7 +33,7 @@ impl FileLowering<'_, '_, '_, '_> {
         PrivateBinding {
             class: declared.class,
             members: declared.members,
-            holder,
+            presence,
             is_decorated,
         }
     }
@@ -46,7 +53,7 @@ impl FileLowering<'_, '_, '_, '_> {
             class,
             member,
             holder,
-            written: None,
+            written: Written::Nowhere,
         }
     }
 }

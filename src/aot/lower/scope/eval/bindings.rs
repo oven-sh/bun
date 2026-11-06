@@ -362,14 +362,24 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
             let text = written_name(file.queries.atom_bytes(name.name));
             let text = file.intern_bytes(text);
             let binding = create_binding(EvalBindingKind::PrivateName, Some(text), depth);
-            let binding = match resolved.holder {
-                PrivateHolder::Instance { layout, field } => EvalBinding {
+            // Evaluated text reads and writes the value of an `accessor` field where it lies.
+            let slot = match resolved.members {
+                PrivateMembers::AutoAccessor(member) if !resolved.is_decorated => {
+                    file.resolve_accessor_storage(member).instance_slot()
+                }
+                _ => match resolved.presence {
+                    PrivateHolder::Instance { layout, field } => Some((layout, field)),
+                    PrivateHolder::ClassObject => None,
+                },
+            };
+            let binding = match slot {
+                Some((layout, field)) => EvalBinding {
                     layout: Some(layout),
                     field: Some(field),
                     operand: token,
                     ..binding
                 },
-                PrivateHolder::ClassObject => EvalBinding {
+                None => EvalBinding {
                     operand: class_object,
                     ..binding
                 },
@@ -386,7 +396,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     ) {
         let (kind, function, setter) = match resolved.members {
             PrivateMembers::AutoAccessor(member) if resolved.is_decorated => {
-                match resolved.holder {
+                match resolved.presence {
                     PrivateHolder::Instance { layout, .. } => {
                         binding.field = layouts::own_fields(self.lowering.file, layout).brand();
                     }
@@ -402,7 +412,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                match resolved.holder {
+                match resolved.presence {
                     PrivateHolder::Instance { .. } => self.bindings.push(binding),
                     PrivateHolder::ClassObject => {
                         self.add_stored(binding, class_slot(scope, ClassSlot::StaticField(member)));

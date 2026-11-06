@@ -13,8 +13,7 @@ use crate::{Index, IndexInt, LinkerContext};
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-/// Fills a CSS file's lazy-export object with its class-name map. A no-op for other lazy exports.
-/// A `composes` that cannot be followed is reported to `log`.
+/// Fills a CSS file's lazy-export object with its class-name map; a bad `composes` goes to `log`.
 pub(crate) fn populate_css_module_lazy_export(
     this: &LinkerContext,
     source_index: IndexInt,

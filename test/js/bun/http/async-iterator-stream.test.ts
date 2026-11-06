@@ -505,7 +505,7 @@ describe.each(asyncIterableBodyShapes)("Bun.serve: %s is closed with return()", 
   });
 });
 
-// setInterval() of node:timers/promises gives an iterator with return() and no throw(). Once
+// setInterval() of node:timers/promises is an async generator. return() clears its interval. Once
 // the server stopped, a leaked interval is the only thing that can keep the child alive. The
 // unref'd timer does not: it only ends a child that a leaked interval keeps alive.
 test.concurrent("Bun.serve: a timers/promises interval as the body is cleared when the client hangs up", async () => {

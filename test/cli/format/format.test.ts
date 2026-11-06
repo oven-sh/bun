@@ -2113,6 +2113,458 @@ describe.concurrent("bun fmt", () => {
       });
     });
 
+    describe("a file whose first block would open front matter", () => {
+      // Prettier 3.9.9 prints a rule as `---` and text as it is written, also at the start of a file. If a later line
+      // of its output starts with `---` or `...`, that output is a file with front matter, and a second run formats the
+      // lines in between as YAML. Bun prints such a rule as `***`, which Prettier's main branch prints for every rule
+      // at the start of a file (prettier/prettier#19839), and such text with a backslash before it, as oxfmt 0.72.0 does.
+      // That is for a fence that printing makes. Fences that the text has behind empty lines are front matter: see below.
+      // Each row has the text, Bun's output, Prettier's output, and Bun's output as MDX where that is another.
+      const rows: [before: string, after: string, byPrettier: string, mdx?: string][] = [
+        [
+          "***\ntitle: x\n***\n\nBody text\n",
+          "***\n\ntitle: x\n\n---\n\nBody text\n",
+          "---\n\ntitle: x\n\n---\n\nBody text\n",
+        ],
+        // The text starts with `---` already, and a rule further down is written in another way.
+        ["---\n\nfoo\n\n***\n", "***\n\nfoo\n\n---\n", "---\n\nfoo\n\n---\n"],
+        // Four dashes are a rule and not a fence, but they are printed as three.
+        ["---\ntitle: x\n\n----\nbody\n", "***\n\ntitle: x\n\n---\n\nbody\n", "---\ntitle: x\n---\n\n-\n\nbody\n"],
+        // The underline of a heading closes it too. MDX prints that heading with `##`.
+        [
+          "***\n\nTitle\n---\n\nbody\n",
+          "***\n\nTitle\n---\n\nbody\n",
+          "---\n\nTitle\n---\n\nbody\n",
+          "---\n\n## Title\n\nbody\n",
+        ],
+        // So does a line that starts with `...`.
+        ["***\n\nSome text\n...and more\n", "***\n\nSome text\n...and more\n", "---\n\nSome text\n...and more\n"],
+        // So does a line of code. Prettier's second run takes this code block apart.
+        [
+          "***\n\n```diff\n--- a/foo\n+++ b/foo\n```\n",
+          "***\n\n```diff\n--- a/foo\n+++ b/foo\n```\n",
+          "---\n\n```diff\n--- a/foo\n+++ b/foo\n```\n",
+        ],
+        // So does a line of a comment or of a formula.
+        ["***\n\n<!--\n---\n-->\n", "***\n\n<!--\n---\n-->\n", "---\n\n<!--\n---\n-->\n"],
+        ["***\n\n$$\n---\n$$\n", "***\n\n$$\n---\n$$\n", "---\n\n$$\n---\n$$\n"],
+        // Examples 43, 47 and 77 of CommonMark, which Prettier's own tests skip as bugs.
+        ["***\n---\n___\n", "***\n\n---\n\n---\n", "---\n\n---\n\n---\n"],
+        [" ***\n  ***\n   ***\n", "***\n\n---\n\n---\n", "---\n\n---\n\n---\n"],
+        ["****\n## foo\n****\n", "***\n\n## foo\n\n---\n", "---\n\n## foo\n\n---\n"],
+        // Text that starts with a fence: a paragraph, and a heading, which MDX prints with `#`.
+        ["---yaml\nfoo: 1\n\n***\n", "\\---yaml\nfoo: 1\n\n---\n", "---yaml\nfoo: 1\n\n---\n"],
+        ["+++\nfoo\n +++\nbar\n", "\\+++\nfoo\n+++\nbar\n", "+++\nfoo\n+++\nbar\n"],
+        [
+          "---a\n===\n\nfoo\n\n***\n",
+          "\\---a\n===\n\nfoo\n\n---\n",
+          "---a\n===\n\nfoo\n\n---\n",
+          "# ---a\n\nfoo\n\n---\n",
+        ],
+      ];
+
+      test.each(rows.map(([before, after, byPrettier, mdx = after]) => [before, after, byPrettier, mdx] as const))(
+        "%j",
+        async (before, after, byPrettier, mdx) => {
+          expect(after).not.toBe(byPrettier);
+          const html = Bun.markdown.html(before);
+          expect([after, mdx].map(text => Bun.markdown.html(text))).toEqual([html, html]);
+          const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": mdx };
+          const written = { "a.md": after, "b.md": after, "a.mdx": mdx, "b.mdx": mdx };
+          const names = Object.keys(files);
+          const [result, asOxfmt] = await Promise.all([
+            format(files, [], { reads: names }),
+            format(files, ["--flavor=oxfmt"], { reads: names }),
+          ]);
+          expect(result.files).toEqual(written);
+          expect(result.exitCode).toBe(0);
+          // In that flavor a Markdown file starts with `***` whatever follows, and MDX is Prettier's in both flavors.
+          expect(asOxfmt.files).toEqual(written);
+          expect(asOxfmt.exitCode).toBe(0);
+        },
+      );
+
+      test("text behind a form feed, which isn't printed", async () => {
+        // Prettier 3.9.9 prints `---yaml\nfoo: 1\n\n---\n`.
+        const files = { "a.md": "\f---yaml\nfoo: 1\n\n***\n", "a.mdx": "\f---yaml\nfoo: 1\n\n***\n" };
+        const after = "\\---yaml\nfoo: 1\n\n---\n";
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "a.mdx": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("a line that starts with a fence only once the text is wrapped", async () => {
+        // Prettier 3.9.9 prints `---a bbbb cccc\n---dddd eeee\n` and `---\n\naaaa bbbb cccc\n...dddd eeee\n`.
+        const args = ["--prose-wrap=always", "--print-width=16"];
+        const files = { "a.md": "---a bbbb cccc ---dddd eeee\n", "b.md": "***\n\naaaa bbbb cccc ...dddd eeee\n" };
+        const written = { "a.md": "\\---a bbbb cccc\n---dddd eeee\n", "b.md": "***\n\naaaa bbbb cccc\n...dddd eeee\n" };
+        const result = await format(files, args, { reads: Object.keys(files) });
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, args)).toEqual([]);
+      });
+
+      test("a line that starts with a fence only once the code of a block is formatted", async () => {
+        // The text has no line of three dashes. Prettier 3.9.9 prints `---\n\n` and the same blocks.
+        const files = { "a.md": "***\n\n```md\nfoo\n\n***\n```\n", "b.md": "***\n\n```css\n  ---x{color:red}\n```\n" };
+        const written = {
+          "a.md": "***\n\n```md\nfoo\n\n---\n```\n",
+          "b.md": "***\n\n```css\n---x {\n  color: red;\n}\n```\n",
+        };
+        const [result, asWritten] = await Promise.all([
+          format(files, [], { reads: Object.keys(files) }),
+          format(files, ["--embedded-language-formatting=off"], { reads: Object.keys(files) }),
+        ]);
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+        // With the code left as it is written, nothing closes the rule.
+        expect(asWritten.files).toEqual({
+          "a.md": "---\n\n```md\nfoo\n\n***\n```\n",
+          "b.md": "---\n\n```css\n  ---x{color:red}\n```\n",
+        });
+      });
+
+      test("a line of HTML", async () => {
+        // Prettier 3.9.9 prints `---\n\n<div>\n---\n</div>\n`. As MDX the element is JSX, which is printed on one line.
+        const written = { "a.md": "***\n\n<div>\n---\n</div>\n" };
+        const result = await format({ "a.md": "___\n\n<div>\n---\n</div>\n" }, [], { reads: ["a.md"] });
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      test("from standard input, with --parser and with every kind of line break", async () => {
+        const [before, after] = rows[0];
+        const lineBreaks = (text: string, lineBreak: string) => text.replaceAll("\n", lineBreak);
+        const files = {
+          "crlf.md": lineBreaks(before, "\r\n"),
+          "cr.md": lineBreaks(before, "\r"),
+          "bom.mdx": "\ufeff" + before,
+        };
+        const [named, asMarkdown, asMdx, written, withCr, withCrlf] = await Promise.all([
+          format({}, ["--stdin-filepath", "a.md"], { stdin: before }),
+          format({}, ["--parser", "markdown"], { stdin: before }),
+          format({}, ["--parser", "mdx"], { stdin: before }),
+          format(files, [], { reads: Object.keys(files) }),
+          format({ "a.md": before }, ["--end-of-line=cr"], { reads: ["a.md"] }),
+          format({ "a.md": before }, ["--end-of-line=crlf"], { reads: ["a.md"] }),
+        ]);
+        expect([named.raw, asMarkdown.raw, asMdx.raw]).toEqual([after, after, after]);
+        expect(written.files).toEqual({ "crlf.md": after, "cr.md": after, "bom.mdx": "\ufeff" + after });
+        expect(withCr.files).toEqual({ "a.md": lineBreaks(after, "\r") });
+        expect(withCrlf.files).toEqual({ "a.md": lineBreaks(after, "\r\n") });
+        expect(await different({ "a.md": lineBreaks(after, "\r") }, ["--end-of-line=cr"])).toEqual([]);
+      });
+
+      test("in Markdown that is a part of another file", async () => {
+        // Each of these starts a text of its own, which is formatted from its first line the next time. Prettier 3.9.9
+        // prints `---\n\ntitle: x\n\n---` in all of them, and `---\ntitle: x\n---` the second time.
+        const files = {
+          "a.md": "# a\n\n```md\n***\ntitle: x\n***\n```\n",
+          "b.mdx": "- a\n\n  ~~~mdx\n  ***\n  title: x\n  ***\n  ~~~\n",
+          "c.html": '<script type="text/markdown">\n***\ntitle: x\n***\n</script>\n',
+          "d.vue": '<docs lang="markdown">\n***\ntitle: x\n***\n</docs>\n',
+          "e.js": "const a = markdown`\n  # a\n\n  ~~~md\n  ***\n  title: x\n  ***\n  ~~~\n`;\n",
+        };
+        const written = {
+          "a.md": "# a\n\n```md\n***\n\ntitle: x\n\n---\n```\n",
+          "b.mdx": "- a\n\n  ```mdx\n  ***\n\n  title: x\n\n  ---\n  ```\n",
+          "c.html": '<script type="text/markdown">\n  ***\n\n  title: x\n\n  ---\n</script>\n',
+          "d.vue": '<docs lang="markdown">\n***\n\ntitle: x\n\n---\n</docs>\n',
+          "e.js": "const a = markdown`\n  # a\n\n  ~~~md\n  ***\n\n  title: x\n\n  ---\n  ~~~\n`;\n",
+        };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      test("in Markdown that is a part of another file, front matter follows an empty line too", async () => {
+        // Prettier 3.9.9 prints `---\n\ntitle: x\n---` in all of them, and `---\ntitle: x\n---` the second time.
+        const files = {
+          "a.md": "# a\n\n```md\n\n---\ntitle:   x\n---\n```\n",
+          "b.html": '<script type="text/markdown">\n\n---\ntitle:   x\n---\n</script>\n',
+          "c.vue": '<docs lang="markdown">\n\n---\ntitle:   x\n---\n</docs>\n',
+          "d.js": "const a = markdown`\n  # a\n\n  ~~~md\n\n  ---\n  title:   x\n  ---\n  ~~~\n`;\n",
+        };
+        const written = {
+          "a.md": "# a\n\n```md\n---\ntitle: x\n---\n```\n",
+          "b.html": '<script type="text/markdown">\n  ---\n  title: x\n  ---\n</script>\n',
+          "c.vue": '<docs lang="markdown">\n---\ntitle: x\n---\n</docs>\n',
+          "d.js": "const a = markdown`\n  # a\n\n  ~~~md\n  ---\n  title: x\n  ---\n  ~~~\n`;\n",
+        };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      test("the text of a template, which is printed after a line break, stays as Prettier prints it", async () => {
+        const files = {
+          "a.js": "const a = markdown`\n  ***\n  title: x\n  ***\n`;\n",
+          "b.js": "const b = md`***\ntitle: x\n***`;\n",
+          // These fences are behind a line break the next time too, so they stay a rule and the underline of a heading.
+          "c.js": "const c = md`\n---\ntitle:   x\n---\n`;\n",
+        };
+        const written = {
+          "a.js": "const a = markdown`\n  ---\n\n  title: x\n\n  ---\n`;\n",
+          "b.js": "const b = md`\n---\n\ntitle: x\n\n---\n`;\n",
+          "c.js": "const c = md`\n---\n\ntitle: x\n---\n`;\n",
+        };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      test("a fence that nothing closes stays as Prettier prints it", async () => {
+        const texts: [before: string, after: string][] = [
+          ["***\n", "---\n"],
+          ["***\n\nfoo\n", "---\n\nfoo\n"],
+          ["+++\n", "+++\n"],
+          ["+++\nfoo\n", "+++\nfoo\n"],
+          ["---foo bar\n", "---foo bar\n"],
+          // The later rule isn't at the start of its line.
+          ["***\n\n- a\n\n  ***\n", "---\n\n- a\n\n  ***\n"],
+          ["***\n\n> ***\n", "---\n\n> ---\n"],
+          // An underline of four dashes isn't a fence.
+          ["***\n\nNotice\n----\n", "---\n\nNotice\n----\n"],
+          // The rules are behind front matter.
+          ["---\na: 1\n---\n\n***\n\nfoo\n\n***\n", "---\na: 1\n---\n\n---\n\nfoo\n\n---\n"],
+          // The front matter ends with its own `...`.
+          ["---\na:   1\n...\n\nfoo\n", "---\na: 1\n...\n\nfoo\n"],
+          // The pragma is the first block.
+          ["<!-- @format -->\n\n***\n\nfoo\n\n***\n", "<!-- @format -->\n\n---\n\nfoo\n\n---\n"],
+        ];
+        const files = Object.fromEntries(texts.map(([before], i) => [`${i}.md`, before]));
+        const written = Object.fromEntries(texts.map(([, after], i) => [`${i}.md`, after]));
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual(written);
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      test("fences that the text has behind empty lines are front matter", async () => {
+        // Prettier 3.9.9 reads a rule or text there, prints it at the start of the file, and reads front matter the next
+        // time. In between it has printed the YAML as a paragraph, without its indentation. Prettier read front matter
+        // there until 3.8, and Hugo and Zola do. Bun prints what Prettier prints for the text without the empty lines.
+        // Each row has the text, Bun's output, what Prettier prints the first time, and the output in the flavor of
+        // oxfmt, which is oxfmt 0.72.0's: there the fences are a rule and text.
+        const texts: [before: string, after: string, byPrettier: string, asOxfmt: string][] = [
+          [
+            "\n---\ntitle:   x\n---\n\n# Hi\n",
+            "---\ntitle: x\n---\n\n# Hi\n",
+            "---\n\ntitle: x\n---\n\n# Hi\n",
+            "***\n\ntitle: x\n---\n\n# Hi\n",
+          ],
+          [
+            "\n---\ntitle: x\nnested:\n  a: 1\n---\n\nBody\n",
+            "---\ntitle: x\nnested:\n  a: 1\n---\n\nBody\n",
+            "---\n\ntitle: x\nnested:\na: 1\n---\n\nBody\n",
+            "***\n\ntitle: x\nnested:\na: 1\n---\n\nBody\n",
+          ],
+          ["  \n\t\n---\n\nfoo\n\n---\n", "---\nfoo\n---\n", "---\n\nfoo\n\n---\n", "***\n\nfoo\n\n---\n"],
+          // Prettier prints the same both times here. It has formatted the TOML as a paragraph.
+          [
+            "\n+++\na   =  1\n+++\n\nBody\n",
+            "+++\na   =  1\n+++\n\nBody\n",
+            "+++\na = 1\n+++\n\nBody\n",
+            "\\+++\na = 1\n+++\n\nBody\n",
+          ],
+          // What follows the fence on its line is read as in a file that starts with the front matter.
+          [
+            "\n---\ntitle: x\n--- foo\n",
+            "---\ntitle: x\n---\n\n```\nfoo\n```\n",
+            "---\n\ntitle: x\n--- foo\n",
+            "***\n\ntitle: x\n--- foo\n",
+          ],
+        ];
+        for (const [, after, byPrettier] of texts) expect(after).not.toBe(byPrettier);
+        const files = (column: number) => Object.fromEntries(texts.map((row, i) => [`${i}.md`, row[column]]));
+        const reads = Object.keys(files(0));
+        const [result, asOxfmt] = await Promise.all([
+          format(files(0), [], { reads }),
+          format(files(0), ["--flavor=oxfmt"], { reads }),
+        ]);
+        expect(result.files).toEqual(files(1));
+        expect(asOxfmt.files).toEqual(files(3));
+        expect([result.exitCode, asOxfmt.exitCode]).toEqual([0, 0]);
+        expect(await different(files(1), [])).toEqual([]);
+        expect(await different(files(3), ["--flavor=oxfmt"])).toEqual([]);
+      });
+
+      test("in the flavor of oxfmt, text behind empty lines that starts with a fence gets a backslash", async () => {
+        // The first line is the text of a heading here. As front matter, Bun prints the same bytes as Prettier 3.9.9.
+        const before = "\n---a\n===\n\nfoo\n\n---\n";
+        const [result, asOxfmt] = await Promise.all([
+          format({ "a.md": before }, [], { reads: ["a.md"] }),
+          format({ "a.md": before }, ["--flavor=oxfmt"], { reads: ["a.md"] }),
+        ]);
+        expect(result.files).toEqual({ "a.md": "---a\n===\n\nfoo\n\n---\n" });
+        expect(asOxfmt.files).toEqual({ "a.md": "\\---a\n===\n\nfoo\n\n---\n" });
+      });
+
+      test("a fence behind up to three spaces opens front matter too", async () => {
+        // Prettier 3.9.9 prints such a fence at the start of the line, and reads front matter the next time, as it does
+        // for fences behind empty lines. Hugo reads front matter in the text as it is written. Each row has the text,
+        // Bun's output and what Prettier prints the first time.
+        const texts: [before: string, after: string, byPrettier: string][] = [
+          [
+            "  ---\ntitle: x\ndraft: true\n---\n\n# Hi\n",
+            "---\ntitle: x\ndraft: true\n---\n\n# Hi\n",
+            "---\n\ntitle: x\ndraft: true\n---\n\n# Hi\n",
+          ],
+          [
+            "\n   ---\ntitle:   x\nnested:\n  a: 1\n---\n\nBody\n",
+            "---\ntitle: x\nnested:\n  a: 1\n---\n\nBody\n",
+            "---\n\ntitle: x\nnested:\na: 1\n---\n\nBody\n",
+          ],
+          // Prettier prints the same bytes for this one, as a paragraph.
+          ['  +++\ntitle = "x"\n+++\n\nBody\n', '+++\ntitle = "x"\n+++\n\nBody\n', '+++\ntitle = "x"\n+++\n\nBody\n'],
+          // Behind four spaces or a tab the fence is code, which stays where it is.
+          ["    ---\ntitle:   x\n---\n", "    ---\n\ntitle: x\n---\n", "    ---\n\ntitle: x\n---\n"],
+          ["\t---\ntitle:   x\n---\n", "    ---\n\ntitle: x\n---\n", "    ---\n\ntitle: x\n---\n"],
+          // The closing fence is indented too, so the text has no front matter, and printing must not make any.
+          ["  ---\n  title: x\n  ---\n", "***\n\ntitle: x\n---\n", "---\n\ntitle: x\n---\n"],
+        ];
+        const files = Object.fromEntries(texts.map(([before], i) => [`${i}.md`, before]));
+        const written = Object.fromEntries(texts.map(([, after], i) => [`${i}.md`, after]));
+        const result = await format({ ...files, "a.mdx": texts[0][0] }, [], {
+          reads: [...Object.keys(files), "a.mdx"],
+        });
+        // As MDX the first text is a rule and a heading: Prettier's MDX parser wants the fence at the start of its line.
+        expect(result.files).toEqual({ ...written, "a.mdx": "***\n\ntitle: x\ndraft: true\n---\n\n# Hi\n" });
+        expect(result.exitCode).toBe(0);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      describe("front matter that `...` closes, and a later line of dashes", () => {
+        // A line that starts with `---` closes front matter before a line of `...` does. Prettier 3.9.9 prints a rule,
+        // the underline of a heading or text at the start of a line as `---`, and the next run reads front matter up to
+        // there: for the first row it prints `---\na: 1\n...\n---\n\nbody\n` then. Bun closes such front matter with
+        // `---`. Each row has the text, Bun's output, Prettier's, and Bun's output in the flavor of oxfmt where that
+        // is another: that flavor writes a rule behind front matter as `***`, which closes nothing.
+        test.each([
+          [
+            "---\na: 1\n...\n\n***\n\nbody\n",
+            "---\na: 1\n---\n\n---\n\nbody\n",
+            "---\na: 1\n...\n\n---\n\nbody\n",
+            "---\na: 1\n...\n\n***\n\nbody\n",
+          ],
+          ["---\na: 1\n...\n\nfoo\n\n ---b\n", "---\na: 1\n---\n\nfoo\n\n---b\n", "---\na: 1\n...\n\nfoo\n\n---b\n"],
+          // YAML that can't be read is printed as it is written, but for the fence.
+          [
+            "---\n{ a\n...\n\n***\n\nbody\n",
+            "---\n{ a\n---\n\n---\n\nbody\n",
+            "---\n{ a\n...\n\n---\n\nbody\n",
+            "---\n{ a\n...\n\n***\n\nbody\n",
+          ],
+          // Four dashes are a rule that is printed as three. Prettier takes them for the fence in the text already.
+          [
+            "---\ntitle: x\n...\n\nbody\n\n----\n",
+            "---\ntitle: x\n---\n\nbody\n\n---\n",
+            "---\ntitle: x\n...\nbody\n---\n\n-\n",
+          ],
+        ])("%j", async (before, after, byPrettier, asOxfmt = after) => {
+          expect(after).not.toBe(byPrettier);
+          const files = { "a.md": before, "a.mdx": before };
+          const [result, inOxfmt] = await Promise.all([
+            format(files, [], { reads: ["a.md", "a.mdx"] }),
+            format(files, ["--flavor=oxfmt"], { reads: ["a.md", "a.mdx"] }),
+          ]);
+          expect(result.files).toEqual({ "a.md": after, "a.mdx": after });
+          expect(inOxfmt.files).toEqual({ "a.md": asOxfmt, "a.mdx": after });
+          expect(await different({ "a.md": after, "a.mdx": after }, [])).toEqual([]);
+          expect(await different({ "a.md": asOxfmt, "a.mdx": after }, ["--flavor=oxfmt"])).toEqual([]);
+        });
+
+        test("in a code block, and with nothing that closes it again", async () => {
+          const files = {
+            "a.md": "# a\n\n```md\n---\na: 1\n...\n\n***\n```\n",
+            // `...` stays where no later line starts with `---`.
+            "b.md": "---\na:   1\n...\n\nbody\n\n- ***\n",
+          };
+          const written = {
+            "a.md": "# a\n\n```md\n---\na: 1\n---\n\n---\n```\n",
+            "b.md": "---\na: 1\n...\n\nbody\n\n- ***\n",
+          };
+          const result = await format(files, [], { reads: Object.keys(files) });
+          expect(result.files).toEqual(written);
+          expect(result.exitCode).toBe(0);
+          expect(await different(written, [])).toEqual([]);
+        });
+      });
+
+      // Known issues: for each of these Bun prints what Prettier 3.9.9 prints, and the second run reads front matter
+      // where the text has none. Each row has the file, the text, the output, and the output of the second run.
+      test.each([
+        // A U+FEFF that is text is a byte order mark once it starts the file.
+        ["a.md", " \ufeff---yaml\nfoo: 1\n\n***\n", "\ufeff---yaml\nfoo: 1\n\n---\n", "\ufeff---yaml\nfoo: 1\n---\n"],
+        // The first block prints nothing, and MDX has front matter behind empty lines.
+        ["a.mdx", "\f\n\n***\n\nfoo\n\n***\n", "\n\n---\n\nfoo\n\n---\n", "---\nfoo\n---\n"],
+        // An address that is a link as it is written. Behind a backslash it would be another link, or none.
+        ["a.md", "+++a@b.co\nfoo\n +++\nbar\n", "+++a@b.co\nfoo\n+++\nbar\n", "+++a@b.co\nfoo\n+++\n\nbar\n"],
+        // The other languages with front matter: style sheets, HTML and Handlebars.
+        [
+          "a.css",
+          " ---a { b: c }\n---d { e: f }\n",
+          "---a {\n  b: c;\n}\n---d {\n  e: f;\n}\n",
+          "---a {\n  b: c;\n}\n---\n\nd {\n  e: f;\n}\n",
+        ],
+        [
+          "a.html",
+          "\n---\n<div>a</div>\n---\n<p>hi</p>\n",
+          "---\n<div>a</div>\n---\n<p>hi</p>\n",
+          "---\n<div>a</div>\n---\n\n<p>hi</p>\n",
+        ],
+        ["a.hbs", "---\n{{foo}}\n ---\n", "---\n{{foo}}\n---", "---\n{ { foo } }\n---"],
+      ])("known issue: %s %j", async (name, before, after, again) => {
+        const first = await format({ [name]: before }, [], { reads: [name] });
+        expect(first.files).toEqual({ [name]: after });
+        const second = await format({ [name]: after }, [], { reads: [name] });
+        expect(second.files).toEqual({ [name]: again });
+      });
+
+      test("known issue: in MDX an indented line of dashes is the underline of a heading the next time", async () => {
+        // The line is text because it's indented by four. As MDX, Prettier 3.9.9 and Bun print it without the
+        // indentation, and for Prettier it then closes front matter. For Bun it is the underline of a heading.
+        const first = await format({ "a.mdx": "***\n\na\n    ---\n" }, [], { reads: ["a.mdx"] });
+        expect(first.files).toEqual({ "a.mdx": "***\n\na\n---\n" });
+        const second = await format({ "a.mdx": "***\n\na\n---\n" }, [], { reads: ["a.mdx"] });
+        expect(second.files).toEqual({ "a.mdx": "---\n\n## a\n" });
+      });
+
+      // In Markdown such a line is printed at the start of its line behind a hard line break, as in Prettier 3.9.9,
+      // and the next run reads something else. Without the rule above, these two texts were front matter after the
+      // first run, which the second run kept. Each row has the text, the output, and the output of the second run.
+      test.each([
+        ["***\n\n- a  \n      ---\n\n---\n", "***\n\n- a  \n  ---\n\n---\n", "***\n\n- a\n  ---\n\n---\n"],
+        ["+++toml\n---\\\n    ---\n +++\n", "\\+++toml\n\\---\\\n---\n+++\n", "\\+++toml\n\\---\\\n---\n\n+++\n"],
+      ])("known issue: a line of dashes behind a hard line break: %j", async (before, after, again) => {
+        const first = await format({ "a.md": before }, [], { reads: ["a.md"] });
+        expect(first.files).toEqual({ "a.md": after });
+        const second = await format({ "a.md": after }, [], { reads: ["a.md"] });
+        expect(second.files).toEqual({ "a.md": again });
+      });
+
+      test("known issue: a rule directly under a line of Liquid is the underline of a heading to other readers", async () => {
+        // Prettier 3.9.9 prints `---\n{{ foo }}\n---\n`, which is front matter the next time.
+        const written = { "a.md": "***\n{{ foo }}\n---\n" };
+        const result = await format({ "a.md": "***\n{{ foo }}\n***\n" }, [], { reads: ["a.md"] });
+        expect(result.files).toEqual(written);
+        expect(await different(written, [])).toEqual([]);
+      });
+
+      test("known issue: front matter at the start of a template is a rule and text the next time", async () => {
+        // As in Prettier 3.9.9: the text is written behind a line break, where nothing looks for front matter.
+        const first = await format({ "a.js": "const b = md`---\na:   1\n---\n\n# Hi`;\n" }, [], { reads: ["a.js"] });
+        expect(first.files).toEqual({ "a.js": "const b = md`\n---\na: 1\n---\n\n# Hi\n`;\n" });
+        const second = await format(first.files as Record<string, string>, [], { reads: ["a.js"] });
+        expect(second.files).toEqual({ "a.js": "const b = md`\n---\n\na: 1\n---\n\n# Hi\n`;\n" });
+      });
+    });
+
     describe("an underlined MDX heading with several lines of text", () => {
       // `## text` ends at the first line break, so the heading keeps its underline as long as its text has one.
       // Prettier 3.9.9 reads all of these as a paragraph. It puts an empty line above `---`, which makes that a rule, and
@@ -4253,7 +4705,7 @@ describe.concurrent("bun fmt", () => {
     expect(forOxfmt.exitCode).toBe(0);
   });
 
-  describe("MDX front matter behind lines of spaces and tabs", () => {
+  describe("front matter behind lines of spaces and tabs", () => {
     // Prettier's MDX parser looks for front matter at the first line that has something on it. Its Markdown parser
     // looks at the start of the file only. Each row has the text and what Prettier 3.9.9 prints for it as MDX.
     const texts: [before: string, after: string][] = [
@@ -4283,33 +4735,82 @@ describe.concurrent("bun fmt", () => {
       expect(await different({ ...config, ...written }, [])).toEqual([]);
     });
 
-    test("is a rule and a heading in Markdown", async () => {
-      // As in Prettier 3.9.9, which reads front matter in what it has printed the next time it runs.
-      const first = "---\n\ntitle: x\n---\n\n# Hi\n";
-      const result = await format({ "a.md": texts[0][0], "b.md": first }, [], { reads: ["a.md", "b.md"] });
-      expect(result.files).toEqual({ "a.md": first, "b.md": "---\ntitle: x\n---\n\n# Hi\n" });
+    test("is front matter in Markdown too", async () => {
+      // Prettier 3.9.9 prints `---\n\ntitle: x\n---\n\n# Hi\n` for the first text, and this output the next time.
+      const names = texts.map((_, i) => `${i}.md`);
+      const markdown = Object.fromEntries(texts.map(([before], i) => [names[i], before]));
+      const result = await format(markdown, [], { reads: names });
+      expect(result.files).toEqual({
+        ...Object.fromEntries(texts.map(([, after], i) => [names[i], after])),
+        // What follows the front matter on its last line is read as Prettier's Markdown parser reads it.
+        "5.md": "---\ntitle: x\n---\n\ntext\n\nBody\n",
+        "6.md": "---\ntitle: x\n---\n\n```\ntext\n```\n\nBody\n",
+        "7.md": "---\na: 1\n---\n\n```\n* b\n```\n\n- c\n",
+      });
       expect(result.exitCode).toBe(0);
+      expect(await different(result.files as Record<string, string>, [])).toEqual([]);
     });
 
-    test("known issue: --insert-pragma writes the pragma before it, which makes it a rule and a heading", async () => {
-      // Prettier 3.9.9 prints the same.
-      const result = await format({ "a.mdx": texts[0][0] }, ["--insert-pragma"], { reads: ["a.mdx"] });
-      expect(result.files).toEqual({ "a.mdx": "<!-- @format -->\n\n---\n\n## title: x\n\n# Hi\n" });
+    test("--insert-pragma writes the pragma behind it", async () => {
+      // Prettier 3.9.9 looks for front matter at the start of the text, both to place the pragma and to see if there
+      // is one. So it writes a pragma before this front matter, which is a rule and a heading from then on, or a
+      // paragraph. Each row has the file, the text, Bun's output and Prettier's.
+      const rows = [
+        [
+          "0.mdx",
+          texts[0][0],
+          "---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+          "<!-- @format -->\n\n---\n\n## title: x\n\n# Hi\n",
+        ],
+        [
+          "1.mdx",
+          "\n---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+          "---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+          "<!-- @format -->\n\n---\n\n## title: x\n\n<!-- @format -->\n\n# Hi\n",
+        ],
+        [
+          "2.mdx",
+          "  \n\t\n+++\na = 1\n+++\n\nBody\n",
+          "+++\na = 1\n+++\n\n<!-- @format -->\n\nBody\n",
+          "<!-- @format -->\n\n+++\na = 1\n+++\n\nBody\n",
+        ],
+        [
+          "3.md",
+          texts[0][0],
+          "---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+          "<!-- @format -->\n\n---\n\ntitle: x\n---\n\n# Hi\n",
+        ],
+        [
+          "4.md",
+          "\n---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+          "---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+          "<!-- @format -->\n\n---\n\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi\n",
+        ],
+      ];
+      for (const [, , printed, byPrettier] of rows) expect(printed).not.toBe(byPrettier);
+      const names = rows.map(([name]) => name);
+      const before = Object.fromEntries(rows.map(([name, text]) => [name, text]));
+      const after = Object.fromEntries(rows.map(([name, , text]) => [name, text]));
+      const result = await format(before, ["--insert-pragma"], { reads: names });
+      expect(result.files).toEqual(after);
       expect(result.exitCode).toBe(0);
+      expect(await different(after, ["--insert-pragma"])).toEqual([]);
     });
 
-    test("--require-pragma and --check-ignore-pragma look for a pragma at the start of the file, as in Prettier", async () => {
-      // Prettier 3.9.9 finds neither pragma behind this front matter, so it leaves the first file as it is and formats
-      // the second.
+    test("--require-pragma and --check-ignore-pragma find the pragma behind it", async () => {
+      // Prettier 3.9.9 looks for the pragma behind front matter at the start of the text only. It leaves the first
+      // text as it is, and formats the second, which says `@noformat`.
       const required = "\n---\ntitle:   x\n---\n\n<!-- @format -->\n\n# Hi   there\n";
       const ignored = "\n---\ntitle:   x\n---\n\n<!-- @noformat -->\n\n# Hi   there\n";
+      const reads = ["a.mdx", "a.md"];
       const [withRequire, withIgnore] = await Promise.all([
-        format({ "a.mdx": required }, ["--require-pragma"], { reads: ["a.mdx"] }),
-        format({ "a.mdx": ignored }, ["--check-ignore-pragma"], { reads: ["a.mdx"] }),
+        format({ "a.mdx": required, "a.md": required }, ["--require-pragma"], { reads }),
+        format({ "a.mdx": ignored, "a.md": ignored }, ["--check-ignore-pragma"], { reads }),
       ]);
-      expect(withRequire.files).toEqual({ "a.mdx": required });
+      const formatted = "---\ntitle: x\n---\n\n<!-- @format -->\n\n# Hi there\n";
+      expect(withRequire.files).toEqual({ "a.mdx": formatted, "a.md": formatted });
       expect(withRequire.exitCode).toBe(0);
-      expect(withIgnore.files).toEqual({ "a.mdx": "---\ntitle: x\n---\n\n<!-- @noformat -->\n\n# Hi there\n" });
+      expect(withIgnore.files).toEqual({ "a.mdx": ignored, "a.md": ignored });
       expect(withIgnore.exitCode).toBe(0);
     });
 

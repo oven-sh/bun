@@ -4,6 +4,7 @@
 //! ends in mdast: micromark and mdast-util-from-markdown have their own rules for line breaks and whitespace at the
 //! ends of containers.
 
+use super::Mode;
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::spans::{self, push_without_nul};
 use super::strings::{normalize_identifier, push_lowercase, unescape};
@@ -45,10 +46,18 @@ pub(crate) enum Syntax {
     },
 }
 
-/// The start and the end of the front matter of `text`. In MDX it can follow lines of spaces and tabs, as in Prettier.
-fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
+/// The start and the end of the front matter of `text`. In MDX and Markdown it can follow lines of spaces and tabs.
+pub(crate) fn front_matter_of(text: &[u8], syntax: Syntax, mode: Mode) -> Option<(usize, usize)> {
     let mut start = 0;
-    if syntax == Syntax::Mdx {
+    if matches!(text.first(), Some(b' ' | b'\t' | b'\n')) {
+        let spaces_before_fence = match syntax {
+            // As in Prettier: a line of spaces and tabs makes no node in remark-parse 8.
+            Syntax::Mdx => 0,
+            // Prettier 3.9.9 reads such front matter on its second run only, and never in the text of a template.
+            Syntax::Markdown if !mode.is_after_line_break => 3,
+            // oxfmt: 0.72.0 writes `***` or `\+++` for such fences.
+            _ => return None,
+        };
         loop {
             let blank_len = text[start..]
                 .iter()
@@ -59,6 +68,9 @@ fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
             }
             start += blank_len + 1;
         }
+        // Behind more spaces, or a tab, the fence is code, which Prettier prints as it is.
+        let indentation = text[start..].iter().take(spaces_before_fence);
+        start += indentation.take_while(|byte| **byte == b' ').count();
     }
     let end = start + super::front_matter::parse(&text[start..])?.end;
     Some((start, end))
@@ -66,12 +78,16 @@ fn front_matter_of(text: &[u8], syntax: Syntax) -> Option<(usize, usize)> {
 
 /// Prettier parses a text with spaces in place of the front matter. That only makes a difference if something follows
 /// the front matter on its last line. In that case this returns the text with the spaces.
-pub(crate) fn blank_front_matter(text: &[u8], syntax: Syntax) -> Option<Vec<u8>> {
+pub(crate) fn blank_front_matter(
+    text: &[u8],
+    syntax: Syntax,
+    front_matter: Option<(usize, usize)>,
+) -> Option<Vec<u8>> {
     // Prettier's MDX parser reads on behind the front matter.
     if syntax == Syntax::Mdx {
         return None;
     }
-    let (start, end) = front_matter_of(text, syntax)?;
+    let (start, end) = front_matter?;
     if matches!(text.get(end), None | Some(b'\n')) {
         return None;
     }
@@ -85,18 +101,17 @@ pub(crate) fn blank_front_matter(text: &[u8], syntax: Syntax) -> Option<Vec<u8>>
     Some(blanked)
 }
 
-/// Fills `tree` with the syntax tree of `text`, in which every line break is `\n`. Returns the root. `original` is the
-/// same text, or the input of [`blank_front_matter`] if `text` is its output.
+/// Fills `tree` with the syntax tree of `text`, in which every line break is `\n`, and returns the root.
 pub(crate) fn parse(
     text: &[u8],
-    original: &[u8],
     syntax: Syntax,
+    front_matter: Option<(usize, usize)>,
     tree: &mut Tree,
 ) -> Option<NodeId> {
-    let Some((start, end)) = front_matter_of(original, syntax) else {
+    let Some((start, end)) = front_matter else {
         return parse_lines(text, tree, syntax, 0);
     };
-    let first_line = match original.get(end) {
+    let first_line = match text.get(end) {
         None | Some(b'\n') => end + 1,
         Some(_) if syntax == Syntax::Mdx => end,
         // The last line of the front matter, which is three spaces in `text`.

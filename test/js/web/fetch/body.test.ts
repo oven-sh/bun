@@ -775,6 +775,31 @@ for (const { body, fn } of bodyTypes) {
           }
           expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });
+        test("rejects a fetch textStream() when the connection drops after a decode the reader saw", async () => {
+          // The server waits for the reader to take "A", so the incomplete
+          // bytes are a pull of their own that decodes to nothing.
+          const consumedFirstChunk = Promise.withResolvers<void>();
+          await using server = await rawChunkedServer(async sock => {
+            await writeChunk(sock, [0x41]);
+            await consumedFirstChunk.promise;
+            for (const p of [[0xf0], [0x9f]]) await writeChunk(sock, p);
+            sock.destroy();
+          });
+          const res = await fetch(`http://127.0.0.1:${server.port}/`);
+          let received = "";
+          let error: any;
+          try {
+            for await (const ch of res.textStream()) {
+              received += ch;
+              consumedFirstChunk.resolve();
+            }
+          } catch (e) {
+            error = e;
+          } finally {
+            consumedFirstChunk.resolve();
+          }
+          expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
+        });
       }
       if (body === Request) {
         test("streams an incoming request body server-side", async () => {

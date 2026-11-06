@@ -517,3 +517,67 @@ describe("Invalid oaepHash, mgf1Hash and oaepLabel options", () => {
     });
   });
 });
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/cipher.js#L67-L87
+describe.each([
+  ["publicEncrypt", "key", rsaPubPem],
+  ["publicDecrypt", "key", rsaPubPem],
+  ["privateEncrypt", "privateKey", rsaKeyPem],
+  ["privateDecrypt", "privateKey", rsaKeyPem],
+])("%s checks its arguments in Node's order:", (name, argument, key) => {
+  const outcome = (options, buffer = Buffer.alloc(16)) => {
+    try {
+      return crypto[name](options, buffer).length;
+    } catch (e) {
+      return `${e.name} ${e.code}: ${e.message}`;
+    }
+  };
+  const wrongType = name =>
+    `TypeError ERR_INVALID_ARG_TYPE: The "${name}" ${name.includes(".") ? "property" : "argument"} must be of type string`;
+
+  test("the key argument, before the options and the buffer", () => {
+    for (const options of [{ oaepHash: 5 }, { mgf1Hash: 5 }, { oaepLabel: 5 }, { oaepHash: "nope" }]) {
+      expect(outcome({ key: 5, ...options })).toStartWith(wrongType(`${argument}.key`));
+    }
+    expect(outcome({ key: 5 }, 5)).toStartWith(wrongType(`${argument}.key`));
+  });
+
+  test("the options and the buffer, before the key is read", () => {
+    const unreadable = "not a PEM";
+    expect(outcome({ key: unreadable })).toStartWith("Error ERR_OSSL_PEM_NO_START_LINE");
+    expect(outcome({ key: unreadable, oaepHash: 5 })).toStartWith(wrongType("key.oaepHash"));
+    expect(outcome({ key: unreadable, mgf1Hash: 5 })).toStartWith(wrongType("key.mgf1Hash"));
+    expect(outcome({ key: unreadable, oaepLabel: 5 })).toStartWith(wrongType("key.oaepLabel"));
+    expect(outcome({ key: unreadable }, 5)).toStartWith(wrongType("buffer"));
+  });
+
+  test("the types of the options, then the buffer, then the names of the digests", () => {
+    expect(outcome({ key, mgf1Hash: 5 }, 5)).toStartWith(wrongType("key.mgf1Hash"));
+    expect(outcome({ key, oaepLabel: 5 }, 5)).toStartWith(wrongType("key.oaepLabel"));
+    expect(outcome({ key, oaepHash: "nope", mgf1Hash: 5 })).toStartWith(wrongType("key.mgf1Hash"));
+    expect(outcome({ key, oaepHash: "nope" }, 5)).toStartWith(wrongType("buffer"));
+    expect(outcome({ key, oaepHash: "nope" })).toStartWith("Error ERR_OSSL_EVP_INVALID_DIGEST");
+  });
+});
+
+test("publicEncrypt reads oaepLabel after the key, as its getters left it", () => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = publicKey.export({ format: "jwk" });
+  const encrypt = (oaepLabel, kty) =>
+    crypto.publicEncrypt(
+      { key: Object.defineProperty({ ...jwk }, "kty", { get: kty }), format: "jwk", oaepLabel },
+      Buffer.from("hello"),
+    );
+  const decrypt = (encrypted, oaepLabel) => crypto.privateDecrypt({ key: privateKey, oaepLabel }, encrypted).toString();
+
+  const label = Buffer.from("before");
+  const rewritten = encrypt(label, () => (label.write("after!"), "RSA"));
+  expect(decrypt(rewritten, Buffer.from("after!"))).toBe("hello");
+  expect(() => decrypt(rewritten, Buffer.from("before"))).toThrow(
+    expect.objectContaining({ code: "ERR_OSSL_RSA_OAEP_DECODING_ERROR" }),
+  );
+
+  const gone = new Uint8Array(Buffer.from("before"));
+  const detached = encrypt(gone, () => (gone.buffer.detached || gone.buffer.transfer(), "RSA"));
+  expect(decrypt(detached, undefined)).toBe("hello");
+});

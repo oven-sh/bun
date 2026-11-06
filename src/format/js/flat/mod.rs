@@ -511,6 +511,11 @@ impl<'a> Formatter<'a> {
         if state.mode == Mode::Off {
             return false;
         }
+        // What a line leaves to the printers asks for lines again, and not always by way of `Expr` or `Stmt`: the
+        // children of an element.
+        if !self.context_mut().has_stack_left() {
+            return false;
+        }
         let options = self.options();
         let (width, indent_width) = (
             options.line_width.value() as usize,

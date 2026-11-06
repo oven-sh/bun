@@ -6907,6 +6907,19 @@ exports.format = async text => "by Prettier";
       },
     );
 
+    // The children of an element that are written as lines ask for lines again. Without indentation no line gets full, so
+    // that went on until the stack ended, at depths between the limit of the printers and that of the parser.
+    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([16_000, 18_000, 20_000, 22_000, 23_500])(
+      "%d elements of JSX in each other, with a tabWidth of 0",
+      async depth => {
+        const text = nested("x = (\n", "<a>\n<b />\n", "x\n", "</a>\n", ");\n", depth);
+        const result = await format({ "a.jsx": text }, ["--check", "--log-level=error", "--tab-width=0"]);
+        const tooDeep = problem("a.jsx", "The code is nested too deeply") + "\n\nCould not check 1 file.";
+        expect(result.stderr).toBeOneOf(["", tooDeep]);
+        expect(result.exitCode).toBe(result.stderr === "" ? 1 : 2);
+      },
+    );
+
     test("rejects output longer than JavaScript's maximum string length", async () => {
       // 560 MB. Prettier prints 490 MB.
       const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;

@@ -546,7 +546,7 @@ import "./mocks"; // calls vi.mock("./tax", ...)
 import { total } from "./cart"; // imports "./tax", and gets the mock
 ```
 
-Where Bun turns an import into `await import()`, a name that the module doesn't export is `undefined`, as in Vitest and Jest, and not a `SyntaxError`. That holds in every file with a hoisted call, whether it imports from `bun:test`, `@jest/globals` or `vitest`. In a test file that uses `bun:test` or `@jest/globals` and has no hoisted call, it's still a `SyntaxError`.
+Where Bun turns an import into `await import()`, a name that the module doesn't export is `undefined`, as in Vitest and in Jest with Babel, and not a `SyntaxError`. That holds in every file with a hoisted call, whether it imports from `bun:test`, `@jest/globals` or `vitest`. For a name that a mock's factory didn't return, see [Getters and Missing Exports](#getters-and-missing-exports).
 
 To mock a module for every test file, use `--preload` to load your mocks before your tests run.
 

@@ -185,26 +185,6 @@ describe.concurrent("hoisting", () => {
     ]);
   });
 
-  // Vitest, and Jest with Babel, read an import off an object too. Only an import that stays static is a SyntaxError.
-  test.each([
-    [`import { test, vi } from "bun:test";`, "vi.mock"],
-    [`import { test, jest } from "bun:test";`, "jest.mock"],
-    [`import { test, jest } from "@jest/globals";`, "jest.mock"],
-    [`import { test, vi } from "vitest";`, "vi.mock"],
-  ])("%s %s(): a name that a module doesn't export is undefined", async (header, mock) => {
-    expect(
-      await events({
-        "hoist.test.ts": `
-          ${header}
-          import absentDefault, { absent, other } from "./other";
-          ${mock}("./mod", () => ({ value: "mocked" }));
-          events.push(other, typeof absent, typeof absentDefault);
-          ${print}
-        `,
-      }),
-    ).toEqual([["load other", "other", "undefined", "undefined"]]);
-  });
-
   test("an import is a live binding", async () => {
     expect(
       await events({
@@ -686,6 +666,58 @@ describe.concurrent("not hoisted", () => {
         `,
       }),
     ).toEqual([["load mod", "load side", "real"]]);
+  });
+});
+
+// Vitest, and Jest with Babel, read an import off an object too. A static import is checked when the file is linked.
+describe.concurrent("a name that a module doesn't export", () => {
+  test.each([
+    [`import { test, vi } from "bun:test";`, "vi.mock"],
+    [`import { test, jest } from "bun:test";`, "jest.mock"],
+    [`import { test, jest } from "@jest/globals";`, "jest.mock"],
+    [`import { test, vi } from "vitest";`, "vi.mock"],
+  ])("is undefined in a file that hoists: %s %s()", async (header, mock) => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          ${header}
+          import absentDefault, { absent, other } from "./other";
+          ${mock}("./mod", () => ({ value: "mocked" }));
+          events.push(other, absent === undefined, absentDefault === undefined);
+          ${print}
+        `,
+      }),
+    ).toEqual([["load other", "other", true, true]]);
+  });
+
+  test("is undefined in a Vitest file with two imports and no hoisted call", async () => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          import { test } from "vitest";
+          import absentDefault, { absent, other } from "./other";
+          import "./mod";
+          events.push(other, absent === undefined, absentDefault === undefined);
+          ${print}
+        `,
+      }),
+    ).toEqual([["load other", "load mod", "other", true, true]]);
+  });
+
+  // One import has no order to keep, so it stays static. Imports of the test API don't count.
+  test.each([
+    [`import { test } from "vitest";`],
+    [`import { test } from "vitest"; import { expect } from "bun:test"; import { jest } from "@jest/globals";`],
+  ])("is a SyntaxError in a Vitest file with one import and no hoisted call: %s", async header => {
+    const { stderr, exitCode } = await run({
+      "hoist.test.ts": `
+        ${header}
+        import { absent } from "./other";
+        test("unreachable", () => { console.log(absent, typeof expect, typeof jest); });
+      `,
+    });
+    expect(stderr).toContain("SyntaxError: Export named 'absent' not found in module");
+    expect(exitCode).toBe(1);
   });
 });
 

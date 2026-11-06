@@ -34,13 +34,15 @@ function availableAddressSpace() {
   return Number(status.readBigUInt64LE(48));
 }
 
+function commitCharge() {
+  // On Windows this is PrivateUsage, or undefined when the process cannot read it.
+  const bytes = Bun.unsafe.memoryFootprint();
+  if (bytes === undefined) throw new Error("Bun.unsafe.memoryFootprint() has no value");
+  return bytes;
+}
+
 function sample() {
-  return {
-    threads: threadCount(),
-    addressSpace: availableAddressSpace(),
-    // The process's commit charge on Windows (PrivateUsage).
-    commit: Bun.unsafe.memoryFootprint()!,
-  };
+  return { threads: threadCount(), addressSpace: availableAddressSpace(), commit: commitCharge() };
 }
 
 const how = process.argv[2];

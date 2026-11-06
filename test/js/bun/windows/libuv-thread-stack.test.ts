@@ -32,6 +32,7 @@ describe.skipIf(!isWindows)("libuv takes a thread's stack size as the size to re
     const started = await startThreads("pool", { UV_THREADPOOL_SIZE: String(poolSize) });
     expect(started.threads).toBeGreaterThanOrEqual(poolSize);
     expect(started.commitForEach).toBeLessThan(4 * MiB);
+    expect(started.reserveForEach).toBeGreaterThan(4 * MiB);
     expect(started.reserveForEach).toBeLessThan(16 * MiB);
   });
 
@@ -39,6 +40,7 @@ describe.skipIf(!isWindows)("libuv takes a thread's stack size as the size to re
     const started = await startThreads("uv_thread_create_ex");
     expect(started.threads).toBeGreaterThanOrEqual(8);
     expect(started.commitForEach).toBeLessThan(4 * MiB);
+    expect(started.reserveForEach).toBeGreaterThan(4 * MiB);
     expect(started.reserveForEach).toBeLessThan(16 * MiB);
   });
 });

@@ -75,7 +75,8 @@ export const libuv: Dependency = {
   // uv_thread_create_ex passes STACK_SIZE_PARAM_IS_A_RESERVATION with an
   // explicit stack size. Without it Windows commits the whole size when the
   // thread starts: 8 MB for each thread of the pool. Delete the file when
-  // LIBUV_COMMIT has oven-sh/libuv#19, the same commit for the fork.
+  // LIBUV_COMMIT has oven-sh/libuv#19, the same commit for the fork
+  // (workarounds.ts fails configure when the pin changes).
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",

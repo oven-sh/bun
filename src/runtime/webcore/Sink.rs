@@ -461,6 +461,15 @@ impl JSSink<FileSink> {
     ) -> JsResult<()> {
         self.start_with_config(cx, streams::Start::file_sink(&options.path, options.fd))
     }
+
+    /// [`FileSink::set_blocking`]. A closed sink writes nothing more.
+    #[cfg(unix)]
+    pub(crate) fn set_blocking(&self, blocking: bool) {
+        if let Some(sink) = self.sink.get() {
+            // SAFETY: the object's live sink.
+            unsafe { sink.as_ref() }.set_blocking(blocking);
+        }
+    }
 }
 
 impl JSSink<NetworkSink> {

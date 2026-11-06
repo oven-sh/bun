@@ -55,11 +55,28 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 /// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
-pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
-    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
-        Ok(()) => 0,
-        Err(err) => -i32::from(err.errno),
+pub(crate) fn set_stdio_blocking(
+    fd: i32,
+    blocking: bool,
+    sink: Option<&crate::webcore::file_sink::JSSink>,
+) -> i32 {
+    let fd = bun_sys::Fd::from_uv(fd);
+    // libuv reopens a terminal (https://github.com/libuv/libuv/blob/v1.52.1/src/unix/tty.c#L166-L183). Here it is the description that the parent has too, so `O_NONBLOCK` never goes on it.
+    #[cfg(unix)]
+    if !blocking && bun_sys::isatty(fd) {
+        return 0;
     }
+    if let Err(err) = bun_sys::update_nonblocking(fd, !blocking) {
+        return -i32::from(err.errno);
+    }
+    // The stream's sink does not read `O_NONBLOCK` for a socket, or for a pipe where Linux has `RWF_NOWAIT`, so it is told.
+    #[cfg(unix)]
+    if let Some(sink) = sink {
+        sink.set_blocking(blocking);
+    }
+    #[cfg(windows)]
+    let _ = sink;
+    0
 }
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {

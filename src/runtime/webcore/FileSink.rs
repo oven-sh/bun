@@ -206,6 +206,24 @@ impl FileSink {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
         self.writer.get().memory_cost()
     }
+
+    /// `_handle.setBlocking()` of the stream over this sink. The caller already set or cleared `O_NONBLOCK` on the fd.
+    #[cfg(unix)]
+    pub(crate) fn set_blocking(&self, blocking: bool) {
+        // Only a stdio sink: any other still holds a small write (`should_buffer`) when `write()` returns.
+        debug_assert!(self.writer.get().force_sync);
+        let Some(poll) = self.writer.get().get_poll() else {
+            return;
+        };
+        poll.set_blocking_writes(blocking);
+        if !blocking {
+            return;
+        }
+        // What is queued waits for the writable poll, as in libuv (https://github.com/libuv/libuv/blob/v1.52.1/src/unix/stream.c#L1385-L1403). The flush after this tick would wait for the reader with the loop stopped.
+        if let Some(vm) = self.js_vm() {
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, vm);
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

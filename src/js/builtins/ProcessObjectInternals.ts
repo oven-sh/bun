@@ -110,14 +110,17 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
-  // Node's is a TTY, a Pipe or a TCP. Command-line tools call setBlocking(true) before native code writes to the descriptor.
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
-    const setStdioBlocking = $bindgen("node_process.bind.ts", "setStdioBlocking");
-    stream._handle = { fd, setBlocking: (blocking: boolean) => setStdioBlocking(fd, !!blocking) };
-  }
-
   // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
+
+  // Node's is a TTY, a Pipe or a TCP. Command-line tools call setBlocking(true) before they write and exit, or before native code writes to the descriptor.
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    const setStdioBlocking = $bindgen("node_process.bind.ts", "setStdioBlocking");
+    // Only `true` turns it on: https://github.com/nodejs/node/blob/v26.3.0/src/stream_wrap.cc#L319
+    const setBlocking = (blocking: boolean) => setStdioBlocking(fd, blocking === true, underlyingSink);
+    stream._handle = { fd, setBlocking };
+  }
+
   return [stream, underlyingSink];
 }
 

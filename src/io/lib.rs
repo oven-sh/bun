@@ -1938,7 +1938,17 @@ impl FilePollRef {
     }
     #[inline]
     pub fn set_flag(self, f: FilePollFlag) {
-        self.inner().flags.insert(f);
+        let flags = &mut self.inner().flags;
+        flags.insert(f);
+        // A terminal is written with plain write(2).
+        if f == FilePollFlag::Tty {
+            flags.insert(FilePollFlag::PlainWrite);
+        }
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn set_blocking_writes(self, blocking: bool) {
+        self.inner().set_blocking_writes(blocking);
     }
     #[inline]
     pub(crate) fn file_type(self) -> crate::pipes::FileType {

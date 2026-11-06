@@ -437,5 +437,215 @@ describe.concurrent.skipIf(isWindows)(
         await expectDrainOverPipe(afterInheritSpawn, "{}", { drained: true }, 1 + (1 << 20));
       },
     );
+
+    // Node's stream writes with write(2), so after setBlocking(true) a write waits for the reader and all of it is out when
+    // write() returns. Command-line tools (tsc, uglify-js) call it so that a process.exit() right after loses nothing.
+    // The child first fills the socket or the pipe, which nobody reads yet: a write that does not wait then puts no byte into
+    // it and returns false. It says what setBlocking(true) returned before it writes, and what the writes returned after.
+    // tsc and uglify-js write strings: an ASCII, a Latin-1 and a UTF-16 string each take their own way into the sink.
+    const blockingWriterScript = (name: "stdout" | "stderr") => `
+      const fs = require("fs");
+      const [stream, fd, otherFd] = [process.${name}, ${name === "stdout" ? "1, 2" : "2, 1"}];
+      const report = v => fs.writeSync(otherFd, JSON.stringify(v) + "\\n");
+      const chunk = Buffer.alloc(1 << 20, "B");
+      const lines = ["plain ASCII\\n", Buffer.from([99, 97, 102, 233, 10]).toString("latin1"), "\\u6f22\\u5b57 \\u{1f600}\\n"];
+      let filled = 0;
+      try {
+        for (;;) filled += fs.writeSync(fd, Buffer.alloc(1 << 16, "A"));
+      } catch (err) {
+        if (err.code !== "EAGAIN") throw err;
+      }
+      report({ result: stream._handle.setBlocking(true), filled });
+      const buffer = stream.write(chunk);
+      let strings = true;
+      for (let i = 0; i < 600; i++) strings = stream.write(lines[i % 3]) && strings;
+      report({ buffer, strings });
+      process.exit(0);`;
+    const lines = "plain ASCII\n" + "caf\u00e9\n" + "\u6f22\u5b57 \u{1f600}\n";
+    const written = Buffer.concat([Buffer.alloc(1 << 20, "B"), Buffer.alloc(200 * Buffer.byteLength(lines), lines)]);
+    // What arrived after the bytes that filled the descriptor.
+    const afterFilled = (bytes: Uint8Array, filled: number) => ({
+      bytes: bytes.byteLength - filled,
+      same: written.equals(bytes.subarray(filled)),
+    });
+    const allWritten = { result: 0, buffer: true, strings: true, bytes: written.length, same: true };
+
+    // Socketpair with a lazy parent: nothing reads the stream until the child is about to write to it.
+    test.each(["stdout", "stderr"] as const)(
+      "process.%s.write after _handle.setBlocking(true) is complete when it returns, ahead of process.exit()",
+      async name => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", blockingWriterScript(name)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          lazy: true,
+        });
+        const [output, reports] = name === "stdout" ? [proc.stdout, proc.stderr] : [proc.stderr, proc.stdout];
+        const events = jsonLines(reports);
+        const { result, filled } = await events.next();
+        const [bytes, wrote, exitCode] = await Promise.all([output.bytes(), events.next(), proc.exited]);
+        expect({ result, ...wrote, ...afterFilled(bytes, filled) }).toEqual(allWritten);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // Real pipe(2) via sh. The reader only starts on SIGUSR1, so the pipe is full while the write waits.
+    test("process.stdout.write after _handle.setBlocking(true) waits for the reader of a real pipe", async () => {
+      await using proc = spawn({
+        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), blockingWriterScript("stdout"), gatedReader],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const events = jsonLines(proc.stderr);
+      const seen: { reader?: number; result?: number; filled?: number; buffer?: boolean; strings?: boolean } = {};
+      while (seen.reader === undefined || seen.result === undefined) Object.assign(seen, await events.next());
+      process.kill(seen.reader, "SIGUSR1");
+      const [bytes, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      while (seen.buffer === undefined) Object.assign(seen, await events.next());
+      const { reader, filled, ...reports } = seen;
+      expect({ ...reports, ...afterFilled(bytes, filled!) }).toEqual(allWritten);
+      expect(exitCode).toBe(0);
+    });
+
+    // What a write from before the call left in the stream drains with writes that wait too.
+    test("process.stdout.write after _handle.setBlocking(true) and the 'drain' of an earlier write is complete when it returns", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
+           const chunk = Buffer.alloc(1 << 20, "B");
+           report({ first: process.stdout.write(Buffer.alloc(1 << 20, "A")) });
+           report({ result: process.stdout._handle.setBlocking(true) });
+           process.stdout.once("drain", () => {
+             report({ ret: process.stdout.write(chunk) });
+             process.exit(0);
+           });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: true,
+      });
+      const events = jsonLines(proc.stderr);
+      expect(await events.next()).toEqual({ first: false });
+      const [bytes, reports, exitCode] = await Promise.all([
+        proc.stdout.bytes(),
+        (async () => [await events.next(), await events.next()])(),
+        proc.exited,
+      ]);
+      // All of A, then all of B.
+      expect({ reports, bytes: bytes.byteLength, lastA: bytes.lastIndexOf(65), firstB: bytes.indexOf(66) }).toEqual({
+        reports: [{ result: 0 }, { ret: true }],
+        bytes: 2 << 20,
+        lastA: (1 << 20) - 1,
+        firstB: 1 << 20,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // As in libuv, what was queued before the call waits for the writable poll. Nobody reads here, so it stays queued, and
+    // neither the loop nor process.exit() waits for it.
+    test("bytes queued before _handle.setBlocking(true) do not stop the event loop", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
+           const first = process.stdout.write(Buffer.alloc(1 << 20, "A"));
+           report({ first, result: process.stdout._handle.setBlocking(true) });
+           setImmediate(() => {
+             report({ loopRuns: true });
+             process.exit(0);
+           });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: true,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe('{"first":false,"result":0}\n{"loopRuns":true}\n');
+      expect(exitCode).toBe(0);
+    });
+
+    // setBlocking(false) puts the stream's own writes back, and not only O_NONBLOCK: the inherit spawn clears that flag
+    // again, and the stream still does not wait. Node reads the argument with IsTrue(), so 1 does not turn it on.
+    const blockingThenNot = `for (const blocking of [true, false, 1]) if (process.stdout._handle.setBlocking(blocking) !== 0) throw new Error("setBlocking failed");`;
+    test("process.stdout.write on a socket is asynchronous again after _handle.setBlocking(false)", async () => {
+      await expectDrainOverSocket(blockingThenNot + afterInheritSpawn, 1 + (1 << 20));
+    });
+
+    test.skipIf(!pipesHaveNowait)(
+      "process.stdout.write on a pipe is asynchronous again after _handle.setBlocking(false) (RWF_NOWAIT)",
+      async () => {
+        await expectDrainOverPipe(blockingThenNot + afterInheritSpawn, "{}", { drained: true }, 1 + (1 << 20));
+      },
+    );
+
+    // After setBlocking(true) a socket is written with write(2), as libuv does, and not with send(MSG_NOSIGNAL).
+    test("process.stdout.write after _handle.setBlocking(true) to a socket that nobody reads fails with EPIPE", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("fs");
+           const result = process.stdout._handle.setBlocking(true);
+           fs.readSync(0, Buffer.alloc(1)); // until the parent has closed its end of stdout
+           process.stdout.on("error", err => {
+             fs.writeSync(2, JSON.stringify({ result, code: err.code, syscall: err.syscall }));
+             process.exit(7);
+           });
+           process.stdout.write(Buffer.alloc(1 << 20, "B"));`,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.stdout.cancel();
+      proc.stdin.write("x");
+      await proc.stdin.end();
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stderr)).toEqual({ result: 0, code: "EPIPE", syscall: "write" });
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 7, signalCode: null });
+    });
+
+    // libuv reopens a terminal, so its O_NONBLOCK never reaches the description that the parent shell has too.
+    test("process.stdout._handle.setBlocking() with false or 1 leaves a terminal blocking", async () => {
+      for (const blocking of [false, 1]) {
+        let output = "";
+        const reported = Promise.withResolvers<void>();
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const result = process.stdout._handle.setBlocking(${blocking});
+             require("fs").writeSync(1, JSON.stringify({ isTTY: process.stdout.isTTY, result }) + " ");
+             process.argv = [process.argv[0], "probe", "1"];
+             require(${JSON.stringify(probe)});`,
+          ],
+          env: bunEnv,
+          terminal: {
+            data(_terminal, chunk: Uint8Array) {
+              output += Buffer.from(chunk).toString();
+              if (/\d:(non)?blocking/.test(output)) reported.resolve();
+            },
+            exit() {
+              reported.reject(new Error("the terminal closed before the report: " + JSON.stringify(output)));
+            },
+          },
+        });
+        await reported.promise;
+        expect({ blocking, output: output.trim() }).toEqual({
+          blocking,
+          output: '{"isTTY":true,"result":0} 1:blocking',
+        });
+        expect(await proc.exited).toBe(0);
+        proc.terminal!.close();
+      }
+    });
   },
 );

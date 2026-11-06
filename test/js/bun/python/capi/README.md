@@ -8,8 +8,8 @@ C sources, the scripts that use what they are compiled to, and what CPython 3.15
 - `include/`: the header that `NAME.c` is compiled with **here**. It is written for these tests, declares what Bun implements so far, and has none of CPython's
   text. In abi3t a header is declarations and a few macros: C sees the layout of no object.
 - `here/`: scripts for what has no counterpart in CPython, where it is undefined or the end of the process: the API called without the GIL, before there is an interpreter or
-  when it has ended; several interpreters in one process, on several threads (Workers) or on one (a `ShadowRealm`); C that JS has loaded (`bun:ffi`). What they are to print is in
-  `capi.test.ts`, written by hand.
+  when it has ended; several interpreters in one process, on several threads (Workers) or on one (a `ShadowRealm`); C that JS has loaded (`bun:ffi`); an instance between the collection
+  that finds it dead and its `tp_dealloc`; JS's weak references. What they are to print is in `capi.test.ts` or beside them, written by hand.
 - `everything.c` calls every function that `include/declarations.h` declares, for the callers that are to be refused. A function that is added there is added here: a test looks.
 
 `capi.test.ts` compiles each source with the machine's compiler (`$CC`, `cc`, `clang`, `gcc`), as `test/js/bun/ffi` does, and runs each script several times: as it comes,
@@ -22,4 +22,4 @@ has died; that changes nothing in CPython.
 
     tools/update.py [NAME...]                 ask CPython again, and write the .expected files
     tools/update.py --ours BUN [NAME...]      compile against include/, run with Bun, show the differences; writes nothing
-    tools/check_header.py                     include/declarations.h agrees with CPython's headers, and declares nothing that abi3t does not have
+    tools/check_header.py                     include/declarations.h and include/numbers.h agree with CPython's headers, and nothing is declared that abi3t does not have

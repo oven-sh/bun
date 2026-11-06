@@ -92,7 +92,50 @@ static const char *call_everything(PyObject *x)
     PyErr_Clear();
     SAY("%d", PyList_SetItem(x, 0, Py_NewRef(x)));
     PyErr_Clear();
-    SAY("%d", PyList_Append(x, x));
+    SAY("%d |", PyList_Append(x, x));
+    PyErr_Clear();
+
+    /* Memory is given to everybody. What PyObject_Free() is handed may be an object, so it asks. */
+#define SAY_AND_FREE(allocate, allocate_zeroed, reallocate, release) \
+    { \
+        void *memory = reallocate(allocate(8), 600), *zeroed = allocate_zeroed(2, 300); \
+        SAY("%d%d", memory != NULL, zeroed != NULL); \
+        release(memory); \
+        release(zeroed); \
+    }
+    SAY_AND_FREE(PyMem_Malloc, PyMem_Calloc, PyMem_Realloc, PyMem_Free);
+    SAY_AND_FREE(PyMem_RawMalloc, PyMem_RawCalloc, PyMem_RawRealloc, PyMem_RawFree);
+    SAY_AND_FREE(PyObject_Malloc, PyObject_Calloc, PyObject_Realloc, PyObject_Free);
+
+    static PyType_Slot slots[] = {{0, NULL}};
+    static PyType_Spec spec = {"everything.Made", -8, 0, Py_TPFLAGS_DEFAULT, slots};
+    PyTypeObject *type = (PyTypeObject *)x;
+    SAY_AND_GIVE_BACK(PyType_FromSpecWithBases(&spec, x));
+    SAY_AND_GIVE_BACK(PyType_FromModuleAndSpec(x, &spec, x));
+    SAY_AND_GIVE_BACK(PyType_FromMetaclass(type, x, &spec, x));
+    /* Who is served has a type and an instance of his own for what follows. */
+    PyObject *made = PyType_FromSpec(&spec);
+    SAY_WHETHER_NULL(made);
+    if (made)
+        type = (PyTypeObject *)made;
+    SAY("%d", PyType_IsSubtype(type, type));
+    SAY_WHETHER_NULL(PyType_GetSlot(type, Py_tp_alloc));
+    SAY("%ld", (long)PyType_GetTypeDataSize(type));
+    SAY_AND_GIVE_BACK(_PyObject_New(type));
+    SAY_AND_GIVE_BACK(_PyObject_GC_New(type));
+    PyObject *instance = PyType_GenericAlloc(type, 0);
+    SAY_WHETHER_NULL(instance);
+    PyObject *y = instance ? instance : x;
+    SAY_WHETHER_NULL(PyObject_GetTypeData(y, type));
+    SAY_WHETHER_NULL(PyObject_GetTypeData_DuringGC(y, type));
+    PyObject_GC_Track(y);
+    SAY("%d", PyObject_GC_IsTracked(y));
+    PyObject_GC_UnTrack(y);
+    SAY("%d", PyObject_GC_IsFinalized(y));
+    SAY("%d", PyObject_CallFinalizerFromDealloc(y));
+    PyObject_ClearWeakRefs(y);
+    PyObject_GC_Del(y);
+    Py_XDECREF(made);
     PyErr_Clear();
     to[-1] = 0;
     return answers;

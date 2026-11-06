@@ -9,9 +9,18 @@ const root = import.meta.dir;
 const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
 
 /** Libraries that a script of the same name loads with ctypes.PyDLL. */
-const libraries = ["references", "ownership", "loaded", "raises_as_loaded", "goes", "first_by_cdll", "identity"];
-/** Libraries for the scripts in here/ alone. */
-const others = ["without_gil", "everything"];
+const libraries = [
+  "references",
+  "ownership",
+  "loaded",
+  "raises_as_loaded",
+  "goes",
+  "first_by_cdll",
+  "identity",
+  "lifecycle",
+];
+/** Libraries for the scripts in here/ alone, and for a script that runs in one mode only. */
+const others = ["without_gil", "everything", "at_exit", "memory", "unowned"];
 
 // These builds take seconds to start Python, and a collection at every turn takes them minutes.
 const isSlow = isDebug || isASAN;
@@ -277,10 +286,12 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   // What call_everything() in everything.c says. Who is refused is told the same whatever he asks with; only Py_IsInitialized() knows more.
   const refusedEverything = (isInitialized: 0 | 1) =>
     `1 1 3221225472 NULL 0 1 000 2 2 2 1 1 2 2 1 1 1 1 | ${isInitialized} NULL NULL NULL NULL NULL NULL 0 0 | ` +
-    "NULL NULL NULL NULL -1 NULL -1 NULL -1 NULL -1 NULL -1 NULL -1 -1";
+    "NULL NULL NULL NULL -1 NULL -1 NULL -1 NULL -1 NULL -1 NULL -1 -1 | " +
+    "11 11 11 NULL NULL NULL NULL 0 NULL 0 NULL NULL NULL NULL NULL 0 0 0";
   const servedEverything = (isException: 0 | 1) =>
     `1 1 3221225472 object 0 1 000 2 2 2 2 2 2 2 2 2 2 1 | 1 NULL NULL object object object object 1 ${isException} | ` +
-    "object object object object -1 object -1 object -1 NULL -1 object -1 NULL -1 -1";
+    "object object object object -1 object -1 object -1 NULL -1 object -1 NULL -1 -1 | " +
+    "11 11 11 NULL NULL NULL object 1 object 16 object object object object object 0 0 0";
   const everything = (when: string, answers: (isException: 0 | 1) => string) =>
     `${when}: what was kept is NULL: 0\n with the exception: ${answers(1)}\n with the type:      ${answers(0)}\n`;
   const raisedWithWhatWasKept = "ValueError: with what was read as the library was loaded\n";
@@ -288,7 +299,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   test("everything.c calls every function that is declared", () => {
     const declared = readFileSync(join(root, "include", "declarations.h"), "utf8").matchAll(/\b(\w+)\([^)]*\);/g);
     const source = readFileSync(join(root, "everything.c"), "utf8");
-    expect([...declared].map(match => match[1]).filter(name => !new RegExp(`\\b${name}\\(`).test(source))).toEqual([]);
+    expect([...declared].map(match => match[1]).filter(name => !new RegExp(`\\b${name}\\b`).test(source))).toEqual([]);
   });
 
   test.concurrent(
@@ -380,10 +391,12 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     "the books of a call do not depend on for whom C runs further out",
     async () => {
       const books = "ValueError: raised by C; RuntimeError('from the destructor'); C owns [0, 0, 0], [1], [0]\n";
+      const booksOfAnInstance = "[[0, 0], [1, 0], [0, 1], [0, 0]] [1000007]\n";
       expect(await runInTwo("realm_books.mjs")).toEqual({
         stdout:
           `main: ${books}main, inside C that main runs: ${books}main, inside C that the realm runs: ${books}` +
           "later: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n" +
+          `main, an instance: ${booksOfAnInstance}main, an instance, inside C that the realm runs: ${booksOfAnInstance}` +
           "C owns: [1]\nmain calls it: Thing\nC owns: [1]\nthe realm calls it: Thing\nC owns: [1]\n" +
           "the realm calls it, inside C that the realm runs: Thing\nC owns: [1]\n" +
           "C that main runs calls it: C got an object\nC owns: [1]\n" +
@@ -426,6 +439,18 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
       limit,
     );
   }
+
+  test.concurrent(
+    "instances that die with the realm of the interpreter that has the API come to their end, and then the realm goes",
+    async () => {
+      expect(await runInTwo("realm_with_instances.mjs")).toEqual({
+        stdout: "made 3 0\nthe realm has gone: true ended: 3\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
 
   test.concurrent(
     "an address in the middle of a symbol stands for no object",
@@ -546,4 +571,120 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     },
     limit,
   );
+
+  for (const mode of ["as it comes", "collecting all the time", "no generations, nothing concurrent"]) {
+    test.concurrent(
+      `what makes objects or runs code fails if a tp_traverse calls it: ${mode}`,
+      async () => {
+        expect(await run("here/rude.py", "lifecycle", modes[mode].options)).toEqual({
+          stdout: "3 True\n[<class 'lifecycle.Node'>]\nTrue True\n10 Node 0\n0 False\nbefore its turn []\n[]\n",
+          stderr:
+            "Python: a function of the C API was called by a tp_traverse; it fails\n" +
+            "Python: Py_INCREF was called by a tp_traverse; the count stays as it was, " +
+            "and from now on whatever C owns is held for ever\n",
+          exitCode: 0,
+        });
+      },
+      modes[mode].limit,
+    );
+  }
+
+  test.concurrent(
+    "collections come as the memory grows that C allocates",
+    async () => {
+      expect(await run("here/memory_of_c.py", "memory")).toEqual({
+        stdout: "the first was destroyed before 2,000 blocks of a megabyte had been asked for: True\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
+
+  // What is destroyed when the modules have gone, whatever the order. (Which objects of a cycle are asked to let go is the collector's business.)
+  function atExit(output: string) {
+    const lines = output.trimEnd().split("\n");
+    const told = lines.findIndex(line => line.startsWith("the program is told of the end")) + 1;
+    return [
+      ...lines.slice(0, told),
+      ...lines
+        .slice(told)
+        .filter(line => !line.startsWith("2"))
+        .sort(),
+    ];
+  }
+  for (const [name, args, isLeft] of [
+    ["", [], () => true],
+    [", in a program without finalizers", ["without_finalizers"], (line: string) => !/^__del__$|000009$/.test(line)],
+  ] as const) {
+    test.concurrent(
+      `at exit: what reference counts would have freed, then atexit, then cyclic garbage and what goes with the modules${name}`,
+      async () => {
+        const { stdout, stderr, exitCode } = await run("at_exit.py", "at_exit", {}, ...args);
+        expect(stderr).toBe("");
+        expect(atExit(stdout)).toEqual(atExit(readFileSync(join(root, "at_exit.expected"), "utf8")).filter(isLeft));
+        expect(exitCode).toBe(0);
+      },
+      limit,
+    );
+  }
+
+  test.concurrent(
+    "what a tp_finalize or a tp_dealloc raises is reported, and goes no further",
+    async () => {
+      expect(await run("here/raises.py", "lifecycle")).toEqual({
+        stdout:
+          "unraisable: ValueError raised by tp_finalize | Exception ignored in tp_finalize of 'Watched' | None\n" +
+          "nothing is raised where the collection was asked for\n[3000000, 1000000]\n" +
+          "unraisable: ValueError raised by tp_dealloc | Exception ignored in tp_dealloc of 'Chatty' | None | data of -1\n[1000007]\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
+
+  // (A collection in the middle of the looking.)
+  const often = {
+    options: { BUN_JSC_slowPathAllocsBetweenGCs: isSlow ? "13" : "3" },
+    limit: modes["a collection every few allocations"].limit,
+  };
+  for (const [mode, { options, limit }] of Object.entries({
+    "as it comes": modes["as it comes"],
+    "freed cells are overwritten": modes["freed cells are overwritten"],
+    "collecting all the time": modes["collecting all the time"],
+    "a collection every three allocations": often,
+  })) {
+    test.concurrent(
+      `an instance between the death of its face and its tp_dealloc, and after that: ${mode}`,
+      async () => {
+        const { stdout, stderr, exitCode } = await run("here/faceless.py", "lifecycle", options);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(readFileSync(join(root, "here/faceless.expected"), "utf8"));
+        expect(exitCode).toBe(0);
+      },
+      limit,
+    );
+
+    test.concurrent(
+      `JS's weak references to an instance die before its tp_dealloc; what is only cleared may be in JS's hands: ${mode}`,
+      async () => {
+        expect(await run("here/weak_in_js.mjs", "lifecycle", options)).toEqual({
+          stdout:
+            "before its turn: deref(): undefined\n" +
+            "no cycle | events [1000001] | deref(): undefined\n" +
+            "a cycle through a list | events [2000002, 1000002] | deref(): undefined\n" +
+            "the same, taken before its turn | events [2000003] | " +
+            "deref(): Sub, data of 3, attributes {'attribute': 'of the face'}, holds something: False\n" +
+            "it referred to [], and now holds ['held anew'], of which the collector knows: True\n" +
+            "still held | events [] | " +
+            "deref(): Sub, data of 3, attributes {'attribute': 'of the face'}, holds something: True\n" +
+            "dropped | events [1000003] | deref(): undefined\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      limit,
+    );
+  }
 });

@@ -20,6 +20,27 @@ typedef ssize_t Py_ssize_t;
 typedef struct _object PyObject;
 typedef struct _typeobject PyTypeObject;
 
+/* What an extension says about a type that it makes. */
+typedef struct {
+    int slot; /* Py_tp_dealloc and so on; 0 ends the array. */
+    void *pfunc;
+} PyType_Slot;
+
+typedef struct {
+    const char *name;
+    int basicsize; /* Negative: so much more than the base. C does not know how large an object is. */
+    int itemsize;
+    unsigned int flags;
+    PyType_Slot *slots;
+} PyType_Spec;
+
+typedef void (*destructor)(PyObject *);
+typedef void (*freefunc)(void *);
+typedef int (*inquiry)(PyObject *);
+typedef int (*visitproc)(PyObject *, void *);
+typedef int (*traverseproc)(PyObject *, visitproc, void *);
+typedef PyObject *(*allocfunc)(PyTypeObject *, Py_ssize_t);
+
 #include "declarations.h"
 
 #define Py_INCREF(op) _Py_IncRef((PyObject *)(op))
@@ -32,6 +53,36 @@ typedef struct _typeobject PyTypeObject;
         (op) = NULL; \
         Py_DecRef(py_clear_old); \
     } while (0)
+
+/* In a tp_traverse, whose parameters are named visit and arg. */
+#define Py_VISIT(op) \
+    do { \
+        if (op) { \
+            int py_visit_result = visit((PyObject *)(op), arg); \
+            if (py_visit_result) \
+                return py_visit_result; \
+        } \
+    } while (0)
+
+#define PyObject_New(type, typeobj) ((type *)_PyObject_New(typeobj))
+#define PyObject_GC_New(type, typeobj) ((type *)_PyObject_GC_New(typeobj))
+
+#define Py_tp_alloc 47
+#define Py_tp_base 48
+#define Py_tp_bases 49
+#define Py_tp_clear 51
+#define Py_tp_dealloc 52
+#define Py_tp_doc 56
+#define Py_tp_traverse 71
+#define Py_tp_free 74
+#define Py_tp_finalize 80
+
+#define Py_TPFLAGS_DEFAULT 0
+#define Py_TPFLAGS_DISALLOW_INSTANTIATION (1UL << 7)
+#define Py_TPFLAGS_IMMUTABLETYPE (1UL << 8)
+#define Py_TPFLAGS_HEAPTYPE (1UL << 9)
+#define Py_TPFLAGS_BASETYPE (1UL << 10)
+#define Py_TPFLAGS_HAVE_GC (1UL << 14)
 
 #define Py_CONSTANT_NONE 0
 #define Py_CONSTANT_FALSE 1
@@ -52,6 +103,8 @@ typedef struct _typeobject PyTypeObject;
 #define Py_RETURN_NONE return Py_None
 #define Py_RETURN_TRUE return Py_True
 #define Py_RETURN_FALSE return Py_False
+
+#include "numbers.h"
 
 #ifdef __cplusplus
 }

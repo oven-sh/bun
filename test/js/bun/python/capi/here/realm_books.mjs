@@ -19,6 +19,11 @@ main.sizes_around(libraries, false, () => say("main, inside C that main runs", m
 realmSizes(libraries, false, () => say("main, inside C that the realm runs", main.books(libraries)));
 say("later", main.books_later(libraries));
 
+say("main, an instance", main.books_of_an_instance(libraries));
+realmSizes(libraries, false, () =>
+  say("main, an instance, inside C that the realm runs", main.books_of_an_instance(libraries)),
+);
+
 // The code of a callback gives a reference with its result, and whoever has called it takes that over: both or neither.
 const address = String(main.make_callback(libraries));
 const realmCalls = await inRealm("call_by_address");

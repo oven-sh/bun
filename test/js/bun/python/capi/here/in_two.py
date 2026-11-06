@@ -244,3 +244,42 @@ def drop_thing_and_ask_c():
     thing = None
     gc.collect()
     return f"{ref_to_thing() is not None} {attempt(lambda: lib_that_holds.held(0).name)}"
+
+
+# The books of an instance of the type of an extension: it owns a reference to its type, which goes with it from class to class and which its tp_dealloc gives back.
+# How many references C owns to the type and to a class that derives from it: before, with an instance, when that has changed its class, and when it has been destroyed. And what C noted.
+def books_of_an_instance(libraries):
+    global lifecycle, Node, Derived
+    if "lifecycle" not in globals():
+        lifecycle = ctypes.PyDLL(f"{libraries}/liblifecycle.so")
+        lifecycle.make_types.restype = lifecycle.take_events.restype = py_object
+        lifecycle.set_id.argtypes = [py_object, c_long]
+        lifecycle.set_id.restype = None
+        Node = lifecycle.make_types()[0]
+        Derived = type("Derived", (Node,), {"__slots__": ()})
+    counts = [owned(libraries, Node, Derived)]
+    node = Node()
+    lifecycle.set_id(node, 7)
+    counts.append(owned(libraries, Node, Derived))
+    node.__class__ = Derived
+    counts.append(owned(libraries, Node, Derived))
+    del node
+    gc.collect()
+    counts.append(owned(libraries, Node, Derived))
+    first = counts[0]
+    return f"{[[a - first[0], b - first[1]] for a, b in counts]} {lifecycle.take_events()}"
+
+
+# Instances of the type of an extension that live as long as this interpreter does. C owns no reference to the type but those of the instances.
+def make_instances(libraries):
+    global kept_instances
+    lib = ctypes.PyDLL(f"{libraries}/libunowned.so")
+    lib.make_type.restype = py_object
+    lib.hold.argtypes = [py_object, py_object]
+    lib.hold.restype = None
+    Holder = lib.make_type()
+    kept_instances = [Holder() for _ in range(3)]
+    # In a cycle through a list; holds another; holds nothing.
+    lib.hold(kept_instances[0], kept_instances)
+    lib.hold(kept_instances[1], kept_instances[2])
+    return f"made {len(kept_instances)}"

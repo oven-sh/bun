@@ -1,0 +1,216 @@
+== the types
+Node Node lifecycle (<class 'object'>,) (<class 'lifecycle.Node'>, <class 'object'>) <class 'type'> <class 'lifecycle.Node'>
+Wide Wide lifecycle (<class 'lifecycle.Node'>,) (<class 'lifecycle.Wide'>, <class 'lifecycle.Node'>, <class 'object'>) <class 'type'> <class 'lifecycle.Wide'>
+Watched Watched lifecycle (<class 'lifecycle.Node'>,) (<class 'lifecycle.Watched'>, <class 'lifecycle.Node'>, <class 'object'>) <class 'type'> <class 'lifecycle.Watched'>
+Chatty Chatty lifecycle (<class 'lifecycle.Node'>,) (<class 'lifecycle.Chatty'>, <class 'lifecycle.Node'>, <class 'object'>) <class 'type'> <class 'lifecycle.Chatty'>
+Leaf Leaf lifecycle (<class 'object'>,) (<class 'lifecycle.Leaf'>, <class 'object'>) <class 'type'> <class 'lifecycle.Leaf'>
+Bare Bare lifecycle (<class 'object'>,) (<class 'lifecycle.Bare'>, <class 'object'>) <class 'type'> <class 'lifecycle.Bare'>
+Two references. None
+['__module__', '__doc__']
+True False True False
+Node 32
+Wide 40000
+Watched 16
+Chatty 0
+Leaf 16
+Bare 32
+TypeError: type 'lifecycle.Leaf' is not an acceptable base type
+TypeError: type 'lifecycle.Chatty' is not an acceptable base type
+TypeError: multiple bases have instance lay-out conflict
+(<class '__main__.Derived'>, <class 'lifecycle.Wide'>, <class 'lifecycle.Node'>, <class 'object'>)
+== an instance
+True 1 None True
+AttributeError: 'lifecycle.Node' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: 'lifecycle.Node' object has no attribute '__dict__'
+TypeError: cannot create weak reference to 'lifecycle.Node' object
+TypeError: lifecycle.Node() takes no arguments
+TypeError: lifecycle.Node() takes no arguments
+True False True True True
+1 0 0 0 True
+['dealloc 0', 'dealloc 0', 'dealloc 0', 'dealloc 1'] 0
+== where the data lies
+0 0 32 0
+0 2 None
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+['dealloc 100', 'dealloc 101', 'dealloc 102', 'dealloc 103', 'dealloc 104', 'dealloc 105', 'dealloc 106', 'dealloc 107', 'dealloc 108', 'dealloc 109', 'dealloc 110', 'dealloc 111', 'dealloc 112', 'dealloc 113', 'dealloc 114', 'dealloc 115', 'dealloc 116', 'dealloc 117', 'dealloc 118', 'dealloc 119', 'dealloc 2']
+0
+== what an instance holds lives, and goes with it
+[] True held True
+['dealloc 3'] None
+== a chain: each before what it refers to
+[]
+['dealloc 10', 'dealloc 11', 'dealloc 12', 'dealloc 13']
+[] 20 22
+['dealloc 20', 'dealloc 21', 'dealloc 22', 'dealloc 23', 'dealloc 24', 'dealloc 25']
+3000 ['dealloc 1000', 'dealloc 1001'] ['dealloc 3998', 'dealloc 3999'] True
+== a long way from what the program holds
+[] (5000, 200000, 204999)
+[] (5000, 200000, 204999)
+5000 ['dealloc 200000', 'dealloc 200001'] ['dealloc 204998', 'dealloc 204999']
+[] (300, 210299, 210000)
+[] (300, 210299, 210000)
+300 ['dealloc 210299', 'dealloc 210298'] ['dealloc 210001', 'dealloc 210000']
+== two that share a third
+['dealloc 30']
+['dealloc 31', 'dealloc 32']
+== cycles
+['dealloc 40'] True
+[] 0
+['dealloc 42', 'dealloc 41'] True
+['dealloc 44', 'dealloc 45', 'dealloc 43'] True
+5 ['dealloc 50', 'dealloc 51', 'dealloc 52', 'dealloc 53', 'dealloc 54'] True
+500 500 True
+== objects that hold on to themselves while they let go
+['dealloc 55', 'dealloc 56']
+['dealloc 57', 'dealloc 58', 'dealloc 59'] True
+== a cycle through objects of Python
+['dealloc 60'] None
+== a cycle that something hangs off, and one that is held
+['dealloc 61', 'dealloc 62', 'dealloc 63', 'dealloc 64']
+[] 66 True
+['dealloc 66', 'dealloc 65']
+== what the collector is not told of
+[]
+['dealloc 70', 'dealloc 71']
+[]
+== what is never given back stays
+[] True {74}
+[] True {74}
+[] True {74}
+== not tracked: not asked
+0
+[]
+1
+['dealloc 81']
+== tp_finalize
+0
+['finalize 90', 'dealloc 90']
+['dealloc 91', 'dealloc 92', 'finalize 91', 'finalize 92']
+== a finalizer that keeps the object
+['finalize 93']
+Watched 93 94 1
+['dealloc 93', 'dealloc 94']
+== a finalizer that keeps what the object refers to
+['finalize 95', 'dealloc 95']
+96 97
+['dealloc 96', 'dealloc 97']
+== classes that derive from the types
+(<class '__main__.Sub'>, <class 'lifecycle.Node'>, <class 'object'>) dict_keys(['attribute']) 110 x True
+True
+['dealloc 110'] None
+1 False False
+['dealloc 111']
+['dealloc 112', 'dealloc 113'] [('__del__', 112, True)]
+['dealloc 114'] [('__del__ in place of tp_finalize', 114)]
+== __del__ that brings the object back
+[] 1 120 121 True
+['dealloc 120', 'dealloc 121'] None
+== __del__ of an object of Python that gets at an instance
+[] 130 131
+['dealloc 130', 'dealloc 131']
+== what a finalizer brings back has its weak references, whoever else held it
+['dealloc 126'] True shared
+[] None
+[] True True 128
+['dealloc 127', 'dealloc 128'] [None, None]
+== a cycle of an instance and an object with a __del__: the finalizer sees it whole
+['dealloc 132'] [('__del__', 132, True)] None
+['dealloc 133'] [('__del__', 133, True)] None
+== a cycle in which a tp_finalize keeps its object: nothing of it is touched
+['finalize 134'] 0
+134 135 True 1 0
+['dealloc 134', 'dealloc 135'] True
+['finalize 134'] 0
+134 135 True 1 0
+['dealloc 134', 'dealloc 135'] True
+== weak references and their callbacks
+['dealloc 140'] None [('callback', True)]
+['dealloc 142', 'dealloc 141'] [None, None]
+== __class__
+Other 150
+TypeError: __class__ assignment: 'Plain' object layout differs from 'Other'
+TypeError: __class__ assignment: 'lifecycle.Node' object layout differs from 'Other'
+TypeError: __class__ assignment: 'lifecycle.Wide' object layout differs from 'Other'
+TypeError: __class__ assignment: 'SubOfWide' object layout differs from 'Other'
+TypeError: __class__ assignment: 'Sub' object layout differs from 'Plain'
+['dealloc 150']
+== a tp_dealloc that makes objects and tells the program
+['dealloc 160', 'dealloc 161', 'dealloc 162'] [160, 161]
+['dealloc 163', 'dealloc 164'] [163, 164]
+== a tp_dealloc that hands what the object refers to to the program
+['dealloc 165'] [166] 167
+['dealloc 166', 'dealloc 167']
+['dealloc 180'] [181] 182
+['dealloc 181', 'dealloc 182', 'dealloc 183', 'dealloc 184', 'dealloc 185', 'dealloc 186']
+['dealloc 169', 'dealloc 168'] []
+[]
+== the walks through the heap
+True ["<class 'lifecycle.Node'>", '[1, 2]'] True
+True False
+['dealloc 170']
+['Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node', 'Node']
+== gc.DEBUG_SAVEALL: what hangs off garbage that is handed to the program
+[]
+1 190 191
+[] 190
+['dealloc 190', 'dealloc 191']
+== many, while the program goes on
+0 588 [10000, 10050, 10100, 10150, 10200, 10250] [20000, 20050, 20100, 20150, 20200, 20250]
+12
+1 588 [10000, 10050, 10100, 10150, 10200, 10250] [20000, 20050, 20100, 20150, 20200, 20250]
+12
+2 588 [10000, 10050, 10100, 10150, 10200, 10250] [20000, 20050, 20100, 20150, 20200, 20250]
+12
+3 588 [10000, 10050, 10100, 10150, 10200, 10250] [20000, 20050, 20100, 20150, 20200, 20250]
+12
+4 588 [10000, 10050, 10100, 10150, 10200, 10250] [20000, 20050, 20100, 20150, 20200, 20250]
+12
+== an instance that only C holds, in another instance, keeps what Python knows of it
+[]
+kept True True True
+['dealloc 200', 'dealloc 201'] None
+== a tree with its children in lists, without and with the way back
+511 dealloc 400 dealloc 408 0
+511 dealloc 400 dealloc 408 some are asked to let go
+== many cycles through lists: one gc.collect()
+5000 5000
+5000 5000
+5000 5000
+== weak references to cyclic garbage die before anything is called, and those that are garbage themselves call nothing
+['dealloc 510'] None [('of the program', True, [])]
+   and what reference counts free
+['dealloc 511'] None [('held by the object', True, []), ('of the program', True, [])]
+== __class__ takes the reference to the type along
+1 0
+0 1 B
+0 0
+True
+== a metaclass with a __new__ of its own
+Polite.__new__ OfPolite
+of a base: TypeError: Metaclasses with custom tp_new are not supported.
+of a base, which returns 42: TypeError: Metaclasses with custom tp_new are not supported.
+as an argument: TypeError: Metaclasses with custom tp_new are not supported.
+without one, of a base: Plain
+without one, as an argument: Plain
+== immutable types
+from a mutable base: TypeError: Creating immutable type lifecycle.ImmutableNode from mutable base lifecycle.Node
+__class__ from it: TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+__class__ to it: TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+== Py_tp_base and Py_tp_bases in one spec
+['Wide']
+['Wide']
+== PyObject_GC_IsTracked(), PyObject_GC_IsFinalized() of whatever object
+1 1 0 0 0 1 1 0
+False 0 True 1
+== a type that tells the collector of what its instances hold, and has no tp_dealloc
+True True
+True Told Loud
+what only the type refers to is finalized
+True True
+True ToldAndCleared Loud
+what only the type refers to is finalized
+== a constructor that gives up and frees the memory itself
+0 []
+== at the end

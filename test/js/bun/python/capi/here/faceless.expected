@@ -1,0 +1,77 @@
+== the face has died: nothing of Python's leads to the instance, and what it holds is there
+before its turn: events so far []
+  in gc.get_objects() 0
+  among the referrers of what it holds 0
+  weak references to it and to what it holds None True
+[1000001] 0
+== its address is read as an object before its turn: it comes back, with another face
+before its turn: events so far []
+[] Sub, data of 2, the same id(): True, attributes {}, the old weak reference None
+2 1
+[1000002] 0
+== C hands it to the program before its turn, by a pointer that it does not own: the same
+before its turn: events so far []
+[] Sub, data of 3, the same id(): True, attributes {}, the old weak reference None
+[1000003] 0
+== C takes a reference to it before its turn, and tells nobody: it lives on without a face, until C gives the reference back
+before its turn: events so far []
+[] 1
+[]
+given back, and no collection since: [1000004]
+== C asks for its data before its turn, and after its end
+[4000005, 1000006, 1000005]
+[1000005, 4000000, 1000006]
+== a tp_dealloc hands the object to the program: a face for the occasion, which leads to nothing
+[1000007] Chatty -1
+SystemError: the object of type 'Chatty' has been destroyed
+[]
+== in a cycle through an object of Python's: nothing is hidden; its weak references die, it is cleared, and a later collection finds the face dead
+before its turn: events so far []
+  in gc.get_objects() 2
+  among the referrers of what it holds 1
+  weak references to it and to what it holds None True
+[2000008, 1000008] 0
+== the same, and the program takes what leads to it before its turn: it is cleared in the program's hands, and valid
+before its turn: events so far []
+[2000009] Sub, data of 9, the same id(): True, attributes {'attribute': 'of the face'}, the old weak reference None holds something: False
+   it gets into another cycle, and is cleared again
+[2000009, 1000009] 0
+== the same, and C hands it to the program before its turn: it is not cleared
+before its turn: events so far []
+[] Sub, data of 10, the same id(): True, attributes {'attribute': 'of the face'}, the old weak reference None holds something: True
+[2000010, 1000010] 0
+== the same, and C puts it into a list of the program's, and takes no reference itself: it is not cleared
+before its turn: events so far []
+[] Sub, data of 40, the same id(): True, attributes {'attribute': 'of the face'}, the old weak reference None holds something: True
+[2000040, 1000040] 0
+== the same, and the program hands it to C before its turn: it is seen to have it, and nothing is cleared
+before its turn: events so far []
+[] Sub, data of 11, the same id(): True, attributes {'attribute': 'of the face'}, the old weak reference None holds something: True
+[2000011, 1000011] 0
+== the same, and the program asks for its id(), or its hash()
+before its turn: events so far []
+[] holds something: True
+[2000021, 1000021] 0
+before its turn: events so far []
+[] holds something: True
+[2000022, 1000022] 0
+== the same, and C takes a reference to it, and tells nobody
+before its turn: events so far []
+[] 2
+[2000023, 1000023] 0
+== a cycle from C to C: the faces have died. C takes another reference to one, and tells nobody: neither is cleared
+before its turn: events so far []
+[] 0
+[1000024, 1000025, 2000024] 0
+== two in a cycle, and C hands one of them to the program before their turn: the other can be reached from it, and is not cleared either
+before its turn: events so far []
+before its turn: events so far []
+[] Sub, data of 13, the same id(): True, attributes {'attribute': 'of the face'}, the old weak reference None both hold something: True True
+[1000012, 1000013, 2000012, 2000013] 0
+== no cycle, parent -> list -> child -> (C) grandchild, and the program takes the child before the parent's turn: what the child holds is whole
+before its turn: events so far []
+[1000014] {'attribute': 'of the face'} True True
+[1000015, 1000016] 0
+== a tp_clear that lets go of nothing is called once, and gc.collect() comes to an end
+[2000030] [] []
+[2000030] [] []

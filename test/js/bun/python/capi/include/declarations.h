@@ -70,3 +70,38 @@ extern PyObject *PyExc_ArithmeticError, *PyExc_AssertionError, *PyExc_AttributeE
     *PyExc_SystemError, *PyExc_SystemExit, *PyExc_TabError, *PyExc_TimeoutError, *PyExc_TypeError, *PyExc_UnboundLocalError,
     *PyExc_UnicodeDecodeError, *PyExc_UnicodeEncodeError, *PyExc_UnicodeError, *PyExc_UnicodeTranslateError, *PyExc_UnicodeWarning,
     *PyExc_UserWarning, *PyExc_ValueError, *PyExc_Warning, *PyExc_ZeroDivisionError;
+
+/* Memory */
+void *PyMem_Malloc(size_t);
+void *PyMem_Calloc(size_t, size_t);
+void *PyMem_Realloc(void *, size_t);
+void PyMem_Free(void *);
+void *PyMem_RawMalloc(size_t);
+void *PyMem_RawCalloc(size_t, size_t);
+void *PyMem_RawRealloc(void *, size_t);
+void PyMem_RawFree(void *);
+void *PyObject_Malloc(size_t);
+void *PyObject_Calloc(size_t, size_t);
+void *PyObject_Realloc(void *, size_t);
+void PyObject_Free(void *);
+
+/* Types that extensions make, and the life of their instances */
+PyObject *PyType_FromSpec(PyType_Spec *);
+PyObject *PyType_FromSpecWithBases(PyType_Spec *, PyObject *);
+PyObject *PyType_FromModuleAndSpec(PyObject *, PyType_Spec *, PyObject *);
+PyObject *PyType_FromMetaclass(PyTypeObject *, PyObject *, PyType_Spec *, PyObject *);
+int PyType_IsSubtype(PyTypeObject *, PyTypeObject *);
+void *PyType_GetSlot(PyTypeObject *, int);
+Py_ssize_t PyType_GetTypeDataSize(PyTypeObject *);
+PyObject *PyType_GenericAlloc(PyTypeObject *, Py_ssize_t);
+PyObject *_PyObject_New(PyTypeObject *);
+PyObject *_PyObject_GC_New(PyTypeObject *);
+void *PyObject_GetTypeData(PyObject *, PyTypeObject *);
+void *PyObject_GetTypeData_DuringGC(PyObject *, PyTypeObject *);
+void PyObject_GC_Track(void *);
+void PyObject_GC_UnTrack(void *);
+void PyObject_GC_Del(void *);
+int PyObject_GC_IsTracked(PyObject *);
+int PyObject_GC_IsFinalized(PyObject *);
+int PyObject_CallFinalizerFromDealloc(PyObject *);
+void PyObject_ClearWeakRefs(PyObject *);

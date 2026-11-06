@@ -2220,6 +2220,25 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(result).toEqual({ snap: file(format, before), exitCode: 1 });
       });
 
+      // Without a filter, the hook of a scope that has no test runs. With -t it does not.
+      test("the hook of a scope with no test, which -t leaves out", async () => {
+        const before = { [hooked("hooks only")]: "h", "top 1": "t" };
+        const result = await update(
+          {
+            "a.test.js": `
+              describe("hooks only", () => {
+                beforeAll(() => { expect("h").toMatchSnapshot(); });
+              });
+              test("top", () => { expect("t").toMatchSnapshot(); });
+            `,
+            "__snapshots__/a.test.js.snap": file(format, before),
+          },
+          "-t",
+          "top",
+        );
+        expect(result).toEqual({ snap: file(format, before), exitCode: 0 });
+      });
+
       test("a hook that ran and takes no snapshot anymore does not", async () => {
         const result = await update({
           "a.test.js": `

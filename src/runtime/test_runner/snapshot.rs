@@ -650,13 +650,16 @@ impl Snapshots {
         let mut results: Vec<(*const ExecutionEntry, TestResult)> = Vec::with_capacity(buntest.execution.sequences.len());
         let mut all_ran_to_the_end = true;
         for sequence in &buntest.execution.sequences {
-            match sequence.test_entry {
-                Some(test) => results.push((test.as_ptr().cast_const(), sequence.result)),
-                // A sequence with no test is a hook of a scope, such as `beforeAll`.
-                None => all_ran_to_the_end &= sequence.result == TestResult::Pass,
+            // A sequence with no test is a hook of a scope, such as `beforeAll`.
+            all_ran_to_the_end &= sequence.test_entry.is_some() || sequence.result == TestResult::Pass;
+            if let Some(entry) = sequence.test_entry.or(sequence.first_entry) {
+                results.push((entry.as_ptr().cast_const(), sequence.result));
             }
         }
         index_sort::sort_slice_unstable_by(&mut results, |a, b| a.0.cmp(&b.0));
+        let result_of = |entry: &ExecutionEntry| {
+            results.binary_search_by(|(of, _)| of.cmp(&core::ptr::from_ref(entry))).ok().map(|i| results[i].1)
+        };
 
         // An older Bun wrote its own keys into the files of the other two.
         let formats = [file.format, Format::Bun];
@@ -669,6 +672,10 @@ impl Snapshots {
             if scope.failed {
                 return Ran::NotAllRegistered;
             }
+            // With a filter or `test.only`, the hooks of a scope that runs no test have no sequence.
+            for hook in scope.before_all.iter().chain(&scope.after_all).chain(&scope.around_all) {
+                all_ran_to_the_end &= result_of(hook).is_some();
+            }
             for entry in &scope.entries {
                 let test: &ExecutionEntry = match entry {
                     TestScheduleEntry::Describe(describe) => {
@@ -677,7 +684,7 @@ impl Snapshots {
                     }
                     TestScheduleEntry::TestCallback(test) => test,
                 };
-                let result = results.binary_search_by(|(of, _)| of.cmp(&core::ptr::from_ref(test))).ok().map(|i| results[i].1);
+                let result = result_of(test);
                 let ran_to_the_end = match test.base.mode {
                     ScopeMode::Normal => result == Some(TestResult::Pass),
                     // A todo with no body takes no snapshot. Only `--todo` runs a body, so another run can't tell what the body asks for.

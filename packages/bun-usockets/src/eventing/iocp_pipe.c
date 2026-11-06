@@ -48,6 +48,10 @@ enum {
 /* The most a helper thread reads at once. Each read is handed over between two threads, whatever its size. */
 #define LIBUS_PIPE_THREAD_CHUNK (4 * LIBUS_PIPE_CHUNK)
 
+/* How long a helper thread whose pipe is closed waits for another pipe. A shell script opens the standard output anew
+ * for each builtin that writes to it, and starting a thread takes several times as long as waking one. */
+#define LIBUS_PIPE_THREAD_IDLE_MS 10000
+
 /* The longest pause between two attempts to get a helper thread out of a call. */
 #define LIBUS_PIPE_RETRY_MAX_MS 128
 
@@ -354,8 +358,7 @@ static void us_internal_pipe_thread_write(struct us_internal_pipe_thread_t *thre
     SetEvent(thread->write_done);
 }
 
-static DWORD WINAPI us_internal_pipe_thread_main(void *arg) {
-    struct us_internal_pipe_thread_t *thread = arg;
+static void us_internal_pipe_thread_serve(struct us_internal_pipe_thread_t *thread) {
     for (;;) {
         if (__atomic_load_n(&thread->is_interrupted, __ATOMIC_SEQ_CST)) {
             NtWaitForSingleObject(thread->wake, FALSE, NULL);
@@ -407,7 +410,55 @@ static DWORD WINAPI us_internal_pipe_thread_main(void *arg) {
     NtClose(thread->pipe);
     thread->pipe = NULL;
     us_internal_pipe_thread_unref(thread);
-    return 0;
+}
+
+/* A helper thread without a pipe. It is on that thread's stack. */
+struct us_internal_pipe_idle_thread_t {
+    struct us_internal_pipe_idle_thread_t *next;
+    /* Auto-reset. `thread` is set. */
+    HANDLE wake;
+    struct us_internal_pipe_thread_t *thread;
+};
+
+/* Last in, first out, so that the rest get to end. */
+static struct us_internal_pipe_idle_thread_t *us_internal_pipe_idle_threads;
+static SRWLOCK us_internal_pipe_idle_threads_lock = SRWLOCK_INIT;
+
+/* Takes `idle` off the list, or whichever is first if that is NULL. Returns it, or NULL if it is not there. */
+static struct us_internal_pipe_idle_thread_t *us_internal_pipe_idle_threads_take(struct us_internal_pipe_idle_thread_t *idle) {
+    AcquireSRWLockExclusive(&us_internal_pipe_idle_threads_lock);
+    struct us_internal_pipe_idle_thread_t **link = &us_internal_pipe_idle_threads;
+    while (idle && *link && *link != idle) {
+        link = &(*link)->next;
+    }
+    if ((idle = *link)) {
+        *link = idle->next;
+    }
+    ReleaseSRWLockExclusive(&us_internal_pipe_idle_threads_lock);
+    return idle;
+}
+
+static DWORD WINAPI us_internal_pipe_thread_main(void *arg) {
+    struct us_internal_pipe_idle_thread_t idle = { .wake = CreateEventW(NULL, FALSE, FALSE, NULL), .thread = arg };
+    for (;;) {
+        us_internal_pipe_thread_serve(idle.thread);
+        if (!idle.wake) {
+            return 0;
+        }
+        AcquireSRWLockExclusive(&us_internal_pipe_idle_threads_lock);
+        idle.next = us_internal_pipe_idle_threads;
+        us_internal_pipe_idle_threads = &idle;
+        ReleaseSRWLockExclusive(&us_internal_pipe_idle_threads_lock);
+        LARGE_INTEGER timeout = { .QuadPart = -LIBUS_PIPE_THREAD_IDLE_MS * LIBUS_100NS_PER_MS };
+        if (NtWaitForSingleObject(idle.wake, FALSE, &timeout) == STATUS_TIMEOUT) {
+            if (us_internal_pipe_idle_threads_take(&idle)) {
+                NtClose(idle.wake);
+                return 0;
+            }
+            /* Taken off the list a moment ago. */
+            NtWaitForSingleObject(idle.wake, FALSE, NULL);
+        }
+    }
 }
 
 static struct us_internal_pipe_thread_t *us_internal_pipe_thread_create(HANDLE pipe, HANDLE read_done, HANDLE write_done) {
@@ -425,6 +476,12 @@ static struct us_internal_pipe_thread_t *us_internal_pipe_thread_create(HANDLE p
         DuplicateHandle(GetCurrentProcess(), pipe, GetCurrentProcess(), &thread->pipe, 0, FALSE, DUPLICATE_SAME_ACCESS) &&
         DuplicateHandle(GetCurrentProcess(), read_done, GetCurrentProcess(), &thread->read_done, 0, FALSE, DUPLICATE_SAME_ACCESS) &&
         DuplicateHandle(GetCurrentProcess(), write_done, GetCurrentProcess(), &thread->write_done, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        struct us_internal_pipe_idle_thread_t *idle = us_internal_pipe_idle_threads_take(NULL);
+        if (idle) {
+            idle->thread = thread;
+            SetEvent(idle->wake);
+            return thread;
+        }
         handle = CreateThread(NULL, LIBUS_HELPER_STACK_COMMIT, us_internal_pipe_thread_main, thread, 0, NULL);
     }
     if (!handle) {

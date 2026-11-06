@@ -1305,8 +1305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 local = p.parse_binding(ParseBindingOptions {
                     is_using_statement: opts.is_using_statement,
                 })?;
-                // The test above covers a plain name. A pattern can bind "let" at any depth,
-                // unless a TypeScript "declare" erases it.
+                // A plain name has the test above. A TypeScript "declare" pattern binds nothing.
                 if matches!(local.data, B::B::BIdentifier(_))
                     || (Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare)
                 {

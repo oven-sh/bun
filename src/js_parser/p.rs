@@ -5220,8 +5220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn report_let_as_lexical_name(&mut self, loc: bun_ast::Loc) {
         let r = js_lexer::range_of_identifier(self.source, loc);
-        // `parse_property_binding` names a binding that is not a name after the last identifier
-        // token, which can be the `let` keyword: `let {...1} = {}`. That error is already logged.
+        // `parse_property_binding` takes the name of `{...1}` from the previous identifier token.
         if r.len == 0 {
             return;
         }

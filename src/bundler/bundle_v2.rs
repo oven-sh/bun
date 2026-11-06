@@ -4166,8 +4166,7 @@ pub mod bv2_impl {
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
             // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
+            // worker pool; `task_callback_wrap` frees it once the task ran.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
                 ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),

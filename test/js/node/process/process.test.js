@@ -88,6 +88,128 @@ it("process", () => {
   expect(cwd).toEqual(process.cwd());
 });
 
+it("each function of process has the length that Node gives it", async () => {
+  // What the script below prints under Node v26.3.0, in a child with an IPC channel. A function that process
+  // gains fails this test until it has a line here: take the number from Node.
+  const lengths = {
+    _debugEnd: 0,
+    _debugProcess: 0,
+    _fatalException: 2,
+    _getActiveHandles: 0,
+    _getActiveRequests: 0,
+    _kill: 0,
+    _linkedBinding: 1,
+    _rawDebug: 0,
+    _startProfilerIdleNotifier: 0,
+    _stopProfilerIdleNotifier: 0,
+    _tickCallback: 0,
+    abort: 0,
+    addListener: 2,
+    availableMemory: 0,
+    binding: 1,
+    chdir: 1,
+    constrainedMemory: 0,
+    constructor: 0,
+    cpuUsage: 1,
+    cwd: 0,
+    disconnect: 0,
+    dlopen: 0,
+    emit: 1,
+    emitWarning: 4,
+    eventNames: 0,
+    execve: 1,
+    exit: 1,
+    "finalization.register": 2,
+    "finalization.registerBeforeExit": 2,
+    "finalization.unregister": 1,
+    getActiveResourcesInfo: 0,
+    getBuiltinModule: 1,
+    getMaxListeners: 0,
+    hasUncaughtExceptionCaptureCallback: 0,
+    hrtime: 1,
+    "hrtime.bigint": 0,
+    kill: 2,
+    listenerCount: 2,
+    listeners: 1,
+    loadEnvFile: 0,
+    memoryUsage: 0,
+    "memoryUsage.rss": 0,
+    nextTick: 1,
+    off: 2,
+    on: 2,
+    once: 2,
+    openStdin: 0,
+    prependListener: 2,
+    prependOnceListener: 2,
+    rawListeners: 1,
+    reallyExit: 0,
+    ref: 1,
+    removeAllListeners: 1,
+    removeListener: 2,
+    "report.getReport": 1,
+    "report.writeReport": 2,
+    resourceUsage: 0,
+    send: 4,
+    setMaxListeners: 1,
+    setSourceMapsEnabled: 1,
+    setUncaughtExceptionCaptureCallback: 1,
+    threadCpuUsage: 1,
+    umask: 1,
+    unref: 1,
+    uptime: 0,
+  };
+  // Windows has no users and groups by number.
+  const posixOnly = {
+    getegid: 0,
+    geteuid: 0,
+    getgid: 0,
+    getgroups: 0,
+    getuid: 0,
+    initgroups: 2,
+    setegid: 1,
+    seteuid: 1,
+    setgid: 1,
+    setgroups: 1,
+    setuid: 1,
+  };
+  // Node v26.3.0 has no process.assert.
+  const notInNode = { assert: 1 };
+
+  const src = `
+    const lengths = {};
+    const add = (path, value) => {
+      if (typeof value === "function") lengths[path] = value.length;
+    };
+    const addMembers = (path, holder) => {
+      for (const name of Object.getOwnPropertyNames(holder)) add(path + "." + name, holder[name]);
+    };
+    for (let object = process; object !== Object.prototype; object = Object.getPrototypeOf(object)) {
+      for (const name of Object.getOwnPropertyNames(object)) {
+        const value = process[name];
+        add(name, value);
+        if (typeof value === "function") addMembers(name, value);
+      }
+    }
+    addMembers("report", process.report);
+    addMembers("finalization", process.finalization);
+    console.log(JSON.stringify(lengths));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    // process.send and process.disconnect exist only in a child with an IPC channel.
+    ipc() {},
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lengths: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    lengths: { ...lengths, ...(isWindows ? {} : posixOnly), ...notInNode },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.title with UTF-16 characters", () => {
   // Test with various UTF-16 characters
   process.title = "Hello, 世界! 🌍";

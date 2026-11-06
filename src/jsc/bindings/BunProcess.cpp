@@ -3059,13 +3059,13 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, report, "compact"_s, JSC::jsBoolean(false));
     putDirectNamed(vm, report, "directory"_s, JSC::jsEmptyString(vm));
     putDirectNamed(vm, report, "filename"_s, JSC::jsEmptyString(vm));
-    putDirectNamed(vm, report, "getReport"_s, JSC::JSFunction::create(vm, globalObject, 0, String("getReport"_s), Process_functionGetReport, ImplementationVisibility::Public));
+    putDirectNamed(vm, report, "getReport"_s, JSC::JSFunction::create(vm, globalObject, 1, String("getReport"_s), Process_functionGetReport, ImplementationVisibility::Public));
     putDirectNamed(vm, report, "reportOnFatalError"_s, JSC::jsBoolean(false));
     putDirectNamed(vm, report, "reportOnSignal"_s, JSC::jsBoolean(false));
     putDirectNamed(vm, report, "reportOnUncaughtException"_s, JSC::jsBoolean(process->m_reportOnUncaughtException));
     putDirectNamed(vm, report, "excludeEnv"_s, JSC::jsBoolean(false));
     putDirectNamed(vm, report, "excludeEnv"_s, JSC::jsString(vm, String("SIGUSR2"_s)));
-    putDirectNamed(vm, report, "writeReport"_s, JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public));
+    putDirectNamed(vm, report, "writeReport"_s, JSC::JSFunction::create(vm, globalObject, 2, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public));
     RETURN_IF_EXCEPTION(scope, {});
     return report;
 }
@@ -3212,7 +3212,7 @@ __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSO
 static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0, String("hrtime"_s), Process_functionHRTime, ImplementationVisibility::Public);
+    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 1, String("hrtime"_s), Process_functionHRTime, ImplementationVisibility::Public);
 
     JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0, String("bigint"_s), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
@@ -4197,7 +4197,7 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
-        return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), JSC::removableFunction<Bun::Feature::ProcessIpc, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::IpcHost::jsSend>(), ImplementationVisibility::Public);
+        return JSC::JSFunction::create(vm, globalObject, 4, String("send"_s), JSC::removableFunction<Bun::Feature::ProcessIpc, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::IpcHost::jsSend>(), ImplementationVisibility::Public);
     } else {
         return jsUndefined();
     }
@@ -4220,7 +4220,7 @@ static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
-        return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), JSC::removableFunction<Bun::Feature::ProcessIpc, JSC::RemovedFeatureStub::Throw, Bun__Process__disconnect>(), ImplementationVisibility::Public);
+        return JSC::JSFunction::create(vm, globalObject, 0, String("disconnect"_s), JSC::removableFunction<Bun::Feature::ProcessIpc, JSC::RemovedFeatureStub::Throw, Bun__Process__disconnect>(), ImplementationVisibility::Public);
     } else {
         return jsUndefined();
     }
@@ -6149,12 +6149,12 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _eval                            processGetEval                                      CustomAccessor
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
-  _kill                            Process_functionReallyKill                          Function 2
-  _linkedBinding                   Process_stubEmptyFunction                           Function 0
+  _kill                            Process_functionReallyKill                          Function 0
+  _linkedBinding                   Process_stubEmptyFunction                           Function 1
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
   _rawDebug                        constructRawDebug                                   PropertyCallback
   _tickCallback                    Process_stubEmptyFunction                           Function 0
-  abort                            Process_functionAbort                               Function 1
+  abort                            Process_functionAbort                               Function 0
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback
   loadEnvFile                      constructLoadEnvFile                                PropertyCallback
   finalization                     constructFinalization                               PropertyCallback
@@ -6172,18 +6172,18 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   constrainedMemory                Process_functionConstrainedMemory                   Function 0
   cpuUsage                         Process_functionCpuUsage                            Function 1
   threadCpuUsage                   Process_functionThreadCpuUsage                      Function 1
-  cwd                              Process_functionCwd                                 Function 1
+  cwd                              Process_functionCwd                                 Function 0
   debugPort                        processDebugPort                                    CustomAccessor
   disconnect                       constructProcessDisconnect                          PropertyCallback
-  dlopen                           Process_functionDlopen                              Function 1
-  emitWarning                      Process_emitWarning                                 Function 1
+  dlopen                           Process_functionDlopen                              Function 0
+  emitWarning                      Process_emitWarning                                 Function 4
   env                              constructEnv                                        PropertyCallback
   execArgv                         constructExecArgv                                   PropertyCallback
   execPath                         constructExecPath                                   PropertyCallback
-  execve                           Process_functionExecve                              Function 3
+  execve                           Process_functionExecve                              Function 1
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
-  _fatalException                  Process_functionFatalException                      Function 1
+  _fatalException                  Process_functionFatalException                      Function 2
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
@@ -6199,7 +6199,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
   ppid                             processPpid                                         CustomAccessor
-  reallyExit                       Process_functionReallyExit                          Function 1
+  reallyExit                       Process_functionReallyExit                          Function 0
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
   report                           constructProcessReportObject                        PropertyCallback
@@ -6214,7 +6214,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
   unref                            Process_unref                                       Function 1
-  uptime                           Process_functionUptime                              Function 1
+  uptime                           Process_functionUptime                              Function 0
   version                          constructVersion                                    PropertyCallback
   versions                         constructVersions                                   PropertyCallback
 

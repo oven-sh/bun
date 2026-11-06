@@ -764,10 +764,12 @@ export function createOnWarning(
   };
 }
 
-export function loadEnvFile(path?: string) {
+export function loadEnvFile() {
   // process.loadEnvFile(path = ".env"): parse a dotenv file and apply it to
   // process.env. Reading with fs gives the Node-shaped ENOENT error
   // ({ code, syscall: "open", path }) for missing files.
+  // Not a declared parameter: Node's `path` has a default so that loadEnvFile.length is 0.
+  let path: string | undefined = $argument(0);
   if (path === undefined) {
     path = ".env";
   } else {

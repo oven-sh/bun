@@ -5,8 +5,8 @@ use bun_core::strings::{index_of, index_of_any, index_of_char_usize};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, end_of_expr, start_inside_parentheses,
-    start_of,
+    BinOp, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, end_of_expr,
+    start_inside_parentheses, start_of,
 };
 use rustc_hash::FxHashMap;
 
@@ -35,9 +35,14 @@ struct ReplacedText {
 
 /// What an expression is an operand of.
 #[derive(Copy, Clone, PartialEq)]
-enum Place {
+pub(super) enum Place {
     /// Something is read from it, or it is called.
-    Target,
+    Target {
+        /// By what is no link of an optional chain: `a.b`, `a()` and `new a()`, not `a?.b`.
+        ends_chain: bool,
+        /// Round brackets that are written around the syntax of a type stand between the two. They stay where the type is cut: `(a as T).b`.
+        is_in_written_brackets: bool,
+    },
     Operand {
         of: BinOp,
         is_left: bool,
@@ -673,7 +678,7 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => return None,
         };
         let mut printed = Vec::new();
-        let is_in_brackets = self.place_of(expression) == Place::Target;
+        let is_in_brackets = matches!(self.place_of(expression), Place::Target { .. });
         if !self.append_literal(value, is_in_brackets, &mut printed) {
             return None;
         }
@@ -729,12 +734,17 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    fn place_of(&self, expression: ExprId) -> Place {
+    pub(super) fn place_of(&self, expression: ExprId) -> Place {
         let hir = self.hir;
         let mut child = expression;
+        let mut is_in_written_brackets = false;
         loop {
             let Parent::Expr(parent) = self.bound.parent_of_expr(child) else {
                 return Place::Other;
+            };
+            let target = || Place::Target {
+                ends_chain: !self.is_chain_root(parent),
+                is_in_written_brackets,
             };
             return match hir[parent].kind {
                 ExprKind::As { .. }
@@ -742,16 +752,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ExprKind::AsConst(_)
                 | ExprKind::NonNull(_)
                 | ExprKind::Instantiation { .. } => {
+                    is_in_written_brackets |=
+                        (hir.expr_flags(parent)).contains(ExprFlags::PARENTHESIZED);
                     child = parent;
                     continue;
                 }
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == child => {
-                    Place::Target
-                }
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == child => target(),
                 ExprKind::Call(site) | ExprKind::New(site) | ExprKind::TaggedTemplate(site)
                     if hir[site].callee == child =>
                 {
-                    Place::Target
+                    target()
                 }
                 ExprKind::Binary { op, left, .. } => Place::Operand {
                     of: op,
@@ -769,23 +779,32 @@ impl FileLowering<'_, '_, '_, '_> {
         if place == Place::Other {
             return false;
         }
+        let is_target = matches!(place, Place::Target { .. });
         let printed = self.follow_replaced_names(operand);
         match self.find_literal_value(printed) {
-            Some(Constant::Undefined | Constant::Boolean(_)) => return place == Place::Target,
-            Some(Constant::Number(number)) => {
-                return place == Place::Target && number.is_sign_negative();
-            }
+            Some(Constant::Undefined | Constant::Boolean(_)) => return is_target,
+            Some(Constant::Number(number)) => return is_target && number.is_sign_negative(),
             Some(_) => return false,
             None => {}
         }
         match hir[printed].kind {
             ExprKind::Binary { op: inner, .. } => match place {
                 Place::Operand { of, is_left } => needs_parentheses(of, inner, is_left),
-                Place::Target | Place::OperandOfPrefix | Place::Other => true,
+                Place::Target { .. } | Place::OperandOfPrefix | Place::Other => true,
             },
             ExprKind::Cond { .. } | ExprKind::Assign { .. } | ExprKind::Yield { .. } => true,
             ExprKind::Fn(function) => hir[function].kind == FnKind::Arrow,
-            ExprKind::Unary { .. } | ExprKind::Await(_) => place == Place::Target,
+            ExprKind::Unary { .. } | ExprKind::Await(_) => is_target,
+            // Written brackets around the syntax of a type already stand where the printer puts those of a link.
+            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => match place {
+                Place::Target {
+                    ends_chain,
+                    is_in_written_brackets,
+                } => {
+                    !is_in_written_brackets && self.is_link_printed_in_brackets(printed, ends_chain)
+                }
+                Place::Operand { .. } | Place::OperandOfPrefix | Place::Other => false,
+            },
             _ => false,
         }
     }

@@ -23,6 +23,21 @@ impl FileLowering<'_, '_, '_, '_> {
             Chain::No => false,
         }
     }
+
+    // Bun's printer puts a link of an optional chain in round brackets where what reads from it or calls it is no link of the chain: `(a?.b).c`, `(a?.b)()`.
+    pub(in crate::lower) fn is_link_printed_in_brackets(
+        &self,
+        link: ExprId,
+        ends_chain: bool,
+    ) -> bool {
+        self.is_chain_root(link)
+            && match self.runs_as_written() {
+                // Nothing prints such a file anew: it has the brackets that are written, and no others.
+                true => (self.hir.expr_flags(link)).contains(ExprFlags::PARENTHESIZED),
+                // `ExprFlag::HasNonOptionalChainParent` of js_printer, also for `new` and a tag.
+                false => ends_chain,
+            }
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {

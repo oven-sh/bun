@@ -1,4 +1,5 @@
 // A call says what the program calls its callee, for "a.b.c is not a function": the callee as it is written where it consists of names, `this`, `super` and names in brackets. Of anything else that ends in a name, the name.
+// A link of an optional chain stands in round brackets where what calls it or reads from it is no link of the chain, as Bun's transpiler prints it: `(o?.a).m`. So does an initializer that is printed in place of a name.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="callResult"
 // CHECK: [[inner]] = Call {{*}}calleeName="f"
@@ -34,6 +35,47 @@
 // CHECK: = Call {{*}}calleeName="o?.m"
 // CHECK-LABEL: function {{*}}name="optionalThenMember"
 // CHECK: = Call {{*}}calleeName="o?.a.m"
+// CHECK-LABEL: function {{*}}name="parenthesizedChain"
+// CHECK: = Call {{*}}calleeName="(o?.a.m)"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainAsserted"
+// CHECK: = Call {{*}}calleeName="(o?.m)"
+// CHECK: = Call {{*}}calleeName="(o?.m)"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainConstructed"
+// CHECK: = Construct {{*}}calleeName="(o?.M)"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainTag"
+// CHECK: = Call {{*}}calleeName="(o?.t)"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenChain"
+// CHECK: = Call {{*}}calleeName="o?.a?.m"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenComputed"
+// CHECK: = Call {{*}}calleeName="(o?.a)[k]"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenLongPaths"
+// CHECK: = Call {{*}}calleeName="(o?.aaaaaaaaaaaaaaaaaaaa).bbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccc.dddddddddd.m"
+// CHECK: = Call {{*}}calleeName="m"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenMember"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenMemberAsserted"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenMemberConstructed"
+// CHECK: = Construct {{*}}calleeName="(o?.a).M"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenMemberTag"
+// CHECK: = Call {{*}}calleeName="(o?.a).t"
+// CHECK-LABEL: function {{*}}name="parenthesizedChainThenString"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
+// CHECK-LABEL: function {{*}}name="parenthesizedLongerChainThenMember"
+// CHECK: = Call {{*}}calleeName="(o?.a.b).m"
+// CHECK-LABEL: function {{*}}name="replacedByChainConstructed"
+// CHECK: = Construct {{*}}calleeName="(o?.M)"
+// CHECK-LABEL: function {{*}}name="replacedByChainThenChain"
+// CHECK: = Call {{*}}calleeName="o?.a?.m"
+// CHECK-LABEL: function {{*}}name="replacedByChainThenMember"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
+// CHECK-LABEL: function {{*}}name="replacedByChainThenMemberAsserted"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
+// CHECK-LABEL: function {{*}}name="replacedByChainThenMemberConstructed"
+// CHECK: = Construct {{*}}calleeName="(o?.a).M"
+// CHECK-LABEL: function {{*}}name="replacedTwiceByChainThenMember"
+// CHECK: = Call {{*}}calleeName="(o?.a).m"
 // CHECK-LABEL: function {{*}}name="tooLong"
 // CHECK: = Call {{*}}calleeName="m"
 // CHECK-LABEL: function {{*}}name="privateMember"
@@ -97,6 +139,92 @@ export function optionalMember(o: any) {
 
 export function optionalThenMember(o: any) {
   o?.a.m();
+}
+
+export function parenthesizedChain(o: any) {
+  (o?.a.m)();
+}
+
+export function parenthesizedChainAsserted(o: any) {
+  (o?.m as any)();
+  (o?.m)!();
+}
+
+export function parenthesizedChainConstructed(o: any) {
+  new (o?.M)();
+}
+
+export function parenthesizedChainTag(o: any) {
+  (o?.t)`x`;
+}
+
+export function parenthesizedChainThenChain(o: any) {
+  (o?.a)?.m();
+}
+
+export function parenthesizedChainThenComputed(o: any, k: any) {
+  (o?.a)[k]();
+}
+
+export function parenthesizedChainThenLongPaths(o: any) {
+  (o?.aaaaaaaaaaaaaaaaaaaa).bbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccc.dddddddddd.m();
+  (o?.aaaaaaaaaaaaaaaaaaaa).bbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccc.ddddddddddd.m();
+}
+
+export function parenthesizedChainThenMember(o: any) {
+  (o?.a).m();
+}
+
+export function parenthesizedChainThenMemberAsserted(o: any) {
+  (o?.a as any).m();
+  (o?.a)!.m();
+}
+
+export function parenthesizedChainThenMemberConstructed(o: any) {
+  new (o?.a).M();
+}
+
+export function parenthesizedChainThenMemberTag(o: any) {
+  (o?.a).t`x`;
+}
+
+export function parenthesizedChainThenString(o: any) {
+  (o?.a)["m"]();
+}
+
+export function parenthesizedLongerChainThenMember(o: any) {
+  (o?.a.b).m();
+}
+
+export function replacedByChainConstructed(o: any) {
+  const r = o?.M;
+  new r();
+}
+
+export function replacedByChainThenChain(o: any) {
+  const r = o?.a;
+  r?.m();
+}
+
+export function replacedByChainThenMember(o: any) {
+  const r = o?.a;
+  r.m();
+}
+
+export function replacedByChainThenMemberAsserted(o: any) {
+  const r = o?.a;
+  (r as any).m();
+}
+
+export function replacedByChainThenMemberConstructed(o: any) {
+  const r = o?.a;
+  new r.M();
+}
+
+export function replacedTwiceByChainThenMember(o: any) {
+  const first = o?.a;
+  const second = first;
+  second.m();
 }
 
 export function tooLong(o: any) {

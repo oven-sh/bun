@@ -35,6 +35,11 @@ function deleted(o: any) {
   delete o[k];
 }
 function tested(o: any) { const k = "e"; return k in o; }
+function chainCalled(o: any) { return (o?.value)(1); }
+function memberOfChainCalled(o: any) { return (o?.box).run(1, 2); }
+function memberOfChainConstructed(o: any) { return new (o?.box).Made(); }
+function memberOfChainInitializerCalled(o: any) { const r = o?.box; return r.run(3); }
+function memberOfChainInitializerRead(o: any) { const r = o?.none; return r.value; }
 test("quotes", () => {
   tell("initializer", () => initializer(null));
   tell("initializerOnLines", () => initializerOnLines(null));
@@ -48,6 +53,12 @@ test("quotes", () => {
   tell("stored", () => stored(null));
   tell("deleted", () => deleted(null));
   tell("tested", () => tested(null));
+  const chained = { value: 1, box: {}, none: null };
+  tell("chainCalled", () => chainCalled(chained));
+  tell("memberOfChainCalled", () => memberOfChainCalled(chained));
+  tell("memberOfChainConstructed", () => memberOfChainConstructed(chained));
+  tell("memberOfChainInitializerCalled", () => memberOfChainInitializerCalled(chained));
+  tell("memberOfChainInitializerRead", () => memberOfChainInitializerRead(chained));
   console.log(told.join("\\n"));
 });
 `,
@@ -61,6 +72,11 @@ test("a compiled test quotes what bun test quotes where the transpiler prints so
   expect(plain.stdout).toContain("initializer: null is not an object (evaluating 'lookup(x).value')");
   expect(plain.stdout).toContain("base: null is not an object (evaluating 'null.value')");
   expect(plain.stdout).toContain("parameterKey: undefined is not an object (evaluating 'o[k]')");
+  // The transpiler prints round brackets around an optional chain that something outside the chain reads from or calls, also in place of a name.
+  expect(plain.stdout).toContain(
+    "memberOfChainCalled: (o?.box).run is not a function. (In '(o?.box).run(1, 2)', '(o?.box).run' is undefined)",
+  );
+  expect(plain.stdout).toContain("memberOfChainInitializerRead: null is not an object (evaluating '(o?.none).value')");
   const lines = (output: string) => output.split("\n").filter(line => line.includes(": "));
   expect(lines(compiled.stdout)).toEqual(lines(plain.stdout));
   expect(compiled.exitCode).toBe(0);

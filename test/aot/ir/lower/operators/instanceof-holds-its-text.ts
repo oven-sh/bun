@@ -2,6 +2,12 @@
 // CHECK-LABEL: function {{*}}name="ofACall"
 // CHECK: = InstanceOf
 // CHECK-NOT: writtenExpression
+// CHECK-LABEL: function {{*}}name="ofAChainInParentheses"
+// CHECK: = InstanceOf {{*}} writtenExpression="left instanceof holder?.inner"
+// CHECK-LABEL: function {{*}}name="ofAMemberOfAChain"
+// CHECK: = InstanceOf {{*}} writtenExpression="left instanceof (holder?.inner).list"
+// CHECK-LABEL: function {{*}}name="ofAMemberOfAVariableReplacedByAChain"
+// CHECK: = InstanceOf {{*}} writtenExpression="1 instanceof (holder?.inner).list"
 // CHECK-LABEL: function {{*}}name="ofAVariableReplacedByACall"
 // CHECK: = InstanceOf
 // CHECK-NOT: writtenExpression
@@ -24,6 +30,7 @@
 
 // `instanceof` holds its text, as Bun's transpiler prints it, where both operands consist of names or are one of a few literals: a message quotes it.
 // Where the transpiler prints the initializer of a local variable in place of its only use, the text holds the initializer, and a call has no text.
+// The transpiler prints round brackets around an optional chain where a member is read from it, and none where the chain is the whole operand.
 export function ofNames(left: any, right: any) {
   return left instanceof right;
 }
@@ -54,4 +61,14 @@ export function ofAVariableUsedOnce(left: any, right: () => any) {
 export function ofAVariableUsedTwice(left: any, right: () => any) {
   const local = right();
   return [left instanceof local, local];
+}
+export function ofAChainInParentheses(left: any, holder: any) {
+  return left instanceof (holder?.inner);
+}
+export function ofAMemberOfAChain(left: any, holder: any) {
+  return left instanceof (holder?.inner).list;
+}
+export function ofAMemberOfAVariableReplacedByAChain(holder: any) {
+  const local = holder?.inner;
+  return (1 as any) instanceof local.list;
 }

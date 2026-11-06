@@ -16,6 +16,7 @@ use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
+use self::text_printed_in_place::Place;
 use super::Callee;
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
@@ -288,7 +289,8 @@ enum Around {
     Operator(BinOp),
     RightOperand(BinOp),
     Condition,
-    Access,
+    // `ends_chain`: what reads from the expression or calls it is no link of an optional chain.
+    Access { ends_chain: bool },
 }
 
 #[derive(Default)]
@@ -712,7 +714,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut first = self.skip_type_syntax(operand);
         let mut around = around;
         loop {
-            let is_access = matches!(around, Around::Access);
+            let is_access = matches!(around, Around::Access { .. });
             let is_loose = !matches!(around, Around::Spread);
             let (next, below) = match hir.written_kind(first) {
                 _ if self.is_literal_operand(first) => return false,
@@ -729,7 +731,7 @@ impl FileLowering<'_, '_, '_, '_> {
                             op == BinOp::Comma || needs_parentheses(outer, op, false)
                         }
                         Around::Condition => op == BinOp::Comma,
-                        Around::Access => true,
+                        Around::Access { .. } => true,
                     };
                     if is_wrapped {
                         return true;
@@ -751,14 +753,19 @@ impl FileLowering<'_, '_, '_, '_> {
                     return is_access || matches!(around, Around::Operator(BinOp::Pow));
                 }
                 ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_)
-                    if is_access
-                        && self.is_chain_root(first)
-                        && hir.expr_flags(first).contains(ExprFlags::PARENTHESIZED) =>
+                    if let Around::Access { ends_chain } = around
+                        && self.is_link_printed_in_brackets(first, ends_chain) =>
                 {
                     return true;
                 }
-                ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } => (obj, Around::Access),
-                ExprKind::Call(site) => (hir[site].callee, Around::Access),
+                ExprKind::Index { obj, chain, .. } | ExprKind::Dot { obj, chain, .. } => {
+                    let ends_chain = chain == Chain::No;
+                    (obj, Around::Access { ends_chain })
+                }
+                ExprKind::Call(site) => {
+                    let ends_chain = hir[site].chain == Chain::No;
+                    (hir[site].callee, Around::Access { ends_chain })
+                }
                 // Its source map knows where a tagged template begins, whatever the tag begins with.
                 ExprKind::TaggedTemplate(_) => return false,
                 ExprKind::Ident(_) => match self.find_printed_in_place(first) {
@@ -1015,7 +1022,14 @@ impl FileLowering<'_, '_, '_, '_> {
             return Some(self.intern_binding_name(self.bound.binding(inner), name));
         }
         let mut path = Vec::new();
-        if self.append_written_path(inner, &mut path) {
+        let ends_chain = matches!(
+            self.place_of(inner),
+            Place::Target {
+                ends_chain: true,
+                ..
+            }
+        );
+        if self.append_written_path(inner, ends_chain, &mut path) {
             return Some(self.intern_bytes(&path));
         }
         if self.is_literal_operand(inner) || matches!(hir[inner].kind, ExprKind::Ident(_)) {
@@ -1061,33 +1075,43 @@ impl FileLowering<'_, '_, '_, '_> {
                 match self.queries.atom_bytes(name) {
                     b"undefined" => b"void 0",
                     b"Infinity" => b"1 / 0",
-                    _ => return self.append_written_path(printed, text),
+                    _ => return self.append_written_path(printed, false, text),
                 }
             }
             ExprKind::Await(awaited) if !self.is_literal_operand(awaited) => {
                 text.extend_from_slice(b"await ");
-                return self.append_written_path(awaited, text);
+                return self.append_written_path(awaited, false, text);
             }
-            _ => return self.append_written_path(printed, text),
+            _ => return self.append_written_path(printed, false, text),
         };
         text.extend_from_slice(literal);
         true
     }
 
     /// `a.b.c`, `this.#x`, `a?.b[key]`: a callee that consists of names, as plain Bun quotes it in "a.b.c is not a function".
+    /// `ends_chain`: what reads from the expression or calls it is no link of an optional chain, so a link stands in round brackets: `(a?.b).c`.
     /// Answers false, with `path` in any state, for anything else and for what is too long to be worth its bytes in the executable.
-    fn append_written_path(&self, expression: ExprId, path: &mut Vec<u8>) -> bool {
+    fn append_written_path(
+        &self,
+        expression: ExprId,
+        ends_chain: bool,
+        path: &mut Vec<u8>,
+    ) -> bool {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
         if self.is_literal_operand(inner) {
             return self.append_printed_literal(inner, path);
         }
+        let is_in_brackets = self.is_link_printed_in_brackets(inner, ends_chain);
+        if is_in_brackets {
+            path.push(b'(');
+        }
         match hir.written_kind(inner) {
             ExprKind::Ident(_) if self.is_name_printed_otherwise(inner) => {
                 return match self.find_printed_in_place(inner) {
                     Some(Printed::Initializer(initializer)) => {
-                        self.append_written_path(initializer, path)
+                        self.append_written_path(initializer, ends_chain, path)
                     }
                     Some(Printed::Function(_)) | None => false,
                 };
@@ -1103,7 +1127,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     path.extend_from_slice(b"await ");
                     awaited = next;
                 }
-                if self.is_literal_operand(awaited) || !self.append_written_path(awaited, path) {
+                if self.is_literal_operand(awaited)
+                    || !self.append_written_path(awaited, false, path)
+                {
                     return false;
                 }
                 path.push(b')');
@@ -1111,14 +1137,18 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                if self.is_literal_operand(obj) || !self.append_written_path(obj, path) {
+                if self.is_literal_operand(obj)
+                    || !self.append_written_path(obj, chain == Chain::No, path)
+                {
                     return false;
                 }
                 path.extend_from_slice(if chain == Chain::Start { b"?." } else { b"." });
                 path.extend_from_slice(written_name(self.queries.atom_bytes(name)));
             }
             ExprKind::Index { obj, index, chain } => {
-                if self.is_literal_operand(obj) || !self.append_written_path(obj, path) {
+                if self.is_literal_operand(obj)
+                    || !self.append_written_path(obj, chain == Chain::No, path)
+                {
                     return false;
                 }
                 match (self.find_literal_value(index), hir[index].kind) {
@@ -1173,6 +1203,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
             _ => return false,
+        }
+        if is_in_brackets {
+            path.push(b')');
         }
         path.len() <= LONGEST_PATH
     }

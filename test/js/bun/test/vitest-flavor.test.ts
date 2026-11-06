@@ -3171,6 +3171,77 @@ describe.concurrent("exports", () => {
     expect({ log, exitCode }).toEqual({ log: ["mine function"], exitCode: 0 });
   });
 
+  test(`"assert" of "bun:test" and of "@jest/globals" isn't chai's`, async () => {
+    const { errors, exitCode } = await runTests({
+      ...chai,
+      "bun.test.js": `import { assert, test } from "bun:test"; test("test", () => console.log(assert()));`,
+      "jest.test.js": `import { assert, test } from "@jest/globals"; test("test", () => console.log(assert()));`,
+    });
+    const error = "SyntaxError: Export named 'assert' not found in module 'bun:test'.";
+    expect({ errors, exitCode }).toEqual({ errors: [error, error], exitCode: 1 });
+  });
+
+  // The factory of a mock of "vitest" runs when the first module imports it.
+  test(`an unused import of "assert" or "should" leaves no import of "vitest" behind`, async () => {
+    const { log, exitCode } = await runTests({
+      ...chai,
+      "unused.ts": `import { assert, should } from "vitest"; export const value = "unused";`,
+      "type-only.ts": `import { assert } from "vitest"; export const value: ReturnType<typeof assert> = "only a type";`,
+      "with-vi.ts": `import { assert, vi } from "vitest"; export const value = assert() + " and " + vi;`,
+      "a.test.js": `
+        import { mock, test } from "bun:test";
+        test("test", async () => {
+          const vitest = mock(() => ({ vi: "the mocked vi" }));
+          mock.module("vitest", vitest);
+          for (const file of ["unused.ts", "type-only.ts", "with-vi.ts"]) {
+            const { value } = await import("./" + file);
+            console.log(file + ":", value + ",", "vitest imported", vitest.mock.calls.length, "times");
+          }
+        });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "unused.ts: unused, vitest imported 0 times",
+        "type-only.ts: only a type, vitest imported 0 times",
+        "with-vi.ts: the project's assert and the mocked vi, vitest imported 1 times",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test(`an unused import of "assert" or "should" needs no chai`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "helper.ts": `import { assert, should } from "vitest"; export const inAHelper = "a helper without chai";`,
+      "a.test.ts": `
+        import { assert } from "vitest";
+        import { inAHelper } from "./helper.ts";
+        test("test", () => console.log(inAHelper));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["a helper without chai"],
+      results: ["(pass) test"],
+      exitCode: 0,
+    });
+  });
+
+  test(`"assert" and "should" come from chai wherever they stand in the import`, async () => {
+    const file = `
+      import vitest, { test, vi, assert, expect, should as renamed } from "vitest";
+      import * as fromChai from "chai";
+      test("test", () => {
+        console.log(assert === fromChai.assert, renamed === fromChai.should, typeof vi.fn, typeof expect, vitest.test === test);
+      });
+    `;
+    const { log, results, exitCode } = await runTests({ ...chai, "a.test.js": file, "b.test.ts": file });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["true true function function true", "true true function function true"],
+      results: ["(pass) test", "(pass) test"],
+      exitCode: 0,
+    });
+  });
+
   const globals = {
     test: "function",
     it: "function",
@@ -3753,6 +3824,13 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     "of-neither.js": `import "peek"; import "peek-esm";`,
     "of-vitest-peek.js": `import { vi } from "vitest"; import "peek";`,
     "of-bun-peek-esm.js": `import { mock } from "bun:test"; import "peek-esm";`,
+    "of-vitest-chai.ts": `import { assert } from "vitest"; import "peek"; import "peek-esm";`,
+    "bun-and-chai.test.ts": `
+      import { test } from "bun:test";
+      import { assert } from "vitest";
+      import peekEsm from "peek-esm";
+      test("test", () => console.log("bun:test", JSON.parse(require("peek")()).jest, JSON.parse(peekEsm()).jest));
+    `,
   };
   test.each([
     [["./vitest.test.js"], ["vitest undefined undefined"]],
@@ -3760,6 +3838,9 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     // A preload that imports from "vitest" counts like a test file that does.
     [["--preload=./of-vitest.js", "./vitest.test.js"], ["vitest undefined undefined"]],
     [["--preload=./of-vitest.js", "./bun.test.js"], ["bun:test undefined undefined"]],
+    // A file that imports only "assert" from "vitest" counts too, although the name comes from chai.
+    [["--preload=./of-vitest-chai.ts", "./bun.test.js"], ["bun:test undefined undefined"]],
+    [["./bun-and-chai.test.ts"], ["bun:test undefined undefined"]],
     [["--preload=./of-bun.js", "./vitest.test.js"], ["vitest object object"]],
     [
       ["--preload=./of-vitest-peek.js", "--preload=./of-bun-peek-esm.js", "./vitest.test.js"],

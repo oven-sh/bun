@@ -636,13 +636,37 @@ impl JSXImportSymbols {
 }
 
 #[derive(Default)]
-pub(crate) struct ChaiImports(pub(crate) Vec<(&'static [u8], Ref)>);
+pub(crate) struct ChaiImports(pub(crate) Vec<Stmt>);
 
 impl ChaiImports {
-    pub(crate) fn name(alias: &[u8]) -> Option<&'static [u8]> {
-        [b"assert".as_slice(), b"should"]
-            .into_iter()
-            .find(|&name| name == alias)
+    /// The names that `is_item` matches, for the note about an import in a CommonJS module.
+    pub(crate) const NAMES: &'static str = "\"assert\" and \"should\"";
+
+    pub(crate) fn is_item(item: &js_ast::ClauseItem) -> bool {
+        matches!(item.alias.slice(), b"assert" | b"should")
+    }
+
+    /// Leaves the chai names in `clause` and returns its other names. Both keep the order they were written in.
+    #[inline(never)]
+    pub(crate) fn take_other_names<'a>(
+        arena: &'a bun_alloc::Arena,
+        clause: &mut js_ast::StoreSlice<js_ast::ClauseItem>,
+    ) -> &'a mut [js_ast::ClauseItem] {
+        use bun_alloc::ArenaVecExt as _;
+        let items = clause.slice_mut();
+        let other_count = items.iter().filter(|item| !Self::is_item(item)).count();
+        let mut other_names = bun_alloc::ArenaVec::with_capacity_in(other_count, arena);
+        let mut chai_count = 0;
+        for i in 0..items.len() {
+            if Self::is_item(&items[i]) {
+                items[chai_count] = items[i];
+                chai_count += 1;
+            } else {
+                other_names.push(items[i]);
+            }
+        }
+        clause.truncate(chai_count);
+        other_names.into_bump_slice_mut()
     }
 }
 

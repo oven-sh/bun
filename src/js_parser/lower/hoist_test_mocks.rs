@@ -8,7 +8,7 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
 use bun_collections::VecExt;
 
 use crate::p::P;
-use crate::parser::{Jest, RefMap};
+use crate::parser::{ChaiImports, Jest, RefMap};
 
 #[derive(Clone, Copy)]
 pub(crate) enum MockApi {
@@ -321,6 +321,56 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 }));
         }
         MockHoistOrder::LoweredImport
+    }
+
+    /// Vitest re-exports `assert` and `should` from chai: the statement imports them from there, and its other names from "vitest" in a statement of their own.
+    #[optimize(size)]
+    #[inline(never)]
+    pub(crate) fn redirect_chai_names(
+        &mut self,
+        stmt: Stmt,
+        before: &mut BumpVec<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        let StmtData::SImport(mut import) = stmt.data else {
+            return Ok(());
+        };
+        // With `hot_module_reloading`, the parse pass records the namespace and record of each import item. This split does not update them.
+        debug_assert!(!self.options.features.hot_module_reloading);
+        let vitest_record = import.import_record_index;
+        let range = self.import_records.items()[vitest_record as usize].range;
+        let other_names = ChaiImports::take_other_names(self.arena, &mut import.items);
+
+        if other_names.is_empty() && import.default_name.is_none() {
+            // The record stays: the loader finds a test file that imports from "vitest" by the path of its records.
+            self.import_records.items_mut()[vitest_record as usize]
+                .flags
+                .insert(js_ast::ImportRecordFlags::IS_UNUSED);
+        } else {
+            let namespace_name = self.symbols[import.namespace_ref.inner_index() as usize]
+                .original_name
+                .slice();
+            let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_name);
+            VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
+            let other_names = self.s(
+                S::Import {
+                    namespace_ref,
+                    default_name: import.default_name.take(),
+                    items: js_ast::StoreSlice::new_mut(other_names),
+                    star_name_loc: js_ast::Loc::EMPTY,
+                    import_record_index: vitest_record,
+                    is_single_line: import.is_single_line,
+                    phase_defer: false,
+                },
+                stmt.loc,
+            );
+            let other_names = self.arena.alloc_slice_copy(&[other_names]);
+            self.append_part(before, other_names)?;
+        }
+
+        // With the range of the record the user wrote, an error about this import points at their statement.
+        import.import_record_index =
+            self.add_import_record_by_range(ImportKind::Stmt, range, b"chai");
+        Ok(())
     }
 
     /// `ImportKind::Dynamic` on an `S::Import`'s record tells `ImportScanner` to lower it.

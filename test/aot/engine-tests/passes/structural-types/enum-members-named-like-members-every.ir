@@ -566,8 +566,8 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f46]
 function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f26]
 function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f47 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f48 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f47 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f48 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -614,34 +614,34 @@ function f51 name="appendParts" module=m3 position=1242 role=Library flags=[IsCh
 function f52 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w84 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f53 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w85 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w86 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w87}, {type=number site=w88}] results=[{type=undefined|null|string site=w89 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f54 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w90}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f55 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w91 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w92}, {type=undefined|number site=w93}, {type=number site=w94}, {type=undefined|null|Array site=w95 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=65 function=f48
-runtimefunction id=69 function=f47
-runtimefunction id=131091 function=f55 visibility=Private
+function f55 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w91 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w92}, {type=undefined|number site=w93}, {type=number site=w94}, {type=undefined|null|Array site=w95 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=ArrayPrototypeMap function=f48
+runtimefunction id=ArrayIteratorPrototypeNext function=f47
+runtimefunction id=ArrayTraversalTraverseArray function=f55 visibility=Private
 # -- generated: f0 f7 f9 f17 f18 f20 f21 attempt
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "keys" @Cell = String string="keys"
+# CHECK-NEXT: v0: "keys" @LiteralString = String string="keys"
 # CHECK-NEXT: v1: f7 @Cell = NewClosure function=f7 allocationSite=2 storage=Frame closureForm=Slim
 # CHECK-NEXT: v2: undefined @JSValue = CallDirect v0, v1 function=f61 accessSite=9
-# CHECK-NEXT: v3: "reverse" @Cell = String string="reverse"
+# CHECK-NEXT: v3: "reverse" @LiteralString = String string="reverse"
 # CHECK-NEXT: v4: f9 @Cell = NewClosure function=f9 allocationSite=3 storage=Frame closureForm=Slim
 # CHECK-NEXT: v5: undefined @JSValue = CallDirect v3, v4 function=f61 accessSite=10
-# CHECK-NEXT: v6: "added to a string" @Cell = String string="added to a string"
+# CHECK-NEXT: v6: "added to a string" @LiteralString = String string="added to a string"
 # CHECK-NEXT: v7: f17 @Cell = NewClosure function=f17 allocationSite=4 storage=Frame closureForm=Slim
 # CHECK-NEXT: v8: undefined @JSValue = CallDirect v6, v7 function=f61 accessSite=11
-# CHECK-NEXT: v9: "as json" @Cell = String string="as json"
+# CHECK-NEXT: v9: "as json" @LiteralString = String string="as json"
 # CHECK-NEXT: v10: f18 @Cell = NewClosure function=f18 allocationSite=5 storage=Frame closureForm=Slim
 # CHECK-NEXT: v11: undefined @JSValue = CallDirect v9, v10 function=f61 accessSite=12
-# CHECK-NEXT: v12: "read by names made at run time" @Cell = String string="read by names made at run time"
+# CHECK-NEXT: v12: "read by names made at run time" @LiteralString = String string="read by names made at run time"
 # CHECK-NEXT: v13: f20 @Cell = NewClosure function=f20 allocationSite=6 storage=Frame closureForm=Slim
 # CHECK-NEXT: v14: undefined @JSValue = CallDirect v12, v13 function=f61 accessSite=13
 # CHECK-NEXT: v15: undefined @JSValue = Undefined
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=793 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=f7|f9|f17|f18|f20 site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=793 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="added to a string"|"as json"|"keys"|"read by names made at run time"|"reverse" site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=f7|f9|f17|f18|f20 site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f7 module=
 # CHECK: m0 position=1527 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Array<string, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -746,7 +746,7 @@ runtimefunction id=131091 function=f55 visibility=Private
 # CHECK-NEXT: v15: boolean @Boolean = Less v13, v10 form=Integers
 # CHECK-NEXT: TestAndBranch v15 -> taken b5(| 0), notTaken b9()
 # CHECK-NEXT: b5(v16: int[0, 4294967294] @Int64):
-# CHECK-NEXT: v17: boolean @Boolean = HasArrayElement v9, v16 arrayStorage=Contiguous level=Proven accessSite=57 [keyIsIntegral]
+# CHECK-NEXT: v17: boolean @Boolean = IsInBounds v9, v16 [isFromProgram]
 # CHECK-NEXT: TestAndBranch v17 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v18: int[0, 4294967294] @Int64 = Upcast v16 castType=int[0, 9007199254740990]
@@ -817,8 +817,8 @@ runtimefunction id=131091 function=f55 visibility=Private
 # CHECK-NEXT: Jump -> next b6(v31)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=793 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=f7|f9|f17|f18|f20}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f4} {
-# CHECK-NEXT: b0(v0: string @Cell, v1: f7|f9|f17|f18|f20 @Cell):
+# CHECK: module=m0 position=793 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="added to a string"|"as json"|"keys"|"read by names made at run time"|"reverse" site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=f7|f9|f17|f18|f20}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f4} {
+# CHECK-NEXT: b0(v0: "added to a string"|"as json"|"keys"|"read by names made at run time"|"reverse" @LiteralString, v1: f7|f9|f17|f18|f20 @Cell):
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v5: anything @JSValue = CatchValue

@@ -207,7 +207,12 @@ fn compute_this_position(
         };
         return file.class_this_type(class, Some(member));
     }
-    if let Some(layout) = file.constructor_function_layout(source) {
+    // A function that only hands `this` on says nothing of what it is called on.
+    if let Some(layout) = file.constructor_function_layout(source)
+        && file
+            .queries
+            .stores_into_instances_or_prototype_object(source)
+    {
         let instance = file.fragment.types.intern(Type::layout(layout));
         return file.create_receiver_position(instance, Some(func.start));
     }

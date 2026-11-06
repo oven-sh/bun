@@ -152,6 +152,15 @@ fn create_jsc_ffi_function(
     })
 }
 
+/// Throws in a Bun built with `--ffi=off`. Loading a library runs its constructors.
+fn throw_if_disabled(global: &JSGlobalObject) -> JsResult<()> {
+    unsafe extern "C" {
+        /// Defined in `JSCFFIBridge.cpp`.
+        safe fn Bun__FFI__throwIfDisabled(global: &JSGlobalObject);
+    }
+    jsc::call_check_slow(global, || Bun__FFI__throwIfDisabled(global))
+}
+
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
@@ -467,8 +476,7 @@ enum DeferredError {
 }
 
 // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type
-// (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
+// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -639,6 +647,7 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> crate::Result<NonNull<TCC::State>> {
+        let ctx = std::ptr::from_mut::<CompileC>(self);
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -653,10 +662,10 @@ impl CompileC {
 
         // TODO: correctly handle invalid user-provided options
         let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
-            options: Some(NonNull::from(compile_options)),
+            options: Some(compile_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(std::ptr::from_mut::<CompileC>(self)),
+                ctx: Some(ctx),
                 handler: Self::handle_compilation_error,
             },
         }) {
@@ -1075,6 +1084,9 @@ impl FFI {
             object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
+            if !compile_c.libraries.items.is_empty() {
+                throw_if_disabled(global_this)?;
+            }
         }
 
         if let Some(flags_value) = object.get_truthy(global_this, "flags")? {
@@ -1282,10 +1294,10 @@ impl FFI {
 
     pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
-            fn Bun__JSCFFICallbackClose(callback: JSValue);
+            /// Type-checks the cell (`dynamicDowncast`) before use.
+            safe fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
-        // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
+        Bun__JSCFFICallbackClose(callback.to_js());
     }
 
     pub(crate) fn callback<'a>(
@@ -1349,10 +1361,12 @@ impl FFI {
 
     pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
-            fn Bun__FFI__closeFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
+            /// Type-checks `library` (`dynamicDowncast`) before use.
+            fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        // SAFETY: thin FFI wrapper. The C++ side type-checks the cell (dynamicDowncast) before use.
+        // SAFETY: C++ indexes `functionsValue` unchecked up to its length. It is empty or the array
+        // that `cc` filled from 0 to its length, which JS never sees.
         let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
@@ -1453,6 +1467,60 @@ impl FFI {
     }
 }
 
+/// The `Bun.FFI` functions return validation errors instead of throwing them. `bun:ffi` calls the wrappers below, which throw.
+fn throw_if_error(global: &JSGlobalObject, result: JSValue) -> JsResult<JSValue> {
+    if result.is_error() {
+        return Err(global.throw_value(result));
+    }
+    Ok(result)
+}
+
+impl FFI {
+    pub(crate) fn open_library<'a>(
+        cx: &mut JsScope<'a>,
+        name: Option<&[u8]>,
+        symbols: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let result = Self::dlopen(cx, name, symbols)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn link_library<'a>(
+        cx: &mut JsScope<'a>,
+        symbols: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let result = Self::link_symbols(cx, symbols)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn make_function<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+        name: Option<bun_core::String>,
+    ) -> JsResult<JSValue> {
+        let result = Self::cfunction(cx, options, name)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn make_callback<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+        callback: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let result = Self::callback(cx, options, callback)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn print_source<'a>(
+        cx: &mut JsScope<'a>,
+        symbols: JsLocal<'a>,
+        is_callback: bool,
+    ) -> JsResult<JSValue> {
+        let result = Self::view_source(cx, symbols, is_callback)?;
+        throw_if_error(cx.global(), result)
+    }
+}
+
 /// Creates an Exception object indicating that options object is invalid.
 /// The exception is not thrown on the VM.
 fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
@@ -1530,6 +1598,7 @@ impl FFI {
             return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
+        throw_if_disabled(global)?;
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
             match bun_sys::DynLib::open(name) {
@@ -1538,7 +1607,7 @@ impl FFI {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let mut backup_buf = bun_paths::path_buffer_pool::get();
                     let backup_name =
-                        Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..]);
+                        Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
                     match backup_name.map(bun_sys::DynLib::open) {
                         Some(Ok(d)) => break 'brk d,
                         Some(Err(_)) | None => {
@@ -2027,7 +2096,7 @@ impl Function {
         }
     }
 
-    pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
+    pub(crate) fn compile(&mut self, napi_env: Option<NonNull<c_void>>) -> crate::Result<()> {
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2038,7 +2107,7 @@ impl Function {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
         let state = match TCC::State::init::<Function, false>(&TCC::Config {
-            options: Some(NonNull::from(tcc_options)),
+            options: Some(tcc_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
@@ -2064,12 +2133,9 @@ impl Function {
         let state = unsafe { self.state.unwrap().as_mut() };
 
         if let Some(env) = napi_env {
-            // `env` is the live VM-owned napi env; process-lifetime.
+            // `makeNapiEnvForFFI` leaks a ref on `env`: the address stays valid for JIT'd code.
             if state
-                .add_symbol(
-                    zstr!("Bun__thisFFIModuleNapiEnv"),
-                    std::ptr::from_ref(env).cast::<c_void>(),
-                )
+                .add_symbol(zstr!("Bun__thisFFIModuleNapiEnv"), env.as_ptr())
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2682,17 +2748,10 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
-) -> Option<&'static napi::NapiEnv> {
-    // Return is `'static`, not `'a` — the env is heap-allocated by C++
-    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
-    // to `'a` (the iterator borrow) is over-restrictive and blocks the
-    // immediate-after `values_mut()` loop at every call site.
+) -> Option<NonNull<c_void>> {
     for function in functions {
         if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
-            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return NonNull::new(global_this.make_napi_env_for_ffi());
         }
     }
     None

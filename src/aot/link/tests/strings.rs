@@ -22,9 +22,9 @@ fn mark_all(units: &[LinkUnit]) -> Vec<UnitMarks> {
 }
 
 fn find_local_id(units: &[LinkUnit], unit: usize, text: &[u8]) -> StringId {
-    units[unit]
-        .strings
-        .find(text)
+    let strings = &units[unit].strings;
+    let mut ids = strings.ids();
+    ids.find(|&id| strings.get(id) == text)
         .expect("the unit has no such string")
 }
 

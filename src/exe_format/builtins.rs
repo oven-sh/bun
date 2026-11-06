@@ -160,6 +160,11 @@ impl<'a> Builtins<'a> {
         })
     }
 
+    /// A piece of the sources of the functions of src/js/builtins, which stand one behind the other as WebCoreJSBuiltins.cpp compiles them.
+    pub fn source_of_functions(&self, start: u32, end: u32) -> Option<&'a [u8]> {
+        self.data.get(start as usize..end as usize)
+    }
+
     /// The id of the module whose registry specifier is exactly `name`.
     pub fn find(&self, name: &[u8]) -> Option<u32> {
         (0..self.count).find(|&id| self.module(id).is_some_and(|m| m.name == name))

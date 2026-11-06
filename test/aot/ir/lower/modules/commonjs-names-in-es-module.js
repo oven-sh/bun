@@ -11,7 +11,9 @@
 // RUN(META): lower
 // META-LABEL: function {{*}}name="readOthers"
 // META-NOT: isFreeName
-// META-COUNT-3: = ModuleBuiltin
+// META: = ModuleBuiltin
+// META: = String string="{{*}}commonjs-names-in-es-module.js"
+// META: = String string="{{*}}modules"
 // META-NOT: isFreeName
 // META: Return
 

@@ -213,6 +213,11 @@ impl StringTable {
         });
     }
 
+    /// For a table that waits with many others: nothing is added to it or looked up in it anymore.
+    pub fn forget_ids(&mut self) {
+        self.ids = Default::default();
+    }
+
     pub fn intern(&mut self, bytes: &[u8]) -> StringId {
         let joined = join_surrogate_pairs(bytes);
         let bytes = joined.as_deref().unwrap_or(bytes);
@@ -337,6 +342,7 @@ impl StringTable {
     }
 
     fn find_hashed(&self, hash: u64, bytes: &[u8]) -> Option<StringId> {
+        debug_assert_eq!(self.ids.len(), self.len(), "`forget_ids` was the end");
         self.ids.find(hash, |&id| self.get(id) == bytes).copied()
     }
 }

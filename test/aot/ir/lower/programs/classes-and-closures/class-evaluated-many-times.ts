@@ -162,44 +162,45 @@ console.log("named by a computed key:", named.map((C, i) => C.name + ":" + C.cre
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewDictionary
-// CHECK-NEXT: v2 = ToPropertyKey v0
-// CHECK-NEXT: v3 = NewClosure function=[[f_23]]
-// CHECK-NEXT: SetFunctionName v3, v2
-// CHECK-NEXT: v5 = NewClass v3 layout=[[L_24]]
-// CHECK-NEXT: v6 = NewClosure function=[[f_25]]
-// CHECK-NEXT: DefineMethod v5, v6 layout=[[L_24]] key="twice"
-// CHECK-NEXT: v8 = NewClosure function=[[f_26]]
-// CHECK-NEXT: DefineMethod v5, v8 layout=[[L_24]] side=Static index=1 key="create"
-// CHECK-NEXT: v10 = FinishClass v5 layout=[[L_24]]
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[f_20]] site=[[w_27]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: ElemDefine v1, v2, v11
-// CHECK-NEXT: v13 = ElemGet v1, v0
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[f_20]] site=[[w_27]] flags=[OmitsNull]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: v1 = ToPropertyKey v0
+// CHECK-NEXT: v2 = NewClosure function=[[f_23]]
+// CHECK-NEXT: SetFunctionName v2, v1
+// CHECK-NEXT: v4 = NewClass v2 layout=[[L_24]]
+// CHECK-NEXT: v5 = NewClosure function=[[f_25]]
+// CHECK-NEXT: DefineMethod v4, v5 layout=[[L_24]] key="twice"
+// CHECK-NEXT: v7 = NewClosure function=[[f_26]]
+// CHECK-NEXT: DefineMethod v4, v7 layout=[[L_24]] side=Static index=1 key="create"
+// CHECK-NEXT: v9 = FinishClass v4 layout=[[L_24]]
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_20]] site=[[w_27]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v11 = NewObject layout=[[L_28]]
+// CHECK-NEXT: ElemDefine v11, v1, v10
+// CHECK-NEXT: v13 = FinishObject v11
+// CHECK-NEXT: v14 = ElemGet v13, v0
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_20]] site=[[w_27]] flags=[OmitsNull]} illTypedCause=FromLooseType
+// CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_28]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=number site=[[w_29]]}] {
-// CHECK-NEXT: b0(v0: env [[L_28]], v1: function, v2: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_29]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=number site=[[w_30]]}] {
+// CHECK-NEXT: b0(v0: env [[L_29]], v1: function, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_28]]
+// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_29]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="Item"
 // CHECK-NEXT: v5 = StrictEq v4, v1
 // CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v6 = Call v2, v4 calleeName="Item.#bump"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=[[w_30]]}}, {declared={type=number site=[[w_29]]}}]
+// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=[[w_31]]}}, {declared={type=number site=[[w_30]]}}]
 // CHECK-NEXT: b3() frequency=Unlikely:
 // CHECK-NEXT: v7 = NewRuntimeError runtimeError=InvalidPrivateBrand
 // CHECK-NEXT: Throw v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="reveal"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=[[L_31]] site=[[w_32]]} results=[{type=undefined|null|string site=[[w_33]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: classtoken, v1: anything, v2: [[L_31]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=[[L_32]] site=[[w_33]]} results=[{type=undefined|null|string site=[[w_34]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: classtoken, v1: anything, v2: [[L_32]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = PrivateGet v2, v0 layout=[[L_31]]
+// CHECK-NEXT: v3 = PrivateGet v2, v0 layout=[[L_32]]
 // CHECK-NEXT: v4 = Call v1, v2 calleeName="this.#hidden"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|string site=[[w_34]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_33]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|string site=[[w_35]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_34]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }

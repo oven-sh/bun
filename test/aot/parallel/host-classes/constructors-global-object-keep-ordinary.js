@@ -18,6 +18,8 @@ console.log(names.length > 90, taken.join("; ") || "nothing is taken");
 function isBlob(x) { return x instanceof Blob; }
 function isForm(x) { return "function" == typeof FormData && x instanceof FormData; }
 function isFile(x) { return x instanceof File; }
+// Where every call of a function is inlined, it has no code of its own for the lines above to judge.
+globalThis.kept = [isBlob, isForm];
 class Below extends Blob {}
 class Form extends FormData {}
 const values = [new Blob([]), new File([], "f"), new Below([]), new FormData(), new Form(), Object.create(Blob.prototype), Object.create(FormData.prototype), Object.setPrototypeOf(new Blob([]), null), Object.setPrototypeOf({}, new FormData()), new Proxy(new Blob([]), {}), new Proxy({}, { getPrototypeOf() { return FormData.prototype; } }), {}, [], () => 1, "t", 5, null, undefined, Symbol.iterator, 1n, Blob, FormData, Blob.prototype, FormData.prototype];

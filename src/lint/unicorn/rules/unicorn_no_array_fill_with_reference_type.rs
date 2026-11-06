@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallows using reference values as `Array#fill()` values.
 pub struct NoArrayFillWithReferenceType;
 
-const NO_REFERENCE_FILL_VALUE: Message = Message::new("", "Do not use a reference value as the fill value.");
+const NO_REFERENCE_FILL_VALUE: &Message = &Message::new("", "Do not use a reference value as the fill value.");
 
 fn is_reference_expression(fill_value: Expr) -> bool {
     match get_inner_expression(fill_value).kind() {

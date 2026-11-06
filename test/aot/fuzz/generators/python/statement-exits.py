@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""statement-exits.py <seed> [ts|js]: THE WAYS OUT OF A STATEMENT. Random structured programs over numbers: if, for, while, do, for-of, for-in, switch with fall-through, labelled blocks and loops, break and continue with and without labels, try | catch | finally with return, break, continue and throw inside each part (a finally that overrides), nested functions, closures that catch loop variables and are called later, generators that are left early, conditional and logical expressions with effects, compound assignments, ++ and --, integer and double arithmetic at the borders of int32. Every loop burns fuel, functions call only those above them: every program ends. Each step is logged into a running sum and the first lines are printed. As plain Bun."""
+"""statement-exits.py <seed> [ts|js]: Every way to exit a statement. Random structured programs over numbers: if, for,
+while, do, for-of, for-in, switch with fall-through, labeled blocks and loops, break and continue with and without
+labels, return, throw.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 TS = (sys.argv[2] if len(sys.argv) > 2 else 'ts') == 'ts'

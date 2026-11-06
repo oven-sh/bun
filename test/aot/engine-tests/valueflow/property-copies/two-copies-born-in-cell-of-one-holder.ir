@@ -61,5 +61,5 @@ function f1 name="grow" module=m0 position=189 flags=[IsChecked, HasExplicitName
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 159, patchpoints: 7, rare instructions: 57, polls: 1
+# CHECK-NEXT: instructions: 130, patchpoints: 6, rare instructions: 57, polls: 1
 # CHECK-NEXT: end of function f0

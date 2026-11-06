@@ -19,9 +19,7 @@ const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const isArrayBufferView = ArrayBuffer.isView;
-const isAnyArrayBuffer = (b: unknown): b is ArrayBuffer | SharedArrayBuffer =>
-  b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 // The native streams count in 32 bits, and a buffer can be 2 ** 32 bytes long. Node.js takes a length modulo 2 ** 32:
 // it compresses nothing of such a chunk, and does not return from a write with such a chunkSize.

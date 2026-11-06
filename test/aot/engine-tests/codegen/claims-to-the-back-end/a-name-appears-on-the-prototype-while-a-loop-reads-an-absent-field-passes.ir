@@ -1,5 +1,5 @@
 # FORM: AsRead
-# RUN: run-in-shell globalThis.argumentCount = 2;
+# RUN: run-in-shell globalThis.argumentCount = 2; globalThis.names = ["other", "another", "note", "last"];
 # OPTIONS: check=MovedLoads
 # CHECK: 5555
 # CHECK-NOT: AOT claim check
@@ -48,7 +48,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v20 = Integer integer=1
     v21 = Construct v7, -, v20 calleeName="Card"
     v22 = Convert v21 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v23 = Data data=d0
+    v23 = PropGet v18 key="names" [isFreeName]
     v24 = Call v1, -, v22, v23 calleeName="walk"
     v25 = Convert v24 declared={type=number}
     v26 = Call v19, -, v25 calleeName="print"
@@ -57,7 +57,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v29 = Integer integer=2
     v30 = Construct v7, -, v29 calleeName="Card"
     v31 = Convert v30 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v32 = Data data=d1
+    v32 = PropGet v27 key="names" [isFreeName]
     v33 = Call v1, -, v31, v32 calleeName="walk"
     v34 = Convert v33 declared={type=number}
     v35 = Call v28, -, v34 calleeName="print"

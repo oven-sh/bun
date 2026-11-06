@@ -371,8 +371,7 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
         }
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
-            // SAFETY: pure translation function.
-            let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(err) };
+            let uv_err = bun_libuv_sys::uv_translate_sys_error(err);
             return Ok(BindResult::Errno(if uv_err != 0 { uv_err } else { -4094 }));
         }
 

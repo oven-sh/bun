@@ -19,7 +19,13 @@ impl<'s> Folder<'_, 's> {
         let hir = self.hir;
         let kind = hir[e].kind;
         match kind {
-            ExprKind::Unary { op, operand } => self.fold_unary(op, operand),
+            ExprKind::Unary { op, operand } => {
+                let folded = self.fold_unary(op, operand);
+                if op == UnOp::Typeof && matches!(folded.value, Value::Unknown) {
+                    self.conditions.insert(e, true);
+                }
+                folded
+            }
             ExprKind::Binary { op, left, right } => self.fold_binary(e, op, left, right),
             ExprKind::Cond { test, branches } => {
                 self.fold_conditional(e, test, hir.branches(branches))
@@ -105,8 +111,9 @@ impl<'s> Folder<'_, 's> {
         if op == UnOp::Typeof
             && let Some(type_name) = type_of_literal
         {
+            // Making a closure or a pattern does nothing that a program can see.
             let type_name = Value::from(Constant::String(type_name));
-            return Folded::new(type_name, self.folded(operand).effects);
+            return Folded::new(type_name, Effects::None);
         }
         if op == UnOp::Not
             && let Some(&is_truthy) = self.conditions.get(&operand)
@@ -121,9 +128,15 @@ impl<'s> Folder<'_, 's> {
     fn fold_binary(&mut self, e: ExprId, op: BinOp, left: ExprId, right: ExprId) -> Folded {
         match op {
             BinOp::Add => self.fold_addition(e),
-            BinOp::And => self.fold_logical(e, LogicalOperator::And, left, right),
-            BinOp::Or => self.fold_logical(e, LogicalOperator::Or, left, right),
-            BinOp::Nullish => self.fold_logical(e, LogicalOperator::Nullish, left, right),
+            BinOp::And | BinOp::Or | BinOp::Nullish => {
+                self.note_nullish_logical_result(e, op, left, right);
+                let operator = match op {
+                    BinOp::And => LogicalOperator::And,
+                    BinOp::Or => LogicalOperator::Or,
+                    _ => LogicalOperator::Nullish,
+                };
+                self.fold_logical(e, operator, left, right)
+            }
             BinOp::Comma => {
                 self.copy_condition(e, right);
                 let (left, right) = (self.folded(left), self.folded(right));
@@ -210,11 +223,21 @@ impl<'s> Folder<'_, 's> {
         let is_decided_by_left = match op {
             LogicalOperator::And => self.condition(left).map(|is_truthy| !is_truthy),
             LogicalOperator::Or => self.condition(left),
-            LogicalOperator::Nullish => self.is_nullish(left).map(|is_nullish| !is_nullish),
+            LogicalOperator::Nullish => {
+                let is_nullish = self.is_nullish(left);
+                let is_nullish = is_nullish.or_else(|| self.is_nullish_in_bun_run(left));
+                is_nullish.map(|is_nullish| !is_nullish)
+            }
         };
         match is_decided_by_left {
             Some(true) => {
-                self.exclude_operand(right, left);
+                let is_excluded_by_bun_run = match op {
+                    LogicalOperator::And | LogicalOperator::Or => {
+                        self.is_truthy_in_bun_run(left).is_some()
+                    }
+                    LogicalOperator::Nullish => self.is_nullish_in_bun_run(left).is_some(),
+                };
+                self.exclude_operand(right, is_excluded_by_bun_run);
                 self.copy_condition(e, left);
                 self.folded(left)
             }
@@ -261,7 +284,7 @@ impl<'s> Folder<'_, 's> {
         };
         let Branches { yes, no } = branches;
         let (selected, excluded) = if is_true { (yes, no) } else { (no, yes) };
-        self.exclude_operand(excluded, test);
+        self.exclude_operand(excluded, self.is_truthy_in_bun_run(test).is_some());
         self.copy_condition(e, selected);
         let (test, selected) = (self.folded(test), self.folded(selected));
         Folded::new(selected.value, test.effects.min(selected.effects))

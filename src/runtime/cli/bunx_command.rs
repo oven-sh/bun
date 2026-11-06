@@ -722,7 +722,7 @@ impl BunxCommand {
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different
         // working directory than this command.
         let mut temp_dir_buf = bun_paths::path_buffer_pool::get();
-        let temp_dir = bun_resolver::fs::FileSystem::instance()
+        let temp_dir = bun_resolver::fs::FileSystem::get()
             .abs_buf_checked(&[RealFS::platform_temp_dir()], &mut temp_dir_buf[..]);
         let bases = [
             install_cache.as_ref().map(|dir| dir.path.as_slice()),
@@ -943,7 +943,7 @@ impl BunxCommand {
 
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
 
-        let root_dir_info = Run::configure_env_for_run(
+        let (this_transpiler, root_dir_info) = Run::configure_env_for_run(
             ctx,
             &mut this_transpiler_slot,
             None,
@@ -952,8 +952,6 @@ impl BunxCommand {
                 store_root_fd: false,
             },
         )?;
-        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is initialized.
-        let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(

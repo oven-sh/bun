@@ -11,7 +11,7 @@
 // CHECK-LABEL: function {{*}}name="r"
 // CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}] thisType
 // CHECK-LABEL: function {{*}}name="s"
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="a"}] thisType
 
 declare function g(): unknown;
 declare function use(value: unknown): void;

@@ -8,22 +8,21 @@
 //   testaot run <file or folder>.. --show-output      IR tests: a .ir file says what is run on it and what must be printed
 //   testaot native <part of a name>                   tests written in C++
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isCI, isMacOS, isWindows } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { bunEnv, bunExe, isArm64, isCI, isMusl, isWindows } from "harness";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { slot } from "../harness/commands";
+import { countsInstructions } from "../analysis-scaling/measure-check";
+import { slot, slots } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
+import { sharedSlot } from "../harness/shared-slots";
+import { findTool } from "../shell/find-tools";
 
 const repository = join(import.meta.dir, "..", "..", "..");
 const besideBun = dirname(bunExe());
 const suffix = isWindows ? ".exe" : "";
-const findTool = (name: string) =>
-  [besideBun, join(repository, "build", "release-local"), join(repository, "build", "release")]
-    .map(folder => join(folder, name + suffix))
-    .find(existsSync);
 
-export const testaot = process.env.TESTAOT ?? findTool("testaot");
-export const jsc = process.env.JSC ?? findTool("jsc");
+export const testaot = process.env.TESTAOT ?? findTool(bunExe(), "testaot");
+export const jsc = process.env.JSC ?? findTool(bunExe(), "jsc");
 export const engineTests =
   process.env.AOT_ENGINE_TESTS ??
   [
@@ -78,17 +77,31 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 // TODO: it prints something else on arm64.
 const failsToday = isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : [];
 
+// With musl a run of these loops costs some 100,000 instructions more than with glibc, however many turns it makes (ten times the turns
+// moved it from 90,000 to 150,000). The code of the loop is the same, and most rows make 100,000 turns, so a row can read up to 1 instruction higher.
+const isOverABoundByTheCostOfMusl = (line: string) => {
+  const found = /at most ([0-9.]+) instructions; nearest: .*?, ([0-9.]+) instructions/.exec(line);
+  return isMusl && found !== null && Number(found[2]) - Number(found[1]) <= 1;
+};
+
 async function expectEveryTestPasses(args: string[], cwd?: string) {
   const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd);
   await printOutputOfFailedTests(lines, cwd);
   const failed = lines.filter(
-    line => line.startsWith("FAIL ") && !failsToday.some(name => line.startsWith(`FAIL ${name}: `)),
+    line =>
+      line.startsWith("FAIL ") &&
+      !failsToday.some(name => line.startsWith(`FAIL ${name}: `)) &&
+      !isOverABoundByTheCostOfMusl(line),
   );
-  // In front of its FAIL line a native test has said which check failed, and where.
-  expect(failed.length ? lines.filter(line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line)).slice(-60) : []).toEqual(
-    [],
+  // In front of its FAIL line a native test has said which check failed, and where. A row that musl is forgiven is no part of the failure.
+  const shown = lines.filter(
+    line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line) && !isOverABoundByTheCostOfMusl(line),
   );
-  const listed = lines.filter(line => line.startsWith("FAIL ")).length;
+  expect(failed.length ? shown.slice(-60) : []).toEqual([]);
+  // A file of IR tests has a FAIL line for each of its commands that fails, and counts once in the last line.
+  const listed = new Set(
+    lines.filter(line => line.startsWith("FAIL ")).map(line => /^FAIL (.+?\.ir):\d+: /.exec(line)?.[1] ?? line),
+  ).size;
   expect({ lastLine: lines.at(-1), stderr, exitCode }).toEqual({
     lastLine: expect.stringMatching(new RegExp(`^[1-9][0-9]* passed, ${listed} failed, [0-9]+ todo$`)),
     stderr: expect.any(String),
@@ -99,7 +112,8 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
 const skipOrFail = (why: string) =>
   // CI packs the tools wherever Bun has the compiler.
   isCI && !isWindows && !unsupported
-    ? test(why, () => expect(why).toBeUndefined())
+    ? test(`${why}: does ../harness/tests-that-start-tools-of-the-engine.ts see that this file imports ./testaot.ts?`, () =>
+        expect(why).toBeUndefined())
     : test.skip(`${why}: test/aot/engine/testaot.ts says where it is looked for`, () => {});
 
 // A command line of Windows holds 32,767 characters.
@@ -133,20 +147,41 @@ export function irTests(part: number, parts: number) {
   }
 }
 
+/**
+ * The IR tests that bound a count of the hardware's instruction counter. Where the counter cannot be read they pass without a count,
+ * so ir-<n>.test.ts does not judge the bounds on such a machine.
+ */
+export function irTestsWithInstructionBounds() {
+  if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
+  for (const folder of [engineTests!, testsOfBunsEntries]) {
+    const mine = readdirSync(folder, { recursive: true, encoding: "utf8" })
+      .filter(path => path.endsWith(".ir") && readFileSync(join(folder, path), "utf8").includes("aotInstructionCount"))
+      .sort();
+    test.skipIf(!countsInstructions())(
+      `${mine.length} IR tests of ${folder === engineTests ? "the engine" : "test/aot/engine-tests"}`,
+      async () => {
+        expect(mine.length).toBeGreaterThan(0);
+        for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], folder);
+      },
+      600_000,
+    );
+  }
+}
+
 // `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and
-// as many of them run at once as there are processors: whoever is done takes the next.
+// as many of them run at once as there are processors: whoever is done takes the next. CI runs several of these files at once, and
+// a share keeps its processor busy, so the files count their shares together.
 const sharesOfAFile = 16;
-// TODO: on the Intel Macs of CI they did not end within the time that a test file has.
-const declare = isMacOS && !isArm64 ? test.todo : test.concurrent;
 
 /** Every `parts`-th native test, from the `part`-th on. */
 export function nativeTests(part: number, parts: number) {
   if (whyNoNativeTests) return void skipOrFail(whyNoNativeTests);
+  const sharesUnderWay = join(dirname(testaot!), "native-tests-under-way");
   for (let slice = 0; slice < sharesOfAFile; slice++) {
     const share = `${(part - 1) * sharesOfAFile + slice + 1}/${parts * sharesOfAFile}`;
-    declare(
+    test.concurrent(
       `native tests: --part=${share}`,
-      () => slot(() => expectEveryTestPasses(["native", `--part=${share}`])),
+      () => slot(() => sharedSlot(sharesUnderWay, slots, () => expectEveryTestPasses(["native", `--part=${share}`]))),
       600_000,
     );
   }

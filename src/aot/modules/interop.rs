@@ -16,6 +16,10 @@ pub struct Interop {
     pub kind: ModuleKind,
     pub export_rule: SyntheticExportRule,
     pub require_result: RequireResult,
+    /// A file that stands for a string, in an executable. `require_result` is what the calls answer that `bun build` links. The loader answers every other call, with `{ default }`.
+    pub answers_loader_with_namespace: bool,
+    /// Of a file that `require` reads as code because nothing names its kind: what an import makes of the same file.
+    pub form_that_imports_get: Option<FileId>,
 }
 
 impl Interop {
@@ -61,6 +65,8 @@ impl Interop {
             kind,
             export_rule,
             require_result,
+            answers_loader_with_namespace: false,
+            form_that_imports_get: None,
         }
     }
 

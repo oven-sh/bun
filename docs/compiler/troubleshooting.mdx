@@ -53,7 +53,6 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `Cannot find module`, only on another machine    | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `... was not compiled into this executable`      | Use that API once in your own code                                                |
 | `EvalError: ... the compiler couldn't tell ...`  | Call `eval` or `new Function` directly                                            |
-| `Cannot replace a loader in Module._extensions`  | [Remove the hook](/compiler/compatibility#loader-hooks-and-the-module-cache)      |
 | `--preload can't be used with this executable`   | Import the file from your entry point                                             |
 | `BUN_INSPECT can't be used with this executable` | Build with `--compile-inspector`                                                  |
 | `... can have 256 JSCallbacks open at a time`    | `close()` the callbacks you're done with                                          |

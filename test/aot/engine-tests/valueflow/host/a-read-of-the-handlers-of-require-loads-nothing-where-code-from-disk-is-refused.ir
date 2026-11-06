@@ -1,0 +1,8 @@
+# require.extensions[".js"](input, input)
+# The build excludes code outside the image. The run time refuses every file that a handler is handed, so the program stays closed
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve unseen
+# CHECK-NOT: ModuleRequireExtensions
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+# PROGRAM-OF: a-read-of-the-handlers-of-require-loads-code-by-name.ir

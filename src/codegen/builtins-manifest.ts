@@ -61,7 +61,7 @@ const fixed: Record<string, string> = {
   "process.env.NODE_ENV": '"production"',
 };
 for (const [key, value] of Object.entries({ ...define, ...fixed })) {
-  if (globalsToPrefix.includes(key)) continue;
+  if (globalsToPrefix.includes(key) || value.startsWith("__intrinsic__natives.")) continue;
   const name = key.startsWith("__intrinsic__") ? "$" + key.slice("__intrinsic__".length) : key;
   lines.push(`define\t${name}\t${canonicalJSON(name, value)}`);
 }
@@ -167,11 +167,16 @@ for (const [file, text] of [
   lines.push(`declares-for-every-file\t${file}\t${seen.join(" ")}\t${asked.join(" ") || "-"}`);
 }
 
-// The positions of each module stand behind its id and their length.
+// The positions of each file stand behind its id and their length. The files of functions follow on the modules.
+const firstIdOfFunctionFiles = 1 << 20;
 const bundledPositions: Uint8Array[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
   const [kind, file, encoded] = line.split("\t");
   if (line === "") continue;
+  if (kind === "evaluated-functions" || kind === "place" || kind === "part") {
+    lines.push(line);
+    continue;
+  }
   if (kind !== "positions") {
     // The names are those of the text that was bundled.
     const bundled = path.join(import.meta.dir, "../js", file);
@@ -187,7 +192,10 @@ for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
     continue;
   }
   const positions = Buffer.from(encoded, "base64");
-  bundledPositions.push(encodeNumbers([moduleList.indexOf(file), positions.length]), positions);
+  const id = file.startsWith("builtins/")
+    ? firstIdOfFunctionFiles + functionFiles.indexOf(file)
+    : moduleList.indexOf(file);
+  bundledPositions.push(encodeNumbers([id, positions.length]), positions);
 }
 
 const manifest = lines.join("\n") + "\n";

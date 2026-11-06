@@ -2829,7 +2829,7 @@ impl<'a> Installer<'a> {
     /// `check_link_entries` bounded the length. Normalized: a Windows junction resolves no `..`.
     fn link_target_path<'b>(&self, target: &[u8], buf: &'b mut paths::PathBuffer) -> &'b [u8] {
         let base: &[u8] = if crate::dependency::is_link_path(target) {
-            bun_fs::FileSystem::instance().top_level_dir()
+            bun_fs::FileSystem::get().top_level_dir()
         } else {
             self.manager().global_link_dir_path
         };
@@ -2950,7 +2950,7 @@ fn append_workspace_path(buf: &mut impl PathLike, workspace_path: &[u8]) -> sys:
     }
     let mut join_buf = paths::path_buffer_pool::get();
     let absolute = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-        bun_fs::FileSystem::instance().top_level_dir(),
+        bun_fs::FileSystem::get().top_level_dir(),
         &mut join_buf[..],
         &[workspace_path],
     );

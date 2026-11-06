@@ -1,6 +1,6 @@
 // Sets made from literals of constant strings: lookups with every kind of key, order, the first change, copies, iteration while changing, subclasses, collections.
-// IR+  = NewSetFromTable( table=\d+)?( @|$)
-// IR= 1 fresh  = NewSetFromTable( table=\d+)?( @|$)
+// IR+  = NewSetFromData data=d\d+ @
+// IR= 1 fresh  = NewSetFromData data=d\d+ @
 // IR= 0 fresh NewArray
 const ONE = new Set(["only"]);
 const TWO = new Set(["a", "bb"]);

@@ -46,6 +46,13 @@ function test(port) {
   });
 }
 
+// The dev server asks the npm registry for the latest version of Next.js and waits for the answer. It ignores a failure.
+const { fetch } = globalThis;
+globalThis.fetch = (input, init) =>
+  String(input?.url ?? input).startsWith("https://registry.npmjs.org/")
+    ? Promise.reject(new Error("offline"))
+    : fetch(input, init);
+
 const app = next({ dev: true, dir: import.meta.dirname, quiet: true });
 const handle = app.getRequestHandler();
 

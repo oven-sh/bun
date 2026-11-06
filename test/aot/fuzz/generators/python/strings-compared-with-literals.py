@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""strings-compared-with-literals.py <seed> [<functions>]: functions that compare ONE value (typed any | unknown | string | a union with strings) with LITERALS of the lengths 0 1 2 3 4 5 7 8 9 12 15 16 17 24 31 32 33 40, 8-bit and 16-bit, by === !== == != switch, includes-lists, ?: chains, Map and Set lookups and object keys; the values: each literal itself, and the same text made at run time eight ways (sliced, joined, a rope cut at every third place, out of char codes, a 16-bit buffer holding only Latin-1, out of JSON, out of a template, padded and trimmed), its near misses (first | middle | last character changed, one shorter, one longer, the other case, a NUL inside, the 16-bit look-alike), and what is no string (String objects, objects with toString | valueOf, numbers for numeric literals, null, undefined, booleans, symbols, arrays of one string). Every line as plain Bun's."""
+"""strings-compared-with-literals.py <seed> [<functions>]: Functions that compare one value (typed any, unknown, string
+or a union with strings) with literals of lengths 0 to 40, 8-bit and 16-bit, with shared prefixes and suffixes.
+"""
 import random, sys, json
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 40
 R = random.Random(seed)

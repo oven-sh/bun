@@ -134,11 +134,11 @@ function f3 name="fromBits" module=m0 position=576 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: v4: Float64Array @JSValue = CallBuiltin -, v3 overload=Float64Array/2 accessSite=2
 # CHECK-NEXT: v5: Float64Array<anything, pristine[Storage, Names]> @Cell = AssumeType v4 provenType=Float64Array<anything, pristine[Storage, Names]>
 # CHECK-NEXT: PutModuleVariable v5 variable=g2
-# CHECK-NEXT: v7: Array<undefined|null|Array<number>> @Cell = Data data=d0 allocationSite=1 encoding=ReadOnlyTree request=4
+# CHECK-NEXT: v7: Array<undefined|null|Array<number>> @Cell = Data data=d3 allocationSite=1 encoding=ReadOnlyTree request=4 [isNeverToldApart]
 # CHECK-NEXT: v8: Array<Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v7 provenType=Array<Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v9: 0 @Int64 = Integer
 # CHECK-NEXT: v10: f2 @Cell = GetModuleVariable variable=g1
-# CHECK-NEXT: v150: codeaddress @RawWord = ResolveCallTarget v10 argumentCount=1
+# CHECK-NEXT: v153: codeaddress @RawWord = ResolveCallTarget v10 argumentCount=1
 # CHECK-NEXT: Jump -> next b1(v9)
 # CHECK-NEXT: b1(v11: int[0, 4294967295] @Int64):
 # CHECK-NEXT: Jump -> next b2(v11)
@@ -177,7 +177,7 @@ function f3 name="fromBits" module=m0 position=576 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: b10(v33: guard @Void):
 # CHECK-NEXT: v34: number @ImpureDouble = GetTypedArrayElement v5, v31, v33 typedArrayType=10 level=Proven accessSite=11 [keyIsIntegral, isInsideView]
 # CHECK-NEXT: v35: L0 @Cell = NewObject -, v34 layout=L0 fields=[0] allocationSite=5 allocation=1 allocationClass=0
-# CHECK-NEXT: v36: undefined|null|string @JSValue = CallResolved v10, v150, -, v35 calleeName="state" accessSite=8 callees=[f2, ..]
+# CHECK-NEXT: v36: undefined|null|string @JSValue = CallResolved v10, v153, -, v35 calleeName="state" accessSite=8 callees=[f2, ..]
 # CHECK-NEXT: v37: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v38: anything|unspecified @JSValue = Unspecified valueType=anything
 # CHECK-NEXT: v39: boolean @Boolean = HasBirthFieldsFilled v35
@@ -206,118 +206,121 @@ function f3 name="fromBits" module=m0 position=576 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: v51: undefined|Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue = ElemGet v8, v17 [keyIsIntegral]
 # CHECK-NEXT: v52: 1 @Int64 = Integer integer=1
 # CHECK-NEXT: v53: int[1, 4294967295] @Int64 = Add v17, v52 form=Integers
-# CHECK-NEXT: v54: Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue = RequireObjectCoercible v51 nullishAccess=Iterate
-# CHECK-NEXT: Jump -> next b17(v53, v54)
-# CHECK-NEXT: b17(v55: int[1, 4294967295] @Int64, v56: Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue) frequency=Rare:
-# CHECK-NEXT: v57: 0 @Int32 = Integer
-# CHECK-NEXT: v58: undefined|int[0, 4294967295] @JSValue = ElemGet v56, v57 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b18(v55, v56)
-# CHECK-NEXT: b18(v59: int[1, 4294967295] @Int64, v60: Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue) frequency=Rare:
-# CHECK-NEXT: v61: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v62: undefined|int[0, 4294967295] @JSValue = ElemGet v60, v61 [keyIsIntegral]
-# CHECK-NEXT: v63: anything @JSValue = CallDirect function=f9 accessSite=7
-# CHECK-NEXT: v64: 2 @Int32 = Integer integer=2
-# CHECK-NEXT: Jump -> next b19(v63, v59, v64)
-# CHECK-NEXT: b19(v65: anything @JSValue, v66: int[1, 4294967295] @Int64, v67: int[1, 2] @Int32) frequency=Rare:
-# CHECK-NEXT: v68: 0 @OptionalDouble = Integer
-# CHECK-NEXT: v69: L0 @Cell = NewObject -, v68 layout=L0 fields=[0] allocationSite=5 allocation=1 allocationClass=0
-# CHECK-NEXT: PropSet v69, v65 key="v"
-# CHECK-NEXT: v71: L0 @Cell = FinishObject v69
-# CHECK-NEXT: v72: undefined|null|string @JSValue = Call v10, -, v71 calleeName="state" accessSite=8 callees=[f2, ..]
-# CHECK-NEXT: v73: number|unspecified @OptionalDouble = Unspecified valueType=number
-# CHECK-NEXT: Jump -> next b20(v66, v71, v67, v73, v65)
-# CHECK-NEXT: b20(v74: int[1, 4294967295] @Int64, v75: L0 @Cell, v76: int[1, 4] @Int32, v77: number|unspecified @OptionalDouble, v78: anything|unspecified @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v79: boolean @Boolean = HasBirthFieldsFilled v75
-# CHECK-NEXT: TestAndBranch v79 -> taken b21(), notTaken b23(v74, v75, v76, v77, v78)
+# CHECK-NEXT: v54: fact @Void = Specified
+# CHECK-NEXT: v55: Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v51, v54 provenType=Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b17(v53, v55)
+# CHECK-NEXT: b17(v56: int[1, 4294967295] @Int64, v57: Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue) frequency=Rare:
+# CHECK-NEXT: v58: 0 @Int32 = Integer
+# CHECK-NEXT: v59: undefined|int[0, 4294967295] @JSValue = ElemGet v57, v58 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b18(v56, v57)
+# CHECK-NEXT: b18(v60: int[1, 4294967295] @Int64, v61: Array<int[0, 4294967295], proven, pristine[Storage, Names, Dense]> @JSValue) frequency=Rare:
+# CHECK-NEXT: v62: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v63: undefined|int[0, 4294967295] @JSValue = ElemGet v61, v62 [keyIsIntegral]
+# CHECK-NEXT: v64: undefined|number @OptionalDouble = CallDirect function=f9 accessSite=7
+# CHECK-NEXT: v65: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: Jump -> next b19(v64, v60, v65)
+# CHECK-NEXT: b19(v66: undefined|number @JSValue, v67: int[1, 4294967295] @Int64, v68: int[1, 2] @Int32) frequency=Rare:
+# CHECK-NEXT: v69: 0 @OptionalDouble = Integer
+# CHECK-NEXT: v70: L0 @Cell = NewObject -, v69 layout=L0 fields=[0] allocationSite=5 allocation=1 allocationClass=0
+# CHECK-NEXT: PropSet v70, v66 key="v"
+# CHECK-NEXT: v72: L0 @Cell = FinishObject v70
+# CHECK-NEXT: v73: undefined|null|string @JSValue = Call v10, -, v72 calleeName="state" accessSite=8 callees=[f2, ..]
+# CHECK-NEXT: v74: number|unspecified @OptionalDouble = Unspecified valueType=number
+# CHECK-NEXT: Jump -> next b20(v67, v72, v68, v74, v66)
+# CHECK-NEXT: b20(v75: int[1, 4294967295] @Int64, v76: L0 @Cell, v77: int[1, 4] @Int32, v78: number|unspecified @OptionalDouble, v79: anything|unspecified @JSValue) frequency=Unlikely:
+# CHECK-NEXT: v80: boolean @Boolean = HasBirthFieldsFilled v76
+# CHECK-NEXT: TestAndBranch v80 -> taken b21(), notTaken b23(v75, v76, v77, v78, v79)
 # CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: v80: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v81: int[0, 4] @Int32 = BitAnd v76, v80 form=Integers
-# CHECK-NEXT: v83: number|unspecified @Double = Unspecified valueType=number
-# CHECK-NEXT: v82: boolean @Boolean = ToBoolean v81 form=Integers
-# CHECK-NEXT: TestAndBranch v82 -> taken b22(), notTaken b24(v83, v74, v76, v78)
+# CHECK-NEXT: v81: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v82: int[0, 4] @Int32 = BitAnd v77, v81 form=Integers
+# CHECK-NEXT: v84: number|unspecified @Double = Unspecified valueType=number
+# CHECK-NEXT: v83: boolean @Boolean = ToBoolean v82 form=Integers
+# CHECK-NEXT: TestAndBranch v83 -> taken b22(), notTaken b24(v84, v75, v77, v79)
 # CHECK-NEXT: b22() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b2(v74)
-# CHECK-NEXT: b23(v84: int[1, 4294967295] @Int64, v85: L0 @Cell, v86: int[1, 4] @Int32, v87: number|unspecified @Double, v88: anything|unspecified @JSValue) frequency=Rare:
-# CHECK-NEXT: v89: anything @JSValue = PropGet v85 key="v" accessSite=9 siteCache=0
-# CHECK-NEXT: Jump -> next b24(v87, v84, v86, v88)
-# CHECK-NEXT: b24(v90: number|unspecified @Double, v91: int[1, 4294967295] @Int64, v92: int[1, 4] @Int32, v93: anything|unspecified @JSValue) frequency=Rare:
-# CHECK-NEXT: v94: 3 @Int32 = Integer integer=3
-# CHECK-NEXT: v95: int[0, 3] @Int32 = BitAnd v92, v94 form=Integers
-# CHECK-NEXT: v96: boolean @Boolean = ToBoolean v95 form=Integers
-# CHECK-NEXT: TestAndBranch v96 -> taken b25(v93), notTaken b25(v90)
-# CHECK-NEXT: b25(v97: anything|unspecified @JSValue) frequency=Rare:
-# CHECK-NEXT: v98: anything|unspecified @JSValue = Upcast v97 castType=anything
-# CHECK-NEXT: v99: 1 @JSValue = Integer integer=1
-# CHECK-NEXT: v100: fact @Void = Specified
-# CHECK-NEXT: v101: anything @JSValue = AssumeType v98, v100 provenType=anything
-# CHECK-NEXT: v102: number|string|bigint @JSValue = Add v101, v99 form=Generic
-# CHECK-NEXT: Jump -> next b1(v91)
+# CHECK-NEXT: Jump -> next b2(v75)
+# CHECK-NEXT: b23(v85: int[1, 4294967295] @Int64, v86: L0 @Cell, v87: int[1, 4] @Int32, v88: number|unspecified @Double, v89: anything|unspecified @JSValue) frequency=Rare:
+# CHECK-NEXT: v90: anything @JSValue = PropGet v86 key="v" accessSite=9 siteCache=0
+# CHECK-NEXT: Jump -> next b24(v88, v85, v87, v89)
+# CHECK-NEXT: b24(v91: number|unspecified @Double, v92: int[1, 4294967295] @Int64, v93: int[1, 4] @Int32, v94: anything|unspecified @JSValue) frequency=Rare:
+# CHECK-NEXT: v95: 3 @Int32 = Integer integer=3
+# CHECK-NEXT: v96: int[0, 3] @Int32 = BitAnd v93, v95 form=Integers
+# CHECK-NEXT: v97: boolean @Boolean = ToBoolean v96 form=Integers
+# CHECK-NEXT: TestAndBranch v97 -> taken b25(v94), notTaken b25(v91)
+# CHECK-NEXT: b25(v98: anything|unspecified @JSValue) frequency=Rare:
+# CHECK-NEXT: v99: anything|unspecified @JSValue = Upcast v98 castType=anything
+# CHECK-NEXT: v100: undefined|null|boolean|number|string|symbol|bigint|unspecified @JSValue = AssumeType v99 provenType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: v101: 1 @JSValue = Integer integer=1
+# CHECK-NEXT: v102: fact @Void = Specified
+# CHECK-NEXT: v103: undefined|null|boolean|number|string|symbol|bigint @JSValue = AssumeType v100, v102 provenType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: v104: number|string|bigint @JSValue = Add v103, v101 form=Generic
+# CHECK-NEXT: Jump -> next b1(v92)
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v103: 1 @Double = Integer integer=1
-# CHECK-NEXT: v104: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v105: fractional @Double = Double number=0.5
-# CHECK-NEXT: v106: fractional @Double = Double number=0.5
-# CHECK-NEXT: v107: whole @Double = Double number=1e+300
-# CHECK-NEXT: v108: whole @Double = Double number=-1e+300
-# CHECK-NEXT: v109: whole @Double = Double number=Infinity
-# CHECK-NEXT: v110: whole @Double = Double number=-Infinity
-# CHECK-NEXT: v111: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v112: Array<1|double> @Cell = NewArray v104, v105, v106, v107, v108, v109, v110, v111 contents=1|double allocationSite=3
-# CHECK-NEXT: v113: Array<1|double, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v112 provenType=Array<1|double, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v114: 0 @Int64 = Integer
-# CHECK-NEXT: v115: f1 @Cell = GetModuleVariable variable=g0
-# CHECK-NEXT: v149: codeaddress @RawWord = ResolveCallTarget v115 argumentCount=1
-# CHECK-NEXT: Jump -> next b27(v114, v103)
-# CHECK-NEXT: b27(v116: int[0, 4294967295] @Int64, v117: number @DoubleWithPayload):
-# CHECK-NEXT: Jump -> next b28(v116, v117)
-# CHECK-NEXT: b28(v118: int[0, 4294967295] @Int64, v119: number @DoubleWithPayload):
+# CHECK-NEXT: v105: 1 @Double = Integer integer=1
+# CHECK-NEXT: v106: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v107: fractional @Double = Double number=0.5
+# CHECK-NEXT: v108: fractional @Double = Double number=0.5
+# CHECK-NEXT: v109: whole @Double = Double number=1e+300
+# CHECK-NEXT: v110: whole @Double = Double number=-1e+300
+# CHECK-NEXT: v111: whole @Double = Double number=Infinity
+# CHECK-NEXT: v112: whole @Double = Double number=-Infinity
+# CHECK-NEXT: v113: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v114: Array<1|double> @Cell = NewArray v106, v107, v108, v109, v110, v111, v112, v113 contents=1|double allocationSite=3
+# CHECK-NEXT: v115: Array<1|double, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v114 provenType=Array<1|double, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v116: 0 @Int64 = Integer
+# CHECK-NEXT: v117: f1 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: v152: codeaddress @RawWord = ResolveCallTarget v117 argumentCount=1
+# CHECK-NEXT: Jump -> next b27(v116, v105)
+# CHECK-NEXT: b27(v118: int[0, 4294967295] @Int64, v119: number @Double):
+# CHECK-NEXT: Jump -> next b28(v118, v119)
+# CHECK-NEXT: b28(v120: int[0, 4294967295] @Int64, v121: number @Double):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v121: int[0, 4294967295] @Int64 = CallInline v113 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v122: boolean @Boolean = Less v118, v121 form=Integers
-# CHECK-NEXT: TestAndBranch v122 -> taken b29(| 0), notTaken b37()
-# CHECK-NEXT: b29(v123: int[0, 4294967294] @Int64):
-# CHECK-NEXT: v124: boolean @Boolean = HasArrayStorage v113 arrayStorage=Double
-# CHECK-NEXT: TestAndBranch v124 -> taken b30(| 0), notTaken b32()
-# CHECK-NEXT: b30(v125: guard @Void):
-# CHECK-NEXT: v126: boolean @Boolean = IsInBounds v113, v123
-# CHECK-NEXT: TestAndBranch v126 -> taken b31(| 0), notTaken b36()
-# CHECK-NEXT: b31(v127: guard @Void):
-# CHECK-NEXT: v128: guard @Void = AllGuards v125, v127
-# CHECK-NEXT: v129: 1|double @Double = GetArrayElement v113, v123, v128 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b35(v129)
+# CHECK-NEXT: v123: int[0, 4294967295] @Int64 = CallInline v115 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v124: boolean @Boolean = Less v120, v123 form=Integers
+# CHECK-NEXT: TestAndBranch v124 -> taken b29(| 0), notTaken b37()
+# CHECK-NEXT: b29(v125: int[0, 4294967294] @Int64):
+# CHECK-NEXT: v126: boolean @Boolean = HasArrayStorage v115 arrayStorage=Double
+# CHECK-NEXT: TestAndBranch v126 -> taken b30(| 0), notTaken b32()
+# CHECK-NEXT: b30(v127: guard @Void):
+# CHECK-NEXT: v128: boolean @Boolean = IsInBounds v115, v125
+# CHECK-NEXT: TestAndBranch v128 -> taken b31(| 0), notTaken b36()
+# CHECK-NEXT: b31(v129: guard @Void):
+# CHECK-NEXT: v130: guard @Void = AllGuards v127, v129
+# CHECK-NEXT: v131: 1|double @Double = GetArrayElement v115, v125, v130 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b35(v131)
 # CHECK-NEXT: b32() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v113
-# CHECK-NEXT: v131: boolean @Boolean = HasArrayStorage v113 arrayStorage=Contiguous
-# CHECK-NEXT: TestAndBranch v131 -> taken b33(| 0), notTaken b36()
-# CHECK-NEXT: b33(v132: guard @Void) frequency=Rare:
-# CHECK-NEXT: v133: boolean @Boolean = IsInBounds v113, v123
-# CHECK-NEXT: TestAndBranch v133 -> taken b34(| 0), notTaken b36()
-# CHECK-NEXT: b34(v134: guard @Void) frequency=Unlikely:
-# CHECK-NEXT: v135: guard @Void = AllGuards v132, v134
-# CHECK-NEXT: v136: 1|double @JSValue = GetArrayElement v113, v123, v135 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b35(v136)
-# CHECK-NEXT: b35(v137: 1|double @Double):
-# CHECK-NEXT: v138: 1 @Int64 = Integer integer=1
-# CHECK-NEXT: v139: int[1, 4294967295] @Int64 = Add v123, v138 form=Integers
-# CHECK-NEXT: v140: number @DoubleWithPayload = Add v119, v137 form=Numbers
-# CHECK-NEXT: v141: undefined|null|string @JSValue = CallResolved v115, v149, -, v140 calleeName="sign" accessSite=6 callees=[f1]
-# CHECK-NEXT: Jump -> next b28(v139, v140)
+# CHECK-NEXT: ConvertToDoubleStorage v115
+# CHECK-NEXT: v133: boolean @Boolean = HasArrayStorage v115 arrayStorage=Contiguous
+# CHECK-NEXT: TestAndBranch v133 -> taken b33(| 0), notTaken b36()
+# CHECK-NEXT: b33(v134: guard @Void) frequency=Rare:
+# CHECK-NEXT: v135: boolean @Boolean = IsInBounds v115, v125
+# CHECK-NEXT: TestAndBranch v135 -> taken b34(| 0), notTaken b36()
+# CHECK-NEXT: b34(v136: guard @Void) frequency=Unlikely:
+# CHECK-NEXT: v137: guard @Void = AllGuards v134, v136
+# CHECK-NEXT: v138: 1|double @JSValue = GetArrayElement v115, v125, v137 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b35(v138)
+# CHECK-NEXT: b35(v139: 1|double @Double):
+# CHECK-NEXT: v140: 1 @Int64 = Integer integer=1
+# CHECK-NEXT: v141: int[1, 4294967295] @Int64 = Add v125, v140 form=Integers
+# CHECK-NEXT: v142: number @Double = Add v121, v139 form=Numbers
+# CHECK-NEXT: v143: undefined|null|string @JSValue = CallResolved v117, v152, -, v142 calleeName="sign" accessSite=6 callees=[f1]
+# CHECK-NEXT: Jump -> next b28(v141, v142)
 # CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v142: undefined|1|double @JSValue = ElemGet v113, v123 [keyIsIntegral]
-# CHECK-NEXT: v143: 1 @Int64 = Integer integer=1
-# CHECK-NEXT: v144: int[1, 4294967295] @Int64 = Add v123, v143 form=Integers
-# CHECK-NEXT: v145: undefined|1|double @OptionalDouble = Expect v142 expectedType=number
-# CHECK-NEXT: v146: number @DoubleWithPayload = Add v119, v145 form=Numbers
-# CHECK-NEXT: v147: undefined|null|string @JSValue = Call v115, -, v146 calleeName="sign" accessSite=6 callees=[f1]
-# CHECK-NEXT: Jump -> next b27(v144, v146)
+# CHECK-NEXT: v144: undefined|1|double @JSValue = ElemGet v115, v125 [keyIsIntegral]
+# CHECK-NEXT: v145: 1 @Int64 = Integer integer=1
+# CHECK-NEXT: v146: int[1, 4294967295] @Int64 = Add v125, v145 form=Integers
+# CHECK-NEXT: v147: fact @Void = Specified
+# CHECK-NEXT: v148: 1|double @JSValue = AssumeType v144, v147 provenType=number
+# CHECK-NEXT: v149: number @Double = Add v121, v148 form=Numbers
+# CHECK-NEXT: v150: undefined|null|string @JSValue = Call v117, -, v149 calleeName="sign" accessSite=6 callees=[f1]
+# CHECK-NEXT: Jump -> next b27(v146, v149)
 # CHECK-NEXT: b37():
-# CHECK-NEXT: v148: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v148
+# CHECK-NEXT: v151: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v151
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromBits"
-# CHECK: module=m0 position=576 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int}, {type=int}] results=[{type=number flags=[IsExpected]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=576 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int}, {type=int}] results=[{type=undefined|number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="fromBits"
-# CHECK: module=m0 position=576 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} {
+# CHECK: module=m0 position=576 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=undefined|number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v2: Float64Array<anything, pristine[Storage, Names]> @Cell = GetModuleVariable variable=g2
 # CHECK-NEXT: v3: 0 @Int32 = Integer
@@ -326,7 +329,7 @@ function f3 name="fromBits" module=m0 position=576 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: b1(v5: guard @Void):
 # CHECK-NEXT: v6: number @ImpureDouble = GetTypedArrayElement v2, v3, v5 typedArrayType=10 level=Proven accessSite=11 [keyIsIntegral, isInsideView]
 # CHECK-NEXT: Jump -> next b2(v6)
-# CHECK-NEXT: b2(v7: undefined|number @JSValue):
+# CHECK-NEXT: b2(v7: undefined|number @OptionalDouble):
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: v8: undefined|number @OptionalDouble = GetTypedArrayElement v2, v3 typedArrayType=10 level=Proven accessSite=11 [keyIsIntegral]

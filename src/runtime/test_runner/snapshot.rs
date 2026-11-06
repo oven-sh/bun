@@ -485,7 +485,7 @@ impl Snapshots {
                 && let Err(err) = Self::open(files, file.id)
             {
                 file.keeps_all = true;
-                return Err(Self::error_of_open(err));
+                return Err(Self::error_of_open(&err));
             }
             let is_appended = format == Format::Bun && !is_of_the_file;
             file.pending = file.pending.max(if is_appended { Pending::NewEntries } else { Pending::WholeFile });
@@ -617,20 +617,21 @@ impl Snapshots {
         if file.keeps_all {
             return Ok(());
         }
-        let before = self.values.len();
-        self.values.retain(|_, entry| entry.checked || entry.stays);
-        if self.values.len() == before {
+        let kept = self.values.values().iter().filter(|entry| entry.checked || entry.stays).count();
+        if kept == self.values.len() {
             return Ok(());
         }
 
-        // No test owns this change, so a file that can't be changed is an error of the test file.
-        if self.values.is_empty() {
-            return Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable);
+        // No test owns this change, so a file that can't be changed is an error of the test file. The map keeps its entries then.
+        if kept == 0 {
+            Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable)?;
+        } else {
+            if file.pending == Pending::Nothing {
+                Self::open(files, file.id).map_err(LeftAsItIs::NotWritable)?;
+            }
+            file.pending = Pending::WholeFile;
         }
-        if file.pending == Pending::Nothing {
-            Self::open(files, file.id).map_err(LeftAsItIs::NotWritable)?;
-        }
-        file.pending = Pending::WholeFile;
+        self.values.retain(|_, entry| entry.checked || entry.stays);
         Ok(())
     }
 
@@ -679,17 +680,16 @@ impl Snapshots {
                 let result = results.binary_search_by(|(of, _)| of.cmp(&core::ptr::from_ref(test))).ok().map(|i| results[i].1);
                 let ran_to_the_end = match test.base.mode {
                     ScopeMode::Normal => result == Some(TestResult::Pass),
-                    // Only `--todo` runs the body of a todo, so another run can't tell what the body asks for.
-                    ScopeMode::Todo => result == Some(TestResult::Todo) && (is_vitest || !test.has_body),
+                    // A todo with no body takes no snapshot. Only `--todo` runs a body, so another run can't tell what the body asks for.
+                    ScopeMode::Todo => !test.has_body || (is_vitest && result == Some(TestResult::Todo)),
                     // These pass when they throw, which can be before the matcher.
                     ScopeMode::Failing | ScopeMode::Fails => result == Some(TestResult::Pass) && is_vitest,
                     ScopeMode::Skip | ScopeMode::FilteredOut => false,
                 };
                 all_ran_to_the_end &= ran_to_the_end;
-                // A todo that `test.only` leaves out has no result. One with no body takes no snapshot.
-                let is_todo_with_no_entry =
-                    test.base.mode == ScopeMode::Todo && result.is_none() && (is_vitest || !test.has_body);
-                if ran_to_the_end || is_todo_with_no_entry {
+                // Vitest also removes the entries of a todo that `test.only` leaves out. Such a test has no result.
+                let is_todo_left_out = is_vitest && test.base.mode == ScopeMode::Todo && result.is_none();
+                if ran_to_the_end || is_todo_left_out {
                     continue;
                 }
                 for format in formats {
@@ -838,10 +838,8 @@ impl Snapshots {
         }
 
         opened.pwrite_all(&text, offset as i64)?;
-        if !is_appended {
-            bun_sys::ftruncate(opened.handle, text.len() as i64)?;
-        }
-        Ok(())
+        // Also behind new entries: another run can have put a longer text there after the check of the length.
+        bun_sys::ftruncate(opened.handle, (offset + text.len()) as i64)
     }
 
     pub(crate) fn add_inline_snapshot_to_write(
@@ -1285,7 +1283,7 @@ impl Snapshots {
         Ok(success.get())
     }
 
-    fn error_of_open(err: bun_sys::Error) -> Error {
+    fn error_of_open(err: &bun_sys::Error) -> Error {
         // `bun_sys::Tag` is a struct with associated consts, so this can't be a `match`.
         if err.syscall == bun_sys::Tag::mkdir {
             Error::FailedToMakeSnapshotDirectory

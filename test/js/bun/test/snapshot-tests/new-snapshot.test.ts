@@ -435,6 +435,16 @@ describe.concurrent("--update-snapshots", () => {
   const unreadable =
     header + '\n<<<<<<< ours\nexports[`b 1`] = `"ours"`;\n=======\nexports[`b 1`] = `"theirs"`;\n>>>>>>> theirs\n';
 
+  // A todo with no body takes no snapshot, so the run has every entry without it.
+  test("replaces a file that does not parse when test.only leaves out only a todo with no body", async () => {
+    const result = await updateOne(
+      `test.only("a", () => { expect("a").toMatchSnapshot(); });
+       test.todo("b");`,
+      unreadable,
+    );
+    expect(result).toMatchObject({ snapshot: snap({ "a 1": `"a"` }), exitCode: 0 });
+  });
+
   // Such a run can't tell which entries of the file to keep.
   test.each([
     ["-t leaves a test out", `test("b", () => { expect("new").toMatchSnapshot(); });`, ["-t", "a"]],

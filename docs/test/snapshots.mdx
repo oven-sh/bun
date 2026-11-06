@@ -59,6 +59,8 @@ It keeps the entries of a test that did not run to the end:
 - a `test.todo` that has a body
 - a `test.failing` test, which can throw before it reaches its snapshot
 
+If a `describe()` callback throws, Bun removes no entry from the snapshot file of that test file, because the tests after the throw are not registered.
+
 To remove one of these entries, delete it from the snapshot file. To write a snapshot file from scratch, delete the file and run `bun test --update-snapshots`.
 
 A snapshot file in Bun's format keeps the order of its entries. New entries go at the end. When Bun changes or removes an entry, it writes the whole file again from the entries that it read, so comments and manual formatting in the file are lost. Bun does the same when the length of the file changed while the tests ran, which means that something else wrote to it. The changes of that other writer are lost too.

@@ -186,6 +186,17 @@ describe("a snapshot file that bun test can't write", () => {
     },
   );
 
+  // The second run of the file has the same entries to remove: the first one took none out of what it loaded.
+  test.serial("--update-snapshots --rerun-each reports such a file in each run", async () => {
+    using fixture = readOnly({ "a.test.js": matches, "__snapshots__/a.test.js.snap": withUnused });
+    const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots", "--rerun-each=2");
+    const report = `: Failed to remove the entries that no test uses from ${quoted("a.test.js")} (open)\n`;
+    expect(stderr.split(report).length - 1).toBe(2);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n 2 errors\n");
+    expect(fixture.read()).toBe(withUnused);
+    expect(exitCode).toBe(1);
+  });
+
   // On Windows the file can be removed: libuv clears its read-only attribute.
   test.serial.skipIf(isWindows)(
     "--update-snapshots reports a file with no entry left that it can't remove",

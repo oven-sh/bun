@@ -1848,19 +1848,47 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       const boom = `throw new Error("before the snapshot line"); `;
       const stored = file(format, { "one 1": "v1", "three 1": "v3", "two 1": "v2" });
 
-      const runs: [string, string[], string][] = [
-        ["every test runs", ["--update-snapshots"], plain],
-        ["-t one without the flag", ["-t", "one"], plain],
-        ["-t one", ["--update-snapshots", "-t", "one"], plain],
-        ["two and three are test.skip", ["--update-snapshots"], form("test", "test.skip", "test.skip")],
-        ["--only, and one is test.only", ["--update-snapshots", "--only"], form("test.only", "test", "test")],
-        ["two throws before its snapshot", ["--update-snapshots"], form("test", "test", "test", "", boom)],
+      // The last two columns are what the run itself reports: [pass, fail, exit code], and a line of its output.
+      type Reported = [[number, number, number], string];
+      const runs: [string, string[], string, ...Reported][] = [
+        ["every test runs", ["--update-snapshots"], plain, [3, 0, 0], "Ran 3 tests across 1 file"],
+        ["-t one without the flag", ["-t", "one"], plain, [1, 0, 0], "Ran 1 test across 1 file"],
+        ["-t one", ["--update-snapshots", "-t", "one"], plain, [1, 0, 0], "Ran 1 test across 1 file"],
+        [
+          "two and three are test.skip",
+          ["--update-snapshots"],
+          form("test", "test.skip", "test.skip"),
+          [1, 0, 0],
+          "Ran 3 tests across 1 file",
+        ],
+        [
+          "--only, and one is test.only",
+          ["--update-snapshots", "--only"],
+          form("test.only", "test", "test"),
+          [1, 0, 0],
+          "Ran 1 test across 1 file",
+        ],
+        [
+          "two throws before its snapshot",
+          ["--update-snapshots"],
+          form("test", "test", "test", "", boom),
+          [2, 1, 1],
+          "Ran 3 tests across 1 file",
+        ],
         [
           "--bail, and one fails before its snapshot",
           ["--update-snapshots", "--bail"],
           form("test", "test", "test", boom),
+          [0, 0, 1],
+          "Bailed out after 1 failure",
         ],
-        ["-t selects no test", ["--update-snapshots", "-t", "nothing-has-this-name"], plain],
+        [
+          "-t selects no test",
+          ["--update-snapshots", "-t", "nothing-has-this-name"],
+          plain,
+          [0, 0, 1],
+          "matched 0 tests",
+        ],
       ];
       // Vitest removes the entries of a todo. The block below has that row.
       if (format !== "vitest") {
@@ -1868,11 +1896,15 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
           "two and three are test.todo with a body",
           ["--update-snapshots"],
           form("test", "test.todo", "test.todo"),
+          [1, 0, 0],
+          "Ran 3 tests across 1 file",
         ]);
       }
-      test.each(runs)("%s", async (_, args, tests) => {
+      test.each(runs)("%s", async (_, args, tests, counts, line) => {
         using dir = tempDir("snapshot-left-out", { "a.test.js": tests, "__snapshots__/a.test.js.snap": stored });
-        await runTests(String(dir), { CI: "false", V: "v2" }, ...args, "./a.test.js");
+        const first = await runTests(String(dir), { CI: "false", V: "v2" }, ...args, "./a.test.js");
+        expect([first.pass, first.fail, first.exitCode]).toEqual(counts);
+        expect(first.stderr).toContain(line);
         expect(snap(dir)).toBe(stored);
 
         writeFileSync(join(String(dir), "a.test.js"), plain);

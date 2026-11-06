@@ -2604,6 +2604,125 @@ describe.concurrent("resetModules", () => {
       1,
     );
   });
+
+  // These answer a load from the source that an earlier load transpiled, in the same test file or in one before it.
+  // One --parallel worker takes every test file of a fixture (scale-up gated), so the files share its sources.
+  const withSourceCache: [string[]][] = [[["--isolate"]], [["--isolate=modules"]], [["--parallel=2"]]];
+  const everyMode: [string[]][] = [[[]], ...withSourceCache];
+  const oneWorkerEnv = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" };
+  // With a second test file, --parallel starts a worker.
+  const anEarlierTestFile = `import { test } from "bun:test"; test("runs first", () => {});`;
+
+  test.each(everyMode)("the next load reads the file again %j", async args => {
+    await expectFixturesToPass(
+      {
+        "esm.ts": `export const text = "v1";`,
+        "cjs.cjs": `exports.text = "v1";`,
+        "earlier.test.ts": `
+          import { expect, test } from "bun:test";
+          import { text } from "./esm.ts";
+          test("loads both first", () => expect([text, require("./cjs.cjs").text]).toEqual(["v1", "v1"]));
+        `,
+        "reset.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          // Before the first reset, only the earlier test file has loaded the two modules.
+          test.each([["v2", jest], ["v3", vi], ["v4", jest]])("%s", async (text, api) => {
+            writeFileSync(join(import.meta.dir, "esm.ts"), 'export const text = "' + text + '";');
+            writeFileSync(join(import.meta.dir, "cjs.cjs"), 'exports.text = "' + text + '";');
+            api.resetModules();
+            expect([(await import("./esm.ts")).text, require("./cjs.cjs").text]).toEqual([text, text]);
+          });
+        `,
+      },
+      4,
+      args,
+      oneWorkerEnv,
+    );
+  });
+
+  test.each(withSourceCache)("vi.resetModules() keeps the sources of the packages that stay loaded %j", async args => {
+    await expectFixturesToPass(
+      {
+        "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-pkg/index.js": `export default {};`,
+        "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
+        "node_modules/cjs-pkg/index.js": `module.exports = {};`,
+        // Node would read it as CommonJS, so Vitest inlines it.
+        "node_modules/untyped-esm-pkg/package.json": `{ "name": "untyped-esm-pkg", "main": "index.js" }`,
+        "node_modules/untyped-esm-pkg/index.js": `export default {};`,
+        "own.js": `import "esm-pkg"; import "cjs-pkg"; import "untyped-esm-pkg";`,
+        "earlier.test.js": `
+          import { test } from "bun:test";
+          import "./own.js";
+          test("loads them first", () => {});
+        `,
+        "reset.test.js": `
+          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+          import { expect, jest, test, vi } from "bun:test";
+
+          const cached = () =>
+            ["./own.js", "esm-pkg", "cjs-pkg", "untyped-esm-pkg"].map(name => isolatedModuleCacheSourceType(require.resolve(name)));
+          const all = ["BunTranspiledModule", "BunTranspiledModule", "Program", "BunTranspiledModule"];
+          const packages = [null, "BunTranspiledModule", "Program", null];
+
+          test("the sources that an earlier test file cached", () => {
+            expect(cached()).toEqual(all);
+            vi.resetModules();
+            expect(cached()).toEqual(packages);
+            vi.resetModules();
+            expect(cached()).toEqual(packages);
+          });
+
+          test("the sources of the packages that this test file loaded", async () => {
+            await import("./own.js");
+            expect(cached()).toEqual(all);
+            vi.resetModules();
+            expect(cached()).toEqual(packages);
+            jest.resetModules();
+            expect(cached()).toEqual([null, null, null, null]);
+          });
+        `,
+      },
+      3,
+      args,
+      oneWorkerEnv,
+    );
+  });
+
+  test.each(everyMode)("vi.resetModules() reads an ES module package again that failed to load %j", async args => {
+    await expectFixturesToPass(
+      {
+        "node_modules/throws/package.json": `{ "name": "throws", "type": "module", "main": "index.js" }`,
+        "node_modules/throws/index.js": `export const text = "v1"; throw new Error("v1");`,
+        "node_modules/imports-throws/package.json": `{ "name": "imports-throws", "type": "module", "main": "index.js" }`,
+        "node_modules/imports-throws/index.js": `export { text } from "throws";`,
+        "node_modules/links/package.json": `{ "name": "links", "type": "module", "main": "index.js" }`,
+        "node_modules/links/index.js": `export { missing as text } from "./exports.js";`,
+        "node_modules/links/exports.js": `export const text = "v2";`,
+        "earlier.test.js": anEarlierTestFile,
+        "reset.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const load = name => import(name).then(({ text }) => text, error => error.constructor.name);
+          test("a package that threw, through the package that imports it, and one that failed to link", async () => {
+            expect([await load("imports-throws"), await load("links")]).toEqual(["Error", "SyntaxError"]);
+            writeFileSync(join(import.meta.dir, "node_modules/throws/index.js"), 'export const text = "v2";');
+            writeFileSync(join(import.meta.dir, "node_modules/links/index.js"), 'export { text } from "./exports.js";');
+            vi.resetModules();
+            expect([await load("imports-throws"), await load("links")]).toEqual(["v2", "v2"]);
+          });
+        `,
+      },
+      2,
+      args,
+      oneWorkerEnv,
+    );
+  });
 });
 
 describe.concurrent("factories", () => {

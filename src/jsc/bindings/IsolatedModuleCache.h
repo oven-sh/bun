@@ -4,6 +4,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/ScopedLambda.h>
 
 namespace Zig {
 class GlobalObject;
@@ -77,6 +78,9 @@ public:
     // have preceded, and Module._extensions[".js"] called by a program. The
     // provider that is cached for the key stays.
     static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
+
+    // For resetModules(): evicts every entry that `keeps` doesn't claim.
+    static void dropForReset(JSC::VM&, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps);
 
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);

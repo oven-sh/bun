@@ -245,8 +245,8 @@ declare module "bun:test" {
      */
     function createMockFromModule<T = any>(id: string): Mocked<T>;
     /**
-     * Re-evaluate each module on its next `import()` or `require()`. Mocked modules stay mocked, and their factories
-     * run again.
+     * Re-evaluate each module on its next `import()` or `require()`, from its file as it is then. Mocked modules stay
+     * mocked, and their factories run again.
      */
     function resetModules(): typeof jest;
     function setSystemTime(now?: number | Date | string): void;
@@ -483,7 +483,8 @@ declare module "bun:test" {
      */
     importMock<T = any>(id: string): Promise<Mocked<T>>;
     /**
-     * Re-evaluate each module on its next `import()` or `require()`. Mocked modules stay mocked.
+     * Re-evaluate each module on its next `import()` or `require()`, from its file as it is then. Mocked modules stay
+     * mocked. As in Vitest, packages in `node_modules` stay loaded. `jest.resetModules()` loads them again too.
      */
     resetModules(): typeof vi;
     /**

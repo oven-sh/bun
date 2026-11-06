@@ -2305,7 +2305,10 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
   // into the finished file's graph: "ModuleGraph has been disposed".
   // Makes a module large, so that its transpile is still out when the test file that asked for it ends.
   const large = `export const zeros = [${Buffer.alloc(100_000, "0,").toString()}];`;
-  const leftLoading = [["a first load", `void import("./helper.ts");`]];
+  const leftLoading = [
+    ["a first load", `void import("./helper.ts");`],
+    ["a load after vi.resetModules()", `await import("./helper.ts"); vi.resetModules(); void import("./helper.ts");`],
+  ];
   describe.each(leftLoading)("a finished file's import() that is still loading is dropped: %s", (_, leaveLoading) => {
     test.each([
       ...isolateFlags.map(flag => [flag, [flag], {}] as const),

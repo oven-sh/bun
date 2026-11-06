@@ -74,6 +74,13 @@ void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zi
         insert(vm, key, provider, pluginContents);
 }
 
+void IsolatedModuleCache::dropForReset(JSC::VM& vm, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps)
+{
+    WebCore::clientData(vm)->isolationSourceProviderCache.removeIf([&](auto& entry) {
+        return !keeps(entry.key, *static_cast<Zig::SourceProvider*>(entry.value.get()));
+    });
+}
+
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 {
     WebCore::clientData(vm)->isolationSourceProviderCache.remove(key);

@@ -8,15 +8,12 @@ use crate::comments::{
 use crate::doc::ALIGN_MARK_ROOT;
 use crate::lexer::{C_FLAGS, C_STRIDE, CF_BLOCK, CF_INDENTABLE, CF_PLAIN};
 use crate::print::statics::{SPACE, TWO_SPACES};
+use crate::scan::is_space;
 use crate::{Quick, Words};
-
-pub(crate) fn print_comments_is_blank(c: i32) -> bool {
-    return c == 32 || c == 9 || c == 13 || c == 10 || c == 11 || c == 12;
-}
 
 impl Quick {
     pub(crate) fn trim_end(&self, start: i32, mut end: i32) -> i32 {
-        while end > start && print_comments_is_blank(self.t.at(end - 1)) {
+        while end > start && is_space(self.t.at(end - 1)) {
             end -= 1;
         }
         return end;
@@ -33,7 +30,7 @@ impl Quick {
                 }
                 saw_newline = true;
                 let mut q = p + 1;
-                while q < e && print_comments_is_blank(self.t.at(q)) && self.t.at(q) != 10 {
+                while q < e && is_space(self.t.at(q)) && self.t.at(q) != 10 {
                     q += 1;
                 }
                 if self.t.at(q) != 42 {
@@ -138,7 +135,7 @@ impl Quick {
                 }
                 line_start = p + 1;
                 while line_start < e
-                    && print_comments_is_blank(self.t.at(line_start))
+                    && is_space(self.t.at(line_start))
                     && self.t.at(line_start) != 10
                 {
                     line_start += 1;

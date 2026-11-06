@@ -5158,6 +5158,45 @@ describe("JavaScript and TypeScript in a host", () => {
         ],
         [["--print-width=40"], ["--tab-width=4", "--print-width=27"], ["--tab-width=4", "--print-width=30"]],
       ));
+    // What a thread has learned from the texts that it has formatted decides what the next one costs, and nothing else.
+    describe("what was formatted before", () => {
+      // The files are named one by one: those that a search finds are formatted in the order in which they are found.
+      const expectSameInOrder = (name: string, texts: string[], options: string[][]) =>
+        test.skipIf(!hasFlag).concurrent.each(options.map(flags => [flags.join(" ") || "defaults", flags] as const))(
+          "%s",
+          async (_, flags) => {
+            const files = texts.map((_, index) => `${index}/${name}`);
+            const { different, said, expected } = await differences(name, texts, ["--threads=1", ...flags, ...files]);
+            expect(different).toEqual([]);
+            expect(said).toEqual(expected);
+          },
+        );
+      const unformatted = "```js\nconst  a=1\n```\n\n";
+      const blocks = [
+        "```js\nfoo(a, b); // c\u3000\n```\n",
+        "```js\nfoo(a, b); // c\u00a0\n```\n",
+        "```js\nfoo(a, b); // c\ufeff\n```\n",
+        "```ts\nfoo(a, b); // c\u0085\n```\n",
+        "```js\nfoo(a, b); // c\u200b\n```\n",
+        "```js\n// c\u3000\nfoo(a, b);\n```\n",
+        "```js\n//\tprettier-ignor\nfoo(a, b);\n```\n",
+        "```js\nfoo(a, b); // c\n```\n",
+      ];
+      // A block is asked about, or isn't, after so many blocks that weren't as they are printed: in its own file, ..
+      describe("code blocks in one file", () =>
+        expectSameInOrder(
+          "a.md",
+          [0, 1, 7, 8, 9, 22, 23, 24, 40].flatMap(count => blocks.map(block => unformatted.repeat(count) + block)),
+          [[]],
+        ));
+      // .. or in the files before it.
+      describe("code blocks in several files", () =>
+        expectSameInOrder(
+          "a.md",
+          [0, 3, 5, 1, 9, 14, 2].flatMap(count => [unformatted.repeat(count) || "a\n", ...blocks]),
+          [[]],
+        ));
+    });
   });
 });
 
@@ -5882,6 +5921,31 @@ describe("what the quick way for scripts is asked about, and what is done around
       // .. or in a block comment.
       ["a.js", "", "switch (a) {\n  case e: // c1\n  /**\n   * c2\n   */\n  {\n    b;\n  }\n}\n"],
       ["a.ts", "", "declare function a( // c1\nb: number): \n/**\n * c2\n */\nvoid;\n"],
+      // A line with nothing but a tab on it is an empty line: between arguments, elements and parameters.
+      [
+        "a.js",
+        "",
+        'const darkLess = fs.readFileSync(\n  path.join(stylePath, "themes", "dark.less"),\n\t\n  "utf8",\n);\n',
+      ],
+      ["a.js", "", `foo(\n\t${"a".repeat(40)},\n\t\n\t${"b".repeat(40)},\n);\n`],
+      ["a.js", "", `foo(\n  ${"a".repeat(40)},\n  \t \n  ${"b".repeat(40)},\n);\n`],
+      ["a.js", "", `const a = [\n  ${"a".repeat(40)},\n\t\n  ${"b".repeat(50)},\n];\n`],
+      ["a.js", "", `function f(\n  ${"a".repeat(40)},\n\t\n  ${"b".repeat(40)},\n) {\n  x;\n}\n`],
+      // A blank between braces is white space of JSX, whatever is around the string and however it is spelled.
+      ["a.jsx", "", "a = <b>c{ ' ' }d</b>;\n"],
+      ["a.jsx", "", "a = <b>c{\t' '}d</b>;\n"],
+      ["a.jsx", "", "a = (\n  <b>\n    {\t' '}\n    <c />\n  </b>\n);\n"],
+      ["a.tsx", "", 'const a = <Foo>{ " " }</Foo>;\n'],
+      ["a.jsx", "", 'a = <b>c{"\\x20"}d</b>;\n'],
+      ["a.jsx", "", 'a = <b>c{"\\u0020"}d</b>;\n'],
+      ["a.jsx", "", 'a = <b>c{"\\u{20}"}d{"\\u{000020}"}e</b>;\n'],
+      ["a.jsx", "", 'a = <b>c{"\\ "}d{" \\\n"}e</b>;\n'],
+      ["a.jsx", "", 'a = (\n  <b>\n    c{"\\x20"}\n    <d />\n  </b>\n);\n'],
+      ["a.jsx", "", 'a = <b>c{"\\x21"}d{"\\x20 "}e{"\\u{2000}"}f{"\\n"}g</b>;\n'],
+      // White space of any kind before `prettier-ignore`.
+      ["a.js", "", "b;\n//\fprettier-ignore\na  =  1;\n"],
+      ["a.js", "", "b;\n//\t\u000bprettier-ignore\na  =  1;\n"],
+      ["a.ts", "", "class A {\n  b = 1;\n  /*\u000bprettier-ignore*/\n  a  =  1;\n}\n"],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;

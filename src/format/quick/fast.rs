@@ -26,6 +26,7 @@ use crate::ast::{
 use crate::lexer::{KW_LENGTHS, kw, tk};
 use crate::options::{QUOTE_PROPS_AS_NEEDED, TRAILING_COMMA_ALL, TRAILING_COMMA_NONE};
 use crate::parse::core::{SCOPE_DERIVED_CONSTRUCTOR, SCOPE_FUNCTION, SCOPE_TOP};
+use crate::scan::is_blank;
 use crate::{Bytes, Quick, R, Words, bytes_before, div, where_byte_is, where_not_printable};
 
 #[derive(Clone, Copy)]
@@ -492,26 +493,11 @@ impl Quick {
         }
     }
 
-    /// Where the blanks in front of p start.
-    pub(crate) fn blanks_back(&self, mut p: i32) -> i32 {
-        while self.t.at(p - 1) == 32 || self.t.at(p - 1) == 9 {
-            p -= 1;
-        }
-        return p;
-    }
-
-    pub(crate) fn blanks(&self, mut p: i32) -> i32 {
-        while self.t.at(p) == 32 || self.t.at(p) == 9 {
-            p += 1;
-        }
-        return p;
-    }
-
     /// Nothing is printed between the tokens around `p`. Returns where the next one starts.
     #[inline]
     pub(crate) fn tight(&mut self, p: i32) -> i32 {
         let c = self.t.at(p);
-        if c != 32 && c != 9 {
+        if !is_blank(c) {
             return p;
         }
         self.drop_blanks(p)
@@ -530,7 +516,7 @@ impl Quick {
     pub(crate) fn spaced(&mut self, p: i32) -> i32 {
         if self.t.at(p) == 32 {
             let c = self.t.at(p + 1);
-            if c != 32 && c != 9 {
+            if !is_blank(c) {
                 return p + 1;
             }
         }
@@ -548,13 +534,6 @@ impl Quick {
 
     pub(crate) fn set_may_break_lines(&mut self, value: bool) {
         self.fast.may_break_lines = value;
-    }
-
-    pub(crate) fn white(&self, mut p: i32) -> i32 {
-        while self.t.at(p) == 32 || self.t.at(p) == 10 || self.t.at(p) == 9 {
-            p += 1;
-        }
-        return p;
     }
 
     /// tight() where the source may have line breaks.
@@ -916,10 +895,7 @@ impl Quick {
                 return Ok(self.no(refusal::ObjectType));
             }
             let mut e = self.word_end(q);
-            if e - q == 8
-                && (self.t.at(e) == 32 || self.t.at(e) == 9)
-                && self.text_is(q, e, b"readonly")
-            {
+            if e - q == 8 && is_blank(self.t.at(e)) && self.text_is(q, e, b"readonly") {
                 let name = self.blanks(e);
                 if (CC.at(self.t.at(name)) & ID_START) != 0 {
                     q = self.spaced(e);
@@ -1107,7 +1083,7 @@ impl Quick {
             if kw > tk::Name {
                 if kw == tk::Typeof {
                     // `typeof a.b`; with `[` behind it Prettier adds parentheses
-                    if self.t.at(q) != 32 && self.t.at(q) != 9 {
+                    if !is_blank(self.t.at(q)) {
                         return Ok(self.no(refusal::TypeWord));
                     }
                     q = self.spaced(q);
@@ -1149,7 +1125,7 @@ impl Quick {
                 let w = self.type_word(p, q - p);
                 if w != TW_PLAIN {
                     // as the name of a type only if nothing that starts a type follows
-                    if w == TW_REFUSED || (self.t.at(q) != 32 && self.t.at(q) != 9) {
+                    if w == TW_REFUSED || !is_blank(self.t.at(q)) {
                         return Ok(self.no(refusal::TypeWord));
                     }
                     q = self.spaced(q);
@@ -1313,9 +1289,7 @@ impl Quick {
         }
         // With nothing in it, it is printed as `{}`, and nothing forces a line break.
         let mut r = q + 1;
-        while self.t.at(r) == 32 || self.t.at(r) == 9 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.white(r);
         // (or with other white space in it, which is not looked through here)
         if self.t.at(r) == 125 || self.t.at(r) == 59 || self.t.at(r) < 32 || self.t.at(r) >= 128 {
             return self.no(refusal::Block);
@@ -1557,8 +1531,7 @@ impl Quick {
                 let has_comma = self.t.at(q) == 44;
                 let e = if has_comma { q + 1 } else { q };
                 // (an empty line between two of them is kept)
-                let mut s = e + 1;
-                s = self.blanks_end(s);
+                let s = self.indentation_end(e + 1);
                 if self.t.at(e) != 10 || self.t.at(s) == 10 {
                     return Ok(self.no(refusal::Paren));
                 }
@@ -1755,7 +1728,7 @@ impl Quick {
     pub(crate) fn call_arguments(&mut self, p: i32) -> R<i32> {
         let mut q = p;
         let mut c = self.t.at(q);
-        if c == 32 || c == 9 {
+        if is_blank(c) {
             q = self.tight(q);
             c = self.t.at(q);
         }
@@ -1826,7 +1799,7 @@ impl Quick {
             }
             count += 1;
             c = self.t.at(q);
-            if c == 32 || c == 9 {
+            if is_blank(c) {
                 q = self.tight(q);
                 c = self.t.at(q);
             }
@@ -1902,8 +1875,7 @@ impl Quick {
         let mut q = p;
         loop {
             // an empty line between two arguments is kept
-            let mut r = q + 1;
-            r = self.blanks_end(r);
+            let r = self.indentation_end(q + 1);
             if self.t.at(q) != 10 || self.t.at(r) == 10 {
                 return Ok(self.no(refusal::Arguments));
             }
@@ -2150,9 +2122,7 @@ impl Quick {
         if self.t.at(q) == 10 && !is_pattern {
             // The parser reads it. (With a comment first it may hold nothing else.)
             // An argument of an argument is not hugged.
-            while self.t.at(q) == 32 || self.t.at(q) == 9 || self.t.at(q) == 10 {
-                q += 1;
-            }
+            q = self.white(q);
             if !self.options.object_wrap_preserve
                 || self.fast.argument_lists >= 2
                 || self.t.at(q) == 47
@@ -2470,7 +2440,7 @@ impl Quick {
                         }
                         tk::New => {
                             // new a.B<C>(d)
-                            if self.t.at(q) != 32 && self.t.at(q) != 9 {
+                            if !is_blank(self.t.at(q)) {
                                 return Ok(self.no(refusal::New));
                             }
                             q = self.spaced(q);
@@ -2552,7 +2522,7 @@ impl Quick {
                             if (kw >> 8) == kw::Module && self.t.at(q) == 46 {
                                 break 's1;
                             }
-                            if (kw >> 8) == kw::Async && (self.t.at(q) == 32 || self.t.at(q) == 9) {
+                            if (kw >> 8) == kw::Async && is_blank(self.t.at(q)) {
                                 // async (a) => b, async a => b, async function () {
                                 if self.fast.argument_lists >= 2 {
                                     return Ok(self.no(refusal::ArrowInside));
@@ -2899,30 +2869,22 @@ impl Quick {
                 }
             }
             116 => {
-                if (self.t.at(p + 6) == 32 || self.t.at(p + 6) == 9)
-                    && self.text_is(p, p + 6, b"typeof")
-                {
+                if is_blank(self.t.at(p + 6)) && self.text_is(p, p + 6, b"typeof") {
                     operand = self.spaced(p + 6);
                 }
             }
             118 => {
-                if (self.t.at(p + 4) == 32 || self.t.at(p + 4) == 9)
-                    && self.text_is(p, p + 4, b"void")
-                {
+                if is_blank(self.t.at(p + 4)) && self.text_is(p, p + 4, b"void") {
                     operand = self.spaced(p + 4);
                 }
             }
             100 => {
-                if (self.t.at(p + 6) == 32 || self.t.at(p + 6) == 9)
-                    && self.text_is(p, p + 6, b"delete")
-                {
+                if is_blank(self.t.at(p + 6)) && self.text_is(p, p + 6, b"delete") {
                     operand = self.spaced(p + 6);
                 }
             }
             97 => {
-                if (self.t.at(p + 5) == 32 || self.t.at(p + 5) == 9)
-                    && self.text_is(p, p + 5, b"await")
-                {
+                if is_blank(self.t.at(p + 5)) && self.text_is(p, p + 5, b"await") {
                     let o = self.spaced(p + 5);
                     let d = self.t.at(o);
                     // Before a word, a number or a string TypeScript takes it for the operator everywhere; JavaScript where it can be one.
@@ -3080,7 +3042,7 @@ impl Quick {
         loop {
             let mut r = q;
             let mut c = self.t.at(r);
-            if c == 32 || c == 9 {
+            if is_blank(c) {
                 r = self.blanks(r);
                 c = self.t.at(r);
             }
@@ -3686,7 +3648,7 @@ impl Quick {
 
     /// One declarator and the end; p is behind `const`, `let` or `var`.
     pub(crate) fn declaration(&mut self, p: i32, mut needs_value: bool) -> R<i32> {
-        if self.t.at(p) != 32 && self.t.at(p) != 9 {
+        if !is_blank(self.t.at(p)) {
             return Ok(self.no(refusal::Declaration));
         }
         let mut q = self.spaced(p);
@@ -4093,7 +4055,7 @@ impl Quick {
 
     /// p is behind `import`.
     pub(crate) fn import_declaration(&mut self, p: i32) -> i32 {
-        if self.t.at(p) != 32 && self.t.at(p) != 9 {
+        if !is_blank(self.t.at(p)) {
             return self.no(refusal::Import);
         }
         self.fast.ready_kind = k::ImportDeclaration;
@@ -4217,7 +4179,7 @@ impl Quick {
 
     /// ` A, B.C`; p is behind the word in front of them.
     pub(crate) fn dotted_names(&mut self, p: i32) -> i32 {
-        if self.t.at(p) != 32 && self.t.at(p) != 9 {
+        if !is_blank(self.t.at(p)) {
             return self.no(refusal::Start);
         }
         let mut q = self.spaced(p);
@@ -4238,7 +4200,7 @@ impl Quick {
     /// `class A extends B.C implements D, E {` and `interface A extends B, C {` with names and nothing else; p is behind the word `class` or `interface`. With more than `extends B` the
     /// head is a group, which is flat if it fits; the body is there for the parser. A body with nothing in it is `{}`.
     pub(crate) fn class_head(&mut self, p: i32, is_interface: bool) -> i32 {
-        if self.fast.flow || (self.t.at(p) != 32 && self.t.at(p) != 9) {
+        if self.fast.flow || !is_blank(self.t.at(p)) {
             return self.no(refusal::Start);
         }
         let mut q = self.spaced(p);
@@ -4260,7 +4222,7 @@ impl Quick {
             q = if is_interface {
                 self.dotted_names(r + 7)
             } else {
-                if self.t.at(r + 7) == 32 || self.t.at(r + 7) == 9 {
+                if is_blank(self.t.at(r + 7)) {
                     {
                         let v0 = self.spaced(r + 7);
                         self.dotted_name(v0)
@@ -4310,7 +4272,7 @@ impl Quick {
         if self.word_is(p, b"interface") {
             return self.class_head(p + 9, true);
         }
-        if self.word_is(p, b"abstract") && (self.t.at(p + 8) == 32 || self.t.at(p + 8) == 9) {
+        if self.word_is(p, b"abstract") && is_blank(self.t.at(p + 8)) {
             let q = self.spaced(p + 8);
             if self.word_is(q, b"class") {
                 return self.class_head(q + 5, false);
@@ -4320,7 +4282,7 @@ impl Quick {
     }
 
     pub(crate) fn export_declaration(&mut self, p: i32) -> R<i32> {
-        if self.t.at(p) != 32 && self.t.at(p) != 9 {
+        if !is_blank(self.t.at(p)) {
             return Ok(self.no(refusal::Export));
         }
         self.fast.ready_kind = k::ExportNamedDeclaration;
@@ -4401,7 +4363,7 @@ return self.function_head(r + 8, true, true);
 }
 tk::Default => {
 {
-if (self.t.at(e) != 32 && self.t.at(e) != 9) || !self.may_export(q, e) {
+if !is_blank(self.t.at(e)) || !self.may_export(q, e) {
 return Ok(self.no(refusal::Export));
 }
 q = self.spaced(e);
@@ -4557,7 +4519,7 @@ _ => {}
         let e = self.word_end(p);
         let kw = self.keyword_at(p, e - p);
         if (kw != tk::Const && kw != tk::Var && kw != (tk::Name | (kw::Let << 8)))
-            || (self.t.at(e) != 32 && self.t.at(e) != 9)
+            || !is_blank(self.t.at(e))
         {
             return Ok(self.no(refusal::Start));
         }
@@ -4865,7 +4827,7 @@ impl Quick {
                 }
             }
             // a line break here stays
-            if self.t.at(q) != 32 && self.t.at(q) != 9 {
+            if !is_blank(self.t.at(q)) {
                 return Ok(self.no(refusal::Start));
             }
             q = self.spaced(q);
@@ -4921,7 +4883,7 @@ impl Quick {
             // One of these words as a name, out of order or twice is left to the parser.
             if modifier <= rank
                 || modifier == MODIFIER_REFUSED
-                || (self.t.at(e) != 32 && self.t.at(e) != 9)
+                || !is_blank(self.t.at(e))
                 || (is_async && modifier == MODIFIER_ACCESSOR)
             {
                 return Ok(self.no(refusal::Start));
@@ -5502,20 +5464,6 @@ impl Quick {
     }
 }
 impl Quick {
-    /// Does the line of a comment that ends at `q` end in something that is trimmed? Control characters count as such.
-    #[inline(always)]
-    pub(crate) fn ends_in_space(&self, q: i32) -> bool {
-        let c = self.t.at(q - 1);
-        c <= 32 || (c >= 127 && self.ends_in_space_beyond_ascii(q))
-    }
-
-    #[cold]
-    fn ends_in_space_beyond_ascii(&self, q: i32) -> bool {
-        self.t.at(q - 1) == 127
-            || self.unicode_space(q - 2) == 2
-            || (self.unicode_space(q - 3) & 15) == 3
-    }
-
     /// Behind p, the end of a line, in a list of statements (or of members) that is indented by `column`: the comments up to the next item, if each of them stands alone on its lines, as it
     /// is printed. Prettier gives such comments to the item that follows, and prints them in front of it with the empty lines of the source: see claim_comments() of the parser, which
     /// does the same with what the lexer has found. Returns where the last one ends, which is the end of a line, and sets comments_start, comments_last_length, ready_end and ready_flags; or 0.
@@ -5636,14 +5584,12 @@ impl Quick {
             } else {
                 return 0;
             }
-            while self.t.at(v) == 32 || self.t.at(v) == 9 || self.t.at(v) == 10 {
-                v += 1;
-            }
+            v = self.white(v);
             if self.t.at(v) == 112 && self.text_is(v, v + 15, b"prettier-ignore") {
                 return 0;
             }
             // (white space of any kind may stand before those words)
-            if self.t.at(v) >= 128 && self.unicode_space(v) != 0 {
+            if self.is_odd_space(v) {
                 return 0;
             }
             if first == 0 {
@@ -5806,7 +5752,7 @@ impl Quick {
                 {
                     return Ok(fast_refuse(refusal::Start, start));
                 } else if typescript
-                    && (self.t.at(end) == 32 || self.t.at(end) == 9)
+                    && is_blank(self.t.at(end))
                     && self.is_declaration_word(start, end - start)
                 {
                     if end - start >= 8 {
@@ -5941,7 +5887,7 @@ impl Quick {
             indentation
         };
         if self.t.at(b - 1) == 9 {
-            while self.t.at(b - 1) == 9 || self.t.at(b - 1) == 32 {
+            while is_blank(self.t.at(b - 1)) {
                 indentation += if self.t.at(b - 1) == 9 {
                     self.options.tab_width
                 } else {
@@ -6446,9 +6392,7 @@ impl Quick {
         if self.t.at(q) != 61 {
             // a name alone, unless `=` or `:` comes later, maybe behind a comment
             let mut r = q;
-            while self.t.at(r) == 32 || self.t.at(r) == 9 || self.t.at(r) == 10 {
-                r += 1;
-            }
+            r = self.white(r);
             return Ok(
                 if self.t.at(r) == 61
                     || self.t.at(r) == 58
@@ -6545,9 +6489,7 @@ impl Quick {
         if self.t.at(r) != 10 {
             return false;
         }
-        while self.t.at(r) == 32 || self.t.at(r) == 9 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.white(r);
         if self.t.at(r) == 60 {
             return true;
         }
@@ -6555,9 +6497,7 @@ impl Quick {
             return false;
         }
         r += 1;
-        while self.t.at(r) == 32 || self.t.at(r) == 9 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.white(r);
         return self.t.at(r) != 34 && self.t.at(r) != 39;
     }
 
@@ -6567,7 +6507,7 @@ impl Quick {
         let mut q = p;
         let mut containers: i32 = 0;
         // white space next to a tag is `{" "}` if the element breaks; with the end of a line in it, it is nothing
-        if self.t.at(q) == 32 || self.t.at(q) == 9 {
+        if is_blank(self.t.at(q)) {
             return Ok(self.no(refusal::JsxText));
         }
         loop {
@@ -6582,7 +6522,7 @@ impl Quick {
                 }
                 containers = 1;
                 // `{" "}` is white space, and a template alone is hugged
-                let d = self.t.at(q + 1);
+                let d = self.t.at(self.blanks(q + 1));
                 if d == 34 || d == 39 {
                     return Ok(self.no(refusal::JsxText));
                 }
@@ -6596,7 +6536,7 @@ impl Quick {
                 }
                 continue;
             }
-            if c == 32 || c == 9 {
+            if is_blank(c) {
                 let d = self.t.at(self.blanks(q));
                 if d == 60 || d == 10 {
                     return Ok(self.no(refusal::JsxText));
@@ -6715,9 +6655,7 @@ impl Quick {
         }
         // With nothing in the element the closing tag follows on the line, and so does a template that is all there is in it.
         let mut r = p;
-        while self.t.at(r) == 32 || self.t.at(r) == 9 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.white(r);
         if (self.t.at(r) == 60 && self.t.at(r + 1) == 47) || self.t.at(p) == 123 {
             fast_refuse(refusal::End, start);
             return Ok(JSX_REFUSED);
@@ -6825,11 +6763,7 @@ impl Quick {
         if !self.begin(start, typed, await_operator) {
             return Ok(false);
         }
-        let mut inside = start + 1;
-        while self.t.at(inside) == 32 {
-            inside += 1;
-        }
-        let d = self.t.at(inside);
+        let d = self.t.at(self.blanks(start + 1));
         let mut p = if d == 34 || d == 39 {
             self.no(refusal::JsxText)
         } else {

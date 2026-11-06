@@ -4,6 +4,7 @@ use crate::ast::{F_PAREN, k};
 use crate::jsx_guess::is_probably_jsx;
 use crate::lang::lang;
 use crate::parse::core::{TYPED_FLOW, TYPED_TS};
+use crate::scan::is_space;
 use crate::{Quick, R, Stop, Words, why};
 
 /// What a host has said about an expression.
@@ -56,7 +57,7 @@ impl Quick {
         }
         loop {
             let c = self.t.at(p);
-            if c == 32 || c == 9 || c == 10 || c == 13 {
+            if is_space(c) {
                 p += 1;
                 continue;
             }

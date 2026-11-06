@@ -16,6 +16,7 @@ use crate::lexer::{
     CF_BLOCK, CF_CLAIMED, CF_INDENTABLE, CF_PLAIN,
 };
 use crate::parse::core::TYPED_FLOW;
+use crate::scan::{is_blank, is_space, is_white};
 use crate::{LARGEST, Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct Comments {
@@ -254,10 +255,6 @@ fn comments_taken_in(kind: i32) -> i32 {
     }
 }
 
-fn is_blank(c: i32) -> bool {
-    c == 32 || c == 9 || c == 10
-}
-
 /// A letter, a digit, a quote or part of a character beyond ASCII: the end or the start of a name, a number, a string or a template.
 fn is_part_of_word(c: i32) -> bool {
     c >= 128
@@ -345,7 +342,7 @@ impl Quick {
         let mut before = self.lexer.c.at(i * C_STRIDE + C_START) - 1;
         let mut j = i - 1;
         loop {
-            while is_blank(self.t.at(before)) {
+            while is_white(self.t.at(before)) {
                 before -= 1;
             }
             if j < self.lexer.c_base || self.lexer.c.at(j * C_STRIDE + C_END) != before + 1 {
@@ -357,9 +354,7 @@ impl Quick {
         let mut behind = self.lexer.c.at(i * C_STRIDE + C_END);
         let mut j = i + 1;
         loop {
-            while is_blank(self.t.at(behind)) {
-                behind += 1;
-            }
+            behind = self.white(behind);
             if j >= self.lexer.c_count || self.lexer.c.at(j * C_STRIDE + C_START) != behind {
                 break;
             }
@@ -577,9 +572,7 @@ impl Quick {
                         )
                         && {
                             let mut p = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
-                            while is_blank(self.t.at(p)) {
-                                p += 1;
-                            }
+                            p = self.white(p);
                             p == c.h_start
                         }
                 }
@@ -596,7 +589,7 @@ impl Quick {
             && {
                 let mut p = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
                 let mut closes = false;
-                while is_blank(self.t.at(p)) || self.t.at(p) == 41 {
+                while is_white(self.t.at(p)) || self.t.at(p) == 41 {
                     closes |= self.t.at(p) == 41;
                     p += 1;
                 }
@@ -713,9 +706,7 @@ impl Quick {
                     && self.lexer.c.at((i - 1) * C_STRIDE + C_END) <= self.n.at(c.h_following + 1)
                     && {
                         let mut p = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
-                        while is_blank(self.t.at(p)) {
-                            p += 1;
-                        }
+                        p = self.white(p);
                         p != c.h_start
                     })
             }
@@ -786,9 +777,7 @@ impl Quick {
                 let union = c.h_enclosing;
                 !self.is_asked_first(union, 2) || {
                     let mut end = self.n.at(union + 2);
-                    while is_blank(self.t.at(end)) {
-                        end += 1;
-                    }
+                    end = self.white(end);
                     self.t.at(end) != 93
                 }
             }
@@ -1320,7 +1309,7 @@ impl Quick {
         let mut p = start;
         while p < end {
             let c = self.t.at(p);
-            if c != 32 && c != 9 && c != 13 && c != 11 && c != 12 {
+            if !is_space(c) || c == 10 {
                 return false;
             }
             p += 1;
@@ -1397,7 +1386,7 @@ impl Quick {
             let mut p = self.lexer.c.at(at + C_END);
             while p < gap_end {
                 let b = self.t.at(p);
-                if b != 32 && b != 9 && b != 10 && b != 13 && b != 40 && b != 11 && b != 12 {
+                if !is_space(b) && b != 40 {
                     is_gap = false;
                     break;
                 }
@@ -1487,17 +1476,10 @@ impl Quick {
         } else {
             self.comments.h_end
         };
-        while s < e
-            && (self.t.at(s) == 32 || self.t.at(s) == 9 || self.t.at(s) == 10 || self.t.at(s) == 13)
-        {
+        while s < e && is_space(self.t.at(s)) {
             s += 1;
         }
-        while e > s
-            && (self.t.at(e - 1) == 32
-                || self.t.at(e - 1) == 9
-                || self.t.at(e - 1) == 10
-                || self.t.at(e - 1) == 13)
-        {
+        while e > s && is_space(self.t.at(e - 1)) {
             e -= 1;
         }
         if e - s != 15 {
@@ -1581,7 +1563,7 @@ impl Quick {
         let mut is_clear = true;
         while p < end {
             let c = self.t.at(p);
-            if c == 32 || c == 9 {
+            if is_blank(c) {
                 p += 1;
                 continue;
             }
@@ -2512,7 +2494,7 @@ impl Quick {
                 }
                 saw_newline = true;
                 let mut q = p + 1;
-                while self.t.at(q) == 32 || self.t.at(q) == 9 || self.t.at(q) == 13 {
+                while is_space(self.t.at(q)) && self.t.at(q) != 10 {
                     q += 1;
                 }
                 if self.t.at(q) != 42 {

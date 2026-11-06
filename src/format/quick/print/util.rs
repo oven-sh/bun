@@ -7,6 +7,7 @@ use crate::ast::{
 };
 use crate::comments::{CF_LEADING, CF_TRAILING, CF_UNIGNORE};
 use crate::lexer::{C_END, C_FLAGS, C_START, C_STRIDE, CF_BLOCK, tk};
+use crate::scan::is_space;
 use crate::{Quick, Words};
 
 impl Quick {
@@ -187,17 +188,10 @@ impl Quick {
         } else {
             self.comment_end(c)
         };
-        while s < e
-            && (self.t.at(s) == 32 || self.t.at(s) == 9 || self.t.at(s) == 10 || self.t.at(s) == 13)
-        {
+        while s < e && is_space(self.t.at(s)) {
             s += 1;
         }
-        while e > s
-            && (self.t.at(e - 1) == 32
-                || self.t.at(e - 1) == 9
-                || self.t.at(e - 1) == 10
-                || self.t.at(e - 1) == 13)
-        {
+        while e > s && is_space(self.t.at(e - 1)) {
             e -= 1;
         }
         if e - s != 15 {

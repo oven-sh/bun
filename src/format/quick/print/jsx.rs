@@ -69,10 +69,55 @@ impl Quick {
             return false;
         }
         let e = self.n.at(n + 4);
-        return (self.n.at(e) & 0xff) == k::StringLiteral
-            && self.n.at(e + 2) - self.n.at(e + 1) == 3
-            && self.t.at(self.n.at(e + 1) + 1) == 32
-            && !self.has_comment(e);
+        if (self.n.at(e) & 0xff) != k::StringLiteral {
+            return false;
+        }
+        let is_blank = if (self.n.at(e) & F_ESCAPE) != 0 {
+            self.is_escaped_blank(self.n.at(e + 1) + 1, self.n.at(e + 2) - 1)
+        } else {
+            self.n.at(e + 2) - self.n.at(e + 1) == 3 && self.t.at(self.n.at(e + 1) + 1) == 32
+        };
+        return is_blank && !self.has_comment(e);
+    }
+
+    /// Is the value of a string with the content T[p, end) one blank? It is the value that counts, however it is spelled.
+    #[cold]
+    fn is_escaped_blank(&self, mut p: i32, end: i32) -> bool {
+        let mut blanks = 0;
+        while p < end {
+            if self.t.at(p) != 92 {
+                if self.t.at(p) != 32 {
+                    return false;
+                }
+                blanks += 1;
+                p += 1;
+                continue;
+            }
+            let rest = self.t.sub(p + 1, end);
+            let length = match rest {
+                // a line continuation is nothing
+                [b'\n', ..] => {
+                    p += 2;
+                    continue;
+                }
+                [b' ', ..] => 1,
+                [b'x', b'2', b'0', ..] => 3,
+                [b'u', b'0', b'0', b'2', b'0', ..] => 5,
+                [b'u', b'{', digits @ ..] => {
+                    let zeros = digits.iter().take_while(|&&digit| digit == b'0').count();
+                    match digits.get(zeros..) {
+                        Some([b'2', b'0', b'}', ..]) => zeros as i32 + 5,
+                        _ => return false,
+                    }
+                }
+                [b'0', b'4', b'0', ..] => 3,
+                [b'4', b'0', ..] => 2,
+                _ => return false,
+            };
+            blanks += 1;
+            p += 1 + length;
+        }
+        blanks == 1
     }
 
     pub(crate) fn has_jsx_ignore_comment(&self, n: i32) -> bool {

@@ -9,6 +9,7 @@ use crate::ast::{F_CHAIN, F_EXT, F_SHORTHAND, FN_TYPE_PARAMETERS, k};
 use crate::print::core::ARG_LAYOUT_SHIFT;
 use crate::print::statics::{EQ, OPERATOR, SPACE};
 use crate::print::util::is_literal_kind;
+use crate::scan::is_space;
 use crate::{Quick, R, Words};
 
 pub(crate) const LAYOUT_BREAK_AFTER_OPERATOR: i32 = 1;
@@ -44,7 +45,7 @@ impl Quick {
                 }
                 saw_newline = true;
                 let mut q = p + 1;
-                while self.t.at(q) == 32 || self.t.at(q) == 9 || self.t.at(q) == 13 {
+                while is_space(self.t.at(q)) && self.t.at(q) != 10 {
                     q += 1;
                 }
                 if self.t.at(q) != 42 {

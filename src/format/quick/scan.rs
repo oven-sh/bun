@@ -2,13 +2,124 @@
 //! The bytes around the source are zeros, so running off either end stops every loop by itself.
 
 use crate::lexer::{C_END, C_START, C_STRIDE};
-use crate::{Bytes, Quick, Words, bytes_before, where_byte_is};
+use crate::{Bytes, ONES, Quick, Words, bytes_before, where_byte_is};
 use bun_core::strings;
 
+// What is white space, where a line ends and which line is empty has one answer here, for everybody who looks at the bytes: that of the
+// lexer and of the long way. The ends of the lines are "\n" when a text gets here. The lexer takes blanks, tabs and "\n" between tokens, and
+// refuses a text with any other white space between tokens or in a comment, with a control character, U+2028 or U+2029 (rare::ODD_BYTES).
+// Who reads without it (fast.rs, stands.rs) stops at what is none of the three, or asks is_odd_space() and ends_in_space().
+
+/// A blank or a tab: what skipSpaces() skips. A line with nothing else on it is empty.
+#[inline(always)]
+pub(crate) fn is_blank(c: i32) -> bool {
+    c == 32 || c == 9
+}
+
+/// A blank, a tab or the end of a line.
+#[inline(always)]
+pub(crate) fn is_white(c: i32) -> bool {
+    c == 32 || c == 9 || c == 10
+}
+
+/// The white space of ASCII, as `\s` and trim() have it.
+#[inline(always)]
+pub(crate) fn is_space(c: i32) -> bool {
+    c == 32 || (c >= 9 && c <= 13)
+}
+
 impl Quick {
-    pub(crate) fn skip_spaces(&self, mut p: i32) -> i32 {
+    /// Where the blanks and tabs in front of p start.
+    pub(crate) fn blanks_back(&self, mut p: i32) -> i32 {
+        while is_blank(self.t.at(p - 1)) {
+            p -= 1;
+        }
+        return p;
+    }
+
+    /// Where the blanks and tabs from p on end.
+    pub(crate) fn blanks(&self, mut p: i32) -> i32 {
+        while is_blank(self.t.at(p)) {
+            p += 1;
+        }
+        return p;
+    }
+
+    /// Where the blanks, tabs and ends of lines from p on end.
+    pub(crate) fn white(&self, mut p: i32) -> i32 {
+        while is_white(self.t.at(p)) {
+            p += 1;
+        }
+        return p;
+    }
+
+    /// Where the blanks from `p` on end: U+0020 and nothing else. Whoever asks looks at what follows, which can be a tab.
+    #[inline(always)]
+    pub(crate) fn blanks_end(&self, mut p: i32) -> i32 {
+        loop {
+            let others = self.t.u64_at(p) ^ ONES.wrapping_mul(32);
+            if others != 0 {
+                return p + (others.trailing_zeros() >> 3) as i32;
+            }
+            p += 8;
+        }
+    }
+
+    /// Where the blanks and tabs from `p`, the start of a line, on end. The line is empty if it ends there.
+    #[inline(always)]
+    pub(crate) fn indentation_end(&self, p: i32) -> i32 {
+        let q = self.blanks_end(p);
+        if self.t.at(q) == 9 { self.blanks(q) } else { q }
+    }
+
+    /// Where the blanks that end at `p` start: U+0020 and nothing else.
+    #[inline(always)]
+    pub(crate) fn blanks_start(&self, mut p: i32) -> i32 {
+        loop {
+            let others = self.t.u64_at(p - 8) ^ ONES.wrapping_mul(32);
+            if others != 0 {
+                return p - (others.leading_zeros() >> 3) as i32;
+            }
+            p -= 8;
+        }
+    }
+
+    /// Where the blanks (U+0020 and nothing else) and ends of lines from `p` on end.
+    #[inline(always)]
+    pub(crate) fn blank_lines_end(&self, mut p: i32) -> i32 {
+        loop {
+            p = self.blanks_end(p);
+            if self.t.at(p) != 10 {
+                return p;
+            }
+            p += 1;
+        }
+    }
+
+    /// Does the line of a comment that ends at `q` end in something that is trimmed? Control characters count as such.
+    #[inline(always)]
+    pub(crate) fn ends_in_space(&self, q: i32) -> bool {
+        let c = self.t.at(q - 1);
+        c <= 32 || (c >= 127 && self.ends_in_space_beyond_ascii(q))
+    }
+
+    /// Does white space start at `p` that is no blank? Control characters count as such.
+    #[inline(always)]
+    pub(crate) fn is_odd_space(&self, p: i32) -> bool {
         let c = self.t.at(p);
-        if c != 32 && c != 9 {
+        (c < 32 || c >= 127) && (c <= 127 || self.unicode_space(p) != 0)
+    }
+
+    #[cold]
+    fn ends_in_space_beyond_ascii(&self, q: i32) -> bool {
+        self.t.at(q - 1) == 127
+            || self.unicode_space(q - 2) == 2
+            || (self.unicode_space(q - 3) & 15) == 3
+    }
+
+    /// blanks(), where there may be many of them.
+    pub(crate) fn skip_spaces(&self, mut p: i32) -> i32 {
+        if !is_blank(self.t.at(p)) {
             return p;
         }
         // mostly the indentation of a line
@@ -22,7 +133,7 @@ impl Quick {
     }
 
     pub(crate) fn skip_spaces_back(&self, mut p: i32) -> i32 {
-        while self.t.at(p) == 32 || self.t.at(p) == 9 {
+        while is_blank(self.t.at(p)) {
             p -= 1;
         }
         return p;
@@ -208,16 +319,12 @@ impl Quick {
         return -1;
     }
 }
-pub(crate) fn scan_is_space_byte(c: i32) -> bool {
-    return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12;
-}
-
 impl Quick {
     /// The first byte at or behind `p` that is neither white space nor in a comment; 0 at the end.
     pub(crate) fn next_significant_char(&self, mut p: i32) -> i32 {
         loop {
             let c = self.t.at(p);
-            if scan_is_space_byte(c) {
+            if is_space(c) {
                 p += 1;
                 continue;
             }
@@ -236,7 +343,7 @@ impl Quick {
     pub(crate) fn next_significant_index(&self, mut p: i32) -> i32 {
         loop {
             let c = self.t.at(p);
-            if scan_is_space_byte(c) {
+            if is_space(c) {
                 p += 1;
                 continue;
             }

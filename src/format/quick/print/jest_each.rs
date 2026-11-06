@@ -2,6 +2,7 @@
 
 use crate::ast::{F_CHAIN, k};
 use crate::print::statics::{_BAR_, BACKQUOTE};
+use crate::scan::is_space;
 use crate::{Quick, R, Words, rare, zeros};
 
 pub(crate) struct PrintJestEach {
@@ -72,10 +73,6 @@ impl Quick {
             && self.is_jest_each_trigger(self.n.at(object + 4));
     }
 }
-pub(crate) fn print_jest_each_is_space_byte(c: i32) -> bool {
-    return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12;
-}
-
 pub(crate) const PADDING: i32 = 1624; // staticText(" ".repeat(128))
 impl Quick {
     pub(crate) fn push_cell(&mut self, start: i32, end: i32) {
@@ -147,10 +144,10 @@ impl Quick {
             let first = self.n.at(quasis + 1);
             let mut from = self.n.at(first + 1);
             let mut to = self.n.at(first + 2);
-            while from < to && print_jest_each_is_space_byte(self.t.at(from)) {
+            while from < to && is_space(self.t.at(from)) {
                 from += 1;
             }
-            while to > from && print_jest_each_is_space_byte(self.t.at(to - 1)) {
+            while to > from && is_space(self.t.at(to - 1)) {
                 to -= 1;
             }
             self.push_row();
@@ -162,14 +159,12 @@ impl Quick {
                         break 'c3;
                     }
                     let mut cell_end = p;
-                    while cell_end > cell_start
-                        && print_jest_each_is_space_byte(self.t.at(cell_end - 1))
-                    {
+                    while cell_end > cell_start && is_space(self.t.at(cell_end - 1)) {
                         cell_end -= 1;
                     }
                     self.push_cell(cell_start, cell_end);
                     cell_start = p + 1;
-                    while cell_start < to && print_jest_each_is_space_byte(self.t.at(cell_start)) {
+                    while cell_start < to && is_space(self.t.at(cell_start)) {
                         cell_start += 1;
                     }
                 }

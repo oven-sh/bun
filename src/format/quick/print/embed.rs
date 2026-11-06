@@ -10,6 +10,7 @@ use crate::holes::{FILTER_BACKTICK, FILTER_END_OF_LINE, FILTER_UNCOOK};
 use crate::lang::{GUEST_BETWEEN_LINES, lang};
 use crate::options::WHITESPACE_IGNORE;
 use crate::print::statics::{BACKQUOTE, SPACE};
+use crate::scan::is_space;
 use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct PrintEmbed {
@@ -486,10 +487,6 @@ impl Quick {
         }
     }
 }
-pub(crate) fn is_space(c: i32) -> bool {
-    return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12;
-}
-
 /// How many bytes the white space character of JavaScript takes that `text` starts with. 0 if it starts with none.
 fn space_length(text: &[u8]) -> i32 {
     match text {

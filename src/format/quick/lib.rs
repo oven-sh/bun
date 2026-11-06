@@ -772,42 +772,6 @@ impl Quick {
         }
     }
 
-    /// Where the blanks from `p` on end.
-    #[inline(always)]
-    pub(crate) fn blanks_end(&self, mut p: i32) -> i32 {
-        loop {
-            let others = self.t.u64_at(p) ^ ONES.wrapping_mul(32);
-            if others != 0 {
-                return p + (others.trailing_zeros() >> 3) as i32;
-            }
-            p += 8;
-        }
-    }
-
-    /// Where the blanks that end at `p` start.
-    #[inline(always)]
-    pub(crate) fn blanks_start(&self, mut p: i32) -> i32 {
-        loop {
-            let others = self.t.u64_at(p - 8) ^ ONES.wrapping_mul(32);
-            if others != 0 {
-                return p - (others.leading_zeros() >> 3) as i32;
-            }
-            p -= 8;
-        }
-    }
-
-    /// Where the blanks and ends of lines from `p` on end.
-    #[inline(always)]
-    pub(crate) fn blank_lines_end(&self, mut p: i32) -> i32 {
-        loop {
-            p = self.blanks_end(p);
-            if self.t.at(p) != 10 {
-                return p;
-            }
-            p += 1;
-        }
-    }
-
     /// A run starts.
     pub(crate) fn start_run(&mut self) {
         self.why.set(why::NONE);

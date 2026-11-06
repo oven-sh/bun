@@ -300,6 +300,8 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     scratch.reset_filters();
     scratch.set_may_break_lines(false);
     scratch.set_short_cuts(true);
+    // (no parser has said so for this text)
+    scratch.set_type_script_spaces(language == lang::TypeScript);
     let stands = scratch.program_stands(language, SRC_BASE, SRC_BASE + length);
     scratch.set_short_cuts(false);
     // The text is gone when the parser comes.

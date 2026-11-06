@@ -69,7 +69,7 @@ impl Quick {
             p += 1;
         }
         // white space at the end of a comment is not printed
-        return if self.t.at(p - 1) > 32 { p } else { -1 };
+        return if self.ends_in_space(p) { -1 } else { p };
     }
 }
 pub(crate) const STATEMENTS: i32 = 0;
@@ -344,7 +344,7 @@ impl Quick {
                 let mut v = q + 2;
                 v = self.blanks_end(v);
                 // prettier-ignore, behind white space of any kind
-                if self.t.at(v) == 112 || (self.t.at(v) >= 128 && self.unicode_space(v) != 0) {
+                if self.t.at(v) == 112 || self.is_odd_space(v) {
                     return Ok(-1);
                 }
                 while self.t.at(q) != 10 && q < self.stands.last {

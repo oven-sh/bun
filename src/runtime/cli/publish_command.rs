@@ -1336,14 +1336,12 @@ impl PublishCommand {
         };
 
         // The same rule as in pack: a file that isn't in the tarball isn't listed either.
-        let not_packed = match pack::bin_kind_without_following_symlinks(
-            abs_workspace_path,
-            normalized_bin_dir.as_bytes(),
-        ) {
-            FileKind::Directory => None,
-            FileKind::Unknown => Some("does not exist"),
-            _ => Some("is not a directory"),
-        };
+        let not_packed =
+            match pack::packed_bin_kind(abs_workspace_path, normalized_bin_dir.as_bytes()) {
+                FileKind::Directory => None,
+                FileKind::Unknown => Some("does not exist"),
+                _ => Some("is not a directory"),
+            };
         if let Some(why) = not_packed {
             bun_core::warn!(
                 "bin directory '{}' {}",

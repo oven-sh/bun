@@ -1250,7 +1250,7 @@ pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
-pub(crate) fn bin_kind_without_following_symlinks(
+fn bin_kind_without_following_symlinks(
     abs_workspace_path: &[u8],
     bin_path: &[u8],
 ) -> bun_sys::FileKind {
@@ -1280,6 +1280,76 @@ pub(crate) fn bin_kind_without_following_symlinks(
     bun_sys::FileKind::Unknown
 }
 
+/// `Unknown` also if the OS finds `bin_path` under a name that is never packed.
+pub(crate) fn packed_bin_kind(abs_workspace_path: &[u8], bin_path: &[u8]) -> bun_sys::FileKind {
+    let kind = bin_kind_without_following_symlinks(abs_workspace_path, bin_path);
+    if kind == bun_sys::FileKind::Unknown || is_never_packed_on_disk(abs_workspace_path, bin_path) {
+        return bun_sys::FileKind::Unknown;
+    }
+    kind
+}
+
+/// `bin_subpath` has checked the names as they are written. A file system that ignores letter case
+/// or normalizes Unicode also finds a file whose name in the directory is another one.
+fn is_never_packed_on_disk(abs_workspace_path: &[u8], bin_path: &[u8]) -> bool {
+    let bin_path = strings::without_trailing_slash(bin_path);
+    let mut spill: Vec<u8> = Vec::new();
+    let mut lstat = |parts: &[&[u8]]| {
+        bun_sys::lstat(resolve_path::join_z_spill::<resolve_path::platform::Auto>(
+            &mut spill, parts,
+        ))
+    };
+    let mut start = 0;
+    for name in strings::split(bin_path, b"/") {
+        let parent = &bin_path[..start];
+        let is_root_file = start == 0 && name.len() == bin_path.len();
+        start += name.len() + 1;
+
+        let names = names_in_dir(abs_workspace_path, parent);
+        if names.iter().any(|listed| **listed == *name) {
+            continue;
+        }
+        let Ok(found) = lstat(&[abs_workspace_path, parent, name]) else {
+            return true;
+        };
+        let mut same_file = names.iter().filter(|listed| {
+            lstat(&[abs_workspace_path, parent, listed])
+                .is_ok_and(|st| st.st_dev == found.st_dev && st.st_ino == found.st_ino)
+        });
+        let is_never_packed = |listed: &Box<[u8]>| {
+            is_unconditionally_excluded(listed, 2).is_some()
+                || (is_root_file && **listed == *b"package.json")
+        };
+        let Some(first) = same_file.next() else {
+            return true;
+        };
+        if is_never_packed(first) || same_file.any(is_never_packed) {
+            return true;
+        }
+    }
+    false
+}
+
+fn names_in_dir(abs_workspace_path: &[u8], subpath: &[u8]) -> Vec<Box<[u8]>> {
+    let mut spill: Vec<u8> = Vec::new();
+    let abs_path = resolve_path::join_z_spill::<resolve_path::platform::Auto>(
+        &mut spill,
+        &[abs_workspace_path, subpath],
+    );
+    let dir = match bun_sys::open_dir_absolute(abs_path.as_bytes()) {
+        Ok(dir) => dir,
+        Err(err) if is_absent(err.get_errno()) => return Vec::new(),
+        Err(err) => fail_open_dir(err.into(), subpath),
+    };
+    let _close = CloseOnDrop::new(dir);
+    let mut iter = DirIterator::iterate(dir);
+    let mut names = Vec::new();
+    while let Some(entry) = next_dir_entry(&mut iter, subpath) {
+        names.push(entry.name.slice_u8().into());
+    }
+    names
+}
+
 /// `published_files` has already queued the bins, so the walks skip them.
 fn is_listed_bin(bins: &[BinInfo], ty: BinType, subpath: &ZStr) -> bool {
     bins.iter()
@@ -1297,6 +1367,7 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
 
 /// Default ignores that nothing (including an explicit `"files"` entry) can
 /// re-include: the root lockfiles and the `can_override == false` patterns.
+/// Letter case is ignored, like in npm. The patterns are lowercase.
 fn is_unconditionally_excluded(
     entry_name: &[u8],
     dir_depth: usize,
@@ -1308,8 +1379,9 @@ fn is_unconditionally_excluded(
     };
     let strict = (DEFAULT_IGNORE_PATTERNS.iter())
         .filter_map(|&(p, can_override)| (!can_override).then_some(p));
+    let entry_name = entry_name.to_ascii_lowercase();
     (root_only.iter().copied().chain(strict))
-        .find(|pattern| glob::r#match(pattern, entry_name).matches())
+        .find(|pattern| glob::r#match(pattern, &entry_name).matches())
         .map(|pattern| (pattern, IgnorePatternsKind::Default))
 }
 
@@ -1456,7 +1528,7 @@ pub(crate) fn published_files(
     let bins = get_package_bins(json_root);
 
     for bin in &bins {
-        let kind = bin_kind_without_following_symlinks(root_path, bin.path.as_bytes());
+        let kind = packed_bin_kind(root_path, bin.path.as_bytes());
         match bin.ty {
             BinType::File if kind == bun_sys::FileKind::File => {
                 pack_queue.add(PackQueueItem {

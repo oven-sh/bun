@@ -1635,6 +1635,26 @@ describe("client TLS options", () => {
       });
     });
 
+    // tls.connect() throws inside https.request(), so the constructor throws.
+    it("a key entry of the agent that is not valid throws what tls.connect() throws", async () => {
+      using server = await serve();
+      const cert = read("agent1-cert.pem");
+      const dialWith = (key: unknown) => () =>
+        new WebSocket(server.url, { agent: new https.Agent({ ca, cert, key } as https.AgentOptions) });
+      expect(dialWith([{ pem: 5 }])).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "options.key" property must be of type string or an instance of Buffer, TypedArray, or DataView. Received type number (5)`,
+        }),
+      );
+      expect(dialWith([{ pem: read("agent1-key.pem"), passphrase: 5 }])).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "options.passphrase" property must be of type string. Received type number (5)`,
+        }),
+      );
+    });
+
     it("minVersion and maxVersion", async () => {
       using tls12 = await serve({ maxVersion: "TLSv1.2" });
       using tls13 = await serve({ minVersion: "TLSv1.3" });

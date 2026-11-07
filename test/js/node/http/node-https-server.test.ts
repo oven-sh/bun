@@ -262,6 +262,44 @@ describe("https.createServer forwards every TLS server option", () => {
     expect(() => https.createServer({ [name]: value })).toThrow(expect.objectContaining({ code }));
   });
 
+  // https.Server calls storeHTTPOptions() and then tls.Server(): https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L92-L99
+  test.each<[string, object]>([
+    ["a key entry with a pem that is a number", { key: [{ pem: 5 }] }],
+    ["a key entry with a passphrase that is a Buffer", { key: [{ pem: validCert.key, passphrase: Buffer.from("x") }] }],
+    ["a key that is a number", { key: 5 }],
+    ["a passphrase that is a number", { key: validCert.key, passphrase: 5 }],
+    ["ciphers that are a number", { ciphers: 5 }],
+  ])("reports an invalid HTTP option before %s", (_, tlsOptions) => {
+    expect(() => https.createServer({ ...tlsOptions, requestTimeout: "x" } as https.ServerOptions)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "requestTimeout" argument must be of type number. Received type string ('x')`,
+      }),
+    );
+  });
+
+  // http.Server parses it after every other option. https.Server does not parse it:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L666
+  test("reports an invalid uniqueHeaders after every other option", () => {
+    const uniqueHeaders = [
+      {
+        toLowerCase() {
+          throw new RangeError("not a header name");
+        },
+      },
+    ] as unknown as string[];
+    expect(() => http.createServer({ uniqueHeaders })).toThrow(new RangeError("not a header name"));
+    expect(() => http.createServer({ uniqueHeaders, optimizeEmptyRequests: "x" } as http.ServerOptions)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("optimizeEmptyRequests"),
+      }),
+    );
+    expect(() => https.createServer({ uniqueHeaders, key: 5 } as unknown as https.ServerOptions)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining('"options.key"') }),
+    );
+  });
+
   test.each([
     // BoringSSL has no DHE suites to apply it to.
     ["dhparam", "auto"],

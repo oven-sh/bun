@@ -324,6 +324,7 @@ function Server(options, callback): void {
   this[kListenerGeneration] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
+  let hasOptions = false;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -332,6 +333,13 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
+    hasOptions = true;
+  }
+
+  // Before the TLS options, as in https.Server: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L92-L99
+  storeHTTPOptions.$call(this, options);
+
+  if (hasOptions) {
     const tlsHelpers =
       this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca
         ? require("internal/tls")
@@ -438,7 +446,8 @@ function Server(options, callback): void {
   }
 
   this[optionsSymbol] = options;
-  storeHTTPOptions.$call(this, options);
+  // After every other option, as in http.Server: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L666
+  this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   if (callback) this.on("request", callback);
   return this;
@@ -4239,8 +4248,6 @@ function storeHTTPOptions(options) {
   // Node passes options.highWaterMark through to net.Server, which applies it
   // to every accepted connection socket (and from there to req/res streams).
   this[kHighWaterMark] = options.highWaterMark;
-
-  this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   const requestTimeout = options.requestTimeout;
   if (requestTimeout !== undefined) {

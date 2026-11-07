@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 a215f580bc22033035939a3b934e153b56ae313db31231f0d60b3f6d69a254a0.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -709,6 +709,7 @@ function Server(
   this[kListenerGeneration] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
+  let hasOptions = false;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -717,6 +718,13 @@ function Server(
   } else {
     validateObject(options, "options");
     options = { ...options };
+    hasOptions = true;
+  }
+
+  // Before the TLS options, as in https.Server: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L92-L99
+  storeHTTPOptions.$call(this, options);
+
+  if (hasOptions) {
     const tlsHelpers =
       this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca
         ? require("internal/tls")
@@ -823,7 +831,8 @@ function Server(
   }
 
   this[optionsSymbol] = options;
-  storeHTTPOptions.$call(this, options);
+  // After every other option, as in http.Server: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L666
+  this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   if (callback) this.on("request", callback);
   return this;
@@ -5933,8 +5942,6 @@ function storeHTTPOptions(this: $Node.HttpServer, options: $Node.HttpServerOptio
   // Node passes options.highWaterMark through to net.Server, which applies it
   // to every accepted connection socket (and from there to req/res streams).
   this[kHighWaterMark] = options.highWaterMark;
-
-  this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   const requestTimeout = options.requestTimeout;
   if (requestTimeout !== undefined) {

@@ -602,10 +602,12 @@ function newNativeSecureContext(options?: TLSOptions | null, cached = false) {
   }
   if (options) {
     let { key, cert, ca } = options;
-    const normalizedKey = normalizePemKeyOption(key, options.passphrase);
-    if (normalizedKey !== key) {
-      key = normalizedKey;
-      options = { ...options, key };
+    if (key) {
+      const normalizedKey = normalizePemKeyOption(key, options.passphrase);
+      if (normalizedKey !== key) {
+        key = normalizedKey;
+        options = { ...options, key };
+      }
     }
     if (!key || !cert || !ca) {
       options = {

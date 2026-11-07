@@ -9,8 +9,6 @@ const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeIncludes = String.prototype.includes;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeJoin = Array.prototype.join;
-const ArrayPrototypeSome = Array.prototype.some;
-const ArrayPrototypeMap = Array.prototype.map;
 
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
@@ -326,29 +324,57 @@ function processPfxOptions(options: Record<string, any>): Record<string, any> {
   return out;
 }
 
-function hasPemObject(key) {
-  if (!key) return false;
-  if ($isArray(key)) return ArrayPrototypeSome.$call(key, isPemKeyEntry);
-  return isPemKeyEntry(key);
-}
-
 function isPemKeyEntry(k) {
   return k && typeof k === "object" && !isArrayBufferView(k) && "pem" in k;
 }
 
+// One `{ pem, passphrase }` entry of `key`, as the key the native config takes. Node picks the key and its passphrase
+// in its loop over `key`, and checks the two in setKey():
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L200-L207
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L89-L94
+function unwrapPemKeyEntry(entry, ctxPassphrase) {
+  const ownPem = entry.pem;
+  const ownPassphrase = entry.passphrase;
+  const pem = ownPem !== undefined ? ownPem : entry;
+  const passphrase = ownPassphrase !== undefined ? ownPassphrase : ctxPassphrase;
+  // The native config has one passphrase, the context's, for every key it decrypts. So a key with a passphrase is
+  // decrypted here. So is a key whose own passphrase is null next to a context passphrase, which it must not get.
+  const decrypt = passphrase != null || (ownPassphrase === null && !!ctxPassphrase);
+  if (
+    typeof pem !== "string" &&
+    !isArrayBufferView(pem) &&
+    !isArrayBuffer(pem) &&
+    // Only the native config reads a Blob.
+    (decrypt || !$inheritsBlob(pem))
+  ) {
+    throw $ERR_INVALID_ARG_TYPE("options.key", VALID_TLS_ERROR_MESSAGE_TYPES, pem);
+  }
+  if (passphrase != null) validateString(passphrase, "options.passphrase");
+  if (!decrypt) return pem;
+  return require("node:crypto")
+    .createPrivateKey({ key: pem, passphrase: passphrase ?? "" })
+    .export({ type: "pkcs8", format: "pem" });
+}
+
+// Returns `key` itself when it holds no `{ pem, passphrase }` entry.
 function normalizePemKeyOption(key, ctxPassphrase) {
-  if (!key || !hasPemObject(key)) return key;
-  const entries = $isArray(key) ? key : [key];
-  return ArrayPrototypeMap.$call(entries, k => {
-    if (!isPemKeyEntry(k)) return k;
-    // Node: val?.passphrase !== undefined ? val.passphrase : passphrase - an
-    // explicit per-key null means "no passphrase for this key" and does NOT
-    // fall back to the context-level one.
-    const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;
-    if (passphrase == null) return k.pem;
-    const { createPrivateKey } = require("node:crypto");
-    return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });
-  });
+  if (!key) return key;
+  // nodeClientTlsToNative() has no check before this one, and a lone entry outside an array is one key there.
+  const entries = $isArray(key) ? key : isPemKeyEntry(key) ? [key] : undefined;
+  if (entries === undefined) return key;
+  let normalized: unknown[] | undefined;
+  for (let i = 0, length = entries.length; i < length; i++) {
+    let item = entries[i];
+    if (isPemKeyEntry(item)) {
+      item = unwrapPemKeyEntry(item, ctxPassphrase);
+      if (normalized === undefined) {
+        normalized = $newArrayWithSize<unknown>(length);
+        for (let j = 0; j < i; j++) normalized[j] = entries[j];
+      }
+    }
+    if (normalized !== undefined) normalized[i] = item;
+  }
+  return normalized ?? key;
 }
 
 function tlsCipherFilter(a: string) {

@@ -132,6 +132,7 @@ macro_rules! removable_host_function_definition {
     };
 }
 
+/// `$function` stays out of line. Without side effect in some build, it starts with `keep_call_of_entry_point()`.
 #[macro_export]
 macro_rules! call_removable {
     ($feature:ident, Abort, $function:path $(, $argument:expr)* $(,)?) => {{
@@ -153,6 +154,7 @@ macro_rules! call_removable {
     };
 }
 
+/// The rules of `call_removable!` hold for `$function`.
 #[macro_export]
 macro_rules! call_removable_or {
     ($feature:ident, $stub:ident, $removed:block, $function:path $(, $argument:expr)* $(,)?) => {
@@ -209,6 +211,13 @@ pub fn run_body_of_either<const FIRST: u16, const SECOND: u16, R, B: FnOnce() ->
 #[doc(hidden)]
 #[inline(never)]
 pub fn removable_body_entry_point<R, B: FnOnce() -> R>(body: B) -> R {
+    keep_call_of_entry_point();
+    body()
+}
+
+/// Keeps the call of the function that starts with it. An empty function needs `core::hint::black_box` of a value.
+#[inline(always)]
+pub fn keep_call_of_entry_point() {
     // The optimizer removes a call of a function that has no effect, also of one that it may not inline, and the link
     // expects a call behind every guard.
     // SAFETY: it emits no instruction.
@@ -216,7 +225,6 @@ pub fn removable_body_entry_point<R, B: FnOnce() -> R>(body: B) -> R {
     unsafe {
         ::core::arch::asm!("", options(nomem, nostack, preserves_flags))
     };
-    body()
 }
 
 #[cfg(test)]

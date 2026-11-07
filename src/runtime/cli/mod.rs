@@ -1552,6 +1552,8 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
+        // Without Fuzzilli this returns a constant.
+        bun_removable_features::keep_call_of_entry_point();
         if bun_core::Environment::ENABLE_FUZZILLI {
             let ctx = init(Tag::FuzzilliCommand, log)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);

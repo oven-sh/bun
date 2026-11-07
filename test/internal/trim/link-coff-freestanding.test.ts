@@ -48,9 +48,12 @@ import {
   type Machine,
 } from "./link-coff-support.ts";
 import {
+  allRecordsOfCallsWithoutEffect,
   buildGuardCrate,
   builtinUsing,
   callAll,
+  callersWithoutEffectSource,
+  canBuildRustFor,
   compileRust,
   embedderSource,
   entryCalling,
@@ -61,6 +64,7 @@ import {
   exportFeatures,
   Extra,
   indexOf,
+  keepCallOfEntryPoint,
   mainEnteringBuiltin,
   mainGuardingBoth,
   manyFunctions,
@@ -69,8 +73,10 @@ import {
   otherSource,
   plainSpellingsEntryPoints,
   plainSpellingsSource,
+  recordsOfCallsWithoutEffect,
   reviewFiles,
   run,
+  rustCallsWithoutEffect,
   rustSource,
   skipNotice,
   spelledBuiltin,
@@ -1049,6 +1055,33 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
         expect(featuresAt(symbol![1])).toEqual([Extra]);
       }
     });
+
+    test.skipIf(freestandingSkipReasons[machine] !== undefined || !canBuildRustFor(triple(machine)))(
+      "keep the call of a function that has no side effect where it starts with keep_call_of_entry_point()",
+      async () => {
+        using dir = tempDir("trim-coff-freestanding-rust", {
+          ...rustFiles(rustSource + rustCallsWithoutEffect(keepCallOfEntryPoint)),
+          "main.c": `
+            ${callersWithoutEffectSource}
+            int main(int argc, char **argv) {
+              if (argc == 2) return rust_aborting_calls(1);
+              return rust_defaulting_calls(1) + rust_throwing_calls(1);
+            }
+          `,
+        });
+        const folder = String(dir);
+        const options = await compileRustInputs(folder);
+        expect(options).toBeDefined();
+        const { symbols, featuresAt } = await linked(folder, options!);
+        expect(recordsOfCallsWithoutEffect(entryPointsText(folder, output))).toEqual(allRecordsOfCallsWithoutEffect);
+        const functions = ["aborts", "defaults", "throws"].flatMap(stub => [`constant_${stub}`, `unread_${stub}`]);
+        const featuresOf = (name: string) => {
+          const symbol = symbols.find(([symbol]) => symbol.includes(name));
+          return symbol && featuresAt(symbol[1]);
+        };
+        expect(functions.map(name => [name, featuresOf(name)])).toEqual(functions.map(name => [name, [Extra]]));
+      },
+    );
 
     testLink("fail the link on an entry point that is always inlined", async () => {
       const alwaysInlined = rustSource.replace("#[inline(never)]\nfn rust_aborts", "#[inline(always)]\nfn rust_aborts");

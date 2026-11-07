@@ -415,8 +415,10 @@ function describeGuardWithoutReference(
     failure.entry === undefined ? `${failure.target}, which is not in the image` : printer.describe(failure.entry);
   const text =
     `the guard in ${printer.describe(failure.guard)} has no reference to ${missing}, ` +
-    `an entry point of ${printer.featureName(failure.feature)}: the compiler inlined it, so nothing can be cut. ` +
-    `The entry point must not be inlined (#[inline(never)], NEVER_INLINE)`;
+    `an entry point of ${printer.featureName(failure.feature)}, so nothing can be cut. Two causes are usual. ` +
+    `The compiler inlined the entry point: it must stay out of line (#[inline(never)], NEVER_INLINE). ` +
+    `Or the entry point has no side effect in this build and the compiler removed the call: ` +
+    `see keep_call_of_entry_point() in scripts/build/CLAUDE.md`;
   const references = failure.entry === undefined ? printer.successorsOf(failure.guard) : [];
   if (references.length === 0) return text;
   const listed = references.slice(0, maxListedReferences).map(node => printer.describe(node));

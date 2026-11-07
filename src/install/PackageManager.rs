@@ -457,7 +457,8 @@ bun_output::declare_scope!(PackageManager, hidden);
 pub struct PackageManager {
     pub(crate) cache_directory: Option<bun_sys::Dir>,
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
-    pub root_dir: &'static fs::DirEntry,
+    /// The project directory, interned in `DirnameStore`, with a trailing separator.
+    pub root_dir: &'static [u8],
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
@@ -1558,7 +1559,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 fn allocate_package_manager(
     options: Options,
     log: *mut bun_ast::Log,
-    root_dir: &'static fs::DirEntry,
+    root_dir: &'static [u8],
     env: &mut dot_env::Loader,
     // NUL-terminated
     original_package_json_path: Vec<u8>,
@@ -2370,12 +2371,7 @@ pub fn init(
     if !cli.env_files.is_empty() {
         // Load these before the cwd changes, because their paths are relative to it.
         env.load_process()?;
-        env.load(
-            &dot_env::DirEntryKeys(Vec::new()),
-            cli.env_files,
-            dot_env::DotEnvFileSuffix::Production,
-            true,
-        )?;
+        env.load(cli.env_files, dot_env::DotEnvFileSuffix::Production, true)?;
     }
 
     const CONFIG_TAG: bun_options_types::command_tag::Tag =
@@ -2614,34 +2610,18 @@ pub fn init(
     let _ = root_package_json_file.close();
 
     let top_level_dir = fs.top_level_dir();
-    // Returns the resolver's BSSMap-owned
-    // `*EntriesOption` slot.
-    let entries_option = FileSystem::instance()
-        .read_directory(top_level_dir, 0, true)?
-        .try_entries()?;
 
     env.load_process()?;
     // This is read before the project's `.env` files are loaded, so they cannot set it.
     let env_ignores_scripts = env_ignores_scripts(env);
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
-        // `.data` must only be probed while `entries_mutex` is held.
-        let env_probe_keys = {
-            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
-            dot_env::DirEntryKeys(
-                entries_option
-                    .data
-                    .iter()
-                    .map(|(k, _)| Box::from(&**k))
-                    .collect(),
-            )
-        };
         // Follows `BUN_ENV` / `NODE_ENV` like `bun run`, but defaults to the production set.
         let suffix = match env.get_node_env() {
             Some(b"development") => dot_env::DotEnvFileSuffix::Development,
             Some(b"test") => dot_env::DotEnvFileSuffix::Test,
             _ => dot_env::DotEnvFileSuffix::Production,
         };
-        env.load(&env_probe_keys, &[], suffix, false)?;
+        env.load(&[], suffix, false)?;
     }
     // `bunx` sets these for this command alone. They are removed because lifecycle scripts and the
     // security scanner get a copy of this map.
@@ -2709,7 +2689,7 @@ pub fn init(
     let manager_ptr = allocate_package_manager(
         options,
         ctx.log,
-        entries_option,
+        top_level_dir,
         env,
         original_package_json_path_buf,
         root_package_json_path,
@@ -2965,15 +2945,14 @@ fn init_with_runtime_once(
         PackageManager::set_verbose_install(true);
     }
 
-    // Read the root directory BEFORE allocating the singleton. This is
+    // Open the root directory BEFORE allocating the singleton. This is
     // user-reachable failure (the cwd may have been deleted out from under the
     // process, or be unreadable: ENOENT/EACCES/ENOTDIR), and bailing out here
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
-    // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
+    // manager.
     let top_level_dir = FileSystem::get().top_level_dir();
-    let root_dir = FileSystem::instance()
-        .read_directory(top_level_dir, 0, true)?
-        .try_entries()?;
+    let _ = bun_sys::close(bun_sys::open_dir_for_iteration(Fd::cwd(), top_level_dir)?);
+    let root_dir = top_level_dir;
 
     // A file inside `node_modules` belongs to the project that installed the package.
     let importer_dir = match strings::index_of(importer_dir, bun_paths::NODE_MODULES_NEEDLE) {
@@ -3138,14 +3117,9 @@ fn init_with_runtime_once(
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`
     // passed in does not alias the `&mut Lockfile` receiver.
     manager.lockfile.init_empty();
-    if let Ok(fs::EntriesOption::Entries(entries)) =
-        FileSystem::instance().read_directory(project_dir, 0, false)
-        && {
-            // `.data` probes must hold `entries_mutex`.
-            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
-            entries.has_comptime_query(b"bun.lock") || entries.has_comptime_query(b"bun.lockb")
-        }
-        && let Ok(dir) = bun_sys::Dir::open(project_dir)
+    if let Ok(dir) = bun_sys::Dir::open(project_dir)
+        && (bun_sys::lstatat(dir.fd(), bun_core::zstr!("bun.lock")).is_ok()
+            || bun_sys::lstatat(dir.fd(), bun_core::zstr!("bun.lockb")).is_ok())
     {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_dir::<false>(dir.fd(), Some(&mut *manager), log) {
@@ -3156,7 +3130,7 @@ fn init_with_runtime_once(
         // Workspace paths are relative to `root_dir`. A lockfile records them relative to its own
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
-            manager.root_dir = entries;
+            manager.root_dir = FileSystem::get().dirname_store().append(project_dir)?;
             // Auto-install ignores an override that points away from the registry, so it also drops
             // what such an override resolved to in the lockfile.
             use crate::lockfile_real::package::PackageColumns as _;

@@ -3782,13 +3782,13 @@ impl RunCommand {
                     .ok()
                     .flatten()
                 {
-                    if let Some(entries) = bin_dir.get_entries_const() {
-                        // `.data` iteration must hold `entries_mutex`
-                        // (uncontended on this single-threaded CLI path).
-                        let _entries_lock = bun_resolver::fs::FileSystem::get()
-                            .fs
-                            .entries_mutex
-                            .lock_guard();
+                    // `.data` iteration must hold `entries_mutex`
+                    // (uncontended on this single-threaded CLI path).
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    if let Some(entries) = bin_dir.get_entries_listed_locked() {
                         let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3840,13 +3840,13 @@ impl RunCommand {
                 .ok()
                 .flatten()
             {
-                if let Some(entries) = dir_info.get_entries_const() {
-                    // `.data` iteration must hold `entries_mutex`
-                    // (uncontended on this single-threaded CLI path).
-                    let _entries_lock = bun_resolver::fs::FileSystem::get()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
+                // `.data` iteration must hold `entries_mutex`
+                // (uncontended on this single-threaded CLI path).
+                let _entries_lock = bun_resolver::fs::FileSystem::get()
+                    .fs
+                    .entries_mutex
+                    .lock_guard();
+                if let Some(entries) = dir_info.get_entries_listed_locked() {
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {

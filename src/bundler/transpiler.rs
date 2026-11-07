@@ -632,10 +632,10 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // Load the project root for .env file discovery. If the cwd
-                // (or a parent) is unreadable, readDirInfo may return null;
-                // bail out of .env file loading in that case, but process
-                // env vars were already loaded above.
+                // The project root's tsconfig decides the JSX pragma. If the
+                // cwd (or a parent) is unreadable, readDirInfo returns null;
+                // skip .env file loading in that case, but process env vars
+                // were already loaded above.
                 let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
@@ -645,24 +645,6 @@ impl<'a> Transpiler<'a> {
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
                     merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
-
-                // Copy the listing's basenames out under `entries_mutex`,
-                // refreshing it at our generation in the same critical
-                // section: concurrent resolvers rewrite the `DirEntry` map in
-                // place under that lock, and `dot_env::Loader::load` does
-                // file I/O between probes.
-                let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::get()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
-                        Some(entries) => dot_env::DirEntryKeys(
-                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
-                        ),
-                        None => return Ok(()),
-                    }
-                };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -676,7 +658,7 @@ impl<'a> Transpiler<'a> {
                 } else {
                     dot_env::DotEnvFileSuffix::Development
                 };
-                env.load(&dir, &env_files, suffix, skip_default_env)?;
+                env.load(&env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;

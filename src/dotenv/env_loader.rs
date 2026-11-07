@@ -50,27 +50,6 @@ impl DefaultEnvFile {
     }
 }
 
-/// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
-/// `bun_resolver` in the crate graph, so the directory listing is taken
-/// generically; the only operation `load_default_files` performs is a lookup
-/// of a known-at-compile-time filename. Callers snapshot the resolver's
-/// listing into a [`DirEntryKeys`] (the live `DirEntry` map may be rewritten
-/// in place by a concurrent resolver, so `load` must not probe it directly).
-pub trait DirEntryProbe {
-    /// The argument MUST already be ASCII-lowercase.
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
-}
-
-/// Directory-listing basenames copied out under the resolver's
-/// `entries_mutex`, probed between the `.env` file reads in `Loader::load`.
-pub struct DirEntryKeys(pub Vec<Box<[u8]>>);
-
-impl DirEntryProbe for DirEntryKeys {
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        self.0.iter().any(|k| **k == *query_lower)
-    }
-}
-
 /// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
@@ -624,9 +603,11 @@ impl Loader {
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
 
-    pub fn load<D: DirEntryProbe + ?Sized>(
+    /// Load the `--env-file` list, or else the default `.env*` files of the
+    /// working directory. A default file that does not exist is one failed
+    /// `open`, not an error.
+    pub fn load(
         &mut self,
-        dir: &D,
         env_files: &[&[u8]],
         suffix: DotEnvFileSuffix,
         skip_default_env: bool,
@@ -649,7 +630,7 @@ impl Loader {
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
             if !skip_default_env {
-                self.load_default_files(suffix, dir, &mut value_buffer)?;
+                self.load_default_files(suffix, &mut value_buffer)?;
             }
         }
 
@@ -690,61 +671,52 @@ impl Loader {
     // Load .env.development if development
     // Load .env.production if !development
     // .env goes last
-    fn load_default_files<D: DirEntryProbe + ?Sized>(
+    fn load_default_files(
         &mut self,
         suffix: DotEnvFileSuffix,
-        dir: &D,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
         match suffix {
-            DotEnvFileSuffix::Development => self.try_load_default(
-                dir,
-                dir_handle,
-                DefaultEnvFile::DevelopmentLocal,
-                value_buffer,
-            )?,
-            DotEnvFileSuffix::Production => self.try_load_default(
-                dir,
-                dir_handle,
-                DefaultEnvFile::ProductionLocal,
-                value_buffer,
-            )?,
+            DotEnvFileSuffix::Development => {
+                self.try_load_default(dir_handle, DefaultEnvFile::DevelopmentLocal, value_buffer)?
+            }
+            DotEnvFileSuffix::Production => {
+                self.try_load_default(dir_handle, DefaultEnvFile::ProductionLocal, value_buffer)?
+            }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, DefaultEnvFile::TestLocal, value_buffer)?
+                self.try_load_default(dir_handle, DefaultEnvFile::TestLocal, value_buffer)?
             }
         }
 
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, DefaultEnvFile::Local, value_buffer)?;
+            self.try_load_default(dir_handle, DefaultEnvFile::Local, value_buffer)?;
         }
 
         match suffix {
             DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, DefaultEnvFile::Development, value_buffer)?
+                self.try_load_default(dir_handle, DefaultEnvFile::Development, value_buffer)?
             }
             DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, DefaultEnvFile::Production, value_buffer)?
+                self.try_load_default(dir_handle, DefaultEnvFile::Production, value_buffer)?
             }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, DefaultEnvFile::Test, value_buffer)?
+                self.try_load_default(dir_handle, DefaultEnvFile::Test, value_buffer)?
             }
         }
 
-        self.try_load_default(dir, dir_handle, DefaultEnvFile::Env, value_buffer)
+        self.try_load_default(dir_handle, DefaultEnvFile::Env, value_buffer)
     }
 
     #[inline]
-    fn try_load_default<D: DirEntryProbe + ?Sized>(
+    fn try_load_default(
         &mut self,
-        dir: &D,
         dir_handle: bun_sys::Fd,
         env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if dir.has_comptime_query(env_file.name()) {
-            self.load_env_file::<false>(dir_handle, env_file, value_buffer)?;
+        if self.load_env_file::<false>(dir_handle, env_file, value_buffer)? {
             analytics::Features::dotenv_inc();
         }
         Ok(())
@@ -784,14 +756,16 @@ impl Loader {
         Output::flush();
     }
 
+    /// Returns whether a file of that name exists. Only a file that exists
+    /// counts as loaded, even when it cannot be read.
     pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
         env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<bool> {
         if self.default_files_loaded.contains(env_file) {
-            return Ok(());
+            return Ok(true);
         }
         let base = env_file.name();
 
@@ -802,11 +776,12 @@ impl Loader {
             Err(err) => {
                 use bun_sys::E;
                 match err.get_errno() {
+                    E::ENOENT | E::ENOTDIR => return Ok(false),
                     // A unix socket: ENXIO on Linux, EOPNOTSUPP on macOS and FreeBSD.
-                    E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => {
+                    E::EISDIR | E::ENXIO | E::EOPNOTSUPP => {
                         // prevent retrying
                         self.default_files_loaded.insert(env_file);
-                        return Ok(());
+                        return Ok(true);
                     }
                     E::EBUSY | E::EACCES => {
                         if !self.quiet {
@@ -818,7 +793,7 @@ impl Loader {
                         }
                         // prevent retrying
                         self.default_files_loaded.insert(env_file);
-                        return Ok(());
+                        return Ok(true);
                     }
                     _ => return Err(err.into()),
                 }
@@ -842,7 +817,7 @@ impl Loader {
         }
 
         self.default_files_loaded.insert(env_file);
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn load_env_file_dynamic<const OVERRIDE: bool>(

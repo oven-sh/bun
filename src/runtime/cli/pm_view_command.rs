@@ -70,30 +70,23 @@ pub(crate) fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // `root_dir` is in the resolver's directory cache, so lookups must hold
-                // `entries_mutex`.
-                let has_package_json = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::get()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
-                    manager.root_dir.has_comptime_query(b"package.json")
-                };
-                if !has_package_json {
-                    const NO_NAME: &str = "no package name given and no package.json found";
-                    if json_output {
-                        print_json_error(NO_NAME, spec_, None);
-                    } else {
-                        Output::err_generic(NO_NAME, ());
+                let package_json_path = bun_core::ZBox::from_bytes(
+                    &[manager.root_dir, b"package.json".as_slice()].concat(),
+                );
+                let str = match bun_sys::File::open(&package_json_path, bun_sys::O::RDONLY, 0)
+                    .and_then(|file| file.read_to_end())
+                {
+                    Ok(str) => str,
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                        const NO_NAME: &str = "no package name given and no package.json found";
+                        if json_output {
+                            print_json_error(NO_NAME, spec_, None);
+                        } else {
+                            Output::err_generic(NO_NAME, ());
+                        }
+                        Global::exit(1);
                     }
-                    Global::exit(1);
-                }
-                let fd = manager.root_dir.fd;
-                if !fd.is_valid() {
-                    break 'from_package_json;
-                }
-                let Ok(str) = bun_sys::File::read_from(fd, b"package.json") else {
-                    break 'from_package_json;
+                    Err(_) => break 'from_package_json,
                 };
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);

@@ -771,7 +771,7 @@ fn root_patched_dependencies<'a>(
 pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
     let log = manager.log_mut();
     let path = manager.root_package_json_path.as_bytes();
-    let root_dir = manager.root_dir.dir;
+    let root_dir = manager.root_dir;
     let Some((_, patched)) = root_patched_dependencies(
         &mut manager.workspace_package_json_cache,
         log,
@@ -833,7 +833,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     }
     let log = manager.log_mut();
     let path = manager.root_package_json_path.as_bytes();
-    let root_dir = manager.root_dir.dir;
+    let root_dir = manager.root_dir;
     let Some((source, patched)) = root_patched_dependencies(
         &mut manager.workspace_package_json_cache,
         log,

@@ -814,7 +814,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionS
 
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
-/// stepped again (with `input` null). A failed step sets `error` and still returns its output: the caller delivers it, then throws.
+/// stepped again (with `input` null). A failed step sets `outcome.error` and still returns its output: the caller delivers it, then throws.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transform(
@@ -823,8 +823,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     input: *const u8,
     input_len: usize,
     finish: bool,
-    more: &mut bool,
-    error: &mut JSValue,
+    outcome: &mut StepOutcome,
 ) -> JSValue {
     bun_removable_features::removable_definition!(
         CompressionStreams,
@@ -843,7 +842,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     // only driven from the JS thread, so the call-scoped `&mut *this` has no
     // alias.
     let step = unsafe { (*this).step(slice, finish, &mut out) };
-    report_step(global, step, more, error);
+    outcome.set(global, step);
     let chunk = if out.is_empty() {
         JSUint8Array::create_empty(global)
     } else {
@@ -853,18 +852,19 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     bun_jsc::to_js_host_fn_result(global, chunk)
 }
 
-/// Tells the C++ driver how a step ended. A failed step's error is made here, not thrown: the driver delivers the output first.
-fn report_step(
-    global: &JSGlobalObject,
-    step: Result<bool, CodecError>,
-    more: &mut bool,
-    error: &mut JSValue,
-) {
-    match step {
-        Ok(has_more) => *more = has_more,
-        Err(e) => {
-            *more = false;
-            *error = codec_error_to_js(global, &e);
+/// How a step ended, for the C++ driver. Matches `CodecStepOutcome` in `JSCompressionStreamShared.h`.
+#[repr(C)]
+pub(crate) struct StepOutcome {
+    more: bool,
+    /// Set when the step failed. It is not thrown here: the driver delivers the output of the step first.
+    error: JSValue,
+}
+
+impl StepOutcome {
+    fn set(&mut self, global: &JSGlobalObject, step: Result<bool, CodecError>) {
+        match step {
+            Ok(more) => self.more = more,
+            Err(e) => self.error = codec_error_to_js(global, &e),
         }
     }
 }
@@ -904,8 +904,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     input_len: usize,
     finish: bool,
     controller: &crate::webcore::sink::ReadableSinkController,
-    more: &mut bool,
-    error: &mut JSValue,
+    outcome: &mut StepOutcome,
 ) -> JSValue {
     bun_removable_features::removable_definition!(
         CompressionStreams,
@@ -921,7 +920,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
     let step = unsafe { (*this).step(slice, finish, &mut out) };
-    report_step(global, step, more, error);
+    outcome.set(global, step);
     let result = 'write: {
         // The sink copies what it needs before returning.
         let handle = controller.sink_handle();

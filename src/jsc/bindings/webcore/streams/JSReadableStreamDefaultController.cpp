@@ -55,7 +55,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
         return nullptr;
     case SourceKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSourcePullAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
-    case SourceKind::TransformErrorWhenDrained:
+    [[unlikely]] case SourceKind::TransformErrorWhenDrained:
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, controller->m_algorithms.underlyingObject.get()));
     case SourceKind::TeeBranch:
         RELEASE_AND_RETURN(scope, defaultTeePullAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex));

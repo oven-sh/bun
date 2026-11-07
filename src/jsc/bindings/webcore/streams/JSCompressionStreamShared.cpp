@@ -191,13 +191,13 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
-    EncodedJSValue error {};
+    CodecStepOutcome outcome;
     if (auto* sinkController = stream->m_nativeSinkController.get()) {
-        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &step.more, &error));
+        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &outcome));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
     } else {
-        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &step.more, &error));
+        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &outcome));
         RETURN_IF_EXCEPTION(scope, step);
         auto* view = dynamicDowncast<JSArrayBufferView>(out);
         if (view && view->length()) {
@@ -205,9 +205,10 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
             RETURN_IF_EXCEPTION(scope, step);
         }
     }
+    step.more = outcome.more;
     // A failed step has handed over what it produced: the consumer gets that output ahead of the error.
-    if (error) [[unlikely]]
-        throwException(globalObject, scope, JSValue::decode(error));
+    if (outcome.error) [[unlikely]]
+        throwException(globalObject, scope, JSValue::decode(outcome.error));
     return step;
 }
 

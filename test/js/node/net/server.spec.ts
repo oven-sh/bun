@@ -1,4 +1,5 @@
 import { isWindows } from "harness";
+import dns from "node:dns";
 import EventEmitter from "node:events";
 import type { SocketConnectOpts } from "node:net";
 import net from "node:net";
@@ -197,15 +198,16 @@ describe("server.address()", () => {
     expect(server.address()).toEqual({ address: "::", port: 6543, family: "IPv6" });
   });
 
-  // FIXME: hostname is not resolved
-  it.skip("when server.listen(port, hostname), returns an AddressInfo object with the same port and hostname", async () => {
+  // The listener binds the first address the resolver reports for the hostname, as node does.
+  it("when server.listen(port, hostname), returns an AddressInfo object with the resolved address", async () => {
+    const { address, family } = await dns.promises.lookup("localhost");
     const { promise, resolve } = Promise.withResolvers<void>();
-    server.listen(1234, "localhost", resolve);
+    server.listen(0, "localhost", resolve);
     await promise;
     expect(server.address()).toEqual({
-      address: "127.0.0.1",
-      port: 1234,
-      family: "IPv4",
+      address,
+      port: expect.any(Number),
+      family: `IPv${family}`,
     });
   });
 

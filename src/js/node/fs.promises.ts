@@ -354,7 +354,7 @@ const exports = {
       // force makes repeated removal a no-op; real failures (EACCES) still throw
       await fs.rm(fullPath, { recursive: true, force: true });
     }
-    return { path, remove, [Symbol.asyncDispose]: remove };
+    return { __proto__: null, path, remove, [Symbol.asyncDispose]: remove };
   },
   statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
@@ -428,19 +428,12 @@ const exports = {
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {
-    var bytesWritten = await fs.writev(fd, buffers, position);
-    return {
-      bytesWritten,
-      buffers,
-    };
+    const bytesWritten = await fs.writev(fd, buffers, position);
+    return { __proto__: null, bytesWritten, buffers };
   },
   readv: async (fd, buffers, position) => {
-    var bytesRead = await fs.readv(fd, buffers, position);
-
-    return {
-      bytesRead,
-      buffers,
-    };
+    const bytesRead = await fs.readv(fd, buffers, position);
+    return { __proto__: null, bytesRead, buffers };
   },
   constants,
   watch,
@@ -621,7 +614,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       try {
         this[kRef]();
         const bytesRead = await read(fd, buffer, offset, length, position);
-        return { buffer, bytesRead };
+        return { __proto__: null, bytesRead, buffer };
       } finally {
         this[kUnref]();
       }
@@ -728,10 +721,8 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       }
       try {
         this[kRef]();
-        return {
-          buffer,
-          bytesWritten: await write(fd, buffer, offset, length, position),
-        };
+        const bytesWritten = await write(fd, buffer, offset, length, position);
+        return { __proto__: null, bytesWritten, buffer };
       } finally {
         this[kUnref]();
       }

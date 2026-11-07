@@ -39,6 +39,7 @@ You can distribute the page the same way you'd distribute a PDF: a single file y
 <!doctype html>
 <html>
   <head>
+    <meta charset="utf-8" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -231,7 +232,8 @@ When you pass `--compile --target=browser` with an HTML entrypoint, Bun:
 4. Converts every relative asset reference into a base64 `data:` URI
 5. Inlines the bundled JS as `<script type="module">` before `</body>`
 6. Inlines the bundled CSS as `<style>` in `<head>`
-7. Outputs a single `.html` file with no external dependencies
+7. Adds `<meta charset="utf-8">` to `<head>` if the page does not declare an encoding, so browsers decode the inlined code as UTF-8
+8. Outputs a single `.html` file with no external dependencies
 
 ## Minification
 

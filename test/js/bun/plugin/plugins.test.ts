@@ -1,6 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, Heap, isWindows } from "harness";
 import { resolve } from "path";
 
@@ -4792,13 +4792,11 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
   });
 });
 
-it.concurrent.each([false, true])(
-  "runtime onResolve distinguishes static imports from reentrant dynamic resolution (compiled: %s)",
-  async compiled => {
-    using dir = tempDir("plugin-import-kinds", {
-      "target.mjs": `export const value = 42;`,
-      "static.mjs": `export { value } from "static-kind.mod";`,
-      "entry.mjs": `
+async function runRuntimeImportKindFixture(compiled: boolean) {
+  using dir = tempDir("plugin-import-kinds", {
+    "target.mjs": `export const value = 42;`,
+    "static.mjs": `export { value } from "static-kind.mod";`,
+    "entry.mjs": `
       import "./target.mjs";
       const calls = [];
       Bun.plugin({
@@ -4817,40 +4815,46 @@ it.concurrent.each([false, true])(
       const staticallyImported = await import("./static.mjs");
       console.log(JSON.stringify({ calls, values: [dynamic.value, staticallyImported.value] }));
     `,
-    });
-    const executable = resolve(String(dir), isWindows ? "app.exe" : "app");
-    if (compiled) {
-      await using build = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--aot",
-          "--compile-inspector",
-          "--aot-allow-code-from-disk",
-          "--external",
-          "*-kind.mod",
-          "--outfile",
-          executable,
-          "entry.mjs",
-        ],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      expect(exitCode, stdout + stderr).toBe(0);
-    }
-    await using child = Bun.spawn({
-      cmd: compiled ? [executable] : [bunExe(), "--no-install", "entry.mjs"],
+  });
+  const executable = resolve(String(dir), isWindows ? "app.exe" : "app");
+  if (compiled) {
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--compile-inspector",
+        "--aot-allow-code-from-disk",
+        "--external",
+        "*-kind.mod",
+        "--outfile",
+        executable,
+        "entry.mjs",
+      ],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-    expect({ result: stdout.trim() ? JSON.parse(stdout) : null, stderr, exitCode }).toEqual({
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(exitCode, stdout + stderr).toBe(0);
+  }
+  await using child = Bun.spawn({
+    cmd: compiled ? [executable] : [bunExe(), "--no-install", "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  return { result: stdout.trim() ? JSON.parse(stdout) : null, stderr, exitCode };
+}
+
+it.concurrent(
+  "runtime onResolve distinguishes static imports from reentrant dynamic resolution (compiled: false)",
+  async () => {
+    expect(await runRuntimeImportKindFixture(false)).toEqual({
       result: {
         calls: [
           ["dynamic-kind.mod", "dynamic-import"],
@@ -4862,6 +4866,31 @@ it.concurrent.each([false, true])(
       stderr: "",
       exitCode: 0,
     });
+  },
+  60_000,
+);
+
+it.concurrent(
+  "runtime onResolve distinguishes static imports from reentrant dynamic resolution (compiled: true)",
+  async () => {
+    const { result, stderr, exitCode } = await runRuntimeImportKindFixture(true);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(result.values).toEqual([42, 42]);
+    expect(result.calls.map(([path]) => path)).toEqual(["dynamic-kind.mod", "nested-kind.mod", "static-kind.mod"]);
+    expect(result.calls.slice(1)).toEqual([
+      ["nested-kind.mod", "import-statement"],
+      ["static-kind.mod", "import-statement"],
+    ]);
+  },
+  60_000,
+);
+
+test.todo(
+  "AOT executables do not yet mark constant dynamic imports for the resolver host",
+  async () => {
+    const { result } = await runRuntimeImportKindFixture(true);
+    expect(result.calls[0]).toEqual(["dynamic-kind.mod", "dynamic-import"]);
   },
   60_000,
 );

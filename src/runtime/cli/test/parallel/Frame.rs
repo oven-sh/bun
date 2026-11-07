@@ -38,8 +38,8 @@ pub(crate) enum Kind {
     CoverageFile,
     /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
     RefusedChange,
-    /// 5 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), and 1 where it could not
-    /// write an inline one; sent at exit by a worker that runs compiled code
+    /// 6 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), 1 where it could not
+    /// write an inline one, and the entries that it removed from snapshot files; sent at exit by a worker that runs compiled code
     Snapshots,
 }
 

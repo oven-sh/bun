@@ -50,7 +50,7 @@ bun test --update-snapshots
 
 Do this when you've intentionally changed the output. In CI environments, Bun does not write new snapshots unless you pass this flag.
 
-`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore from the snapshot file of each test file that ran a snapshot matcher. If no entry is left, it removes the file.
+`--update-snapshots` writes the entries whose value changed and adds the new ones. It removes the entries that no test uses anymore from the snapshot file of each test file that ran a snapshot matcher. If no entry is left, it removes the file. On the `snapshots:` line of the summary, `N removed` is the number of entries that the run removed.
 
 It keeps the entries of a test that did not run to the end:
 

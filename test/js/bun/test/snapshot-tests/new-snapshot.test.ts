@@ -200,6 +200,7 @@ describe.concurrent("--update-snapshots", () => {
     );
     expect(result).toMatchObject({
       snapshot: snap({ "alpha 1": `"a"`, "beta 1": `"new"`, "grp gamma 1": `"g"` }),
+      stderr: expect.stringContaining("snapshots: +1 added\n"),
       exitCode: 0,
     });
   });
@@ -255,6 +256,45 @@ describe.concurrent("--update-snapshots", () => {
     );
     expect(result).toMatchObject({
       snapshot: snap({ "once 1": `"1"`, "renamed 1": `"r"` }),
+      stderr: expect.stringContaining("snapshots: 1 passed, 1 added, 3 removed\n"),
+      exitCode: 0,
+    });
+  });
+
+  // The keys that are in the file before the run and not after it are the `N removed` of the summary. A file that goes counts in entries.
+  const removedFrom = (before: string, after = "") => {
+    const keysOf = (text: string) => Array.from(text.matchAll(/^exports\[`(.*)`\] = /gm), match => match[1]);
+    return keysOf(before).filter(key => !keysOf(after).includes(key)).length;
+  };
+  const takesOne = `test("kept", () => { expect("k").toMatchSnapshot(); });`;
+  const takesInline = `test("inline", () => { expect("i").toMatchInlineSnapshot(\`"i"\`); });`;
+  const withUnused = snap({ "gone 1": `"g"`, "kept 1": `"k"` });
+  const withoutUnused = snap({ "kept 1": `"k"` });
+  const allUnused = snap({ "old name 1": `"a"`, "old name 2": `"b"` });
+  const counted: [string, string, string, string | undefined, string[], number][] = [
+    ["an entry that no test takes", takesOne, withUnused, withoutUnused, [], 1],
+    ["that entry once when the test file runs twice", takesOne, withUnused, withoutUnused, ["--rerun-each=2"], 2],
+    ["every entry of a file that it removes", takesInline, allUnused, undefined, [], 1],
+    ["those entries once when the test file runs twice", takesInline, allUnused, undefined, ["--rerun-each=2"], 2],
+  ];
+  test.each(counted)("the summary counts %s", async (_, tests, before, after, args, passed) => {
+    expect(await updateOne(tests, before, ...args)).toEqual({
+      snapshot: after,
+      stderr: expect.stringContaining(`snapshots: ${passed} passed, ${removedFrom(before, after)} removed\n`),
+      exitCode: 0,
+    });
+  });
+
+  // The matcher throws before it counts a snapshot, and the summary counts no expect() call of a hook. The line has the removed entries alone.
+  test("the summary counts the entries that a run with no counted snapshot removes", async () => {
+    const result = await updateOne(
+      `afterAll(() => { expect(() => expect(1).toMatchSnapshot({ a: 1 })).toThrow(); });
+       test("a", () => {});`,
+      allUnused,
+    );
+    expect(result).toEqual({
+      snapshot: undefined,
+      stderr: expect.stringContaining(` 0 fail\nsnapshots: ${removedFrom(allUnused)} removed\nRan 1 test `),
       exitCode: 0,
     });
   });
@@ -500,6 +540,7 @@ describe.concurrent("--update-snapshots", () => {
       snapshots: { "a.test.ts.snap": snap({ "x 1": `"x"` }), "b.test.ts.snap": ofB },
       exitCode: 1,
     });
+    expect(result.stderr).toContain("snapshots: 1 passed, 1 added, 1 removed\n");
   });
 
   test("writes a new file in the order in which the tests run", async () => {
@@ -722,6 +763,26 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
+  // Two workers print no snapshots line, so the run does not say how many entries it removed.
+  test("--parallel removes the entries that no test takes, and its summary has no snapshots line", async () => {
+    const tests = `import { expect, test } from "bun:test";
+      ${takesOne}`;
+    const result = await update(
+      {
+        "a.test.ts": tests,
+        "b.test.ts": tests,
+        "__snapshots__/a.test.ts.snap": withUnused,
+        "__snapshots__/b.test.ts.snap": withUnused,
+      },
+      "--parallel=2",
+    );
+    expect(result).toEqual({
+      snapshots: { "a.test.ts.snap": withoutUnused, "b.test.ts.snap": withoutUnused },
+      stderr: expect.stringContaining(" 2 pass\n 0 fail\n 2 expect() calls\n"),
+      exitCode: 0,
+    });
+  });
+
   test("--parallel --bail keeps the entries of a test that fails", async () => {
     const result = await update(
       {
@@ -765,6 +826,7 @@ describe.concurrent("--update-snapshots", () => {
     );
     expect(result).toMatchObject({
       snapshots: { "a.test.ts.snap": after("a"), "c.test.ts.snap": after("c") },
+      stderr: expect.stringContaining("snapshots: +2 added, 2 removed\n"),
       exitCode: 0,
     });
   });

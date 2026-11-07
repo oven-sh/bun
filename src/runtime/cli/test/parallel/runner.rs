@@ -1110,6 +1110,7 @@ fn worker_flush_aggregates(
             counted.failed,
             counted.added,
             usize::from(!wrote_inline_snapshots),
+            counted.removed,
         ];
         cmds.emit(frame::Kind::Snapshots, |wf| {
             for number in numbers {

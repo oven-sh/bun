@@ -1757,6 +1757,9 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
           "d > skipped 1": "s",
           "d > skipped block > inside 1": "i",
         };
+        // The keys that are in the file before the run and not after it are the `N removed` of the summary.
+        const removed = Object.keys(before).filter(key => !(key in kept)).length;
+        expect(stderr).toContain(`snapshots: 2 passed, 2 added, ${removed} removed\n`);
         // Bun's format keeps the order of the file, so the new entry is the last one.
         const after = format === "bun" ? { ...kept, "d > added 1": "added" } : { "d > added 1": "added", ...kept };
         expect(snap(dir)).toBe(file(format, after));
@@ -1769,10 +1772,26 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         "a.test.js": importing(format === "vitest" ? "vitest" : null) + tests,
         "__snapshots__/a.test.js.snap": file(format, before),
       });
-      const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots", "-t", "same");
+      const { stderr, exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots", "-t", "same");
+      expect(stderr).toContain("snapshots: 1 passed, 1 removed\n");
       const { "d > gone 1": _, ...after } = before;
       expect(snap(dir)).toBe(file(format, after));
       expect(exitCode).toBe(0);
+    });
+
+    test.each(formats)("%s: the summary counts the entries that a run removes", async format => {
+      using dir = tempDir("snapshot-obsolete-count", {
+        "a.test.js": `test("t", () => { expect("t").toMatchSnapshot(); });`,
+        "__snapshots__/a.test.js.snap": file(format, { "gone 1": "g", "t 1": "t" }),
+      });
+      const first = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+      expect(first.stderr).toContain("snapshots: 1 passed, 1 removed\n");
+      expect(snap(dir)).toBe(file(format, { "t 1": "t" }));
+      // The next run has nothing to remove.
+      const second = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+      expect(second.stderr).toContain(" 1 snapshots, 1 expect() calls\n");
+      expect(snap(dir)).toBe(file(format, { "t 1": "t" }));
+      expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
     });
 
     // How Jest 30 and Vitest 5 write the key, and they keep the entry too.
@@ -1822,7 +1841,8 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         "a.test.js": `test("t", () => { expect(1).toMatchSnapshot(); });`,
         "__snapshots__/a.test.js.snap": headers[format] + "\nexports[`gone 1`] = `0`;\n\nexports[`t 1`] = `1`;\n",
       });
-      const { exitCode } = await runTests(String(dir), { CI: "false" });
+      const { stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+      expect(stderr).toContain(" 1 snapshots, 1 expect() calls\n");
       expect(snap(dir)).toBe(headers[format] + "\nexports[`gone 1`] = `0`;\n\nexports[`t 1`] = `1`;\n");
       expect(exitCode).toBe(0);
     });
@@ -1832,7 +1852,8 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         "a.test.js": `test("t", () => { expect(1).toMatchInlineSnapshot(\`1\`); });`,
         "__snapshots__/a.test.js.snap": headers[format] + "\nexports[`t 1`] = `1`;\n",
       });
-      const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+      const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+      expect(stderr).toContain("snapshots: 1 passed, 1 removed\n");
       expect(readdirSync(join(String(dir), "__snapshots__"))).toEqual([]);
       expect(exitCode).toBe(0);
     });
@@ -1905,6 +1926,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         const first = await runTests(String(dir), { CI: "false", V: "v2" }, ...args, "./a.test.js");
         expect([first.pass, first.fail, first.exitCode]).toEqual(counts);
         expect(first.stderr).toContain(line);
+        expect(first.stderr).not.toContain(" removed");
         expect(snap(dir)).toBe(stored);
 
         writeFileSync(join(String(dir), "a.test.js"), plain);
@@ -1988,7 +2010,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         });
         const update = ["--update-snapshots", "./a.test.js"];
         const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, ...update);
-        expect(stderr).toContain("snapshots: 1 passed, 2 added\n");
+        expect(stderr).toContain("snapshots: 1 passed, 2 added, 1 removed\n");
         // Bun's format has the new entries in the order in which the tests ran.
         const after =
           format === "bun"

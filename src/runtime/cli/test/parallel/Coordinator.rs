@@ -1061,13 +1061,15 @@ impl<'a> Coordinator<'a> {
                 crate::cli::run_compiled::add_refused_change(rd.str().to_vec());
             }
             frame::Kind::Snapshots => {
-                let [total, passed, failed, added, unwritten] = [(); 5].map(|()| rd.u32() as usize);
+                let [total, passed, failed, added, unwritten, removed] =
+                    [(); 6].map(|()| rd.u32() as usize);
                 if self.ends_as_in_one_process {
                     let snapshots = &mut self.reporter.jest.snapshots;
                     snapshots.total += total;
                     snapshots.passed += passed;
                     snapshots.failed += failed;
                     snapshots.added += added;
+                    snapshots.removed += removed;
                     self.failed_to_write_inline_snapshots |= unwritten != 0;
                 }
             }

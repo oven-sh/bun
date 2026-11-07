@@ -182,6 +182,8 @@ describe("a snapshot file that bun test can't write", () => {
         expect(stderr).toContain(`: Failed to remove the entries that no test uses from ${quoted(name)} (open)\n`);
       }
       expect(stderr).toContain(" 2 pass\n 0 fail\n 2 errors\n");
+      // The summary counts no entry that the run could not remove.
+      expect(stderr).not.toContain(" removed");
       expect([fixture.read("a.test.js"), fixture.read("b.test.js")]).toEqual([withUnused, withUnused]);
       expect(exitCode).toBe(1);
     },
@@ -228,7 +230,7 @@ describe("a snapshot file that bun test can't write", () => {
       expect(stderr).toContain(
         `EACCES: Permission denied: Failed to remove the entries that no test uses from ${quoted("a.test.js")} (unlink)\n`,
       );
-      expect(stderr).toContain(" 1 pass\n 0 fail\n 1 error\n");
+      expect(stderr).toContain(" 1 pass\n 0 fail\n 1 error\n 1 snapshots, 1 expect() calls\n");
       expect(fixture.read()).toBe(unused);
       expect(exitCode).toBe(1);
     },
@@ -238,7 +240,7 @@ describe("a snapshot file that bun test can't write", () => {
   test.serial("--update-snapshots removes a read-only file with no entry left from a writable directory", async () => {
     using fixture = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unused }, "writable");
     const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
-    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(stderr).toContain(" 1 pass\n 0 fail\nsnapshots: 1 passed, 1 removed\n");
     expect(fixture.has()).toBe(false);
     expect(exitCode).toBe(0);
   });

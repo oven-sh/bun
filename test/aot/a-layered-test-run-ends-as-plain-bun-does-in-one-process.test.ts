@@ -34,6 +34,15 @@ test("matches", () => {
 `,
   "__snapshots__/same.test.ts.snap":
     '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`matches 1`] = `"same"`;\n',
+  "unused.test.ts": `import { test, expect } from "bun:test";
+test("takes one", () => {
+  expect("one").toMatchSnapshot();
+});
+`,
+  "__snapshots__/unused.test.ts.snap":
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n" +
+    'exports[`takes one 1`] = `"one"`;\n\n' +
+    'exports[`no test takes this one 1`] = `"two"`;\n',
   "exit-code.test.ts": `import { test } from "bun:test";
 test("leaves an exit code", () => {
   process.exitCode = 3;
@@ -119,6 +128,11 @@ test.concurrent.each([
   {
     flags: ["--parallel=2", "./exit-code.test.ts", "./same.test.ts"],
     summary: ["2 pass", "0 fail", "2 expect() calls", "Ran 2 tests across 2 files."],
+    exitCode: 0,
+  },
+  {
+    flags: ["--parallel=1", "--update-snapshots", "./unused.test.ts"],
+    summary: ["1 pass", "0 fail", "snapshots: 1 passed, 1 removed", "1 expect() calls", "Ran 1 test across 1 file."],
     exitCode: 0,
   },
 ])(

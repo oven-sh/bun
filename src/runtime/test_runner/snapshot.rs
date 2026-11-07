@@ -143,6 +143,8 @@ pub(crate) struct Snapshots {
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
+    /// The entries that `remove_obsolete` took out. Like `added`, it counts before the flush writes the file.
+    pub(crate) removed: usize,
 
     /// The entries of the current file, in the order of the file, then the new ones.
     values: StringArrayHashMap<Entry>,
@@ -170,6 +172,7 @@ impl Snapshots {
             added: 0,
             passed: 0,
             failed: 0,
+            removed: 0,
             values: StringArrayHashMap::new(),
             counts: StringHashMap::new(),
             _current_file: None,
@@ -634,6 +637,7 @@ impl Snapshots {
             }
             file.pending = Pending::WholeFile;
         }
+        self.removed += self.values.len() - kept;
         self.values.retain(|_, entry| entry.checked || entry.stays);
         Ok(())
     }

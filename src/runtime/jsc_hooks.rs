@@ -823,14 +823,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
         // this loop: the resolver does not, and `reload()` defers while `is_in_preload`.
         let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
-        // Strip "file://".
-        let normalized: &[u8] = preload_slice
-            .strip_prefix(b"file://".as_slice())
-            .unwrap_or(preload_slice);
-
-        // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally, so `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
+        let normalized = preload_slice;
+        // File URLs retain their escapes and suffix identity in the module loader.
+        let loader_specifier = normalized.starts_with(b"file:") || normalized.starts_with(b"node:");
+        let module_name = if loader_specifier {
             bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
@@ -4280,6 +4276,7 @@ pub(crate) fn loader_for_path(
 fn normalize_specifier_for_loader<'a>(
     origin: &bun_url::URL<'_>,
     slice_: &'a [u8],
+    preserve_path_delimiters: bool,
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
@@ -4300,7 +4297,9 @@ fn normalize_specifier_for_loader<'a>(
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
+    if !preserve_path_delimiters
+        && let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?')
+    {
         let i = i as usize;
         query = &slice[i..];
         slice = &slice[..i];
@@ -4333,10 +4332,13 @@ unsafe fn get_loader_and_virtual_source<'a>(
     virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
     blob_to_deinit: &'a mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
+    preserve_path_delimiters: bool,
 ) -> crate::Result<LoaderResult<'a>> {
-    let (normalized_file_path_from_specifier, specifier, query) =
-        // SAFETY: per fn contract.
-        normalize_specifier_for_loader(unsafe { &(*jsc_vm).origin }, specifier_str);
+    let (normalized_file_path_from_specifier, specifier, query) = normalize_specifier_for_loader(
+        &VirtualMachine::get().origin,
+        specifier_str,
+        preserve_path_delimiters,
+    );
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // A `data:` URL has no file name. What follows its last "." is part of the module's text.
@@ -4702,6 +4704,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    preserve_path_delimiters: bool,
     // The `JSModuleLoader` that is fetching when it is not the global object's (a
     // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
@@ -4739,6 +4742,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     allow_promise,
                     is_commonjs_require,
                     force_loader,
+                    preserve_path_delimiters,
                     module_loader
                 )
             },
@@ -4752,6 +4756,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             allow_promise,
             is_commonjs_require,
             force_loader,
+            preserve_path_delimiters,
             module_loader
         )
     }
@@ -4769,6 +4774,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    preserve_path_delimiters: bool,
     module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
@@ -4802,6 +4808,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
             &mut virtual_source_to_use,
             &mut blob_to_deinit,
             type_attribute_str,
+            preserve_path_delimiters,
         )
     } {
         Ok(lr) => lr,
@@ -4888,6 +4895,8 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         };
         if !had_blob
             && lr.virtual_source.is_none()
+            // Async completion only carries the filesystem specifier.
+            && !preserve_path_delimiters
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()

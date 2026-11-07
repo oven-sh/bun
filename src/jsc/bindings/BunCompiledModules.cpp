@@ -34,6 +34,7 @@
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Symbol.h>
 #include <wtf/SetForScope.h>
+#include <wtf/URL.h>
 
 #if ENABLE(AOT)
 namespace Zig {
@@ -185,9 +186,23 @@ static constexpr bool hostHasTwoSeparators = true;
 static constexpr bool hostHasTwoSeparators = false;
 #endif
 
-static std::optional<AOT::ModuleID> moduleThatAnswersToPath(const String& path)
+static String pathForCompiledModuleLookup(const String& key)
+{
+    if (!key.startsWith("file://"_s))
+        return key;
+    URL url(key);
+    if (!url.isValid() || !url.queryWithLeadingQuestionMark().isEmpty() || !url.fragmentIdentifierWithLeadingNumberSign().isEmpty())
+        return {};
+    return url.fileSystemPath();
+}
+
+static std::optional<AOT::ModuleID> moduleThatAnswersToPath(const String& key)
 {
     if (!hasCompiledModules())
+        return std::nullopt;
+    // Module records keep filesystem paths; encoded loader keys keep literal delimiters distinct from URL suffixes.
+    String path = pathForCompiledModuleLookup(key);
+    if (path.isNull())
         return std::nullopt;
     std::optional<AOT::ModuleID> found = AOT::findModule(path);
     if (found || !hostHasTwoSeparators)
@@ -274,7 +289,10 @@ static std::optional<AOT::ModuleID> findModuleWithAttributes(JSGlobalObject* glo
     String type = typeAttributeOf(attributes);
     if (type.isNull())
         return std::nullopt;
-    BunString pathArgument = Bun::toString(path);
+    String lookupPath = pathForCompiledModuleLookup(path);
+    if (lookupPath.isNull())
+        return std::nullopt;
+    BunString pathArgument = Bun::toString(lookupPath);
     BunString typeArgument = Bun::toString(type);
     bool isFormWithoutAttributes = false;
     BunString pathOfForm = Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes);
@@ -865,7 +883,7 @@ static JSValue createLoadError(JSGlobalObject* realm, const String& path)
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
     ErrorableResolvedSource source;
     SetForScope isAsking(isAskingWhyFileFails, true);
-    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone);
+    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone, true);
     if (!source.success)
         return JSValue::decode(source.result.err);
     // The text of a JSON file goes through the parser of the engine next, as where the loader reads it. What that throws stays thrown.

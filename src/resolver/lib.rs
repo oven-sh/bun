@@ -1184,6 +1184,92 @@ pub mod fs {
             Ok(unsafe { &*out })
         }
 
+        /// The listing that a `DirInfo` fill uses for the key of `result`: the cached one if it is of `generation`, else the names of `open_dir`, which the caller opened. With `store_fd` the listing keeps that handle. Caller holds `entries_mutex`.
+        pub(crate) fn fill_listing_locked(
+            &mut self,
+            generation: Generation,
+            result: &mut bun_alloc::Result,
+            open_dir: Fd,
+            store_fd: bool,
+            dir_path: &[u8],
+        ) -> crate::CrateResult<*mut EntriesOption> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "fill_listing_locked: caller must hold entries_mutex",
+            );
+            let mut in_place: Option<*mut DirEntry> = None;
+            if let Some(cached_entry) = self.entries.at_index(result.index) {
+                if let EntriesOption::Entries(entries) = cached_entry {
+                    if entries.generation >= generation {
+                        return Ok(cached_entry);
+                    }
+                    in_place = Some(std::ptr::from_mut(*entries));
+                }
+            }
+
+            // SAFETY: (fn-wide) `in_place`/`dir_entries_ptr` point to a slot of `self.entries`
+            // (BSSMap singleton) or a fresh leaked Box; both outlive this fn and are accessed
+            // under `entries_mutex`.
+            let mut new_entry = DirEntry::init(
+                if let Some(existing) = in_place {
+                    // SAFETY: see fn-wide note above.
+                    unsafe { &*existing }.dir
+                } else {
+                    DirnameStore::instance()
+                        .append_slice(dir_path)
+                        .expect("unreachable")
+                },
+                generation,
+            );
+            // 64 covers a typical node_modules package dir without the 1→2→4→…→N rehash cascade.
+            new_entry.data.reserve(64);
+
+            // A permission-denied ancestor has no fd to enumerate; its entry set stays empty.
+            if open_dir.is_valid() {
+                let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                let mut filename_store = FilenameStoreAppender::new();
+                while let Ok(Some(value)) = dir_iterator.next() {
+                    new_entry
+                        .add_entry_with_store(
+                            // SAFETY: see fn-wide note above.
+                            in_place.map(|existing| unsafe { &mut (*existing).data }),
+                            &value,
+                            &mut filename_store,
+                        )
+                        .expect("unreachable");
+                }
+            }
+            if let Some(existing) = in_place {
+                // SAFETY: see fn-wide note above.
+                unsafe { &mut *existing }.data.clear();
+            }
+            if store_fd {
+                new_entry.fd = open_dir;
+            }
+            // `DirEntry.data` holds a `NonNull`, so a fresh slot is a leaked Box, not a zeroed one.
+            let dir_entries_ptr = match in_place {
+                Some(p) => {
+                    // SAFETY: a live BSSMap slot (`in_place`).
+                    unsafe { *p = new_entry };
+                    p
+                }
+                None => bun_core::heap::into_raw(Box::new(new_entry)),
+            };
+            bun_core::scoped_log!(
+                crate::fs_full::Fs,
+                "readdir({}, {}) = {}",
+                open_dir,
+                bstr::BStr::new(dir_path),
+                // SAFETY: see fn-wide note above.
+                unsafe { (*dir_entries_ptr).data.count() },
+            );
+            self.entries.put(
+                result,
+                // SAFETY: see fn-wide note above.
+                EntriesOption::Entries(unsafe { &mut *dir_entries_ptr }),
+            )
+        }
+
         /// Evicts `file_path` from the directory-entry cache; returns whether
         /// an entry was removed.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {

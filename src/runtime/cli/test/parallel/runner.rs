@@ -1016,6 +1016,14 @@ pub(crate) fn worker_emit_test_done(
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };
+    if let Some(test) = test {
+        for failure in &test.earlier_failures {
+            cmds.emit(frame::Kind::TestAttempt, |wf| {
+                wf.u32(file_idx);
+                encode_failure(wf, failure);
+            });
+        }
+    }
     cmds.emit(frame::Kind::TestDone, |wf| {
         wf.u32(file_idx);
         wf.str(formatted_line);
@@ -1036,14 +1044,27 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
         wf.str(name);
         wf.u32(line);
     }
-    // Earlier attempts' failures first, then the last attempt's if it failed.
+    // The last attempt's failure. Each of `earlier_failures` goes ahead in a `TestAttempt` frame.
     wf.u32(u32::from(t.failure.is_some()));
-    wf.u32(u32::try_from(t.earlier_failures.len()).expect("int cast"));
-    for f in t.earlier_failures.iter().chain(&t.failure) {
-        wf.str(&f.name);
-        wf.str(&f.message);
-        wf.str(&f.body);
-        wf.u32(u32::from(f.uncaught));
+    if let Some(failure) = &t.failure {
+        encode_failure(wf, failure);
+    }
+}
+
+fn encode_failure(wf: &mut Frame, f: &test_command::TestFailure) {
+    wf.str(&f.name);
+    wf.str(&f.message);
+    wf.str(&f.body);
+    wf.u32(u32::from(f.uncaught));
+}
+
+/// Inverse of `encode_failure`.
+pub(crate) fn decode_failure(rd: &mut frame::Reader<'_>) -> test_command::TestFailure {
+    test_command::TestFailure {
+        name: rd.str().to_vec(),
+        message: rd.str().to_vec(),
+        body: rd.str().to_vec(),
+        uncaught: rd.u32() != 0,
     }
 }
 
@@ -1052,6 +1073,7 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
 pub(crate) fn decode_test_case<'a>(
     rd: &mut frame::Reader<'a>,
     file: &'a [u8],
+    earlier_failures: Vec<test_command::TestFailure>,
 ) -> Option<test_command::TestCaseReport<'a>> {
     use crate::test_runner::execution::Result;
     let status =
@@ -1068,16 +1090,7 @@ pub(crate) fn decode_test_case<'a>(
     for _ in 0..n {
         scopes.push((rd.str(), rd.u32()));
     }
-    let has_failure = rd.u32() != 0;
-    let earlier = rd.u32() as usize;
-    let mut read_failure = || test_command::TestFailure {
-        name: rd.str().to_vec(),
-        message: rd.str().to_vec(),
-        body: rd.str().to_vec(),
-        uncaught: rd.u32() != 0,
-    };
-    let earlier_failures: Vec<_> = (0..earlier).map(|_| read_failure()).collect();
-    let failure = has_failure.then(read_failure);
+    let failure = (rd.u32() != 0).then(|| decode_failure(rd));
     Some(test_command::TestCaseReport {
         file,
         scopes,

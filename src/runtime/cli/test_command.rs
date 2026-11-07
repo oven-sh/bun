@@ -2047,7 +2047,7 @@ impl CommandLineReporter {
     /// Everything a structured reporter needs about one finished test. Built
     /// once in `handle_test_completed`; the serial runner hands it straight
     /// to `JunitReporter::record_test_case`, a `--parallel` worker encodes it
-    /// on its `TestDone` frame and the coordinator replays it.
+    /// on its `TestAttempt` and `TestDone` frames and the coordinator replays it.
     fn test_case_report<'a>(
         status: bun_test::Execution::Result,
         buntest: &bun_test::BunTest,

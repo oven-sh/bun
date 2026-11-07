@@ -178,6 +178,8 @@ impl ChildrenOfWorkers {
 pub(crate) struct FileTestRecords {
     /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
     pub(crate) tests: Vec<Box<[u8]>>,
+    /// `TestAttempt` payloads past the file index, each with the index in `tests` of the `TestDone` that follows it.
+    pub(crate) attempts: Vec<(usize, Box<[u8]>)>,
     pub(crate) elapsed_ns: u64,
     /// Unix time in milliseconds, or 0 if the file never started.
     pub(crate) started_unix_ms: i64,
@@ -725,6 +727,15 @@ impl<'a> Coordinator<'a> {
                 let _ = Output::error_writer().write_all(formatted);
                 self.last_printed_dot = is_dot;
                 Output::flush();
+            }
+            frame::Kind::TestAttempt => {
+                let idx = rd.u32();
+                if w.inflight != Some(idx) {
+                    return;
+                }
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.attempts.push((file.tests.len(), Box::from(rd.p)));
+                }
             }
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 10];

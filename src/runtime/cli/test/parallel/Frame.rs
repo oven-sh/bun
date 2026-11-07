@@ -34,6 +34,8 @@ pub(crate) enum Kind {
     CoverageFile,
     /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
     RefusedChange,
+    /// u32 file_idx, then one failure as in TestDone: an earlier failed attempt of the retried test that the file's next TestDone reports
+    TestAttempt,
 }
 
 impl TryFrom<u8> for Kind {
@@ -50,6 +52,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
             8 => Kind::RefusedChange,
+            9 => Kind::TestAttempt,
             _ => return Err(()),
         })
     }

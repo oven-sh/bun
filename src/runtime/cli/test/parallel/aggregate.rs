@@ -27,8 +27,14 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
         } else {
             bun_core::time::milli_timestamp()
         };
-        for payload in &file.tests {
-            if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
+        let mut attempts = file.attempts.iter().peekable();
+        for (index, payload) in file.tests.iter().enumerate() {
+            let earlier_failures =
+                core::iter::from_fn(|| attempts.next_if(|(test, _)| *test == index))
+                    .map(|(_, attempt)| runner::decode_failure(&mut Reader { p: attempt }))
+                    .collect();
+            let test = runner::decode_test_case(&mut Reader { p: payload }, rel, earlier_failures);
+            if let Some(test) = test {
                 junit.record_test_case(&test).expect("oom");
             }
         }

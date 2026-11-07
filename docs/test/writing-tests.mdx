@@ -510,6 +510,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `.not.toMatchObject()` with a value that isn't an object  | an error                             | passes                                                               |
 | `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
 | `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
+| `toHaveProperty([symbol])` on an object with that key     | passes                               | fails: a path element is read as a string                            |
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |

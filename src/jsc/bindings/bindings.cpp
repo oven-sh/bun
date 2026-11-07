@@ -5180,15 +5180,20 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         auto* pathObject = path.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         forEachInArrayLike(globalObject, pathObject, [&](JSValue item) -> bool {
-            if (!(item.isString() || item.isNumber())) {
+            if (!(item.isString() || item.isNumber() || item.isSymbol())) {
                 currProp = {};
                 return false;
             }
 
-            JSString* propNameString = item.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            Identifier propName = propNameString->toIdentifier(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            Identifier propName;
+            if (item.isSymbol()) {
+                propName = Identifier::fromUid(asSymbol(item)->privateName());
+            } else {
+                JSString* propNameString = item.toString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                propName = propNameString->toIdentifier(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
 
             currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});

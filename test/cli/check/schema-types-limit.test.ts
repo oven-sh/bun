@@ -43,6 +43,7 @@ test.skipIf(isASAN || isDebug)(
       errors: [
         "ask.ts(3,10): error TS2589: Type instantiation is excessively deep and possibly infinite.",
         "ask.ts(3,10): error TS2590: Expression produces a union type that is too complex to represent.",
+        "ask.ts(3,10): error TS5114: Instantiations of type 'ParseSchema' appear infinitely circular.",
       ],
       exitCode: 1,
     });

@@ -44,7 +44,8 @@ function answerInOrder(hold: Hold) {
   };
 }
 
-// A prepared statement is answered as one with text parameters and no columns.
+// A prepared statement is answered as one with text parameters and no columns. BEGIN, COMMIT and SAVEPOINT are
+// prepared statements too: the server refuses one at its Execute, and leaves behind its ReadyForQuery.
 const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => {
   let nextConn = 0;
   return listeningServer(socket => {
@@ -73,6 +74,10 @@ const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => 
           const nameEnd = body.indexOf(0);
           prepared = body.subarray(nameEnd + 1, body.indexOf(0, nameEnd + 1)).toString("utf8");
           received.push({ conn: connId, sql: prepared });
+          if (drops(prepared)) {
+            socket.destroy();
+            return;
+          }
           answer(prepared, () => socket.write(pgParseComplete()));
         } else if (type === "D") {
           const parameters = Array(new Set(prepared.match(/\$\d+/g)).size).fill(25 /* text */);
@@ -81,9 +86,21 @@ const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => 
         } else if (type === "B") {
           answer(prepared, () => socket.write(pgBindComplete()));
         } else if (type === "E") {
-          answer(prepared, () => socket.write(pgCommandComplete("SELECT 0")));
+          const sql = prepared;
+          answer(
+            sql,
+            () => socket.write(pgCommandComplete(tagOf(sql))),
+            () => socket.write(pgErrorResponse({ S: "ERROR", C: "XX000", M: `refused: ${sql}` })),
+          );
         } else if (type === "S") {
-          answer(prepared, () => socket.write(pgReadyForQuery()));
+          const sql = prepared;
+          answer(sql, () =>
+            leavesAfter(sql)
+              ? socket.end(
+                  Buffer.concat([pgReadyForQuery(), pgErrorResponse({ S: "FATAL", C: "57P01", M: "goodbye" })]),
+                )
+              : socket.write(pgReadyForQuery()),
+          );
         } else if (type === "Q") {
           const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
           received.push({ conn: connId, sql });
@@ -172,6 +189,8 @@ type Adapter = {
   wire: { notify: string | null; commitDistributed: string; rollbackDistributed: string };
   // what ends beginDistributed("x") when its callback fulfils, and when it rejects
   distributedEnd: [string[], string[]];
+  /// Rows of `statementsThatReachTheServer` whose letters differ on this adapter, by "kind, state".
+  rows?: Record<string, string>;
 };
 const adapters: Adapter[] = [
   {
@@ -200,6 +219,9 @@ const adapters: Adapter[] = [
       ["XA END 'x'", "XA PREPARE 'x'"],
       ["XA END 'x'", "XA ROLLBACK 'x'"],
     ],
+    // The text query that drops the connection follows SAVEPOINT in one write, so SAVEPOINT is never answered
+    // and the loss is what the savepoint rejects with. On PostgreSQL it waits for the answer.
+    rows: { "savepoint, connection lost": "rrrrr-rrriiii.C", "nested savepoint, connection lost": "rrrrr-rrriiii.C" },
   },
 ];
 
@@ -364,7 +386,7 @@ type ScopeState =
 // prettier-ignore
 const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, rejects?: string][] = [
   ["transaction", "open",             "SSSSSSSSSiiii.R"],
-  ["transaction", "callback settled", "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["transaction", "callback settled", "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["transaction", "end in flight",    "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction", "ended",            "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction", "close waits",      "rrrrrrrrriiii..", "rrrrrrrrriiii.."],
@@ -373,7 +395,7 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["transaction", "connection lost",  "rrrrrrrrriiii.C"],
 
   ["savepoint", "open",               "SSSSSSSSSiiii.R"],
-  ["savepoint", "callback settled",   "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["savepoint", "callback settled",   "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["savepoint", "end in flight",      "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["savepoint", "ended",              "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["savepoint", "outer rolled back",  "eeeeeeeeeiiiirD", "eeeeeeeeeiiiirE"],
@@ -384,7 +406,7 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["savepoint", "connection lost",    "rrrrrrrrriiii.E"],
 
   ["nested savepoint", "open",               "SSSSSSSSSiiii.R"],
-  ["nested savepoint", "callback settled",   "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["nested savepoint", "callback settled",   "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["nested savepoint", "end in flight",      "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["nested savepoint", "ended",              "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["nested savepoint", "outer rolled back",  "eeeeeeeeeiiiirD", "eeeeeeeeeiiiirE"],
@@ -400,7 +422,7 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["reserved", "connection lost",    "rrrrrr-rriiii.."],
 
   ["transaction on reserved", "open",             "SSSSSSSSSiiii.R"],
-  ["transaction on reserved", "callback settled", "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["transaction on reserved", "callback settled", "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["transaction on reserved", "end in flight",    "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction on reserved", "ended",            "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction on reserved", "outer completed",  "SSSSeSSSSiiiiSR", "SSSSeSSSSiiiiSE"],
@@ -615,7 +637,14 @@ describe.each(adapters)("$adapter", entry => {
   const { BEGIN, distributedBegin, closedCode, endedCode, distributedEnd } = entry;
   const scenario = <T>(run: (server: Server) => Promise<T>) => withServer(entry, run);
 
-  test.each(statementsThatReachTheServer.map(([kind, state, fulfils, rejects]) => ({ kind, state, fulfils, rejects })))(
+  test.each(
+    statementsThatReachTheServer.map(([kind, state, fulfils, rejects]) => ({
+      kind,
+      state,
+      fulfils: entry.rows?.[`${kind}, ${state}`] ?? fulfils,
+      rejects,
+    })),
+  )(
     "a $kind handle, $state: a statement is sent only ahead of the statement that ends its scope",
     async ({ kind, state, fulfils, rejects }) => {
       using dir = tempDir("sql-statements-of-a-handle", { "statement.sql": "SELECT 'file'" });
@@ -1259,6 +1288,204 @@ describe.each(adapters)("$adapter", entry => {
       ).toEqual([]);
     }));
 
+  // The callback runs before BEGIN is answered. MySQL writes a text query behind START TRANSACTION at once, so it
+  // runs outside a transaction when START TRANSACTION is refused. PostgreSQL writes a simple query only with nothing
+  // in flight: it waits for the answer to BEGIN, and a refusal refuses it too.
+  const runsBehindStart = entry.adapter === "mysql";
+  const sentBehindStart = (statement: string) => (runsBehindStart ? [BEGIN, statement] : [BEGIN]);
+
+  // `seen` gets the outcome of the statement the callback makes.
+  describe.each([
+    {
+      form: "an awaited statement",
+      callback: async (tx: any, seen: Promise<string>[]) => {
+        const statement = tx.unsafe("SELECT 'T1'");
+        seen.push(outcome(statement));
+        await statement;
+      },
+    },
+    {
+      form: "an array",
+      callback: (tx: any, seen: Promise<string>[]) => {
+        const statement = tx.unsafe("SELECT 'T1'");
+        seen.push(outcome(statement));
+        return [statement];
+      },
+    },
+  ])(`when the server refuses ${BEGIN} under $form`, ({ callback }) => {
+    test("begin() rejects with the refusal, and a statement made after it is refused", () =>
+      scenario(async ({ sql, log, refuse }) => {
+        refuse(BEGIN);
+        let handle: any;
+        const seen: Promise<string>[] = [];
+        const transaction = await errorOf(
+          sql.begin(tx => {
+            handle = tx;
+            return callback(tx, seen);
+          }),
+        );
+        const late = await outcome(handle.unsafe("SELECT 'late'"));
+        expect({ message: transaction.message, cause: transaction.cause, statement: await seen[0], late }).toEqual({
+          message: expect.stringContaining(`refused: ${BEGIN}`),
+          cause: undefined,
+          statement: runsBehindStart ? "resolved" : `ERR_${entry.adapter.toUpperCase()}_SERVER_ERROR`,
+          late: endedCode,
+        });
+        // The connection is back in the pool.
+        expect(await outcome(sql.unsafe("SELECT 'again'"))).toBe("resolved");
+        expect(log()).toEqual([...sentBehindStart("SELECT 'T1'"), "SELECT 'again'"]);
+      }));
+
+    test("the error of the callback is the cause", () =>
+      scenario(async ({ sql, log, refuse }) => {
+        refuse(BEGIN);
+        const failure = new Error("callback failed");
+        const transaction = await errorOf(
+          sql.begin(async tx => {
+            const seen: Promise<string>[] = [];
+            await Promise.resolve(callback(tx, seen)).then(undefined, () => {});
+            await seen[0];
+            throw failure;
+          }),
+        );
+        expect({ message: transaction.message, cause: transaction.cause }).toEqual({
+          message: expect.stringContaining(`refused: ${BEGIN}`),
+          cause: failure,
+        });
+        expect(log()).toEqual(sentBehindStart("SELECT 'T1'"));
+      }));
+  });
+
+  test("a statement that first runs after BEGIN was refused is refused", () =>
+    scenario(async ({ sql, log, refuse }) => {
+      refuse(BEGIN);
+      const seen: string[] = [];
+      const transaction = await errorOf(
+        sql.begin(async tx => {
+          seen.push(await outcome(tx.unsafe("SELECT 'T1'")));
+          seen.push(await outcome(tx.unsafe("SELECT 'T2'")));
+        }),
+      );
+      expect({ message: transaction.message, seen }).toEqual({
+        message: expect.stringContaining(`refused: ${BEGIN}`),
+        seen: [runsBehindStart ? "resolved" : `ERR_${entry.adapter.toUpperCase()}_SERVER_ERROR`, endedCode],
+      });
+      expect(log()).toEqual(sentBehindStart("SELECT 'T1'"));
+    }));
+
+  // A query that waits for the answer to BEGIN: one that is not prepared on the connection yet on PostgreSQL, one
+  // behind a text query of several statements on MySQL.
+  const waiting = runsBehindStart
+    ? { ahead: ["SELECT 'T0';"], make: (tx: any) => [tx.unsafe("SELECT 'T0';"), tx.unsafe("SELECT 'T1'")] }
+    : { ahead: [], make: (tx: any) => [tx.unsafe("SELECT $1", ["T1"])] };
+
+  test("a statement that waited for the answer to BEGIN is refused with it", () =>
+    scenario(async ({ sql, log, refuse }) => {
+      refuse(BEGIN);
+      let statement!: Promise<any>;
+      const transaction = await errorOf(
+        sql.begin(async tx => {
+          const made = waiting.make(tx);
+          for (const query of made) query.execute();
+          statement = errorOf(made.at(-1));
+          await Promise.allSettled(made);
+        }),
+      );
+      expect([(await statement).message, transaction.message]).toEqual([
+        expect.stringContaining(`refused: ${BEGIN}`),
+        expect.stringContaining(`refused: ${BEGIN}`),
+      ]);
+      expect(log()).toEqual([BEGIN, ...waiting.ahead]);
+    }));
+
+  test("a refused SAVEPOINT refuses what waited for it, and the transaction still ends", () =>
+    scenario(async ({ sql, log, refuse }) => {
+      refuse("SAVEPOINT s0");
+      let savepoint!: Promise<any>;
+      let statement!: Promise<any>;
+      const transaction = await outcome(
+        sql.begin(tx => {
+          savepoint = errorOf(
+            tx.savepoint(sp => {
+              const made = waiting.make(sp);
+              for (const query of made) query.execute();
+              statement = errorOf(made.at(-1));
+              return made;
+            }),
+          );
+        }),
+      );
+      expect([transaction, (await savepoint).message, (await statement).message]).toEqual([
+        "resolved",
+        expect.stringContaining("refused: SAVEPOINT s0"),
+        expect.stringContaining("refused: SAVEPOINT s0"),
+      ]);
+      expect(log()).toEqual([BEGIN, "SAVEPOINT s0", ...waiting.ahead, "COMMIT"]);
+    }));
+
+  // The statement follows START TRANSACTION in one write and is still running when the refusal is read.
+  test.skipIf(!runsBehindStart)("close({ timeout }) after BEGIN was refused lets begin() settle", () =>
+    scenario(async ({ sql, refuse, hold }) => {
+      refuse(BEGIN);
+      const held = hold("SELECT 'T1'");
+      let handle: any;
+      let statement!: Promise<string>;
+      const transaction = errorOf(
+        sql.begin(async tx => {
+          handle = tx;
+          statement = outcome(tx.unsafe("SELECT 'T1'"));
+        }),
+      );
+      await held.seen;
+      const closing = outcome(handle.close({ timeout: 60 }));
+      held.answer();
+      expect((await transaction).message).toContain(`refused: ${BEGIN}`);
+      expect([await statement, await closing]).toEqual(["resolved", "resolved"]);
+    }),
+  );
+
+  test("a savepoint whose SAVEPOINT the server refuses rejects with the refusal, and the transaction goes on", () =>
+    scenario(async ({ sql, log, refuse }) => {
+      refuse("SAVEPOINT s0");
+      let sp: any;
+      const result = await sql.begin(async tx => {
+        const savepoint = await errorOf(
+          tx.savepoint(async handle => {
+            sp = handle;
+            await handle.unsafe("SELECT 'in savepoint'");
+          }),
+        );
+        const late = await outcome(sp.unsafe("SELECT 'late'"));
+        await tx.unsafe("SELECT 'after'");
+        return { savepoint: savepoint.message, late };
+      });
+      expect(result).toEqual({ savepoint: expect.stringContaining("refused: SAVEPOINT s0"), late: endedCode });
+      expect(log()).toEqual([
+        BEGIN,
+        "SAVEPOINT s0",
+        ...(runsBehindStart ? ["SELECT 'in savepoint'"] : []),
+        "SELECT 'after'",
+        "COMMIT",
+      ]);
+    }));
+
+  test("a connection that drops at BEGIN rejects begin() with that loss at once, whatever its callback does", () =>
+    scenario(async ({ sql, drop }) => {
+      drop(BEGIN);
+      const seen: string[] = [];
+      const transaction = await errorOf(
+        sql.begin(async tx => {
+          seen.push(await outcome(tx.unsafe("SELECT 'T1'")));
+          throw new Error("callback failed");
+        }),
+      );
+      expect({ code: transaction.code, cause: transaction.cause, seen }).toEqual({
+        code: closedCode,
+        cause: undefined,
+        seen: [closedCode],
+      });
+    }));
+
   test("a ROLLBACK that the server refuses keeps the error of the callback as cause", () =>
     scenario(async ({ sql, log, refuse }) => {
       refuse("ROLLBACK");
@@ -1386,8 +1613,14 @@ describe.each(adapters)("$adapter", entry => {
     )("$scope rejects with the goodbye: only $answered was answered", ({ answered, run }) =>
       scenario(async ({ sql, received, leaveAfter }) => {
         leaveAfter(answered);
-        expect((await errorOf(run(sql))).message).toBe("goodbye");
-        expect(received.at(-1)).toEqual({ conn: 0, sql: answered });
+        // On MySQL the callback's statement follows START TRANSACTION in the same write: the goodbye is the answer
+        // to that statement, and the transaction hears of the close. A simple query waits for BEGIN's answer.
+        const pipelined = entry.adapter === "mysql" && answered === BEGIN;
+        const { message, cause } = await errorOf(run(sql));
+        expect({ message, cause: cause?.message }).toEqual(
+          pipelined ? { message: "Connection closed", cause: "goodbye" } : { message: "goodbye", cause: undefined },
+        );
+        expect(received.at(-1)).toEqual({ conn: 0, sql: pipelined ? "SELECT 'T1'" : answered });
       }),
     );
   });
@@ -1969,7 +2202,10 @@ describe("what a handle keeps", () => {
           await savepoint;
         });
         expect(await outcome(transaction)).toBe(entry.closedCode);
-        expect({ cancelled, log: log() }).toEqual({ cancelled: 0, log: [entry.BEGIN, "SAVEPOINT s0", "ROLLBACK"] });
+        expect({ cancelled, log: log() }).toEqual({
+          cancelled: 0,
+          log: [entry.BEGIN, "SAVEPOINT s0", "RELEASE SAVEPOINT s0", "ROLLBACK"],
+        });
       } finally {
         prototype.cancel = cancel;
       }

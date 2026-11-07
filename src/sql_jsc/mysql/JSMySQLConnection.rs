@@ -694,19 +694,26 @@ impl JSMySQLConnection {
         }
     }
 
-    pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
+    /// The error value that `request` was rejected with.
+    pub(crate) fn on_error_packet(
+        &self,
+        request: Option<&JSMySQLQuery>,
+        err: &ErrorPacket,
+    ) -> JSValue {
         if let Some(request) = request {
-            if let Some(err_) = self.global_object.try_take_exception() {
-                request.reject_with_js_value(err_);
-            } else {
-                request.reject_with_js_value(err.to_js(&self.global_object));
-            }
+            let error = self
+                .global_object
+                .try_take_exception()
+                .unwrap_or_else(|| err.to_js(&self.global_object));
+            request.reject_with_js_value(error);
+            error
         } else {
-            if let Some(err_) = self.global_object.try_take_exception() {
-                self.fail_with_js_value(err_);
-            } else {
-                self.fail_with_js_value(err.to_js(&self.global_object));
-            }
+            let error = self
+                .global_object
+                .try_take_exception()
+                .unwrap_or_else(|| err.to_js(&self.global_object));
+            self.fail_with_js_value(error);
+            error
         }
     }
 }

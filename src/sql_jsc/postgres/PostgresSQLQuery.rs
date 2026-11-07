@@ -69,6 +69,10 @@ pub struct Flags {
     pub(crate) formats: ResultFormats,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// BEGIN, COMMIT, SAVEPOINT: the unnamed statement, pipelined, never lost (26000).
+    pub(crate) internal: bool,
+    /// BEGIN or SAVEPOINT: what is not written yet when the server refuses it is refused too.
+    pub(crate) transaction_start: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
     /// Its values are what `write_bind` sends. See `PostgresRequest::stage_parameters`.
@@ -121,6 +125,8 @@ impl Default for Flags {
             formats: ResultFormats::Text,
             bigint: false,
             simple: false,
+            internal: false,
+            transaction_start: false,
             describe_first: false,
             staged: false,
             discard_response: false,
@@ -231,7 +237,7 @@ impl PostgresSQLQuery {
     }
 
     /// What `reject_at_ready_for_query` put in the place of the rows. `reject` does nothing a second time.
-    fn kept_error(&self) -> Option<JSValue> {
+    pub(crate) fn kept_error(&self) -> Option<JSValue> {
         if !self.flags.get().discard_response {
             return None;
         }
@@ -379,10 +385,12 @@ impl PostgresSQLQuery {
         pending_value: JsLocal<'a, JSArray>,
         bigint: bool,
         simple: bool,
+        internal: bool,
+        transaction_start: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
-        query_ctor_args::validate(global_this, &query, values, simple)?;
+        query_ctor_args::validate(global_this, &query, values, simple || internal)?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
@@ -396,6 +404,8 @@ impl PostgresSQLQuery {
             (*ptr).flags.set(Flags {
                 bigint,
                 simple,
+                internal,
+                transaction_start,
                 ..Default::default()
             });
         }
@@ -461,7 +471,8 @@ impl PostgresSQLQuery {
             .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
         // Reading the values can run user code, so it comes before any look at the connection's state.
         let mut declared = Vec::new();
-        if !self.flags.get().simple {
+        let flags = self.flags.get();
+        if !flags.simple && !flags.internal {
             declared = Signature::declared_types(global_object, binding_value)?;
             let describe_first =
                 !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
@@ -502,6 +513,11 @@ impl PostgresSQLQuery {
             let mut s = PostgresSQLStatement::default();
             // It has no Parse of its own: the Query message is the whole request.
             s.status = StatementStatus::Parsing;
+            RefPtr::new(s)
+        } else if self.flags.get().internal {
+            let mut s = PostgresSQLStatement::default();
+            // Its Parse goes out with its Bind: nothing waits for the answer.
+            s.status = StatementStatus::Prepared;
             RefPtr::new(s)
         } else if unnamed {
             new_statement(None)

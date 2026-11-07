@@ -942,10 +942,9 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             });
         }
 
-        let tail_len = cap + 1 - initial_read.len();
+        // Not the slot past `cap`: that costs a `read()` that returns 0, and a file that grew since the stat would put a byte there.
+        let tail_len = cap - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];
-        // stick a zero at the end
-        tail[tail_len - 1].write(0);
         // SAFETY: `read_all` only writes into the slice (never reads uninitialized
         // bytes); `MaybeUninit<u8>` and `u8` have identical layout, so handing
         // the spare-capacity tail as `&mut [u8]` to a write-only sink is sound.
@@ -954,10 +953,12 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         })?;
         let total = read_count + initial_read.len();
         debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
+        // SAFETY: capacity ≥ `cap + 1` > `total`; bytes `..initial_read.len()`
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };
+        // stick a zero at the end
+        buf.spare_capacity_mut()[0].write(0);
 
         if let Some(bom) = BOM::detect(&buf) {
             debug!("Convert {} BOM", bom.tag_name());

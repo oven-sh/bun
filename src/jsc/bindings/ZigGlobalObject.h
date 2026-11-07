@@ -155,7 +155,6 @@ public:
         return m_guardedObjects;
     }
 
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable);

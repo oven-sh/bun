@@ -38,11 +38,8 @@ test("asymmetric matchers against typed objects", () => {
 `,
 };
 
-async function rowsOf(cwd: string, aot: boolean) {
-  const { stdout, stderr, exitCode } = await run(
-    [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
-    cwd,
-  );
+async function rowsOf(cwd: string, aot: boolean, file = "./matchers.test.ts") {
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--debug-aot"] : []), file], cwd);
   return { rows: stdout.split("\n").filter(line => line.startsWith("ROW ")), stderr: exitCode ? stderr : "", exitCode };
 }
 
@@ -51,6 +48,54 @@ test("under bun test --aot, matchers that compare deeply answer for typed object
   using actualDir = tempDir("test-aot-deep-equality", files);
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);
   expect(expected.rows.length).toBe(88);
+  expect(actual).toEqual(expected);
+  expect(actual.exitCode).toBe(0);
+});
+
+const emptinessFiles = {
+  "no-exports.ts": "export {};\n",
+  "emptiness.test.ts": `
+import { expect, test } from "bun:test";
+import { stripVTControlCharacters } from "node:util";
+import * as noExports from "./no-exports";
+class Plain {}
+class WithField { a = 1; }
+class Tagged { get [Symbol.toStringTag]() { return "Tagged"; } }
+// T: it passes. f: it fails as empty or as not empty. E: any other error.
+const outcome = (f: () => void) => {
+  try { f(); return "T"; } catch (e) { return /\\nExpected value (not )?to be empty\\n/.test(stripVTControlCharacters(String(e))) ? "f" : "E"; }
+};
+test("toBeEmpty() and its negation", () => {
+  const rows: [string, unknown][] = [
+    ["an object literal", {}],
+    ["an object literal with a field", { a: 1 }],
+    ["an instance", new Plain()],
+    ["an instance with a field", new WithField()],
+    ["an instance of a class with a Symbol.toStringTag getter", new Tagged()],
+    ["a module namespace with no exports", noExports],
+    ["a Date", new Date(0)],
+  ];
+  for (const [name, value] of rows) console.log("ROW", name + ":", outcome(() => expect(value).toBeEmpty()) + outcome(() => expect(value).not.toBeEmpty()));
+});
+`,
+};
+
+test("under bun test --aot, toBeEmpty() answers for compiled objects and namespaces as for plain ones", async () => {
+  using expectedDir = tempDir("test-aot-to-be-empty", emptinessFiles);
+  using actualDir = tempDir("test-aot-to-be-empty", emptinessFiles);
+  const [expected, actual] = await Promise.all([
+    rowsOf(String(expectedDir), false, "./emptiness.test.ts"),
+    rowsOf(String(actualDir), true, "./emptiness.test.ts"),
+  ]);
+  expect(expected.rows).toEqual([
+    "ROW an object literal: Tf",
+    "ROW an object literal with a field: fT",
+    "ROW an instance: Tf",
+    "ROW an instance with a field: fT",
+    "ROW an instance of a class with a Symbol.toStringTag getter: Tf",
+    "ROW a module namespace with no exports: Tf",
+    "ROW a Date: fT",
+  ]);
   expect(actual).toEqual(expected);
   expect(actual.exitCode).toBe(0);
 });

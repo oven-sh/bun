@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::bindgen::{JsScope, JsWrapper};
-use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
+use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSType, JSValue, JsResult, VM};
 
 use super::{throw, Expect};
 
@@ -16,10 +16,16 @@ impl Expect {
         let (this, value, not) = self.matcher_prelude(global, this_value.to_js(), "toBeEmpty", "")?;
         let mut pass;
 
-        let actual_length = value.get_length_if_property_exists_internal(global)?;
+        // The length probe reports 0 for a value that is not a cell, and a function has a `length`.
+        let is_string_or_object = value.is_string() || (value.is_object() && !value.is_callable());
+        let actual_length = if is_string_or_object {
+            value.get_length_if_property_exists_internal(global)?
+        } else {
+            f64::INFINITY
+        };
 
         if actual_length == f64::INFINITY {
-            if value.js_type_loose().is_object() {
+            if is_string_or_object {
                 if value.is_iterable(global)? {
                     let mut any_properties_in_iterator = false;
 
@@ -39,6 +45,11 @@ impl Expect {
                         anything_in_iterator,
                     )?;
                     pass = !any_properties_in_iterator;
+                } else if !matches!(value.js_type(), JSType::FinalObject | JSType::CompiledObject)
+                    && !value.to_string_tag_is_object_or_module(global)?
+                {
+                    // Another class, like a Date. A plain object is exempt (`URLSearchParams.prototype.toJSON()` tags its result), and "Module" is the tag of a module namespace.
+                    pass = false;
                 } else {
                     let Some(_cell) = value.to_cell() else {
                         return Err(global.throw_type_error(format_args!(
@@ -64,7 +75,7 @@ impl Expect {
                     pass = props_iter.len == 0;
                 }
             } else {
-                let signature = Expect::get_signature("toBeEmpty", "", false);
+                let signature = Expect::get_signature("toBeEmpty", "", not);
                 return throw!(
                     this,
                     global,
@@ -80,17 +91,6 @@ impl Expect {
             )));
         } else {
             pass = actual_length == 0.0;
-        }
-
-        if not && pass {
-            let signature = Expect::get_signature("toBeEmpty", "", true);
-            return throw!(
-                this,
-                global,
-                signature,
-                "\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
-                value.to_fmt(&mut super::make_formatter(global))
-            );
         }
 
         if not {

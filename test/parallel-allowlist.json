@@ -1532,6 +1532,7 @@
     "aot/a-database-under-a-chosen-name-is-opened-where-the-program-runs.test.ts",
     "aot/a-written-alternative-without-an-ending-whose-type-the-call-names-is-in-the-program.test.ts",
     "aot/an-alternative-that-is-left-outside-does-not-take-the-written-files-with-it.test.ts",
-    "aot/the-functions-of-a-written-object-are-asked-once-whether-they-can-see-it.test.ts"
+    "aot/the-functions-of-a-written-object-are-asked-once-whether-they-can-see-it.test.ts",
+    "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts"
   ]
 }

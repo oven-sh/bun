@@ -288,7 +288,7 @@ pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBu
     });
 }
 
-pub(crate) fn runs_unseen_code(source: &ParsedSource) -> bool {
+fn runs_unseen_code(source: &ParsedSource) -> bool {
     let names = &source.contents.names;
     source.of_run.runs_unseen_code
         || source.of_run.loads.names_file_with_query.is_some()

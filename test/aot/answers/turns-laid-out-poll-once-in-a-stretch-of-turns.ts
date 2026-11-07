@@ -26,7 +26,7 @@
 declare function report(value: unknown): void;
 function sumBytes(view: Uint8Array): number { let t = 0; for (let i = 0; i < view.length; i++) t += view[i]; return t; }
 function countSpaces(s: string): number { let n = 0; for (let i = 0; i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; }
-function hashBetween(from: number, n: number): number { let h = 7; for (let i = from | 0; i < (n | 0); i++) h = (h * 31 + i) | 0; return h; }
+function hashBetween(from: number, n: number): number { let h = 7; for (let i = from | 0; i < (n | 0); i++) h = ((h & 0xffffff) * 31 + i) | 0; return h; }
 function sumSixteen(x: number, y: number): number { let sum = x & 7; for (let i = 0; i < 16; i++) sum += x * y + i; return sum; }
 function bytesOf(length: number): Uint8Array { const view = new Uint8Array(length); for (let i = 0; i < length; i++) view[i] = i * 37 + (i >> 9); return view; }
 function textOf(length: number): string { return "ab cde f".repeat((length >> 3) + 1).slice(0, length); }

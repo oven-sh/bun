@@ -53,7 +53,14 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             folder: &folder_of_text,
             opens_database: loader_attribute(hir, site)
                 .is_some_and(|it| atoms.bytes(it) == b"sqlite")
-                && !embed_attribute(hir, site).is_some_and(|it| atoms.bytes(it) == b"true"),
+                && !embed_attribute(hir, site).is_some_and(|it| atoms.bytes(it) == b"true")
+                && !analyzed
+                    .analysis
+                    .is_path_from_own_directory(site.specifier_node)
+                && analyzed
+                    .analysis
+                    .find_resolved_form(site.specifier_node)
+                    .is_none(),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
         };
         let resolution = resolve_site(context, key, hir, site, alternatives, names, written);

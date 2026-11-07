@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-database-under-a-chosen-name-is-opened-where-the-program-runs.test.ts": {
     "default": 60000,
     "asan": 240000

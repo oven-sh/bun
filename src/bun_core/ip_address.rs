@@ -50,7 +50,7 @@ fn parse_strict_v6(input: &[u8]) -> Option<Ipv6Addr> {
 }
 
 /// An IPv6 address with a zone id: `fe80::1%eth0` is the address `fe80::1` and the zone `eth0`. The split is at the first `%`, and the address is in the strict form of `parse_strict`. The zone names an interface of this machine: it is not part of the address, and it is not checked here.
-fn parse_zoned_ipv6(input: &[u8]) -> Option<(Ipv6Addr, &[u8])> {
+pub fn parse_zoned_ipv6(input: &[u8]) -> Option<(Ipv6Addr, &[u8])> {
     let (address, zone) = crate::strings::split_once_char(input, b'%')?;
     Some((parse_strict_v6(address)?, zone))
 }

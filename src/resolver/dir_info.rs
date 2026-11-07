@@ -85,12 +85,6 @@ impl core::ops::Deref for DirInfoRef {
     }
 }
 
-impl core::fmt::Debug for DirInfoRef {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("DirInfoRef").field(&self.0.as_ptr()).finish()
-    }
-}
-
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again

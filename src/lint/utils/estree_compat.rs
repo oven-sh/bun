@@ -20,7 +20,7 @@ use crate::ast::{
     Name, Node, Param, Pat, PatKind, PropKind, Stmt, StmtKind, StmtTag, TypeKind, TypeNode, UnOp,
     VarDecl,
 };
-use crate::span::{Span, Spanned};
+use crate::span::Span;
 use bun_sema::hir;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -217,13 +217,6 @@ impl<'a> From<Target<'a>> for Node<'a> {
             Target::Pat(pat) => Node::Pat(pat),
             Target::Expr(e) => Node::Expr(e),
         }
-    }
-}
-
-impl Spanned for Target<'_> {
-    #[inline]
-    fn span(&self) -> Span {
-        Target::span(*self)
     }
 }
 

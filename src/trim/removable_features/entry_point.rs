@@ -121,18 +121,6 @@ macro_rules! removable_definition {
 }
 
 #[macro_export]
-macro_rules! removable_host_function_definition {
-    ($feature:ident, $function:path) => {
-        $crate::record_removable_entry_point!(
-            { $crate::Feature::$feature.index() },
-            { $crate::StubKind::Throw as u8 },
-            $function,
-            $crate::GuardOrigin::Definition
-        )
-    };
-}
-
-#[macro_export]
 macro_rules! call_removable {
     ($feature:ident, Abort, $function:path $(, $argument:expr)* $(,)?) => {{
         $crate::record_removable_entry_point!(

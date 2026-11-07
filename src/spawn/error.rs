@@ -35,10 +35,4 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-impl From<bun_sys::Error> for Error {
-    fn from(e: bun_sys::Error) -> Self {
-        Self::Sys(e.into())
-    }
-}
-
 pub type Result<T, E = Error> = core::result::Result<T, E>;

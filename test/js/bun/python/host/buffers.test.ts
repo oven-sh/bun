@@ -1,4 +1,5 @@
 // Bytes: typed arrays, ArrayBuffer, DataView and Buffer in Python; bytes, bytearray and memoryview in JavaScript.
+import { isWindows } from "harness";
 import { program } from "./helpers";
 
 const group = program();
@@ -348,12 +349,16 @@ def view(*items):
   ],
 );
 
+// The rows from here on are a program of their own, beside the other: they collect again and again, which takes a debug build its time.
+const held = program();
+
 // While a function written in C++ uses the memory of a typed array, the memory is pinned: JS gets a copy where it asks for the
 // memory itself, and the function goes on where it was.
-group(
+held(
   "memory that JavaScript would take away in the middle of a call",
   {
     setup: `
+import js, struct
 import _codecs, codecs, ctypes, io, marshal, pickle, sys, threading, types
 def array(size=1 << 16): return js.Uint8Array(size).fill(0x11)
 class Takes:
@@ -451,3 +456,227 @@ class Takes:
     ["u = array()\nstruct.pack_into('<B', u, 0, 1), u.buffer.transfer().byteLength, len(u)", "(None, 65536, 0)"],
   ],
 );
+
+// An instance that ctypes makes of the memory of a typed array, and what is made of the instance, are addresses. The memory is pinned
+// until a collection finds that nothing refers to any of them.
+if (!isWindows)
+  held(
+    "what ctypes makes of memory of JavaScript",
+    {
+      setup: `
+import gc, mmap, os
+Bytes = ctypes.c_uint8 * (1 << 16)
+libc = ctypes.CDLL(None)
+Compare = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8))
+# What makes the exports go that only code written in C++ holds: a bytearray of which a view has been dropped is resized.
+def resize_another():
+    other = bytearray(64)
+    view = memoryview(other)
+    del view
+    other.extend(b"x")
+def pointers():
+    u = array(); a = Bytes.from_buffer(u); t = Takes(u)
+    p, c = ctypes.pointer(a), ctypes.cast(a, ctypes.POINTER(ctypes.c_uint8))
+    t()
+    p.contents[0] = c[1] = a[2] = 0xee
+    return bytes(u)[:4], t.state()
+def a_later_argument():
+    u = array(); a = Bytes.from_buffer(u); t = Takes(u)
+    source = ctypes.create_string_buffer(bytes([0xee]) * (1 << 16), 1 << 16)
+    class Parameter:
+        @property
+        def _as_parameter_(self): t(); return source
+    ctypes.memmove(a, Parameter(), 1 << 16)
+    return set(bytes(u)), t.state()
+def a_callback(size):
+    u = js.Uint8Array(size); a = (ctypes.c_uint8 * size).from_buffer(u); t = Takes(u)
+    for i in range(size): a[i] = (size - 1 - i) & 0xff
+    libc.qsort(a, size, 1, Compare(lambda x, y: (t(), x[0] - y[0])[1]))
+    return list(u)[:3], list(u) == sorted(u), t.state()
+class Exporter:
+    "An object of Python's that hands on memory of JS's."
+    def __init__(self, u): self.u = u
+    def __buffer__(self, flags): return memoryview(self.u)
+def made_on_the_way(how, exporter=lambda u: u):
+    u = js.Uint8Array(64); t = Takes(u)
+    for i in range(64): u[i] = 63 - i
+    class Parameter:
+        @property
+        def _as_parameter_(self): return (ctypes.c_uint8 * 64).from_buffer(exporter(u))
+        @classmethod
+        def from_param(cls, value): return (ctypes.c_uint8 * 64).from_buffer(exporter(u))
+    qsort = libc["qsort"]
+    if how == "from_param": qsort.argtypes = [Parameter, ctypes.c_size_t, ctypes.c_size_t, Compare]
+    def compare(x, y):
+        if t.moved is None: resize_another(); t()
+        return x[0] - y[0]
+    qsort(Parameter(), 64, 1, Compare(compare))
+    return list(u)[:3], t.state()
+def without_the_GIL():
+    u = array(); t = Takes(u); made = threading.Event(); r, w = os.pipe()
+    class Parameter:
+        @property
+        def _as_parameter_(self):
+            a = Bytes.from_buffer(u)
+            made.set()
+            return a
+    thread = threading.Thread(target=lambda: libc.read(r, Parameter(), 512))
+    thread.start()
+    made.wait(10)
+    resize_another(); t()
+    os.write(w, bytes([0xee]) * 512)
+    thread.join(10)
+    os.close(r); os.close(w)
+    return u[0], u[511], u[512], t.state()
+def in_the_hands_of_tuple(exporter=lambda u: u):
+    arrays = [array() for _ in range(3)]
+    def make():
+        for u in arrays:
+            yield ctypes.pointer(Bytes.from_buffer(exporter(u)))
+            resize_another()
+    pointers = tuple(make())
+    takes = [Takes(u) for u in arrays]
+    for t in takes: t()
+    for p in pointers: ctypes.memset(p, 0xee, 1 << 16)
+    return [t.state() for t in takes]
+def brought_back_to_life(exporter=lambda u: u):
+    u = array(); saved = []
+    class Holder:
+        def __del__(self): saved.append(self.pointer)
+    holder = Holder(); holder.pointer = ctypes.pointer(Bytes.from_buffer(exporter(u))); holder.cycle = holder
+    del holder
+    gc.collect()
+    t = Takes(u); t()
+    saved[0].contents[0] = 0xee
+    return u[0], t.state()
+def a_length():
+    u = array(); a = Bytes.from_buffer(u); t = Takes(u, 1 << 16)
+    return set(ctypes.string_at(a, t)), t.state()
+def only_a_pointer_is_kept():
+    u = array(); p = ctypes.pointer(Bytes.from_buffer(u))
+    gc.collect(); js.Bun.gc(True); gc.collect()
+    t = Takes(u); t()
+    p.contents[0] = 0xee
+    return u[0], t.state()
+def transferred(u): return u.buffer.transfer().byteLength, len(u)
+def nothing_is_kept():
+    u = array(); a = Bytes.from_buffer(u); p = ctypes.pointer(a)
+    before = transferred(u)
+    del a, p
+    gc.collect()
+    return before, transferred(u)
+def of_a_view():
+    u = array(); m = memoryview(u); a = Bytes.from_buffer(m)
+    m.release()
+    before = transferred(u)
+    del a
+    gc.collect()
+    return before, transferred(u)
+def of_a_view_that_is_kept():
+    u = array(); m = memoryview(u); a = Bytes.from_buffer(m)
+    before = transferred(u)
+    del a
+    gc.collect()
+    return before, transferred(u), m.nbytes
+def collected_by(collect):
+    u = array(); a = Bytes.from_buffer(u)
+    del a
+    collect()
+    return transferred(u)
+def a_young_collection():
+    # It frees what has not lived through a collection, and one may come at any time.
+    return any(collected_by(lambda: gc.collect(0)) == (65536, 0) for _ in range(20))
+def released_by_hand():
+    u = array(); a = Bytes.from_buffer(u); p = ctypes.pointer(a)
+    a._objects['ffffffff'].release()
+    gc.collect(); js.Bun.gc(True)
+    before = transferred(u)
+    p.contents[0] = 0xee
+    del a, p
+    gc.collect()
+    return before, u[0], transferred(u)
+def two_of_one_view():
+    u = array(); m = memoryview(u); a = Bytes.from_buffer(m); b = Bytes.from_buffer(m)
+    m.release()
+    del a
+    gc.collect()
+    before = transferred(u)
+    del b
+    gc.collect()
+    return before, transferred(u)
+def that_fails():
+    u = array()
+    try: Bytes.from_buffer(u, 1)
+    except ValueError as error: return str(error)[:21], transferred(u)
+def of_an_mmap():
+    m = mmap.mmap(-1, 1 << 16); a = Bytes.from_buffer(m)
+    try: m.close()
+    except BufferError: refused = True
+    a[0] = 1
+    del a
+    gc.collect()
+    m.close()
+    return refused, m.closed
+def again_and_again():
+    arrays = [array(64) for _ in range(100)]
+    for _ in range(3):
+        instances = [(ctypes.c_uint8 * 64).from_buffer(u) for u in arrays for _ in range(3)]
+        del instances
+        gc.collect()
+    return sum(transferred(u) == (64, 0) for u in arrays)
+`,
+    },
+    [
+      ["pointers()", "(b'\\xee\\xee\\xee\\x11', (65536, 65536, 0))"],
+      ["a_later_argument()", "({238}, (65536, 65536, 0))"],
+      ["a_callback(64)", "([0, 1, 2], True, (64, 64, 0))"],
+      ["a_callback(1001)", "([0, 0, 0], True, (1001, 1001, 0))"],
+      ["a_length()", "({17}, (65536, 65536, 0))"],
+      // Nothing but the call holds the instance.
+      ["made_on_the_way('_as_parameter_')", "([0, 1, 2], (64, 64, 0))"],
+      ["made_on_the_way('from_param')", "([0, 1, 2], (64, 64, 0))"],
+      ["without_the_GIL()", "(238, 238, 17, (65536, 65536, 0))"],
+      ["in_the_hands_of_tuple()", "[(65536, 65536, 0), (65536, 65536, 0), (65536, 65536, 0)]"],
+      ["brought_back_to_life()", "(238, (65536, 65536, 0))"],
+      // Such an export has somebody to tell when it is over, and a finalizer of Python's that does so. The pin does not go by that.
+      ["made_on_the_way('_as_parameter_', Exporter)", "([0, 1, 2], (64, 64, 0))"],
+      ["made_on_the_way('from_param', Exporter)", "([0, 1, 2], (64, 64, 0))"],
+      ["in_the_hands_of_tuple(Exporter)", "[(65536, 65536, 0), (65536, 65536, 0), (65536, 65536, 0)]"],
+      ["brought_back_to_life(Exporter)", "(238, (65536, 65536, 0))"],
+      ["only_a_pointer_is_kept()", "(238, (65536, 65536, 0))"],
+      // JS gets a copy, and then the memory itself.
+      ["nothing_is_kept()", "((65536, 65536), (65536, 0))"],
+      ["of_a_view()", "((65536, 65536), (65536, 0))"],
+      // The view of the program's pins nothing.
+      ["of_a_view_that_is_kept()", "((65536, 65536), (65536, 0), 65536)"],
+      ["again_and_again()", "100"],
+      ["collected_by(gc.collect), collected_by(lambda: js.Bun.gc(True))", "((65536, 0), (65536, 0))"],
+      ["a_young_collection()", "True"],
+      // A pointer made before is still an address.
+      ["released_by_hand()", "((65536, 65536), 238, (65536, 0))"],
+      ["two_of_one_view()", "((65536, 65536), (65536, 0))"],
+      [
+        "b = js.ArrayBuffer(64, maxByteLength=128)\na = (ctypes.c_uint8 * 64).from_buffer(js.Uint8Array(b))\nb.resize(16)",
+        "!JSRangeError: RangeError: ArrayBuffer resize failed with new byte length 16",
+      ],
+      ["b.resize(128)\ndel a\ngc.collect()\nb.resize(16), b.byteLength", "(None, 16)"],
+      ["that_fails()", "('Buffer size too small', (65536, 0))"],
+      ["of_an_mmap()", "(True, True)"],
+      [
+        "b = js.ArrayBuffer(64)\na = (ctypes.c_uint8 * 64).from_buffer(b)\nd = (ctypes.c_uint8 * 8).from_buffer(js.DataView(b, 8, 8))\nb.transfer().byteLength, b.detached",
+        "(64, False)",
+      ],
+      ["del a\ngc.collect()\nb.transfer().byteLength, b.detached", "(64, False)"],
+      ["del d\ngc.collect()\nb.transfer().byteLength, b.detached", "(64, True)"],
+      // That cannot be pinned. The instance notices.
+      [
+        "w = js.WebAssembly.Memory(initial=1, maximum=4)\na = Bytes.from_buffer(js.Uint8Array(w.buffer))\nw.grow(1), a[0]",
+        "!BufferError: the ArrayBuffer was detached or shrunk",
+      ],
+      [
+        "u = array()\na = Bytes.from_buffer(u)\nview = a._objects['ffffffff']\ntype(view).__name__, view.obj is u",
+        "('memoryview', True)",
+      ],
+      ["u = array()\na = Bytes.from_buffer_copy(u)\ntransferred(u), a[0]", "((65536, 0), 17)"],
+    ],
+  );

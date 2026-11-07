@@ -290,6 +290,12 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
+    /// `end_without_body(true)` minus the bytes, for a response the
+    /// application destroyed; see `uws_res_abandon`.
+    pub(crate) fn abandon(&mut self) {
+        c::uws_res_abandon(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_res_end_sendfile(
             Self::ssl_flag(),
@@ -968,6 +974,15 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
+    /// HTTP/1 only: node:http's `destroy()` is the one caller. See `Response::abandon`.
+    pub fn abandon(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).abandon(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).abandon(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
     pub fn clear_handlers_of<U>(self, user_data: *mut U) {
         match self {
@@ -1369,6 +1384,7 @@ pub mod c {
             res: &mut uws_res,
             close_connection: bool,
         );
+        pub(crate) safe fn uws_res_abandon(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,

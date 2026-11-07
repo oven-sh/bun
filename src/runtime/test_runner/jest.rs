@@ -651,6 +651,8 @@ pub(crate) mod on_unhandled_rejection {
             }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
+            // A failed matcher's error is a failure of the attempt that called the matcher, also in a hook or a failing test.
+            let attempt = buntest.unclaimed.is_failure(&current_state_data, rejection).then_some(current_state_data);
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
@@ -672,8 +674,8 @@ pub(crate) mod on_unhandled_rejection {
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
-                true,
-                &current_state_data,
+                bun_test::Report::Once,
+                attempt.as_ref().unwrap_or(&current_state_data),
             );
             buntest.is_reporting_uncaught = false;
             buntest.add_result(current_state_data);

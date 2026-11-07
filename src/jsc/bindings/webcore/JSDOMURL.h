@@ -53,6 +53,10 @@ public:
     // canonical (the parsed string is then that very StringImpl), so those never allocate a second string.
     mutable JSC::WriteBarrier<JSC::JSString> m_href;
     JSC::JSString* href(JSC::JSGlobalObject&) const;
+    // The component getters (host, pathname, ...) return substrings of that href JSString instead of copying bytes.
+    JSC::JSString* substringOfHref(JSC::JSGlobalObject&, unsigned offset, unsigned length) const;
+    JSC::JSString* substringOfHref(JSC::JSGlobalObject&, WTF::StringView) const;
+    static unsigned offsetInHref(const WTF::URL&, WTF::StringView);
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)

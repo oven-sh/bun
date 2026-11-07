@@ -1,0 +1,9 @@
+// STATISTIC: OwnKeyWalksExpanded >= 1
+// Object.assign(t, s, t): by the time t is read as a source it holds what s brought.
+// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+function place(n) {
+  const t = { a: n, b: n + 1 };
+  Object.assign(t, { a: n * 10 }, t);
+  return t.a + " " + t.b;
+}
+for (const n of JSON.parse("[1,2,3]")) console.log(place(n));

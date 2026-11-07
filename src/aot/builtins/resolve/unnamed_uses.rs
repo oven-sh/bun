@@ -417,8 +417,11 @@ impl Resolver<'_, '_> {
                 || self.computed.iter().any(is_read_under_such_key)
                 || hir.props.iter().any(|property| is_key(property.key))
                 || hir.pat_props.iter().any(|property| is_key(property.key))
+                || (hir.template_parts.iter()).any(|part| part.cooked.is_some_and(is_such))
                 || hir.exprs.iter().any(|expr| match expr.kind {
-                    ExprKind::Dot { name, .. } | ExprKind::String(name) => is_such(name),
+                    ExprKind::Dot { name, .. }
+                    | ExprKind::String(name)
+                    | ExprKind::JsxText(name) => is_such(name),
                     _ => false,
                 }))
     }

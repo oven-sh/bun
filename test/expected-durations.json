@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/what-the-library-hands-out-looks-and-takes-stores-as-in-plain-bun-where-code-from-disk-is-allowed.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-frame-around-a-disposal-that-throws-points-at-the-resource.test.ts": {
     "default": 60000,
     "asan": 240000

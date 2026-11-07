@@ -2,13 +2,13 @@ use std::ops::Range;
 
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PropKey};
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::resolve::FinishedFile;
 use bun_sema::util::SharedSort;
 
 use super::FileContents;
-use super::load_names::find_modules_spelled_in_data;
+use super::load_names::{find_modules_spelled_as_keys_in_data, find_modules_spelled_in_data};
 use crate::builtins::table::{self, ExportLookup};
 use crate::builtins::{BuiltinId, ResolvedBuiltins};
 use crate::load::runtime_modules::RuntimeModules;
@@ -89,7 +89,12 @@ impl ContentsScan<'_, '_> {
             match value {
                 DataValue::String(text) => self.look_at_text_in_data(text),
                 DataValue::Array(items) => pending.extend_from_slice(items),
-                DataValue::Object(properties) => pending.extend(properties.iter().map(|it| it.1)),
+                DataValue::Object(properties) => {
+                    for &(key, value) in properties {
+                        self.look_at_key(PropKey::Name(key));
+                        pending.push(value);
+                    }
+                }
                 DataValue::Undefined
                 | DataValue::Null
                 | DataValue::Boolean(_)
@@ -116,6 +121,7 @@ impl ContentsScan<'_, '_> {
                 self.look_at_folded_text(expression);
             }
             ExprKind::New(_) => self.look_at_construction(expression),
+            ExprKind::Object(properties) => self.look_at_keys(properties),
             ExprKind::Call(call) => {
                 self.look_at_folded_text(expression);
                 self.look_at_folded_data(expression);
@@ -140,7 +146,6 @@ impl ContentsScan<'_, '_> {
             | ExprKind::Regex { .. }
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Array(_)
-            | ExprKind::Object(_)
             | ExprKind::Fn(_)
             | ExprKind::Class(_)
             | ExprKind::Unary { .. }
@@ -178,6 +183,7 @@ pub(crate) fn scan_file(
     if is_made_from_data(hir) {
         let mut found = FileContents::default();
         found.names.written_as_values = find_modules_spelled_in_data(request, input);
+        found.names.written_as_keys = find_modules_spelled_as_keys_in_data(request, input);
         return found;
     }
     debug_assert_eq!(analysis.import_sites.len(), resolutions.len());
@@ -203,6 +209,7 @@ pub(crate) fn scan_file(
     scan.look_at_paths_written_from_own_folder();
     scan.look_at_loads_of_worker_threads();
     scan.look_at_constructions_behind_module_handed_on();
+    scan.look_at_keys_of_classes();
     scan.finish_names();
     let starts = &mut scan.found.worker_starts;
     starts.shared_sort_unstable_by_key(|start| (hir[start.at].pos, start.at, start.name_node));

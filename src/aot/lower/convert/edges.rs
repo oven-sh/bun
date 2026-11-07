@@ -1,10 +1,10 @@
-use bun_sema::bind::FnOwner;
+use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::check::aot::{
     ClassDeclaration, ClassMember, ClassParent, ClassRef, FunctionRef, MemberName,
     ObjectMemberKind, ShapeKind, TypeShape,
 };
 use bun_sema::fold::Constant;
-use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind, MemberKey};
+use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind, MemberKey, UnOp};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ir::generated::IllTypedCause;
@@ -205,6 +205,39 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    fn is_reckoned_with(&self, read: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut value = read;
+        while let Parent::Expr(user) = bound.parent_of_expr(value)
+            && user.is_some()
+        {
+            match hir[user].kind {
+                ExprKind::Unary {
+                    op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+                    ..
+                }
+                | ExprKind::Assign { op: Some(_), .. }
+                | ExprKind::Call(_) => return true,
+                ExprKind::Binary { op, .. } => match op {
+                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => value = user,
+                    BinOp::EqEq
+                    | BinOp::NotEq
+                    | BinOp::EqEqEq
+                    | BinOp::NotEqEq
+                    | BinOp::In
+                    | BinOp::Instanceof => return false,
+                    _ => return true,
+                },
+                ExprKind::Cond { test, .. } if test != value => value = user,
+                ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::Satisfies { .. } => {
+                    value = user;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     pub(in crate::lower) fn position_of_int32_read(
         &mut self,
         read: ExprId,
@@ -215,7 +248,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let ty = self.queries.expression_type(read).ok()?;
         let mapped = self.map_type_at(ty);
         let range = self.fragment.types.get(mapped.ty).integer_range();
-        (range == Some((i64::from(i32::MIN), i64::from(i32::MAX))))
+        let every_int32 = (i64::from(i32::MIN), i64::from(i32::MAX));
+        (range == Some(every_int32) || self.is_reckoned_with(read))
             .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
     }
 

@@ -639,6 +639,7 @@ fn add_target<'r>(
         host_module: file.host_module,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
+        is_linked_by_bundler,
         is_loaded_with_importer: is_statement,
         has_shared_type: is_statement && has_type_of_shared_kind,
         has_type_of_shared_kind,

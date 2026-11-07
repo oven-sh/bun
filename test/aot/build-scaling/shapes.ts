@@ -1073,10 +1073,10 @@ export const shapes: Shape[] = [
   ...[[], ["--check"]].map(flags => ({
     name: `a row of ifs that compare a field that holds fractions with whole numbers${flags.length ? ", in a build that looks for type errors" : ""}`,
     counted: "comparisons",
-    size: flags.length ? 900 : 600,
+    // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
+    size: flags.length ? 900 : 2400,
     entry: "main.ts",
     flags,
-    growsSoFarInInstructionsUnderMusl: flags.length ? undefined : "2.12 times in instructions",
     write: (size: number) => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts":
@@ -2304,8 +2304,10 @@ export const shapes: Shape[] = [
   {
     name: "loops in a row inside one loop that each add fractions to a sum of their own",
     counted: "loops",
-    size: 400,
+    // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
+    size: 1600,
     entry: "main.js",
+    // Measured at a quarter of this size. Under glibc it grows 2.03 times there and 2.08 times here.
     growsSoFarInInstructionsUnderMusl: "2.10 times in instructions",
     counts: ["WalksOfLoops", "ValuesWalked"],
     write: size => ({
@@ -2553,9 +2555,9 @@ console.log(typeof outmost.inner);
   {
     name: "cases of one switch that each assign another text to one variable",
     counted: "cases",
-    size: 3000,
+    // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
+    size: 12000,
     entry: "main.js",
-    growsSoFarInInstructionsUnderMusl: "2.11 times in instructions",
     write: size => ({
       "main.js": `function pick(n) {\n  let picked = "t";\n  switch (n) {\n${lines(size, index => `    case ${index}: picked = "t${index}"; break;`)}  }\n  return picked;\n}\nconsole.log(pick(process.argv.length));\n`,
     }),
@@ -3532,8 +3534,10 @@ console.log(typeof outmost.inner);
   {
     name: "objects that are each handed to a function with a loop, with a store into a variable behind each",
     counted: "objects",
-    size: 2000,
+    // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
+    size: 8000,
     entry: "main.js",
+    // Measured at a quarter of this size. Under glibc it grows 2.04 times there and 2.08 times here.
     growsSoFarInInstructionsUnderMusl: "2.13 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `sum += pick({ k: ${index}, next: null }, 0).k;`),
@@ -3589,8 +3593,10 @@ console.log(typeof outmost.inner);
   {
     name: "closures that are each handed to a function with a loop, with a store into what they capture behind each",
     counted: "closures",
-    size: 2000,
+    // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
+    size: 8000,
     entry: "main.js",
+    // Measured at a quarter of this size. Under glibc it grows 2.03 times there and 2.07 times here.
     growsSoFarInInstructionsUnderMusl: "2.11 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `{ let c = ${index}; const f = () => c++; pick({ k: f, next: null }, 0); c += 1; }`),

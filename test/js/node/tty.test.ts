@@ -301,11 +301,15 @@ describe.concurrent("ReadStream destroy()", () => {
 
 describe.concurrent("WriteStream destroy()", () => {
   async function destroyStdioStreams(exhaustDescriptors: boolean) {
+    // ulimit keeps every descriptor of the child below this number.
+    const descriptorLimit = 64;
     const script = `
       const fs = require("fs");
       const tty = require("tty");
       const { once } = require("events");
       const isOpen = fd => { try { fs.fstatSync(fd); return true; } catch { return false; } };
+      // With the limit, every descriptor that is open. Without it the list is empty: nothing below runs out of them.
+      const openFds = () => [...Array(${exhaustDescriptors ? descriptorLimit : 0}).keys()].filter(isOpen);
       const hasSink = s => Object.getOwnPropertySymbols(s).some(sym => sym.description === "kWriteStreamFastPath");
       const out = process.stdout;
       const destroyed = [];
@@ -318,9 +322,14 @@ describe.concurrent("WriteStream destroy()", () => {
       }
       (async () => {
         // A debug build opens each builtin module's file on first use, so load them while it still can.
+        const idle = openFds();
         const warmup = new tty.WriteStream(1);
+        const sinkFds = openFds().filter(fd => !idle.includes(fd));
         warmup.destroy();
         await once(warmup, "close");
+        // On Linux the FileSink closes its descriptor on another thread, after "close". A close that
+        // came after the loop below would free a descriptor, and one of the streams would get a FileSink.
+        while (sinkFds.some(isOpen)) await new Promise(resolve => setImmediate(resolve));
 
         const held = [];
         let code;
@@ -344,7 +353,12 @@ describe.concurrent("WriteStream destroy()", () => {
       })();
     `;
     await using proc = Bun.spawn({
-      cmd: [...(exhaustDescriptors ? ["sh", "-c", 'ulimit -n 64 && exec "$0" "$@"'] : []), bunExe(), "-e", script],
+      cmd: [
+        ...(exhaustDescriptors ? ["sh", "-c", `ulimit -n ${descriptorLimit} && exec "$0" "$@"`] : []),
+        bunExe(),
+        "-e",
+        script,
+      ],
       stdin: Bun.file(import.meta.path),
       stdout: "pipe",
       stderr: "pipe",

@@ -836,6 +836,115 @@ describe("parse shell", () => {
         expect(result).toEqual(expected);
       });
     });
+
+    describe("then, elif, else and fi directly after a compound command", () => {
+      const ast = (script: string) => JSON.parse(parse`${{ raw: script }}`);
+      const parseError = (script: string) => {
+        try {
+          ast(script);
+        } catch (e) {
+          return (e as Error).message;
+        }
+      };
+      const wantsThen = 'Expected "then" but got: Eof';
+      const wantsFi = 'Expected "else", "elif", or "fi" but got: Eof';
+
+      // `@` is a command. The word after it is the word that the clause waits for.
+      const slots = [
+        "if @ then echo y; fi",
+        "if true; then @ fi",
+        "if false; then @ else echo b; fi",
+        "if false; then @ elif true; then echo c; fi",
+        "if false; then echo a; elif @ then echo c; fi",
+        "if false; then echo a; elif true; then @ fi",
+        "if false; then echo a; elif false; then @ else echo d; fi",
+        "if false; then echo a; elif false; then @ elif true; then echo e; fi",
+        "if false; then echo a; elif false; then echo c; else @ fi",
+        "if false; then echo a; else @ fi",
+      ];
+      const compounds = ["(echo y)", "[[ a == a ]]", "if true; then echo y; fi"];
+      const lists = ["", "true && ", "false || ", "echo y | ", "true && echo y | "];
+      const everyPosition = slots.flatMap(slot =>
+        compounds.flatMap(compound =>
+          lists.map((list): [string, string] => [
+            slot.replace("@", list + compound),
+            slot.replace("@", list + compound + ";"),
+          ]),
+        ),
+      );
+
+      // [script, the same script with a separator before each word of the clause]
+      test.each([
+        ...everyPosition,
+
+        // a word of the clause on both sides of a compound command
+        ["if (true) then (echo y) fi", "if (true); then (echo y); fi"],
+        ["if true; then (echo a) else (echo b) fi", "if true; then (echo a); else (echo b); fi"],
+        [
+          "if false; then echo a; elif (false) then echo b; elif [[ a == a ]] then (echo c) else (echo d) fi",
+          "if false; then echo a; elif (false); then echo b; elif [[ a == a ]]; then (echo c); else (echo d); fi",
+        ],
+        [
+          "if true; then if true; then if true; then echo y; fi fi fi",
+          "if true; then if true; then if true; then echo y; fi; fi; fi",
+        ],
+
+        // no blank before the word, and a newline after it
+        ["if true; then (echo y)fi", "if true; then (echo y); fi"],
+        ["if true; then (echo a) else\n echo b; fi", "if true; then (echo a); else\n echo b; fi"],
+
+        // inside a subshell and a command substitution
+        ["(if true; then (echo y) fi)", "(if true; then (echo y); fi)"],
+        ["echo $(if true; then (echo y) fi)", "echo $(if true; then (echo y); fi)"],
+        ["echo `if true; then (echo y) fi`", "echo `if true; then (echo y); fi`"],
+        ["if true; then ( if true; then (echo a) fi ) fi", "if true; then ( if true; then (echo a); fi ); fi"],
+
+        // what follows the closing `fi`
+        ["if true; then (echo y) fi; echo tail", "if true; then (echo y); fi; echo tail"],
+        ["if true; then (echo y) fi\necho tail", "if true; then (echo y); fi\necho tail"],
+        ["if true; then (echo y) fi && echo tail", "if true; then (echo y); fi && echo tail"],
+        ["if true; then (echo y) fi || echo tail", "if true; then (echo y); fi || echo tail"],
+        ["if true; then (echo y) fi | cat", "if true; then (echo y); fi | cat"],
+        ["if true; then if true; then echo y; fi fi | cat", "if true; then if true; then echo y; fi; fi | cat"],
+
+        // a comment between the compound command and the line of the word
+        [
+          "if true; then\n  if true; then\n    echo x\n  fi # inner\nfi",
+          "if true; then\n  if true; then\n    echo x\n  fi\nfi",
+        ],
+        ["if true; then\n  (echo x) # note\nfi", "if true; then\n  (echo x)\nfi"],
+        ["if true; then\n  [[ -n a ]] # note\nelse\n  echo b\nfi", "if true; then\n  [[ -n a ]]\nelse\n  echo b\nfi"],
+      ])("%j", (script, separated) => {
+        expect(ast(script)).toEqual(ast(separated));
+      });
+
+      // bash rejects each of these scripts.
+      test.each([
+        // A simple command stops at its redirection. The word after it is not a word of the clause.
+        ...["", "(echo a) && ", "(echo a) | ", "(echo a) ", "[[ a == a ]] "].flatMap((before): [string, string][] => [
+          [`if ${before}echo hi > /dev/null then echo y; fi`, wantsThen],
+          [`if true; then ${before}echo hi > /dev/null fi`, wantsFi],
+        ]),
+        // the word is quoted, or is part of a longer word
+        ['if true; then (echo hi) "fi"', wantsFi],
+        ["if true; then (echo hi) fi$X", wantsFi],
+        // `elif` is the word of the clause here, so it needs its `then`
+        ["if false; then (echo a) elif true; fi", wantsThen],
+      ])("%j fails with %j", (script, message) => {
+        expect(parseError(script)).toBe(message);
+      });
+
+      test("`fi` after a simple command is an argument", () => {
+        expect(ast("if true; then echo hi fi; fi").stmts[0].exprs[0].if.then).toEqual(ast("echo hi fi").stmts);
+      });
+
+      test("a word that the clause does not wait for does not end the statement", () => {
+        const kinds = (stmts: any[]) => stmts.map(stmt => stmt.exprs.map(expr => Object.keys(expr)[0]));
+        // No clause waits for `fi` at the top level, and a `then` body does not wait for `then`.
+        expect(kinds(ast("(echo hi) fi").stmts)).toEqual([["subshell", "cmd"]]);
+        expect(kinds(ast("if true; then (echo hi) then; fi").stmts[0].exprs[0].if.then)).toEqual([["subshell", "cmd"]]);
+      });
+    });
   });
 
   describe.todo("async", () => {

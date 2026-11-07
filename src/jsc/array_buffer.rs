@@ -2,12 +2,10 @@ use core::ffi::{c_uint, c_void};
 use core::ptr;
 
 use crate as jsc;
-use crate::SysErrorJsc;
 use crate::{
     ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
 };
 use bun_alloc::mimalloc;
-use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
 
@@ -59,14 +57,6 @@ impl Default for ArrayBuffer {
 // without a `&T as *const T as *mut T` provenance laundering cast. This matches
 // the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `addr`/`len` are an opaque mmap region
-    // C++ stores into the Buffer's `ArrayBufferContents` (adopted, freed via
-    // munmap by JSC). Unlike `Bun__makeArrayBufferWithBytesNoCopy` below this
-    // is not reachable with caller-chosen pointers: the only caller
-    // (`to_js_buffer_from_memfd`) maps `addr` itself via `bun_sys::mmap`, so
-    // the validity proof is discharged at that single call site.
-    safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); remaining args are by-value scalars.
     safe fn ArrayBuffer__fromSharedMemfd(
@@ -221,9 +211,6 @@ impl ArrayBuffer {
     // keep in sync with Bun::Buffer::kMaxLength
     pub const MAX_SIZE: c_uint = c_uint::MAX;
 
-    // 4 MB or so is pretty good for mmap()
-    const MMAP_THRESHOLD: usize = 1024 * 1024 * 4;
-
     pub fn bytes_per_element(&self) -> Option<u8> {
         match self.typed_array_type {
             JSType::ArrayBuffer | JSType::DataView => None,
@@ -237,52 +224,6 @@ impl ArrayBuffer {
 }
 
 impl ArrayBuffer {
-    /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
-    /// Do not use this for pipes, however tempting it may seem.
-    pub(crate) fn to_js_buffer_from_fd(
-        fd: Fd,
-        size: usize,
-        global: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
-        // *const); fn accepts null ptr with explicit size.
-        // Wrapped in `from_js_host_call` so the C++ throw scope opened by
-        // `Bun__createUint8ArrayForCopy` is checked before `as_array_buffer` below
-        // declares `ASSERT_NO_PENDING_EXCEPTION` (validateExceptionChecks).
-        let buffer_value = crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, ptr::null(), size, true)
-        })?;
-
-        let mut array_buffer = buffer_value.as_array_buffer(global).expect("Unexpected");
-        let mut bytes = array_buffer.byte_slice_mut();
-
-        buffer_value.ensure_still_alive();
-
-        let mut read: isize = 0;
-        while !bytes.is_empty() {
-            match bun_sys::pread(fd, bytes, read as i64) {
-                bun_sys::Result::Ok(amount) => {
-                    bytes = &mut bytes[amount..];
-                    read += isize::try_from(amount).expect("int cast");
-
-                    if amount == 0 {
-                        if !bytes.is_empty() {
-                            bytes.fill(0);
-                        }
-                        break;
-                    }
-                }
-                bun_sys::Result::Err(err) => {
-                    return Err(global.throw_value(err.to_js(global)));
-                }
-            }
-        }
-
-        buffer_value.ensure_still_alive();
-
-        Ok(buffer_value)
-    }
-
     /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
     /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
     /// to copying; the typed-array allocation can also throw, so empty alone
@@ -299,55 +240,6 @@ impl ArrayBuffer {
         crate::call_check_slow(global, || {
             ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
         })
-    }
-
-    pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let stat = match bun_sys::fstat(fd) {
-            bun_sys::Result::Err(err) => {
-                fd.close();
-                return Err(global.throw_value(err.to_js(global)));
-            }
-            bun_sys::Result::Ok(fstat) => fstat,
-        };
-
-        let size = stat.st_size;
-
-        if size == 0 {
-            fd.close();
-            return Self::create_buffer(global, b"");
-        }
-
-        // mmap() is kind of expensive to do
-        // It creates a new memory mapping.
-        // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
-        // So we clone it when it's small.
-        // `stat.st_size` is `i64` on POSIX, `u64` on the libuv stat struct.
-        if (size as i64) < Self::MMAP_THRESHOLD as i64 {
-            let result =
-                Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
-            fd.close();
-            return result;
-        }
-
-        // bun_sys::mmap takes raw i32 prot/flags.
-        // Windows impl ignores these and returns ENOTSUP.
-        #[cfg(unix)]
-        let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
-        #[cfg(not(unix))]
-        let (prot, map_flags) = (0i32, 0i32);
-        let map_len = usize::try_from(size.max(0)).expect("int cast");
-        let result = bun_sys::mmap(ptr::null_mut(), map_len, prot, map_flags, fd, 0);
-        fd.close();
-
-        match result {
-            bun_sys::Result::Ok(buf) => {
-                // `buf` is a fresh mmap region whose ownership transfers to JSC (on `Err` too).
-                crate::host_fn::from_js_host_call(global, || {
-                    JSBuffer__fromMmap(global, buf.cast(), map_len)
-                })
-            }
-            bun_sys::Result::Err(err) => Err(global.throw_value(err.to_js(global))),
-        }
     }
 
     pub const EMPTY: ArrayBuffer = ArrayBuffer {

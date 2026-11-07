@@ -3434,7 +3434,10 @@ console.log(<div {...obj} key="after" />);`),
       const keeps = [
         ["async function* f() { return undefined; }", "async function* f() {\n  return undefined;\n}"],
         ["async function* f() { return void 0; }", "async function* f() {\n  return undefined;\n}"],
-        ["const f = async function* () { return undefined; }", "const f = async function* () {\n  return undefined;\n}"],
+        [
+          "const f = async function* () { return undefined; }",
+          "const f = async function* () {\n  return undefined;\n}",
+        ],
         ["class C { async *f() { return undefined; } }", "class C {\n  async* f() {\n    return undefined;\n  }\n}"],
         ["const o = { async *f() { return undefined; } }", "const o = { async* f() {\n  return undefined;\n} }"],
       ];
@@ -3448,9 +3451,18 @@ console.log(<div {...obj} key="after" />);`),
       const drops = [
         ["async function f() { return undefined; }", "async function f() {\n  return;\n}"],
         ["function* f() { return undefined; }", "function* f() {\n  return;\n}"],
-        ["async function* f() { return () => { return undefined; }; }", "async function* f() {\n  return () => {\n    return;\n  };\n}"],
-        ["async function* f() { return function() { return undefined; }; }", "async function* f() {\n  return function() {\n    return;\n  };\n}"],
-        ["function f() { async function* g() { return undefined; } return undefined; }", "function f() {\n  async function* g() {\n    return undefined;\n  }\n  return;\n}"],
+        [
+          "async function* f() { return () => { return undefined; }; }",
+          "async function* f() {\n  return () => {\n    return;\n  };\n}",
+        ],
+        [
+          "async function* f() { return function() { return undefined; }; }",
+          "async function* f() {\n  return function() {\n    return;\n  };\n}",
+        ],
+        [
+          "function f() { async function* g() { return undefined; } return undefined; }",
+          "function f() {\n  async function* g() {\n    return undefined;\n  }\n  return;\n}",
+        ],
       ];
       for (const [code, out] of drops) {
         expectPrinted_(code, out);

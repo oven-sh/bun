@@ -8,6 +8,21 @@ import { spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
+// The `it` for the cases of a service. A case that fails against R2 runs once
+// more: R2 is a live service, and at times it answers ServiceUnavailable or
+// InternalError for some minutes. Against the local server a case has no
+// second run, so a defect in Bun still fails there.
+type ItOfService = ((title: string, ...rest: any[]) => void) & { skipIf(condition: boolean): ItOfService };
+function itFor(service: string, base: ItOfService = it): ItOfService {
+  if (service !== "R2") return base;
+  const onceMore = (title: string, ...rest: any[]) => {
+    const fn = rest.find(arg => typeof arg === "function");
+    const limit = rest.find(arg => arg !== fn);
+    base(title, { ...(typeof limit === "number" ? { timeout: limit } : limit), retry: 1 }, fn);
+  };
+  return Object.assign(onceMore, { skipIf: (condition: boolean) => itFor(service, base.skipIf(condition)) });
+}
+
 type S3Credentials = S3Options & {
   service: string;
 };
@@ -169,6 +184,7 @@ for (let credentials of allCredentials) {
     };
 
     const S3Bucket = credentials.bucket;
+    const it = itFor(credentials.service);
 
     function makePayLoadFrom(text: string, size: number): string {
       return Buffer.alloc(size, text).toString();

@@ -4,7 +4,7 @@
 // `at()` reports where the runtime says it was called from and counts its calls. `caught(e, "text")` reports where the
 // runtime says `e` was thrown, which has to be the first "text" of the file. Neither position is written down anywhere:
 // the test looks for the call in the text. A call in tail position has no caller to report, so `at()` is never returned.
-// `ran()` only counts its calls, for the initializer of a field: JSC keeps the function it is in out of stack traces.
+// `ran()` only counts its calls, for code that must not run.
 
 export type Case = {
   /** Functions that ran / functions in the file. */
@@ -945,9 +945,9 @@ export const cases: Record<string, Case> = {
     functions: "6/6",
     lines: `
  1|class Members {
- 2|  field = ran();
- 1|  static fixed = ran();
- 2|  #hidden = ran();
+ 2|  field = at();
+ 1|  static fixed = at();
+ 2|  #hidden = at();
  1|  get value() { at(); return 1; }
  1|  set value(v) { at(); }
  1|  static { at(); }

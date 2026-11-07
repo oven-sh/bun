@@ -396,4 +396,108 @@ describe("class field initializer frames", () => {
     ]);
     expect(exitCode).toBe(1);
   });
+
+  // The name of the frame on top, for an instance field and for a static field.
+  const fieldStacks = `class C { f = new Error("instance").stack; static s = new Error("static").stack; }`;
+  const namesOnTop = `stacks => stacks.map(stack => /^\\s+at (\\S+)/.exec(stack.split("\\n")[1])[1])`;
+
+  test.concurrent("in code that is not a file: eval, new Function and node:vm", async () => {
+    using dir = tempDir("field-initializer-not-a-file", {
+      "main.cjs": `
+        const vm = require("node:vm");
+        const namesOnTop = ${namesOnTop};
+        const source = ${JSON.stringify(fieldStacks + "\n[new C().f, C.s]")};
+        console.log(JSON.stringify({
+          directEval: namesOnTop(eval(source)),
+          indirectEval: namesOnTop((0, eval)(source)),
+          newFunction: namesOnTop(new Function(${JSON.stringify(fieldStacks + "\nreturn [new C().f, C.s];")})()),
+          vmContext: namesOnTop(vm.runInNewContext(source, {}, { filename: "in-a-context.js" })),
+          vmScript: namesOnTop(new vm.Script(source, { filename: "a-script.js" }).runInThisContext()),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      // A debug build shows the frames the engine hides unless this is off.
+      env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const names = ["<instance_members_initializer>", "<static_initializer>"];
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: { directEval: names, indirectEval: names, newFunction: names, vmContext: names, vmScript: names },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("in the output of bun build, with and without --bytecode", async () => {
+    using dir = tempDir("field-initializer-built", {
+      "entry.js": `
+        ${fieldStacks}
+        const namesOnTop = ${namesOnTop};
+        console.log(JSON.stringify(namesOnTop([new C().f, C.s])));
+      `,
+    });
+    const run = async (...cmd: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const built = await Promise.all([
+      run("build", "entry.js", "--target=bun", "--outdir=plain"),
+      run("build", "entry.js", "--target=bun", "--bytecode", "--outdir=bytecode"),
+    ]);
+    expect(built.map(build => build.exitCode)).toEqual([0, 0]);
+    const [plain, bytecode] = await Promise.all([run("plain/entry.js"), run("bytecode/entry.js")]);
+    const names = `["<instance_members_initializer>","<static_initializer>"]\n`;
+    expect({ plain, bytecode }).toEqual({
+      plain: { stdout: names, stderr: "", exitCode: 0 },
+      bytecode: { stdout: names, stderr: "", exitCode: 0 },
+    });
+  });
+
+  // The stack of an unread Error is written down when a function on it is collected, and a prepareStackTrace
+  // that is set later is not asked. The function of a class's static fields is garbage as soon as the class is
+  // defined, so whether a collection got to it decides who formats. Either way the initializer is on the stack.
+  test.concurrent("an unread Error of a static field keeps the initializer frame over a collection", async () => {
+    using dir = tempDir("field-initializer-collected", {
+      "main.cjs": `
+        class Instance { field = new Error("instance"); }
+        class Static { static field = new Error("static"); }
+        function make() { const made = new Instance(); return made.field; }
+        const held = { instance: make(), static: Static.field };
+        Bun.gc(true);
+        Bun.gc(true);
+        Error.prepareStackTrace = (error, sites) => "prepared: " + sites.map(site => site.getFunctionName()).join(", ");
+        console.log(JSON.stringify({
+          instance: held.instance.stack,
+          static: String(held.static.stack).includes("<static_initializer>"),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        // The function of the instance fields lives as long as the class.
+        instance: expect.stringMatching(/^prepared: <instance_members_initializer>, Instance, make, /),
+        static: true,
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

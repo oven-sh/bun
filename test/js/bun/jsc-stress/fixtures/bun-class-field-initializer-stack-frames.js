@@ -243,9 +243,13 @@ function constructInALoop()
 if (typeof noInline === "function")
     noInline(constructInALoop);
 
+// The names of the three frames on top: the initializer, the constructor, and the function that constructs.
 function namesOfFrames(error)
 {
-    return frames(error).map(frame => frame.replace(/^\s+at /, "").split(/[@ ]/)[0]).join(" < ");
+    return frames(error).slice(0, 3).map(frame => {
+        const named = /^\s+at (.*) \(.*\)$/.exec(frame) || /^(.*)@/.exec(frame);
+        return named ? named[1] : "";
+    }).join(" < ");
 }
 
 {

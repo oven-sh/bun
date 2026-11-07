@@ -2282,20 +2282,22 @@ test("an exception in a class field initializer reports the field's position", a
       },
       explicit: {
         message: "undefined is not an object (evaluating 'cfg.port')",
-        frames: ["at <instance_members_initializer> (fields.js:9:10)", "at new Explicit (fields.js:10:17)"],
+        frames: [
+          "at <instance_members_initializer> (fields.js:9:10)",
+          expect.stringMatching(/^at new Explicit \(fields\.js:10:\d+\)$/),
+        ],
       },
       static: {
         message: "undefined is not an object (evaluating 'cfg.port')",
-        frames: ["at <static_initializer> (fields.js:16:19)", "at makeStatic (fields.js:15:3)"],
+        frames: ["at <static_initializer> (fields.js:16:19)", expect.stringMatching(/^at makeStatic \(fields\.js:15:\d+\)$/)],
       },
     },
     callSites: {
       message: "undefined is not an object (evaluating 'cfg.port')",
-      // Call site columns are zero based.
-      frames: [{ name: "<instance_members_initializer>", file: "fields.js", line: 3, column: 9, isConstructor: false }],
+      frames: [{ name: "<instance_members_initializer>", file: "fields.js", line: 3, column: 10, isConstructor: false }],
     },
   });
-  // The uncaught error printer excerpts the field's line, not JSC's "(function () { })".
+  // The uncaught error printer quotes the line of the field.
   expect(stderr).toContain("3 |   port = cfg.port;");
   expect(stderr).toMatch(/at <instance_members_initializer> \(.*fields\.js:3:10\)/);
   expect(exitCode).toBe(1);

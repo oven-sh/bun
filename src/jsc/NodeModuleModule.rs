@@ -18,6 +18,10 @@ pub(crate) struct ApiLoader(pub u8);
 impl ApiLoader {
     /// `_none = 254`.
     const NONE: Self = Self(api::Loader::_none as u8);
+    /// What C++ passes for the built-in `Module._extensions[".js"]` handler.
+    const JS: Self = Self(api::Loader::js as u8);
+    /// What C++ passes for the built-in `Module._extensions[".ts"]` handler.
+    const TS: Self = Self(api::Loader::ts as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -126,6 +130,33 @@ impl Default for CustomLoader {
     }
 }
 
+/// `.ts` for the key `.spec.ts`: the extension of the files the key matches.
+fn file_ext_of_key(key: &[u8]) -> &[u8] {
+    let last_dot = strings::last_index_of_char(key, b'.').unwrap_or(0);
+    &key[last_dot..]
+}
+
+/// The loader a built-in `Module._extensions` handler uses for a file with the extension `ext`.
+pub(crate) fn builtin_handler_loader(
+    vm: &VirtualMachine,
+    ext: &[u8],
+    handler: ApiLoader,
+) -> Loader {
+    let by_name = vm.transpiler.options.loader(ext);
+    match handler {
+        ApiLoader::JS if by_name.is_javascript_like() => by_name,
+        ApiLoader::JS => Loader::Js,
+        ApiLoader::TS if by_name == Loader::Tsx => Loader::Tsx,
+        ApiLoader::TS => Loader::Ts,
+        _ => Loader::from_api(handler.to_schema()),
+    }
+}
+
+/// Whether an entry under `key` (`.ts`, or a compound `.spec.ts`) overrides a default loader.
+fn shadows_default_loader(key: &[u8]) -> bool {
+    DEFAULT_LOADERS.get(file_ext_of_key(key)).is_some()
+}
+
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],
@@ -134,7 +165,9 @@ fn on_require_extension_modify(
 ) -> Result<(), bun_alloc::AllocError> {
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
     let vm = global.bun_vm().as_mut();
-    let is_built_in = DEFAULT_LOADERS.get(str).is_some();
+    let is_built_in = shadows_default_loader(str);
+    let builtin = (loader != ApiLoader::NONE)
+        .then(|| builtin_handler_loader(vm, file_ext_of_key(str), loader));
 
     let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
     if !gop.found_existing {
@@ -144,14 +177,13 @@ fn on_require_extension_modify(
             vm.has_mutated_built_in_extensions += 1;
         }
 
-        *gop.value_ptr = if loader != ApiLoader::NONE {
-            CustomLoader::Loader(Loader::from_api(loader.to_schema()))
-        } else {
-            CustomLoader::Custom(Strong::create(value, global))
+        *gop.value_ptr = match builtin {
+            Some(loader) => CustomLoader::Loader(loader),
+            None => CustomLoader::Custom(Strong::create(value, global)),
         };
-    } else if loader != ApiLoader::NONE {
+    } else if let Some(loader) = builtin {
         // Replacing with a built-in loader: drop any held Strong via assignment.
-        *gop.value_ptr = CustomLoader::Loader(Loader::from_api(loader.to_schema()));
+        *gop.value_ptr = CustomLoader::Loader(loader);
     } else {
         match gop.value_ptr {
             CustomLoader::Loader(_) => {
@@ -177,7 +209,7 @@ fn on_require_extension_modify_non_function(
 ) -> Result<(), bun_alloc::AllocError> {
     // SAFETY: see `on_require_extension_modify`.
     let vm = global.bun_vm().as_mut();
-    let is_built_in = DEFAULT_LOADERS.get(str).is_some();
+    let is_built_in = shadows_default_loader(str);
 
     if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {
         // `prev.key: Box<[u8]>` — freed on drop.
@@ -238,4 +270,16 @@ extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
         bun_core::out_of_memory();
     }
+}
+
+/// The loader a built-in handler called directly on `filename` uses.
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__builtinHandlerLoader(
+    global: &JSGlobalObject,
+    handler: ApiLoader,
+    filename: &BunString,
+) -> ApiLoader {
+    let filename = filename.to_utf8();
+    let ext = bun_paths::fs::PathName::find_extname(filename.slice());
+    ApiLoader(builtin_handler_loader(global.bun_vm(), ext, handler).to_api() as u8)
 }

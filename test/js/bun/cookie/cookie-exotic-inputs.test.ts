@@ -158,8 +158,6 @@ describe("Bun.Cookie.parse with exotic inputs", () => {
       "name=value; Expires=Wed, 21 Oct 2025 07:28:00",
       // With timezone offset
       "name=value; Expires=Wed, 21 Oct 2025 07:28:00 +0000",
-      // Non-standard but often accepted
-      "name=value; Expires=2025-10-21T07:28:00Z",
     ];
 
     for (const cookieStr of dateFormats) {
@@ -180,6 +178,16 @@ describe("Bun.Cookie.parse with exotic inputs", () => {
         }
       });
     }
+  });
+
+  test("drops an Expires attribute that holds an ISO 8601 date", () => {
+    // RFC 6265 section 5.1.1 has no ISO 8601 form for a cookie-date. The `expires` option reads one.
+    const cookie = Bun.Cookie.parse("name=value; Expires=2025-10-21T07:28:00Z");
+    expect(cookie.expires).toBeUndefined();
+    expect(cookie.toString()).toBe("name=value; Path=/; SameSite=Lax");
+    expect(new Bun.Cookie("name", "value", { expires: "2025-10-21T07:28:00Z" }).expires).toEqual(
+      new Date(Date.UTC(2025, 9, 21, 7, 28)),
+    );
   });
 
   test("handles boundary values for MaxAge", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.Cookie expires validation", () => {
   describe("Date objects", () => {
@@ -210,6 +211,197 @@ describe("Bun.Cookie expires validation", () => {
       }).toThrowErrorMatchingInlineSnapshot(
         `"The argument 'expires' Invalid expires value. Must be a Date or a number. Received true"`,
       );
+    });
+  });
+
+  describe("ISO 8601 date strings", () => {
+    // Every way to give a cookie an `expires` option. Each one returns the `Set-Cookie` text.
+    const entryPoints: [string, (expires: string) => string][] = [
+      ["new Bun.Cookie(name, value, options)", expires => new Bun.Cookie("a", "b", { expires }).toString()],
+      ["new Bun.Cookie(options)", expires => new Bun.Cookie({ name: "a", value: "b", expires }).toString()],
+      ["Bun.Cookie.from", expires => Bun.Cookie.from("a", "b", { expires }).toString()],
+      [
+        "expires setter",
+        expires => {
+          const cookie = new Bun.Cookie("a", "b");
+          cookie.expires = expires as any;
+          return cookie.toString();
+        },
+      ],
+      [
+        "CookieMap.set(name, value, options)",
+        expires => {
+          const map = new Bun.CookieMap();
+          map.set("a", "b", { expires });
+          return map.toSetCookieHeaders().join("\n");
+        },
+      ],
+      [
+        "CookieMap.set(options)",
+        expires => {
+          const map = new Bun.CookieMap();
+          map.set({ name: "a", value: "b", expires });
+          return map.toSetCookieHeaders().join("\n");
+        },
+      ],
+    ];
+
+    // A date string, and the time it means. JSON.stringify writes a Date in the first form.
+    const readable: [string, number][] = [
+      ["2030-01-01T00:00:00.000Z", Date.UTC(2030, 0, 1)],
+      ["1970-01-01T00:00:00.000Z", 0],
+      ["+058822-08-22T00:00:00.000Z", 1794096000000000],
+      ["-271821-04-20T00:00:00.000Z", -8.64e15],
+      ["2030-01-01", Date.UTC(2030, 0, 1)],
+      ["2030-01-01T05:30:00+05:30", Date.UTC(2030, 0, 1)],
+    ];
+
+    // new Date(string) does not read these. Each one has the shape of an ISO 8601 date.
+    const malformed = ["2030-13-45", "2030-00-00", "2030-01-01T25:00", "2030-01-01T", "2030-01-01T00:00:00.000Zjunk"];
+
+    describe.each(entryPoints)("%s", (_, create) => {
+      test.each(readable)("reads %p", (expires, time) => {
+        expect(create(expires)).toBe(`a=b; Path=/; Expires=${new Date(time).toUTCString()}; SameSite=Lax`);
+      });
+
+      test.each(malformed)("refuses %p", expires => {
+        expect(Date.parse(expires)).toBeNaN();
+        expect(() => create(expires)).toThrow("Invalid cookie expiration date");
+      });
+    });
+
+    test.each([
+      new Date(Date.UTC(2030, 0, 1)),
+      new Date(0),
+      new Date(1709212455167),
+      new Date(1794096000000000),
+      new Date(8.64e15),
+      new Date(-8.64e15),
+    ])("a cookie that expires at %p survives JSON.parse(JSON.stringify(cookie))", expires => {
+      const cookie = new Bun.Cookie("session", "abc123", { expires, domain: "example.com", secure: true });
+      const copy = new Bun.Cookie(JSON.parse(JSON.stringify(cookie)));
+      expect(copy.expires).toEqual(expires);
+      expect(copy.toJSON()).toEqual(cookie.toJSON());
+      expect(copy.toString()).toBe(cookie.toString());
+    });
+
+    test("req.cookies.set in a Bun.serve route reads an ISO 8601 string", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        routes: {
+          "/": req => {
+            req.cookies.set("a", "b", { expires: "2030-01-01T00:00:00.000Z" });
+            return new Response("ok");
+          },
+        },
+      });
+      const response = await fetch(server.url);
+      expect(response.headers.getSetCookie()).toEqual([
+        "a=b; Path=/; Expires=Tue, 01 Jan 2030 00:00:00 GMT; SameSite=Lax",
+      ]);
+    });
+
+    describe("the ends of the Date range", () => {
+      test.each([
+        ["+275760-09-13T00:00:00.000Z", 8.64e15],
+        ["+275760-09-13", 8.64e15],
+        ["+275760-09-13T05:30:00.000+05:30", 8.64e15],
+        ["-271821-04-20T00:00:00.000Z", -8.64e15],
+        ["-271821-04-20", -8.64e15],
+      ])("reads %p", (expires, time) => {
+        expect(new Bun.Cookie("a", "b", { expires }).expires).toEqual(new Date(time));
+      });
+
+      test.each([
+        "+275760-09-13T00:00:00.001Z",
+        "+275760-09-14",
+        "+275760-09-13T00:00:00.000-00:01",
+        "-271821-04-19T23:59:59.999Z",
+        "-271821-04-19",
+        "-271821-04-20T00:00:00.000+00:01",
+      ])("refuses %p", expires => {
+        expect(() => new Bun.Cookie("a", "b", { expires })).toThrow("Invalid cookie expiration date");
+      });
+    });
+
+    test("a string in this shape means what new Date(string) means, in the time zone of the process", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            process.env.TZ = "America/New_York";
+            const text = time => (Number.isNaN(time) ? "Invalid Date" : new Date(time).toISOString());
+            const read = expires => {
+              try {
+                return text(new Bun.Cookie("a", "b", { expires }).expires.getTime());
+              } catch (error) {
+                return error.message;
+              }
+            };
+            for (const expires of ["2021-01-01", "2021-01-01T00:00:00Z", "2021-01-01T00:00:00", "2021-02-30", "-000000-01-01"]) {
+              console.log(expires, "|", read(expires), "|", read(expires) === text(Date.parse(expires)));
+            }
+            const refused = {
+              "a newline after the date": "2021-01-01\\n",
+              "a space before the time": "2021-01-01 00:00:00",
+              "a no-break space before the time": "2021-01-01\\u00a000:00:00",
+            };
+            for (const [label, expires] of Object.entries(refused)) {
+              console.log(label, "|", read(expires), "|", text(Date.parse(expires)));
+            }
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual([
+        // The string | the time the cookie has | whether new Date(string) has the same time.
+        "2021-01-01 | 2021-01-01T00:00:00.000Z | true",
+        "2021-01-01T00:00:00Z | 2021-01-01T00:00:00.000Z | true",
+        "2021-01-01T00:00:00 | 2021-01-01T05:00:00.000Z | true",
+        "2021-02-30 | 2021-03-02T00:00:00.000Z | true",
+        "-000000-01-01 | 2001-01-01T05:00:00.000Z | true",
+        // A date with other text after it | what the cookie does | what new Date(string) reads.
+        "a newline after the date | Invalid cookie expiration date | 2021-01-01T05:00:00.000Z",
+        "a space before the time | Invalid cookie expiration date | 2021-01-01T05:00:00.000Z",
+        "a no-break space before the time | Invalid cookie expiration date | 2021-01-01T05:00:00.000Z",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a refused string leaves the cookie and the map as they were", () => {
+      const cookie = new Bun.Cookie("a", "b", { expires: "2030-01-01" });
+      for (const expires of ["2030", "2030-13-45"]) {
+        expect(() => {
+          cookie.expires = expires as any;
+        }).toThrow("Invalid cookie expiration date");
+        expect(cookie.expires).toEqual(new Date(Date.UTC(2030, 0, 1)));
+
+        const map = new Bun.CookieMap();
+        expect(() => map.set("a", "b", { expires })).toThrow("Invalid cookie expiration date");
+        expect(map.size).toBe(0);
+      }
+    });
+
+    // new Date(string) reads all of these but "" and "1893456000": "60" is the year 1960 and
+    // "Max-Age=3600" is the year 3600. A number of seconds is a valid `expires`, so a string
+    // that does not have the shape of an ISO 8601 date is not read that way.
+    test.each([
+      "",
+      "0",
+      "60",
+      "2030",
+      "3600",
+      "1893456000",
+      "2030-01",
+      " 2030-01-01",
+      "2030-01-01t00:00:00",
+      "Max-Age=3600",
+    ])("still refuses %p", expires => {
+      expect(() => new Bun.Cookie("a", "b", { expires })).toThrow("Invalid cookie expiration date");
     });
   });
 

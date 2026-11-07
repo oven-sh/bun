@@ -31,6 +31,29 @@ namespace WebCore {
 
 using namespace JSC;
 
+// Whether `string` starts with `shape`. A '0' in `shape` stands for any ASCII digit.
+static bool startsWithShape(StringView string, ASCIILiteral shape)
+{
+    if (string.length() < shape.length())
+        return false;
+    for (unsigned i = 0; i < shape.length(); i++) {
+        if (shape[i] == '0' ? !isASCIIDigit(string[i]) : string[i] != shape[i])
+            return false;
+    }
+    return true;
+}
+
+// The date that Date.prototype.toISOString() writes, `YYYY-MM-DD` or a sign and `YYYYYY-MM-DD`, then the end or a `T`.
+static bool isISODateShaped(StringView string)
+{
+    auto shape = "0000-00-00"_s;
+    if (string.startsWith('+') || string.startsWith('-')) {
+        string = string.substring(1);
+        shape = "000000-00-00"_s;
+    }
+    return startsWithShape(string, shape) && (string.length() == shape.length() || string[shape.length()] == 'T');
+}
+
 static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, JSValue expiresValue)
 {
     if (expiresValue.isUndefined() || expiresValue.isNull()) {
@@ -67,6 +90,12 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
         RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
         auto nullTerminatedSpan = expiresStr.utf8();
         double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()));
+        if (std::isnan(parsed) && isISODateShaped(expiresStr)) {
+            // JSON.stringify() writes a Date in this shape. `new Date(string)` reads a string with this call.
+            auto& vm = JSC::getVM(lexicalGlobalObject);
+            parsed = vm.dateCache.parseDate(lexicalGlobalObject, vm, expiresStr);
+            RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
+        }
         if (!std::isfinite(parsed) || std::abs(parsed) > WTF::maxECMAScriptTime) {
             throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
             return Cookie::emptyExpiresAtValue;

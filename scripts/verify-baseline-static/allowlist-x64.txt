@@ -462,6 +462,14 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 
 # ----------------------------------------------------------------------------
+# JSC JIT region protection key. Gate: g_jscConfig.jitProtectionKeyBits, set only after CPUID reports OSPKE.
+# (2 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC29letCurrentThreadReadJITRegionEv           [PKU]
+_ZN3JSC33performJITMemcpyWithProtectionKeyEPvPKvm  [PKU]
+
+
+# ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets.
 # (292 symbols)
 # ----------------------------------------------------------------------------

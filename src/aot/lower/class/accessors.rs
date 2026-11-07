@@ -1,11 +1,12 @@
 use bun_sema::atom::written_name;
+use bun_sema::bind::PrivateMembers;
 use bun_sema::hir::{MemberId, PropKey};
 use bun_sema::program::FileId;
 
 use super::is_auto_accessor;
 use crate::ir::generated::{FunctionFlags, FunctionKind, MethodKind};
 use crate::ir::{DeclaredType, FunctionId, FunctionKey, StringId};
-use crate::lower::private_names::{PrivateTarget, StoredValue};
+use crate::lower::private_names::StoredValue;
 use crate::lower::{FileLowering, FunctionLowering, function};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -99,8 +100,10 @@ impl FileLowering<'_, '_, '_, '_> {
             return Some(self.resolve_accessor_storage(member));
         }
         let name = self.bound.private_name_of_member(member)?;
-        match self.resolve_private_name(name).target() {
-            PrivateTarget::Field(stored) => Some(stored),
+        match self.bound.private_name(name).members {
+            PrivateMembers::Field(field) => {
+                Some(StoredValue::of_name(self.resolve_private_name(name), field))
+            }
             _ => None,
         }
     }

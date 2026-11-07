@@ -1,7 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 
-// `#name in value` where the value is not an object: a static method or accessor has a message of its own, every other private name has the message of the `in` operator, which describes the value. An `accessor` field is a getter and a setter.
+// `#name in value` where the value is not an object: a static method or accessor has a message of its own, every other private name has the message of the `in` operator, which describes the value. An `accessor` field counts as a field.
 function said(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).name + ": " + (e as Error).message; } }
 function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
 

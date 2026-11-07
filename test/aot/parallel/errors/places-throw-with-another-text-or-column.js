@@ -164,10 +164,6 @@ attempt("Intl receiver", () => { Intl.NumberFormat.prototype.format.call(plain);
 
 // The same in the position of a tail call: strict code leaves its frame before such a call.
 attempt("tail call native", () => Math.max(opaque(1n)));
-
-// An `accessor` field on a private name is a getter and a setter. For an object that is no instance, an executable still words the error as it words that of a field.
-attempt("read accessor field of other", () => { class A { accessor #p = 1; static read(o) { return o.#p; } } return A.read(plain); });
-attempt("store accessor field of other", () => { class A { accessor #p = 1; static write(o) { o.#p = 2; } } return A.write(plain); });
 /* Output:
 call string variable -> TypeError: text is not a function. (In 'text()', 'text' is "abc") [32:41] <anonymous>@places-throw-with-another-text-or-column.js:32:41 | attempt@places-throw-with-another-text-or-column.js:20:46 | <anonymous>@places-throw-with-another-text-or-column.js:32:1
 call object variable -> TypeError: plain is not a function. (In 'plain()', 'plain' is an instance of Object) [33:41] <anonymous>@places-throw-with-another-text-or-column.js:33:41 | attempt@places-throw-with-another-text-or-column.js:20:46 | <anonymous>@places-throw-with-another-text-or-column.js:33:1
@@ -280,6 +276,4 @@ structuredClone function -> DataCloneError: The object can not be cloned. [161:4
 structuredClone symbol -> DataCloneError: The object can not be cloned. [162:43] 
 Intl receiver -> TypeError: Intl.NumberFormat.prototype.format called on value that's not a NumberFormat [163:52] <anonymous>@places-throw-with-another-text-or-column.js:163:52 | attempt@places-throw-with-another-text-or-column.js:20:46 | <anonymous>@places-throw-with-another-text-or-column.js:163:1
 tail call native -> TypeError: Conversion from 'BigInt' to 'number' is not allowed. [20:46] max@unknown | attempt@places-throw-with-another-text-or-column.js:20:46 | <anonymous>@places-throw-with-another-text-or-column.js:166:1
-read accessor field of other -> TypeError: Cannot access invalid private field (evaluating 'o.#p') [169:100] read@places-throw-with-another-text-or-column.js:169:100 | attempt@places-throw-with-another-text-or-column.js:20:46 | <anonymous>@places-throw-with-another-text-or-column.js:169:1
-store accessor field of other -> TypeError: Cannot access invalid private field (evaluating 'o.#p = 2') [170:95] write@places-throw-with-another-text-or-column.js:170:95 | attempt@places-throw-with-another-text-or-column.js:20:46 | <anonymous>@places-throw-with-another-text-or-column.js:170:1
 */

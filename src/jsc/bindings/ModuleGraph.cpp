@@ -416,18 +416,25 @@ JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue
         JSValue value = frame->getDirect(vm, name);
         return value ? value : jsUndefined();
     };
+    auto copyFrame = [&](JSObject* frame, JSValue previous, JSValue masked) {
+        JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
+        copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));
+        copy->putDirectOffset(vm, FrameValue, getField(frame, vm.propertyNames->value));
+        copy->putDirectOffset(vm, FramePrev, previous);
+        copy->putDirectOffset(vm, FrameMasked, masked);
+        return copy;
+    };
     JSValue result = getField(frames[framesToRebuild - 1], names.prevPublicName());
     for (size_t i = framesToRebuild - 1; i--;) {
         JSObject* frame = frames[i];
         if (isModuleGraphFrame(frame))
             continue;
-        JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
-        copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));
-        copy->putDirectOffset(vm, FrameValue, getField(frame, vm.propertyNames->value));
-        copy->putDirectOffset(vm, FramePrev, result);
-        copy->putDirectOffset(vm, FrameMasked, getField(frame, names.maskedPublicName()));
-        result = copy;
+        result = copyFrame(frame, result, getField(frame, names.maskedPublicName()));
     }
+    // A lookup starts at the head and reads only the head's mask: a head that was removed hands its mask to the new head, as copyUntil() in node:async_hooks does.
+    JSValue masked = getField(frames[0], names.maskedPublicName());
+    if (result.isObject() && getField(asObject(result), names.maskedPublicName()) != masked)
+        result = copyFrame(asObject(result), getField(asObject(result), names.prevPublicName()), masked);
     return result;
 }
 

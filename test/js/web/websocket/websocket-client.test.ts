@@ -669,6 +669,69 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
     }
   });
 
+  // The WebSocket keeps the stores without the frames of graphs. disable() is noted on the newest frame, and a lookup
+  // reads only the note of the frame it starts at. When the newest frame is a graph's, the events start one frame
+  // lower: they still read what the constructor read, with the note and without it.
+  it("the events read what the constructor read when a store is disabled around a Bun.ModuleGraph", async () => {
+    using server = startServer();
+    type Graph = InstanceType<typeof Bun.ModuleGraph>;
+    async function seenIn(arrange: (storage: AsyncLocalStorage<string>, graph: Graph, construct: () => void) => void) {
+      // A storage of its own: the other tests use `als` at the same time.
+      const storage = new AsyncLocalStorage<string>();
+      const graph = new Bun.ModuleGraph();
+      try {
+        const seen: Record<string, unknown> = {};
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        arrange(storage, graph, () => {
+          seen["at the constructor"] = storage.getStore();
+          const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+          ws.onerror = e => reject((e as ErrorEvent).error);
+          ws.onopen = () => {
+            seen.open = storage.getStore();
+            ws.send("done");
+          };
+          ws.onclose = () => {
+            seen.close = storage.getStore();
+            resolve();
+          };
+        });
+        await promise;
+        return seen;
+      } finally {
+        graph.dispose();
+      }
+    }
+    const store = "entered by the host";
+    expect({
+      "disabled inside the graph, before the constructor": await seenIn((storage, graph, construct) =>
+        storage.run(store, () =>
+          graph.run(() => {
+            storage.disable();
+            construct();
+          }),
+        ),
+      ),
+      "disabled by the host, after the graph's script queued the constructor": await seenIn(
+        (storage, graph, construct) =>
+          storage.run(store, () => {
+            graph.run(() => void Promise.resolve().then(construct));
+            storage.disable();
+          }),
+      ),
+    }).toEqual({
+      "disabled inside the graph, before the constructor": {
+        "at the constructor": undefined,
+        open: undefined,
+        close: undefined,
+      },
+      "disabled by the host, after the graph's script queued the constructor": {
+        "at the constructor": store,
+        open: store,
+        close: store,
+      },
+    });
+  });
+
   it("the WebSocket keeps its async context alive across GC", async () => {
     using server = startServer();
     const seen: Record<string, unknown> = {};

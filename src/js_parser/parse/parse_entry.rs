@@ -280,7 +280,7 @@ impl<'a> Options<'a> {
                 inject_jest_globals: f.inject_jest_globals,
                 is_test_entry_point: f.is_test_entry_point,
                 vitest_globals: f.vitest_globals,
-                own_test_globals: f.own_test_globals,
+                test_globals_are_properties: f.test_globals_are_properties,
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
@@ -2167,31 +2167,26 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
-            // A file that imports a test module keeps any global that a script put on `globalThis` itself.
-            let left_alone = if p
+            let imports_test_module = p
                 .import_records
                 .items()
                 .iter()
-                .any(|record| bun_ast::import_record::is_test_module(record.path.text))
-            {
-                p.options.features.own_test_globals
-            } else {
-                0
-            };
+                .any(|record| bun_ast::import_record::is_test_module(record.path.text));
+            // `globals = "vitest"` made each name a property of `globalThis`, and the free name reads that property.
+            if imports_test_module && p.options.features.test_globals_are_properties {
+                break 'outer;
+            }
             let mut used = bun_alloc::vec_from_iter_in(
                 Jest::GLOBALS
                     .iter()
                     .copied()
                     .zip(p.jest.refs)
-                    .enumerate()
-                    .filter(|(index, (_, global))| {
-                        left_alone & (1 << index) == 0
-                            && global.is_valid()
+                    .filter(|(_, global)| {
+                        global.is_valid()
                             && p.symbols.as_slice()[global.inner_index() as usize]
                                 .use_count_estimate
                                 > 0
-                    })
-                    .map(|(_, used)| used),
+                    }),
                 p.arena,
             );
 
@@ -2207,17 +2202,48 @@ impl<'a> Parser<'a> {
             }
             p.did_apply_test_feature = true;
 
+            let is_cjs = exports_kind == js_ast::ExportsKind::Cjs;
+            let import_record_id = p.add_import_record(
+                match is_cjs {
+                    true => bun_ast::ImportKind::Require,
+                    false => bun_ast::ImportKind::Stmt,
+                },
+                bun_ast::Loc::EMPTY,
+                import_path,
+            );
+
+            // A module that imports a test module gets the function that a script put on `globalThis` under the
+            // name. A script can do that at any time, so each read looks there when it runs. The export is bound to a
+            // name of its own, for a read that finds nothing there.
+            if imports_test_module {
+                for (name, global) in used.iter_mut() {
+                    let export =
+                        p.declare_generated_symbol(js_ast::symbol::Kind::Other, name.as_bytes());
+                    let symbol = &mut p.symbols[global.inner_index() as usize];
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+                        namespace_ref: export,
+                        alias: js_ast::StoreStr::new(name.as_bytes()),
+                        import_record_index: import_record_id,
+                        is_global_with_fallback: true,
+                        was_originally_property_access: false,
+                    }));
+                    // An import that nothing uses is dropped from a TypeScript file, so the uses of the name count
+                    // for the export.
+                    let use_count = symbol.use_count_estimate;
+                    p.symbols[export.inner_index() as usize].use_count_estimate = use_count;
+                    if TS {
+                        p.ts_use_counts[export.inner_index() as usize] =
+                            p.ts_use_counts[global.inner_index() as usize];
+                    }
+                    *global = export;
+                }
+            }
+
             let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
             declared_symbols.ensure_total_capacity(used.len())?;
 
             // For CommonJS modules, use require instead of import
-            if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
-                    import_path,
-                );
-
+            if is_cjs {
                 // Create object binding pattern for destructuring
                 let mut properties = BumpVec::<B::Property>::with_capacity_in(used.len(), p.arena);
                 for &(symbol_name, r) in used.iter() {
@@ -2284,12 +2310,6 @@ impl<'a> Parser<'a> {
                     ..Default::default()
                 });
             } else {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Stmt,
-                    bun_ast::Loc::EMPTY,
-                    import_path,
-                );
-
                 // For ESM modules, use import statement
                 let mut clauses =
                     BumpVec::<js_ast::ClauseItem>::with_capacity_in(used.len(), p.arena);

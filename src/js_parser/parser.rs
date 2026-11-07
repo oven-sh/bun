@@ -196,8 +196,9 @@ pub mod Runtime {
         pub is_test_entry_point: bool,
         /// Inject the globals from "vitest" instead of "bun:test".
         pub vitest_globals: bool,
-        /// Bitset indexed like `Jest::GLOBALS`, set for the ones a script put on `globalThis` itself.
-        pub own_test_globals: u32,
+        /// `globals = "vitest"`: the test globals are properties of `globalThis`, so a module that imports a test module
+        /// reads them from there.
+        pub test_globals_are_properties: bool,
 
         pub no_macros: bool,
 
@@ -301,7 +302,7 @@ pub mod Runtime {
                 inject_jest_globals: false,
                 is_test_entry_point: false,
                 vitest_globals: false,
-                own_test_globals: 0,
+                test_globals_are_properties: false,
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
@@ -398,7 +399,7 @@ pub mod Runtime {
                 self.lower_using,
                 self.repl_mode,
                 self.ascii_only,
-                // `hash_test_features_for_runtime_transpiler` hashes `inject_jest_globals` and `vitest_globals`.
+                // `hash_test_features_for_runtime_transpiler` hashes `inject_jest_globals`, `vitest_globals` and `test_globals_are_properties`.
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -433,8 +434,8 @@ pub mod Runtime {
             hasher.update(&[
                 u8::from(self.inject_jest_globals),
                 u8::from(self.vitest_globals),
+                u8::from(self.test_globals_are_properties),
             ]);
-            hasher.update(&self.own_test_globals.to_le_bytes());
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -1617,7 +1618,7 @@ pub struct Jest {
 }
 
 impl Jest {
-    /// The order sets both the emitted import clause order and the `own_test_globals` bit index.
+    /// The order sets the emitted import clause order.
     pub const GLOBALS: &'static [&'static str] = &[
         "test",
         "it",
@@ -1642,15 +1643,17 @@ impl Jest {
         "aroundAll",
     ];
 
+    /// Returns whether `name` is a test global.
     #[cold]
     #[optimize(size)]
-    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
-        if let Some(global) = Self::GLOBALS
+    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) -> bool {
+        let global = Self::GLOBALS
             .iter()
-            .position(|global| global.as_bytes() == name)
-        {
+            .position(|global| global.as_bytes() == name);
+        if let Some(global) = global {
             self.refs[global] = symbol;
         }
+        global.is_some()
     }
 
     pub fn is_of_bun_only(global: &str) -> bool {

@@ -1379,8 +1379,6 @@ pub struct BundleOptions<'a> {
     pub vitest_globals: bool,
     /// Same effect as `vitest_globals`, for everything loaded by a test file that imports "vitest".
     pub test_file_imports_vitest: bool,
-    /// See `RuntimeFeatures::own_test_globals`.
-    pub own_test_globals: u32,
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
@@ -1629,7 +1627,6 @@ impl<'a> BundleOptions<'a> {
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
             vitest_globals: self.vitest_globals,
             test_file_imports_vitest: self.test_file_imports_vitest,
-            own_test_globals: self.own_test_globals,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
             conditions: ESMConditions {
@@ -1891,7 +1888,6 @@ impl<'a> BundleOptions<'a> {
             rewrite_jest_for_tests: false,
             vitest_globals: false,
             test_file_imports_vitest: false,
-            own_test_globals: 0,
             macro_remap: MacroRemap::default(),
             no_macros: false,
             conditions: ESMConditions {

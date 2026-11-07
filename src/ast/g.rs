@@ -29,6 +29,9 @@ pub struct NamespaceAlias {
     pub alias: StoreStr,
 
     pub was_originally_property_access: bool,
+    /// `bun test`: the symbol is a free test global. It prints as `(globalThis.alias ?? namespace_ref)`, where
+    /// `namespace_ref` binds the test module's export, so a script's own global wins whenever the reference runs.
+    pub is_global_with_fallback: bool,
 
     pub import_record_index: u32,
 }
@@ -39,6 +42,7 @@ impl Default for NamespaceAlias {
             namespace_ref: Ref::default(),
             alias: StoreStr::EMPTY,
             was_originally_property_access: false,
+            is_global_with_fallback: false,
             import_record_index: u32::MAX,
         }
     }

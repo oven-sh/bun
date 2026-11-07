@@ -2169,6 +2169,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `bun test` makes a free test global an import item, so that a read of it can print as a read of `globalThis`.
+    /// A write, a `delete` and a name inside `with` stay as the file has them.
+    #[inline]
+    fn keeps_free_test_global_as_written(
+        &self,
+        ident: E::Identifier,
+        opts: IdentifierOpts,
+    ) -> bool {
+        (opts.assign_target() != js_ast::AssignTarget::None
+            || opts.is_delete_target()
+            || ident.must_keep_due_to_with_stmt())
+            && self.symbols[ident.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
+    }
+
     /// This function is very very hot.
     pub(crate) fn handle_identifier(
         &mut self,
@@ -2269,7 +2283,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Substitute an EImportIdentifier now if this is an import item
-        if self.is_import_item.contains_key(&ref_) {
+        if self.is_import_item.contains_key(&ref_)
+            && !self.keeps_free_test_global_as_written(ident, opts)
+        {
             self.note_import_use(ref_, opts);
             return self.new_expr(
                 E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
@@ -2530,6 +2546,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         namespace_ref,
                         alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
+                        is_global_with_fallback: false,
                         was_originally_property_access: false,
                     }));
                 }
@@ -4328,6 +4345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             namespace_ref: stmt.namespace_ref,
                             alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
+                            is_global_with_fallback: false,
                             was_originally_property_access: false,
                         }));
                     }
@@ -4414,6 +4432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         namespace_ref: stmt.namespace_ref,
                         alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,
+                        is_global_with_fallback: false,
                         was_originally_property_access: false,
                     }));
                 }

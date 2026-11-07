@@ -1,5 +1,5 @@
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 test("Jest auto imports", () => {
@@ -230,6 +230,289 @@ describe.concurrent("a file that imports from a test module", () => {
   );
 });
 
+describe.concurrent("a name that a script puts on globalThis after the file is loaded", () => {
+  const rowsOf = stdout =>
+    stdout
+      .split("\n")
+      .filter(line => line.startsWith("row: "))
+      .sort();
+
+  test.each([
+    ["beforeAll", []],
+    ["beforeAll", ["--isolate"]],
+    ["beforeAll", ["--isolate=modules"]],
+    ["beforeAll", ["--parallel=2"]],
+    ["beforeAll", ["--globals=vitest"]],
+    ["beforeEach", []],
+    ["beforeEach", ["--isolate"]],
+  ])("in a %s() of a preload script: %j", async (hook, flags) => {
+    const file = name => `
+      import { test } from "bun:test";
+      test("test", () => {
+        console.log("row: ${name}", expect === own.expect, describe === own.describe, it === own.it);
+      });
+    `;
+    using dir = tempDir("jest-globals-late", {
+      "preload.ts": `
+        import { ${hook} } from "bun:test";
+        globalThis.own = { expect: () => {}, describe: () => {}, it: () => {} };
+        ${hook}(() => void Object.assign(globalThis, own));
+      `,
+      "a.test.ts": file("a"),
+      "b.test.ts": file("b"),
+      "c.test.ts": file("c"),
+    });
+    // With --parallel the rows come on stderr.
+    const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--preload=./preload.ts", ...flags]);
+    expect({ rows: rowsOf(stdout + stderr), exitCode }).toEqual({
+      rows: ["row: a true true true", "row: b true true true", "row: c true true true"],
+      exitCode: 0,
+    });
+  });
+
+  test("in a preload script that another one reads", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "first.ts": `globalThis.own = globalThis.expect = () => {};`,
+      "second.ts": `
+        import { beforeAll } from "bun:test";
+        console.log("row: as it loads", expect === own);
+        beforeAll(() => console.log("row: in its hook", expect === own));
+      `,
+      "a.test.ts": `test("test", () => {});`,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--preload=./first.ts", "--preload=./second.ts"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: ["row: as it loads true", "row: in its hook true"],
+      exitCode: 0,
+    });
+  });
+
+  // Each file gets a global of its own, so none sees what another one set.
+  test("in the test file, in a module that it loads and in a hook of its own", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "body.test.ts": `
+        import { test } from "bun:test";
+        test("test", () => {
+          const own = (globalThis.expect = () => {});
+          console.log("row: body", expect === own);
+        });
+      `,
+      "top.test.ts": `
+        import { test } from "bun:test";
+        const own = (globalThis.expect = () => {});
+        test("test", () => console.log("row: top", expect === own));
+      `,
+      "sets.ts": `globalThis.own = globalThis.expect = () => {};`,
+      "module.test.ts": `
+        import { test } from "bun:test";
+        import "./sets";
+        test("test", () => console.log("row: module", expect === own));
+      `,
+      "hook.test.ts": `
+        import { beforeAll, test } from "bun:test";
+        beforeAll(() => void (globalThis.own = globalThis.expect = () => {}));
+        test("test", () => console.log("row: hook", expect === own));
+      `,
+      "reads.ts": `
+        import { mock } from "bun:test";
+        export const read = () => expect;
+      `,
+      "helper.test.ts": `
+        import { test } from "bun:test";
+        import { read } from "./reads";
+        test("test", () => {
+          const before = typeof read();
+          const own = (globalThis.expect = () => {});
+          console.log("row: helper", before, read() === own);
+        });
+      `,
+      "reads-later.ts": `
+        import { mock } from "bun:test";
+        export const value = expect;
+      `,
+      "reads-later.cjs": `
+        const { mock } = require("bun:test");
+        module.exports = expect;
+      `,
+      "later.test.ts": `
+        import { test } from "bun:test";
+        test("test", async () => {
+          const own = (globalThis.expect = () => {});
+          console.log("row: later", (await import("./reads-later")).value === own, require("./reads-later.cjs") === own);
+        });
+      `,
+      "commonjs.test.cjs": `
+        const { test } = require("@jest/globals");
+        test("test", () => {
+          const own = (globalThis.expect = () => {});
+          console.log("row: commonjs", expect === own);
+        });
+      `,
+      "vitest.test.ts": `
+        import { test } from "vitest";
+        test("test", () => {
+          const own = (globalThis.expect = () => {});
+          console.log("row: vitest", expect === own);
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--isolate"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: [
+        "row: body true",
+        "row: commonjs true",
+        "row: helper function true",
+        "row: hook true",
+        "row: later true true",
+        "row: module true",
+        "row: top true",
+        "row: vitest true",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // With --isolate the second file gets the module as it was transpiled for the first.
+  test("for one of two files that load the same module: --isolate", async () => {
+    const file = name => `
+      import { test } from "bun:test";
+      import { read } from "./reads";
+      test("test", () => console.log("row: ${name}", read() === globalThis.own ? "own" : typeof read()));
+    `;
+    using dir = tempDir("jest-globals-late", {
+      "preload.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        if (!existsSync("./is-set")) {
+          writeFileSync("./is-set", "");
+          globalThis.own = globalThis.expect = () => {};
+        }
+      `,
+      "reads.ts": `
+        import { mock } from "bun:test";
+        export const read = () => expect;
+      `,
+      "a.test.ts": file("a"),
+      "b.test.ts": file("b"),
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--isolate", "--preload=./preload.ts"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({ rows: ["row: a own", "row: b function"], exitCode: 0 });
+  });
+
+  test("in a hook that the React Compiler compiles", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "19.0.0",
+        exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+      }),
+      "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
+      "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "useRunner.ts": `
+        import { mock } from "bun:test";
+        import { useState } from "react";
+        export function useRunner(own: unknown) {
+          const [factor] = useState(2);
+          const seen = { isOwn: expect === own, describe: typeof describe, factor };
+          return seen;
+        }
+      `,
+      "hook.test.ts": `
+        import { test } from "bun:test";
+        import { useRunner } from "./useRunner";
+        test("test", () => {
+          const before = useRunner(null);
+          const own = (globalThis.expect = () => {});
+          const isCompiled = /\\$\\[\\d+\\]/.test(String(useRunner));
+          console.log("row: hook", isCompiled, JSON.stringify([before, useRunner(own)]));
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--react-compiler"]);
+    const seen = { describe: "function", factor: 2 };
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: [
+        `row: hook true ${JSON.stringify([
+          { isOwn: false, ...seen },
+          { isOwn: true, ...seen },
+        ])}`,
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("undefined and null count as not set, and a store goes to globalThis", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "presence.test.ts": `
+        import { test } from "bun:test";
+        import * as runner from "bun:test";
+        test("test", () => {
+          const own = () => {};
+          const second = () => {};
+          const which = () =>
+            expect === own ? "own" : expect === second ? "second" : expect === runner.expect ? "runner" : String(expect);
+          const rows = [which()];
+          globalThis.expect = own;
+          rows.push(which());
+          expect = second;
+          rows.push(which(), globalThis.expect === second);
+          globalThis.expect = undefined;
+          rows.push(which());
+          globalThis.expect = null;
+          rows.push(which());
+          globalThis.expect = own;
+          delete globalThis.expect;
+          rows.push(which(), typeof expect, { expect }.expect === runner.expect);
+          console.log("row: presence", rows.join(" "));
+        });
+      `,
+      "sloppy.test.cjs": `
+        const { test } = require("bun:test");
+        test("test", () => {
+          const own = () => {};
+          expect = own;
+          console.log("row: sloppy", expect === own, globalThis.expect === own);
+          delete globalThis.expect;
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: ["row: presence runner own second true runner runner runner function true", "row: sloppy true true"],
+      exitCode: 0,
+    });
+  });
+
+  test("with --globals=vitest the name is a property of globalThis and nothing else", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "globals.test.ts": `
+        import { test } from "vitest";
+        import * as runner from "vitest";
+        test("test", () => {
+          const own = () => {};
+          const rows = [expect === runner.expect];
+          globalThis.expect = own;
+          rows.push(expect === own);
+          globalThis.expect = undefined;
+          rows.push(String(expect));
+          delete globalThis.expect;
+          rows.push(typeof expect);
+          try {
+            rows.push(String(expect));
+          } catch (error) {
+            rows.push(error.name);
+          }
+          console.log("row: globals", rows.join(" "));
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--globals=vitest"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: ["row: globals true true undefined undefined ReferenceError"],
+      exitCode: 0,
+    });
+  });
+});
+
 test.concurrent("jest still works as a global when a decorated member's type mentions it", async () => {
   using dir = tempDir("jest-globals-decorator-metadata", {
     "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } }),
@@ -319,7 +602,7 @@ describe.concurrent("the transpiler cache", () => {
     ]);
   });
 
-  test("uses separate entries with and without a preload that sets globalThis.expect", async () => {
+  test("keeps the entry with and without a preload that sets globalThis.expect, but not with --globals=vitest", async () => {
     using dir = tempDir("jest-globals-cache", {
       "preload.ts": `globalThis.expect = () => "own";`,
       "cached.test.ts": `
@@ -328,16 +611,32 @@ describe.concurrent("the transpiler cache", () => {
         ${padding}
       `,
     });
+    const cache = join(String(dir), "cache");
     const results = [];
-    for (const flags of [[], ["--preload=./preload.ts"], [], ["--preload=./preload.ts"]]) {
+    let before = "";
+    for (const flags of [
+      [],
+      ["--preload=./preload.ts"],
+      [],
+      ["--preload=./preload.ts"],
+      ["--globals=vitest"],
+      ["--globals=vitest", "--preload=./preload.ts"],
+    ]) {
       const { stdout, exitCode } = await run(String(dir), ["test", ...flags, "cached.test.ts"], cacheEnv(String(dir)));
-      results.push({ stdout: stdout.trim().split("\n").at(-1), exitCode });
+      // A file is written again when its entry is for other features.
+      const after = readdirSync(cache)
+        .map(name => `${name} ${Bun.hash(readFileSync(join(cache, name)))}`)
+        .join();
+      results.push({ stdout: stdout.trim().split("\n").at(-1), isWritten: after !== before, exitCode });
+      before = after;
     }
     expect(results).toEqual([
-      { stdout: "object", exitCode: 0 },
-      { stdout: "string", exitCode: 0 },
-      { stdout: "object", exitCode: 0 },
-      { stdout: "string", exitCode: 0 },
+      { stdout: "object", isWritten: true, exitCode: 0 },
+      { stdout: "string", isWritten: false, exitCode: 0 },
+      { stdout: "object", isWritten: false, exitCode: 0 },
+      { stdout: "string", isWritten: false, exitCode: 0 },
+      { stdout: "object", isWritten: true, exitCode: 0 },
+      { stdout: "string", isWritten: false, exitCode: 0 },
     ]);
   });
 });

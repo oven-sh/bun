@@ -1502,7 +1502,7 @@ impl<'a> Transpiler<'a> {
                 }
                 opts.features.vitest_globals =
                     self.options.vitest_globals || self.options.test_file_imports_vitest;
-                opts.features.own_test_globals = self.options.own_test_globals;
+                opts.features.test_globals_are_properties = self.options.vitest_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;

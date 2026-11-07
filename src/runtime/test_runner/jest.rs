@@ -330,18 +330,6 @@ pub(crate) mod Jest {
         unsafe { RUNNER.read() }
     }
 
-    /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.
-    pub(crate) fn own_globals(global: &JSGlobalObject) -> JsResult<u32> {
-        let mut found = 0;
-        for (index, &name) in bun_js_parser::Jest::GLOBALS.iter().enumerate() {
-            let name = bun_core::String::static_(name).to_js(global)?;
-            if global.to_js_value().has_own_property_value(global, name)? {
-                found |= 1 << index;
-            }
-        }
-        Ok(found)
-    }
-
     /// `globals = "vitest"`: as with Vitest's `globals: true`, the names are also properties of `globalThis`. Packages look for them there.
     #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn define_vitest_globals(global: &JSGlobalObject) -> JsResult<()> {

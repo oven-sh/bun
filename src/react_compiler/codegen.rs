@@ -1910,6 +1910,10 @@ fn codegen_base_instruction_value(
                 }
             }
             match binding.ref_() {
+                Some(r) if cx.cg.host.reads_free_name_as_import(r) => {
+                    cx.cg.host.record_usage(r);
+                    Ok(Expr::init(E::ImportIdentifier::new(r, true), loc))
+                }
                 Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
                 None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
             }

@@ -45,6 +45,10 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn import_records(&self) -> &[js_ast::ImportRecord<'_>] {
         self.p.import_records.items()
     }
+    fn reads_free_name_as_import(&self, ref_: js_ast::Ref) -> bool {
+        self.p.is_import_item.contains_key(&ref_)
+            && self.p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
+    }
     fn is_module_level(&self, ref_: js_ast::Ref) -> bool {
         let Some(symbol) = self.p.symbols.get(ref_.inner_index() as usize) else {
             return false;

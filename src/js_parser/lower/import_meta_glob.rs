@@ -1213,6 +1213,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         namespace_ref,
                         alias: js_ast::StoreStr::new(name),
                         import_record_index,
+                        is_global_with_fallback: false,
                         was_originally_property_access: false,
                     }));
             }

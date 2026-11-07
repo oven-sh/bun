@@ -9,24 +9,37 @@ import path from "node:path";
 // every armed timer on every eden collection. heapStats() walks the block list
 // to keep protectedObjectTypeCounts/protectedObjectCount user-visible.
 
-describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
+// Not concurrent on a debug build. The children take 0.3 to 16 s each there, and side by side on a machine with few
+// cores each takes several times longer: "heapStats still reports protected Timeout counts" takes 1 s alone and up
+// to its 5 s timeout beside the other nine.
+const concurrentUnlessDebug = isDebug ? describe : describe.concurrent;
+
+concurrentUnlessDebug("Strong handles are backed by StrongRootBlock", () => {
   // A SQL connection drops its cached statements, each with a Strong on its row Structure, from its JSCell
   // destructor, i.e. mid-sweep; emptying and unlinking a block from there must not touch sibling cells
   // (debug builds assert).
-  test("blocks emptied from sweep-time finalizers are released", async () => {
-    const fixture = path.join(import.meta.dir, "../../sql/postgres-statement-structure-gc.fixture.ts");
-    await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { count, protectedWhileHeld, protectedAfterClose, protectedAfter } = JSON.parse(
-      stdout.trim().split("\n").at(-1)!,
-    );
-    expect(protectedWhileHeld).toBeGreaterThanOrEqual(count);
-    // close() released none, so it is the collection that does.
-    expect(protectedAfterClose).toBeGreaterThanOrEqual(count);
-    expect(protectedAfter).toBeLessThan(10);
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "blocks emptied from sweep-time finalizers are released",
+    async () => {
+      const fixture = path.join(import.meta.dir, "../../sql/postgres-statement-structure-gc.fixture.ts");
+      await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { count, protectedWhileHeld, protectedAfterClose, protectedAfter } = JSON.parse(
+        stdout.trim().split("\n").at(-1)!,
+      );
+      expect(protectedWhileHeld).toBeGreaterThanOrEqual(count);
+      // close() released none, so it is the collection that does.
+      expect(protectedAfterClose).toBeGreaterThanOrEqual(count);
+      expect(protectedAfter).toBeLessThan(10);
+      expect(exitCode).toBe(0);
+    },
+    // Only a debug build needs more than the default: the fixture takes 8 to 16 s there, and up to 21 s with the
+    // exception check validation that the test runner turns on. It cannot run fewer statements: a block that is
+    // not the head of the list goes empty only when the statements fill two new blocks. No CI lane runs a debug
+    // build, so every lane keeps the default.
+    isDebug ? 60_000 : undefined,
+  );
 
   test("heapStats still reports protected Timeout counts", async () => {
     const src = `
@@ -91,7 +104,7 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
   }
 });
 
-describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {
+concurrentUnlessDebug("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
     const src = `
       const N = 15000;
@@ -123,8 +136,13 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
     expect(exitCode).toBe(0);
   }, 15_000);
 
-  test("AbortSignal.any([timeout, controller.signal]).abort releases the timeout", async () => {
-    const src = `
+  // Skipped on a debug build: these 50,000 iterations take 47 to 49 s there. A count that fits the timeout, N = 1200,
+  // leaves RSS too little signal: 6 to 11 MiB when the timeouts are released, 12 to 15 MiB when they are not. The
+  // next test counts the timers on every build.
+  test.skipIf(isDebug)(
+    "AbortSignal.any([timeout, controller.signal]).abort releases the timeout",
+    async () => {
+      const src = `
       const N = 10000;
       async function round() {
         for (let i = 0; i < N; i++) {
@@ -151,9 +169,42 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       console.log(JSON.stringify({ deltaMiB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;
-    // The wrappers are collected either way; a timeout that is not released retains 20+ MiB of native memory here.
-    await expectRssDeltaBelow(["-e", src], { release: 10, debug: 14 });
-  }, 15_000);
+      // The wrappers are collected either way; a timeout that is not released retains 20+ MiB of native memory here.
+      await expectRssDeltaBelow(["-e", src], { release: 10, debug: 14 });
+    },
+    15_000,
+  );
+
+  // The same loop with an exact count in place of RSS. A fake timer can be counted, and AbortSignal.timeout() arms one.
+  test("AbortSignal.any([timeout, controller.signal]).abort leaves no timer armed", async () => {
+    const src = `
+      import { heapStats } from "bun:jsc";
+      import { jest } from "bun:test";
+      jest.useFakeTimers();
+      // This one stays reachable, so it stays armed. A count of 0 means that the count does not see these timers.
+      const held = AbortSignal.timeout(600000);
+      (function () {
+        for (let i = 0; i < 500; i++) {
+          const c = new AbortController();
+          const s = AbortSignal.any([AbortSignal.timeout(600000), c.signal]);
+          s.addEventListener("abort", () => {});
+          c.abort();
+        }
+      })();
+      Bun.gc(true);
+      console.log(JSON.stringify({ armed: jest.getTimerCount(), live: heapStats().objectTypeCounts.AbortSignal || 0 }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { armed, live } = JSON.parse(stdout);
+    // Only the held one. All 501 stay armed when the timeouts are not released.
+    expect(armed).toBe(1);
+    // The wrappers are collected either way. Not an exact count: the constructor and the prototype are in it, and a
+    // JIT plan that is still in flight can hold one aborted any() signal.
+    expect(live).toBeLessThan(50);
+    expect(exitCode).toBe(0);
+  });
 
   for (const { name, body } of [
     {

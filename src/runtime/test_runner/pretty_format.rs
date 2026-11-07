@@ -1382,8 +1382,7 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Error => {
-                    // The error of a file that Bun's parser refuses prints as a `BuildMessage`
-                    // does below: the text of its diagnostics.
+                    // The module loader's `SyntaxError` prints as a `BuildMessage` does below: the text of its diagnostics.
                     if let Some(diagnostics) =
                         crate::api::BuildMessage::load_diagnostics(self.global_this, value)
                     {

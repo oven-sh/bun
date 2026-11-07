@@ -37,9 +37,7 @@ function SideEffectFreeRegExpPrototypeSymbolSplit(regexp: RegExp, str: string, l
   return RegExpPrototypeSymbolSplit(regexp, str, limit);
 }
 
-// The error of a file that Bun's parser refuses names the file in the one frame of its `stack`, and the REPL removes
-// the frames of a SyntaxError. Node's decorateErrorStack() puts the location above the message: the file and line,
-// the source line, a caret.
+// Node's decorateErrorStack() puts the file, the source line and a caret above the message of a parse error.
 function parseErrorLocation(err: object): string {
   try {
     if ((err as { name?: unknown }).name !== "SyntaxError") return "";

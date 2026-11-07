@@ -14,8 +14,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// What the module loader keeps on the SyntaxError of a file that Bun's parser refuses: the BuildMessage of the one
-// diagnostic, or an InternalFieldTuple of the first error's BuildMessage and an array of every diagnostic in log order.
+// The SyntaxError keeps one BuildMessage, or an InternalFieldTuple of the first error's BuildMessage and an array of all.
 static JSValue loadDiagnostics(VM& vm, JSValue value)
 {
     auto* error = dynamicDowncast<ErrorInstance>(value);
@@ -37,8 +36,7 @@ JSC_DEFINE_CUSTOM_GETTER(loaderSyntaxErrorDiagnosticGetter, (JSGlobalObject * gl
     RELEASE_AND_RETURN(scope, JSValue::encode(diagnostics.get(globalObject, propertyName)));
 }
 
-// `first` is the BuildMessage of the diagnostic that the error reports. `all` is empty, or an array of the wrappers of
-// every diagnostic of the log.
+// `first` is the BuildMessage that the error reports. `all` is empty, or an array of the wrappers of every diagnostic.
 extern "C" EncodedJSValue Bun__createLoaderSyntaxError(JSGlobalObject* globalObject, const unsigned char* messagePtr, size_t messageLength, const unsigned char* sourceURLPtr, size_t sourceURLLength, uint32_t line, uint32_t column, const unsigned char* stackPtr, size_t stackLength, EncodedJSValue encodedFirst, EncodedJSValue encodedAll)
 {
     VM& vm = getVM(globalObject);
@@ -67,8 +65,7 @@ extern "C" EncodedJSValue Bun__createLoaderSyntaxError(JSGlobalObject* globalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(error));
 }
 
-// The wrapper of diagnostic `index` of a SyntaxError that Bun__createLoaderSyntaxError made. Empty past the last one, and
-// for any other value.
+// The wrapper of diagnostic `index` of the module loader's SyntaxError. Empty past the last one and for any other value.
 extern "C" EncodedJSValue Bun__loaderSyntaxErrorDiagnostic(JSGlobalObject* globalObject, EncodedJSValue value, uint32_t index)
 {
     JSValue diagnostics = loadDiagnostics(getVM(globalObject), JSValue::decode(value));

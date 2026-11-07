@@ -3947,13 +3947,6 @@ impl VirtualMachine {
 }
 
 /// The value a failed fetch rejects with, made from the transpile `log`.
-///
-/// A log whose first error is [`BuildMessage::is_syntax_error`] gives one
-/// `SyntaxError`, which keeps the wrappers of the diagnostics for the
-/// printers. Any other log gives a `BuildMessage`, a `ResolveMessage`, or an
-/// `AggregateError` of them.
-///
-/// [`BuildMessage::is_syntax_error`]: crate::BuildMessage::is_syntax_error
 #[cold]
 #[inline(never)]
 pub fn process_fetch_log(
@@ -6861,8 +6854,7 @@ impl VirtualMachine {
             }
         }
 
-        // The module loader's `SyntaxError` for a file that Bun's parser refuses is reported as
-        // a `BuildMessage` is: its diagnostics, then the frames of the throw.
+        // The module loader's `SyntaxError` is reported as a `BuildMessage` is: its diagnostics, then the throw's frames.
         if let Some(diagnostics) = crate::BuildMessage::load_diagnostics(self.global(), value) {
             let gap = self.had_errors;
             self.print_load_diagnostics(
@@ -6903,10 +6895,7 @@ impl VirtualMachine {
         false
     }
 
-    /// Writes the diagnostics of the module loader's `SyntaxError`, a blank line between two.
-    /// `gap` asks for one before the first. Unlike a `BuildMessage`, the error has no `logged`
-    /// latch: the registry can hand the same object to a later importer, whose report is not a
-    /// repeat.
+    /// Prints on every report, with no `logged` latch: a later importer can get the same error object.
     fn print_load_diagnostics(
         &mut self,
         diagnostics: &crate::LoadDiagnostics<'_>,

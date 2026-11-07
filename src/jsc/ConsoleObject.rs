@@ -3864,8 +3864,7 @@ pub mod formatter {
                 return Ok(());
             }
 
-            // The error of a file that Bun's parser refuses prints as a `BuildMessage` does: the
-            // text of its diagnostics.
+            // The module loader's `SyntaxError` prints as a `BuildMessage` does: the text of its diagnostics.
             if let Some(diagnostics) =
                 crate::BuildMessage::load_diagnostics(self.global_this, value)
             {

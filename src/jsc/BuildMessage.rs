@@ -47,9 +47,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// The diagnostics that the module loader keeps on the `SyntaxError` it makes for a file that
-/// Bun's parser refuses. The error owns them: a diagnostic is borrowed from this holder, which
-/// keeps the error visible to the collector.
+/// The diagnostics of the module loader's `SyntaxError`, borrowed from this holder, which keeps the error alive.
 pub struct LoadDiagnostics<'a> {
     global: &'a JSGlobalObject,
     error: JSValue,
@@ -61,8 +59,7 @@ impl LoadDiagnostics<'_> {
         if cell.is_empty() {
             return None;
         }
-        // The wrappers stay reachable from the error: it holds them under a private name that
-        // script can neither read nor replace.
+        // The error holds the wrappers under a private name, so they live as long as the error does.
         match cell.as_class_ref::<BuildMessage>() {
             Some(build) => Some(&build.msg),
             None => cell
@@ -100,9 +97,7 @@ impl BuildMessage {
         Some(diagnostics)
     }
 
-    /// Whether the module loader reports a log whose first error is `msg` as one `SyntaxError`:
-    /// the parser refused the source text at a line of it. A file that is nested too deeply for
-    /// the parser's stack is not refused for its syntax.
+    /// Whether `msg`, the first error of a log, is a syntax error: it has a line, and it is not a stack overflow.
     pub(crate) fn is_syntax_error(msg: &bun_ast::Msg) -> bool {
         !matches!(msg.metadata, bun_ast::Metadata::Resolve(_))
             && msg
@@ -113,12 +108,7 @@ impl BuildMessage {
             && &*msg.data.text != b"Maximum call stack size exceeded"
     }
 
-    /// The `SyntaxError` that the module loader rejects with for a file whose first error is this
-    /// diagnostic, which [`Self::is_syntax_error`] accepts. `this_value` is the wrapper of `self`.
-    /// `all` is `JSValue::ZERO`, or an array of the wrappers of the diagnostics that the error
-    /// keeps.
-    ///
-    /// The position is the parser's, in the original source: own 1-based `line` and `column`.
+    /// The loader's `SyntaxError` for this diagnostic. `all` is `ZERO`, or an array of the wrappers that it keeps.
     pub(crate) fn to_syntax_error(
         &self,
         global: &JSGlobalObject,
@@ -136,8 +126,7 @@ impl BuildMessage {
         let line = location.line.max(0) as u32;
         let column = location.column.max(0) as u32;
 
-        // The one frame has the form that a parse error of JavaScriptCore gets from `require()`.
-        // The error printer reads that form back from a `stack` that was copied to another error.
+        // The frame has the form of a JavaScriptCore parse error from `require()`, which the error printer reads back.
         let mut stack = Vec::with_capacity(text.len() + file.len() + 56);
         stack.extend_from_slice(b"SyntaxError: ");
         stack.extend_from_slice(text);

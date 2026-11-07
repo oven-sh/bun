@@ -2405,8 +2405,7 @@ impl TestFailure {
         }
     }
 
-    /// A module that can't be found throws a `ResolveMessage`, one that can't be read a `BuildMessage`, and one that
-    /// can't be parsed a `SyntaxError` that holds its diagnostics. They are printed as log messages, with no `ZigException`.
+    /// A module that can't be found, read or parsed throws a value that is printed as log messages, with no `ZigException`.
     #[optimize(size)]
     pub(crate) fn record_log_message(
         slot: &mut Option<TestFailure>,

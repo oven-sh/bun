@@ -477,7 +477,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 // no bit yet is not stale. The ">512 files" fixtures in
                 // test/bake/dev/{css,hot}.test.ts are sized to this step.
                 const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
-                self.stale_files.resize((idx + 1).div_ceil(STEP) * STEP, false)?;
+                self.stale_files
+                    .resize((idx + 1).div_ceil(STEP) * STEP, false)?;
             }
         }
         match stale {

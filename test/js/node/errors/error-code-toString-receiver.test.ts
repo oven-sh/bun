@@ -236,22 +236,50 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
   });
 
   // Node itself says which rows ErrorCode.ts may make with plain(): a producer of each runs there too.
+  // Most are errors from native code, which is a plain error that gets a `code`: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L143-L167
   describe("the rows made with plain()", () => {
     const fixture = join(import.meta.dir, "error-code-toString-fixture.cjs");
-    // --unhandled-rejections=throw is for ERR_UNHANDLED_REJECTION.
-    const flags = ["--unhandled-rejections=throw"];
-    const expected = [["ERR_UNHANDLED_REJECTION", "UnhandledPromiseRejection"]].map(([code, name]) =>
-      JSON.stringify({ code, name, string: "name: message", inheritsToString: true }),
-    );
+    // --no-addons is for ERR_DLOPEN_DISABLED, --unhandled-rejections=throw for ERR_UNHANDLED_REJECTION.
+    const flags = ["--no-addons", "--unhandled-rejections=throw"];
+    const expected = [
+      ["ERR_CLOSED_MESSAGE_PORT", "Error"],
+      ["ERR_CONSTRUCT_CALL_INVALID", "TypeError"],
+      ["ERR_CRYPTO_INVALID_AUTH_TAG", "TypeError"],
+      ["ERR_CRYPTO_INVALID_CURVE", "TypeError"],
+      ["ERR_CRYPTO_INVALID_DIGEST", "TypeError"],
+      ["ERR_CRYPTO_INVALID_IV", "TypeError"],
+      ["ERR_CRYPTO_INVALID_JWK", "TypeError"],
+      ["ERR_CRYPTO_INVALID_KEYLEN", "RangeError"],
+      ["ERR_CRYPTO_INVALID_KEYPAIR", "RangeError"],
+      ["ERR_CRYPTO_INVALID_KEYTYPE", "RangeError"],
+      ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", "RangeError"],
+      ["ERR_CRYPTO_JWK_UNSUPPORTED_CURVE", "Error"],
+      ["ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE", "Error"],
+      ["ERR_CRYPTO_UNKNOWN_CIPHER", "Error"],
+      ["ERR_CRYPTO_UNKNOWN_DH_GROUP", "Error"],
+      ["ERR_CRYPTO_UNSUPPORTED_OPERATION", "Error"],
+      ["ERR_DLOPEN_DISABLED", "Error"],
+      ["ERR_INVALID_OBJECT_DEFINE_PROPERTY", "TypeError"],
+      ["ERR_LOAD_SQLITE_EXTENSION", "Error"],
+      ["ERR_MISSING_PASSPHRASE", "TypeError"],
+      ["ERR_OSSL_EVP_INVALID_DIGEST", "Error"],
+      ["ERR_SCRIPT_EXECUTION_TIMEOUT", "Error"],
+      ["ERR_SQLITE_ERROR", "Error"],
+      ["ERR_SSL_NO_CIPHER_MATCH", "Error"],
+      ["ERR_TLS_INVALID_PROTOCOL_METHOD", "TypeError"],
+      ["ERR_UNHANDLED_REJECTION", "UnhandledPromiseRejection"],
+      ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
+      ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
+    ].map(([code, name]) => JSON.stringify({ code, name, string: "name: message", inheritsToString: true }));
 
-    // The producers were held against v26.3.0, v26.12.1 and v26.13.0.
-    for (const [name, runtime] of [
-      ["bun", bunExe()],
-      ["node", nodeExeAtLeast("26.3.0")],
+    // The producers were held against v26.3.0, v26.12.1 and v26.13.0. An older Node refuses some of their inputs in another way.
+    for (const [name, runtime, runtimeFlags] of [
+      ["bun", bunExe(), flags],
+      ["node", nodeExeAtLeast("26.3.0"), [...flags, "--experimental-vm-modules", "--no-warnings"]],
     ] as const) {
       test.skipIf(!runtime)(`inherit Error.prototype.toString (${name})`, async () => {
         await using proc = Bun.spawn({
-          cmd: [runtime!, ...flags, fixture],
+          cmd: [runtime!, ...runtimeFlags, fixture],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",

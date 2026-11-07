@@ -38,8 +38,8 @@ class ServerRouteList final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     struct IdentifierRange {
-        uint16_t start;
-        uint16_t count;
+        uint32_t start;
+        uint32_t count;
     };
 
     static ServerRouteList* create(
@@ -94,7 +94,7 @@ private:
         : Base(vm, structure)
         , m_routes(callbacks.size())
         , m_paramsObjectStructures(paths.size())
-        , m_pathIdentifierRanges(paths.size() * 2)
+        , m_pathIdentifierRanges(paths.size())
     {
         ASSERT(callbacks.size() == paths.size());
     }
@@ -121,7 +121,7 @@ private:
             WTF::String path = Zig::toString(rawPath);
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
-            size_t identifierCount = 0;
+            uint32_t identifierCount = 0;
             for (size_t j = 0; j < path.length(); j++) {
                 switch (path[j]) {
                 case '/': {
@@ -148,7 +148,7 @@ private:
                 identifierCount++;
             }
 
-            pathIdentifierRanges[0] = { static_cast<uint16_t>(originalIdentifierIndex), static_cast<uint16_t>(identifierCount) };
+            pathIdentifierRanges[0] = { originalIdentifierIndex, identifierCount };
             pathIdentifierRanges = pathIdentifierRanges.subspan(1);
         }
     }
@@ -207,7 +207,8 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
     args.ensureCapacity(identifierCount);
 
     for (size_t i = 0; i < identifierCount; i++) {
-        auto param = req->getParameter(static_cast<unsigned short>(i));
+        // getParameter() takes a 16-bit index. uWS matches at most 100 segments, so a name past that index has no value.
+        auto param = i <= std::numeric_limits<unsigned short>::max() ? req->getParameter(static_cast<unsigned short>(i)) : std::string_view {};
         if (!param.empty()) {
             const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
             args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));

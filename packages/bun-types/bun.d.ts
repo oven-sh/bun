@@ -5990,6 +5990,10 @@ declare module "bun" {
   namespace semver {
     /**
      * Tests whether `version` satisfies `range`. Both arguments are stringified first.
+     *
+     * Returns `false` if `version` is not a version, or if `range` has text that the parser
+     * cannot read as a comparator (`"latest"`, `"foo || 1.2.3"`), as node-semver's `satisfies`
+     * does.
      */
     function satisfies(version: StringLike, range: StringLike): boolean;
 

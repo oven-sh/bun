@@ -1240,6 +1240,11 @@ export function ospath(path: string) {
  * non-npm packages (links, folders, git dependencies, etc.)
  */
 export async function toMatchNodeModulesAt(lockfile: any, root: string) {
+  // The lockfile's debug JSON prints a range of two comparators as "a && b", which Bun.semver.satisfies
+  // refuses. The space is what the range parser reads.
+  function peerSatisfies(version: string, range: string): boolean {
+    return Bun.semver.satisfies(version, range.replaceAll(" && ", " "));
+  }
   function shouldSkip(pkg: any, dep: any): boolean {
     // Band-aid as toMatchNodeModulesAt will sometimes ask this function
     // if a package depends on itself
@@ -1291,7 +1296,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                     }
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
-                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
+                      if (peerSatisfies(pkg.resolution.value, dep.npm.version)) continue;
                     }
                     return {
                       pass: false,
@@ -1336,7 +1341,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                     if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
-                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
+                      if (peerSatisfies(pkg.resolution.value, dep.npm.version)) continue;
                     }
                     return {
                       pass: false,

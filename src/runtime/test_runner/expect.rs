@@ -802,9 +802,7 @@ impl Expect {
     /// user data and is emitted verbatim. `signature` is the pre-processed
     /// header returned by `get_signature` (ANSI or stripped, per stderr
     /// colour state). Nothing here scans bytes for `<…>` markers.
-    ///
-    /// If printing a value throws (a custom inspect method), `JSGlobalObject::throw` throws that
-    /// error in place of the message.
+    /// If printing a value throws, `JSGlobalObject::throw` throws that error in place of the message.
     #[inline(never)]
     pub(crate) fn throw_rendered(
         &self,

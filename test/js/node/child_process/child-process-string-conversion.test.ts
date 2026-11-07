@@ -1,5 +1,6 @@
 /**
- * This test runs under `bun test` and (via node:test/node:assert) under `node --test`.
+ * This test runs under `bun test` and (via node:test/node:assert) under `node --test`. Node is the reference for
+ * every assertion here, so the same file must pass on Node. That is why it imports neither `bun:test` nor `harness`.
  *
  * What the caller's own code throws while an argument, the cwd or an env value is converted to a string is not a
  * failure of the spawn. Node throws it as it is, and keeps `result.error` for what the operating system refuses.

@@ -3427,6 +3427,60 @@ console.log(<div {...obj} key="after" />);`),
       // );
     });
 
+    // https://github.com/oven-sh/bun/issues/48056
+    // In an async generator, `return undefined` awaits its operand and
+    // `return;` does not, so the operand has to stay.
+    it("return undefined in an async generator", () => {
+      const keeps = [
+        ["async function* f() { return undefined; }", "async function* f() {\n  return undefined;\n}"],
+        ["async function* f() { return void 0; }", "async function* f() {\n  return undefined;\n}"],
+        ["const f = async function* () { return undefined; }", "const f = async function* () {\n  return undefined;\n}"],
+        ["class C { async *f() { return undefined; } }", "class C {\n  async *f() {\n    return undefined;\n  }\n}"],
+        ["const o = { async *f() { return undefined; } }", "const o = { async *f() {\n  return undefined;\n} }"],
+      ];
+      for (const [code, out] of keeps) {
+        expectPrinted_(code, out);
+        expectPrintedMin_(code, out.replaceAll("return undefined", "return void 0"));
+      }
+
+      // Every other kind of function drops the operand, including one nested
+      // in an async generator.
+      const drops = [
+        ["async function f() { return undefined; }", "async function f() {\n  return;\n}"],
+        ["function* f() { return undefined; }", "function* f() {\n  return;\n}"],
+        ["async function* f() { return () => { return undefined; }; }", "async function* f() {\n  return () => {\n    return;\n  };\n}"],
+        ["async function* f() { return function() { return undefined; }; }", "async function* f() {\n  return function() {\n    return;\n  };\n}"],
+        ["function f() { async function* g() { return undefined; } return undefined; }", "function f() {\n  async function* g() {\n    return undefined;\n  }\n  return;\n}"],
+      ];
+      for (const [code, out] of drops) {
+        expectPrinted_(code, out);
+        expectPrintedMin_(code, out.replaceAll("return undefined", "return void 0"));
+      }
+    });
+
+    it("return undefined in an async generator takes one more tick than return", async () => {
+      const src = /* js */ `
+        const log = [];
+        async function* explicit() { return undefined; }
+        async function* implicit() { return; }
+        explicit().next().then(() => log.push("explicit done"));
+        implicit().next().then(() => log.push("implicit done"));
+        await Promise.resolve()
+          .then(() => log.push("tick1"))
+          .then(() => log.push("tick2"));
+        console.log(log.join(", "));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("implicit done, tick1, explicit done, tick2\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("import assert", () => {
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);

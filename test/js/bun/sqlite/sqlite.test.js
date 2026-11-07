@@ -3015,7 +3015,7 @@ describe("Database#status", () => {
   });
 
   it("throws for an unknown op, a non-integer op, and a closed database", () => {
-    const db = new Database(":memory:");
+    using db = new Database(":memory:");
     expect(() => db.status(999)).toThrow(new RangeError("Unknown sqlite3_db_status op: 999"));
     expect(() => db.status(2 ** 40)).toThrow(new RangeError("Unknown sqlite3_db_status op: 1099511627776"));
     expect(() => db.status("SQLITE_DBSTATUS_CACHE_USED")).toThrow(new TypeError("Expected op to be an integer"));

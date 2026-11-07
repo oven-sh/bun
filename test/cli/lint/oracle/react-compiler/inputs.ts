@@ -123,6 +123,24 @@ export function Alone(props: { a: number }) {
 }
 `;
 
+/**
+ * The compiler in the two tools reads the callee of `(a?.b)()` into a value. A build calls `b` as a method of `a`: that
+ * depends on `api` and not on `api?.who`, and it reads `ref.current` one more time.
+ */
+const calleeInParentheses = `import { useMemo, useRef } from "react";
+
+export function Listed({ api }) {
+  const value = useMemo(() => (api?.who)(), [api?.who]);
+  return <div>{value}</div>;
+}
+
+export function Focuses() {
+  const ref = useRef(null);
+  (ref.current?.focus)();
+  return <input ref={ref} />;
+}
+`;
+
 /** `x = d` in a pattern has its own source location, and the value it produces gets that location. */
 const defaults = `import { useState } from "react";
 
@@ -643,7 +661,12 @@ function Component(props) {
     "fbt.jsx": duplicateFbtTags,
     "callback-of-map.jsx": callbackOfMap,
   },
-  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  lowering: {
+    ".oxlintrc.json": rc(),
+    "forever.tsx": forever,
+    "defaults.tsx": defaults,
+    "callee-in-parentheses.jsx": calleeInParentheses,
+  },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

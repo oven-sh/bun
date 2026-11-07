@@ -1337,6 +1337,79 @@ pub(super) fn lower_optional_call_expression(
     lower_optional_call_expression_impl(builder, expr, None)
 }
 
+/// Unlike upstream: `(a?.b)(args)` calls `b` with `this === a`. Upstream reads `a?.b` into a value and calls that.
+/// The chain, the arguments and the call are one value block. A memo block that holds the call then holds the
+/// chain too, so the chain has no name and prints inside the call.
+///
+/// Not inlined: what calls it calls itself along the source.
+#[inline(never)]
+pub(super) fn lower_optional_member_callee_call(
+    builder: &mut HirBuilder,
+    call: &ast::E::Call,
+    loc: Option<SourceLocation>,
+) -> Result<InstructionValue, CompilerError> {
+    let continuation_block = builder.reserve(builder.current_block_kind());
+    let continuation_id = continuation_block.id;
+    let place = build_temporary_place(builder, loc);
+
+    let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
+        let (receiver, value) = lower_optional_member_expression_impl(builder, &call.target, None)?;
+        // The property of a `MethodCall` always gets a scope, with the range of the instruction that makes it.
+        // No instruction makes the chain's value: two blocks store it. So this loads it, which
+        // `lower_value_to_temporary` does not do for a temporary.
+        let property = build_temporary_place(builder, value.loc);
+        builder.push(Instruction {
+            id: EvaluationOrder(0),
+            lvalue: property.clone(),
+            value: InstructionValue::LoadLocal {
+                loc: value.loc,
+                place: value,
+            },
+            loc: property.loc,
+            effects: None,
+        });
+        let args = lower_arguments(builder, &call.args)?;
+        let result = lower_value_to_temporary(
+            builder,
+            InstructionValue::MethodCall {
+                receiver,
+                property,
+                args,
+                loc,
+            },
+        )?;
+        lower_value_to_temporary(
+            builder,
+            InstructionValue::StoreLocal {
+                lvalue: LValue {
+                    kind: InstructionKind::Const,
+                    place: place.clone(),
+                },
+                value: result,
+                type_annotation: None,
+                loc,
+            },
+        )?;
+        Ok(Terminal::Goto {
+            block: continuation_id,
+            variant: GotoVariant::Break,
+            id: EvaluationOrder(0),
+            loc,
+        })
+    });
+
+    builder.terminate_with_continuation(
+        Terminal::Sequence {
+            block: sequence_block?,
+            fallthrough: continuation_id,
+            id: EvaluationOrder(0),
+            loc,
+        },
+        continuation_block,
+    );
+    Ok(InstructionValue::LoadLocal { place, loc })
+}
+
 fn lower_optional_call_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,

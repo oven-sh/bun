@@ -3,6 +3,7 @@
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString, cold_todo,
 };
+use crate::hir::environment::OutputMode;
 use crate::hir::*;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
@@ -11,8 +12,8 @@ use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
     AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
     lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    lower_object_property_key, lower_optional_call_expression, lower_optional_member_callee_call,
+    lower_optional_member_expression, lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -71,27 +72,32 @@ pub(crate) fn lower_expression(
                 return lower_optional_call_expression(builder, expr);
             }
             // Check if callee is a MemberExpression => MethodCall
-            let is_member = matches!(
-                &call.target.data,
-                Data::EDot(d) if d.optional_chain.is_none()
-            ) || matches!(
-                &call.target.data,
-                Data::EIndex(i) if i.optional_chain.is_none()
-            );
-            if is_member {
-                let lowered = lower_member_expression(builder, &call.target, None)?;
-                let property = lower_value_to_temporary(builder, lowered.value)?;
-                let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
-                Ok(InstructionValue::MethodCall {
-                    receiver: lowered.object,
-                    property,
-                    args,
-                    loc,
-                })
-            } else {
-                let callee = lower_expression_to_temporary(builder, &call.target)?;
-                let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
-                Ok(InstructionValue::CallExpression { callee, args, loc })
+            let member_chain = match &call.target.data {
+                Data::EDot(d) => Some(d.optional_chain),
+                Data::EIndex(i) => Some(i.optional_chain),
+                _ => None,
+            };
+            match member_chain {
+                Some(None) => {
+                    let lowered = lower_member_expression(builder, &call.target, None)?;
+                    let property = lower_value_to_temporary(builder, lowered.value)?;
+                    let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
+                    Ok(InstructionValue::MethodCall {
+                        receiver: lowered.object,
+                        property,
+                        args,
+                        loc,
+                    })
+                }
+                // `bun lint` reports what upstream reports, and upstream lowers this callee as a value.
+                Some(Some(_)) if builder.environment().output_mode != OutputMode::Lint => {
+                    lower_optional_member_callee_call(builder, call, loc)
+                }
+                _ => {
+                    let callee = lower_expression_to_temporary(builder, &call.target)?;
+                    let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
+                    Ok(InstructionValue::CallExpression { callee, args, loc })
+                }
             }
         }
         Data::EDot(d) => {

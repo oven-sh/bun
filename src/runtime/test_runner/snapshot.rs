@@ -314,7 +314,7 @@ impl Snapshots {
         let buntest_strong = parent.bun_test().ok_or(Error::TestNotActive)?;
         let buntest = buntest_strong.get();
         let Some(active) = parent.phase.entry(buntest).map(core::ptr::NonNull::from) else {
-            return Err(if parent.phase.sequence_has_ended(buntest) { Error::TestNotActive } else { Error::SnapshotInConcurrentGroup });
+            return Err(if parent.phase.test_has_ended(buntest) { Error::TestNotActive } else { Error::SnapshotInConcurrentGroup });
         };
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
         // SAFETY: `buntest_strong` owns the entries of its sequences.
@@ -353,7 +353,7 @@ impl Snapshots {
             return Ok(file.format);
         }
         // A test that has ended gets no snapshot, so it doesn't pick the format of the running file either.
-        if expect.parent.as_ref().is_some_and(|parent| parent.phase.sequence_has_ended(buntest)) {
+        if expect.parent.as_ref().is_some_and(|parent| parent.phase.test_has_ended(buntest)) {
             return Err(Error::TestNotActive);
         }
         self.write_snapshot_file(files)?;
@@ -640,7 +640,7 @@ impl Snapshots {
         // `format_of` refuses a test that has ended only when it loads the file's snapshots, and the file is read before the count.
         if let Some(parent) = expect.parent.as_ref()
             && let Some(buntest) = parent.bun_test()
-            && parent.phase.sequence_has_ended(buntest.get())
+            && parent.phase.test_has_ended(buntest.get())
         {
             return FileOutcome::NoTest(Error::TestNotActive);
         }

@@ -662,7 +662,7 @@ describe.concurrent("test context", () => {
   ])("%s: a context's expect stays bound after its test has finished", async (module, withContext, modifier) => {
     const { log, results, errors, stderr, exitCode } = await runTests({
       "a.test.js": `
-        import { test, describe, expect as globalExpect } from "${module}";
+        import { test, describe, beforeAll, expect as globalExpect } from "${module}";
         ${leftBehind}
         globalExpect.extend({ toLogItsTest() { console.log("custom matcher:", this.currentTestName, this.assertionCalls); return { pass: true, message: () => "" }; } });
         const testWithContext = ${withContext};
@@ -705,6 +705,12 @@ describe.concurrent("test context", () => {
             whileNextRuns = leftBehind(() => { soft.toBe(101); console.log("made by t:", message(() => plain.toMatchSnapshot())); });
           });
           test("next", () => whileNextRuns());
+        });
+        // A hook of its own group is no test. The matcher of an Expect that it made throws in the test that calls it.
+        describe("made by a hook", () => {
+          let soft;
+          beforeAll(() => { soft = globalExpect.soft(1); });
+          test("t", () => { soft.toBe(101); });
         });
         // "t" times out while it waits, and its body goes on while "next" runs.
         describe("timed out", () => {
@@ -789,15 +795,17 @@ describe.concurrent("test context", () => {
         "(pass) file snapshot > next",
         "(pass) made by t > t",
         "(pass) made by t > next",
+        "(fail) made by a hook > t",
         "(fail) timed out > t",
         "(pass) timed out > next",
         "(pass) same group > t",
         "(pass) same group > next",
       ],
       // A failed matcher that nothing awaits, and a failed soft matcher, are each one unhandled error. `expect.poll()` prints two lines.
+      // The eleventh `toBe` error is the one that "made by a hook > t" throws.
       errors: [
         ...Array(2).fill("error: Matcher did not succeed in time."),
-        ...Array(10).fill("error: expect(received).toBe(expected)"),
+        ...Array(11).fill("error: expect(received).toBe(expected)"),
       ],
       betweenTests: 10,
       snapshotsAdded: false,

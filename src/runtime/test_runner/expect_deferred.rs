@@ -1017,7 +1017,7 @@ impl Expect {
         let sequence = test.sequence(&buntest);
         // A test that has ended can't fail any more. `on_uncaught_exception` reports its error between tests.
         if sequence.is_none()
-            && !self.parent.as_ref().is_some_and(|parent| parent.phase.sequence_has_ended(buntest.get()))
+            && !self.parent.as_ref().is_some_and(|parent| parent.phase.test_has_ended(buntest.get()))
         {
             return Err(JsError::Thrown);
         }

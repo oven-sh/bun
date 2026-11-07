@@ -219,6 +219,20 @@ describe("a snapshot file that bun test can't write", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The summary counts an entry as removed after the file is removed, or opens for the write.
+  test.serial("--update-snapshots counts the entry that it removed, and not the one that it can't remove", async () => {
+    using removable = readOnly({ "a.test.js": inline, "__snapshots__/a.test.js.snap": unused }, "writable");
+    const removed = await run(removable.dir, "--update-snapshots");
+    expect(removed.stderr).toContain(" 1 pass\n 0 fail\nsnapshots: 1 passed, 1 removed\n");
+    expect({ has: removable.has(), exitCode: removed.exitCode }).toEqual({ has: false, exitCode: 0 });
+
+    using fixture = readOnly({ "a.test.js": matches, "__snapshots__/a.test.js.snap": withUnused });
+    const { stderr, exitCode } = await run(fixture.dir, "--update-snapshots");
+    expect(stderr).toContain(" 1 pass\n 0 fail\n 1 error\n 1 snapshots, 1 expect() calls\n");
+    expect(fixture.read()).toBe(withUnused);
+    expect(exitCode).toBe(1);
+  });
+
   // On Windows the file can be removed: libuv clears its read-only attribute.
   test.serial.skipIf(isWindows)(
     "--update-snapshots reports a file with no entry left that it can't remove",

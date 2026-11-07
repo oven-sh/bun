@@ -768,6 +768,177 @@ describe.concurrent("--update-snapshots", () => {
       exitCode: 0,
     });
   });
+
+  // b.test.ts takes no snapshot, so nothing loads its snapshot file. Every test of it ran to the end, so no test uses an entry of that file.
+  test.each([[[]], [["--isolate"]], [["--parallel=2"]]])(
+    "removes the snapshot file of a test file that takes no snapshot, between two that take one (%j)",
+    async args => {
+      const tests = (name: string) =>
+        `import { expect, test } from "bun:test";
+         test("${name}", () => { expect("${name}").toMatchSnapshot(); });`;
+      const before = (name: string) => snap({ [`${name} 1`]: `"${name}"`, "gone 1": `"g"` });
+      const { snapshots, exitCode } = await update(
+        {
+          "a.test.ts": tests("a"),
+          "b.test.ts": `import { test } from "bun:test";
+            test("b", () => {});`,
+          "c.test.ts": tests("c"),
+          "__snapshots__/a.test.ts.snap": before("a"),
+          "__snapshots__/b.test.ts.snap": before("b"),
+          "__snapshots__/c.test.ts.snap": before("c"),
+        },
+        ...args,
+      );
+      expect({ snapshots, exitCode }).toEqual({
+        snapshots: { "a.test.ts.snap": snap({ "a 1": `"a"` }), "c.test.ts.snap": snap({ "c 1": `"c"` }) },
+        exitCode: 0,
+      });
+    },
+  );
+
+  describe("test files that import one module with a snapshot test", () => {
+    const shared = `import { expect, test } from "bun:test";
+      test("shared", () => { expect("s").toMatchSnapshot(); });`;
+    const entries = snap({ "shared 1": `"s"` });
+    const both = { "a.test.ts.snap": entries, "b.test.ts.snap": entries };
+
+    // Without --isolate, b.test.ts registers no test: the module that has the test is in the module cache.
+    // So the run can't tell which entries of its snapshot file have no test, and keeps them all.
+    test.each([[[]], [["--isolate"]], [["--parallel=2"]]])("keep their snapshot files (%j)", async args => {
+      const { snapshots, exitCode } = await update(
+        {
+          "shared.ts": shared,
+          "a.test.ts": `import "./shared";`,
+          "b.test.ts": `import "./shared";`,
+          "__snapshots__/a.test.ts.snap": entries,
+          "__snapshots__/b.test.ts.snap": entries,
+        },
+        ...args,
+      );
+      expect({ snapshots, exitCode }).toEqual({ snapshots: both, exitCode: 0 });
+    });
+
+    // The limit of that rule: b.test.ts registers a test, and the run can't tell that another file has the rest of its tests.
+    test.each([
+      [[], { "a.test.ts.snap": entries }],
+      [["--isolate"], both],
+    ])(
+      "of which the later one has a test of its own: only --isolate keeps its snapshot file (%j)",
+      async (args, after) => {
+        const { snapshots, exitCode } = await update(
+          {
+            "shared.ts": shared,
+            "a.test.ts": `import "./shared";`,
+            "b.test.ts": `import "./shared";
+            import { test } from "bun:test";
+            test("of b", () => {});`,
+            "__snapshots__/a.test.ts.snap": entries,
+            "__snapshots__/b.test.ts.snap": entries,
+          },
+          ...args,
+        );
+        expect({ snapshots, exitCode }).toEqual({ snapshots: after, exitCode: 0 });
+      },
+    );
+  });
+
+  // The second run that --rerun-each gives a test file registers fewer tests: the modules that it imports are in the module cache.
+  test.each([[["--rerun-each=2", "./a.test.ts"]], [["--rerun-each=2", "./a.test.ts", "./a.test.ts"]]])(
+    "keeps the snapshot file of a test file that takes no snapshot when a later run registers fewer tests (%j)",
+    async args => {
+      const entries = snap({ "imported 1": `"i"` });
+      const { snapshots, exitCode } = await update(
+        {
+          "shared.ts": `import { expect, test } from "bun:test";
+            test.skip("imported", () => { expect("i").toMatchSnapshot(); });`,
+          "a.test.ts": `import "./shared";
+            import { test } from "bun:test";
+            test("own", () => {});`,
+          "__snapshots__/a.test.ts.snap": entries,
+        },
+        ...args,
+      );
+      expect({ snapshots, exitCode }).toEqual({ snapshots: { "a.test.ts.snap": entries }, exitCode: 0 });
+    },
+  );
+
+  test.each([
+    ["alone, when no test took a snapshot", `test("a", () => {});`, [], "snapshots: 2 removed\n"],
+    [
+      "behind the ones that passed",
+      `test("a", () => { expect("a").toMatchSnapshot(); });`,
+      [],
+      "snapshots: 1 passed, 1 removed\n",
+    ],
+    [
+      "behind the ones that it added",
+      `test("a", () => { expect("new").toMatchSnapshot(); });`,
+      [],
+      "snapshots: +1 added, 1 removed\n",
+    ],
+    ["once, with --rerun-each=2", `test("a", () => {});`, ["--rerun-each=2"], "snapshots: 2 removed\n"],
+  ])("counts the entries that it removed in the summary, %s", async (_, tests, args, line) => {
+    const { stderr, exitCode } = await updateOne(tests, snap({ "a 1": `"a"`, "gone 1": `"g"` }), ...args);
+    expect(stderr).toContain(line);
+    expect(exitCode).toBe(0);
+  });
+
+  describe("a test file that takes no snapshot", () => {
+    const passes = `import { test } from "bun:test";\ntest("a", () => {});`;
+    async function updateIn(dir: unknown, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, CI: "false" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    test("gets no __snapshots__ directory if it has no snapshot file", async () => {
+      using dir = tempDir("update-snapshots-no-file", { "a.test.ts": passes });
+      const { exitCode } = await updateIn(dir, "--update-snapshots");
+      expect({ files: fs.readdirSync(String(dir)), exitCode }).toEqual({ files: ["a.test.ts"], exitCode: 0 });
+    });
+
+    // A directory has the path of the snapshot file, so the run that reads that path fails at it.
+    const directory = { "__snapshots__/a.test.ts.snap/inside": "" };
+    const report = `: Failed to remove the entries that no test uses from "${join("__snapshots__", "a.test.ts.snap")}" (`;
+
+    // The second run that --rerun-each gives the test file does not read the file again.
+    test.each([[[]], [["--rerun-each=2"]]])(
+      "reports a snapshot file that --update-snapshots can't read, once (%j)",
+      async args => {
+        using dir = tempDir("update-snapshots-unreadable", { "a.test.ts": passes, ...directory });
+        const { stderr, exitCode } = await updateIn(dir, "--update-snapshots", ...args);
+        expect(stderr.split(report).length - 1).toBe(1);
+        expect(stderr).toContain(" 0 fail\n 1 error\n");
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test.each([
+      ["without --update-snapshots", passes, [], 0],
+      ["if the test file has no test", `globalThis.loaded = true;`, ["--update-snapshots"], 0],
+      ["if the test file does not load", passes + `\nthrow new Error("after a test");`, ["--update-snapshots"], 1],
+      ["if a test is skipped", passes + `\ntest.skip("b", () => {});`, ["--update-snapshots"], 0],
+      ["if -t leaves a test out", passes + `\ntest("b", () => {});`, ["--update-snapshots", "-t", "a"], 0],
+      [
+        "in the second run that --rerun-each gives the test file",
+        `import { test } from "bun:test";\nif (globalThis.again) test("a", () => {});\nglobalThis.again = true;`,
+        ["--update-snapshots", "--rerun-each=2"],
+        0,
+      ],
+    ])("does not read its snapshot file %s", async (_, tests, args, failures) => {
+      using dir = tempDir("update-snapshots-not-read", { "a.test.ts": tests, ...directory });
+      const { stderr, exitCode } = await updateIn(dir, ...args, "./a.test.ts");
+      expect(stderr).not.toContain("a.test.ts.snap");
+      expect(stderr).toContain(` ${failures} fail\n`);
+      expect(exitCode).toBe(failures);
+    });
+  });
 });
 
 describe.concurrent("a run without --update-snapshots", () => {

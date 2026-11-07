@@ -5013,15 +5013,16 @@ impl TestCommand {
 
                 let mut print_expect_calls = summary.expectations > 0;
                 let snapshots = &reporter.jest.snapshots;
-                // A snapshot that `--update-snapshots` did not write is in none of the three counts.
-                let has_counts = snapshots.passed + snapshots.failed + snapshots.added > 0;
-                if snapshots.total > 0 && (print_expect_calls || has_counts) {
+                let removed = snapshots.removed;
+                // A snapshot that `--update-snapshots` did not write is in none of the first three counts.
+                let has_counts = snapshots.passed + snapshots.failed + snapshots.added + removed > 0;
+                if (snapshots.total > 0 && print_expect_calls) || has_counts {
                     let passed = reporter.jest.snapshots.passed;
                     let failed = reporter.jest.snapshots.failed;
                     let added = reporter.jest.snapshots.added;
 
                     let mut first = true;
-                    if print_expect_calls && added == 0 && failed == 0 {
+                    if print_expect_calls && added == 0 && failed == 0 && removed == 0 {
                         print_expect_calls = false;
                         pretty_error!(
                             "{}{:5>} snapshots, {:5>} expect() calls",
@@ -5043,6 +5044,15 @@ impl TestCommand {
                                 pretty_error!("<b>+{} added<r>", added);
                             } else {
                                 pretty_error!("<b>, {} added<r>", added);
+                            }
+                        }
+
+                        if removed > 0 {
+                            if first {
+                                first = false;
+                                pretty_error!("<b>{} removed<r>", removed);
+                            } else {
+                                pretty_error!("<b>, {} removed<r>", removed);
                             }
                         }
 

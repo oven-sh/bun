@@ -1915,6 +1915,103 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       });
     });
 
+    // No snapshot matcher of the test file runs, so nothing loads its snapshot file, and no test of the run uses an entry of it.
+    describe.each(formats)("%s: the snapshot file of a test file that takes no snapshot", format => {
+      const stored = file(format, { "gone 1": "g", "left out 1": "l" });
+      const ran = `test("ran", () => {});`;
+      const leftOut = (how: string, before = "") =>
+        `${how}("left out", () => { ${before}expect("l").toMatchSnapshot(); });`;
+      /** Runs the tests on a snapshot file. Returns what the file is after the run. */
+      const run = async (tests: string, args: string[], before = stored) => {
+        using dir = tempDir("snapshot-no-matcher", { "a.test.js": tests, "__snapshots__/a.test.js.snap": before });
+        const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, ...args, "./a.test.js");
+        const names = readdirSync(join(String(dir), "__snapshots__"));
+        return {
+          snap: names.length ? snap(dir) : "<removed>",
+          removed: / \d+ removed\n/.test(stderr),
+          exitCode,
+        };
+      };
+      const update = ["--update-snapshots"];
+
+      test.each([
+        ["", update],
+        [", in the first run that --rerun-each gives the test file", [...update, "--rerun-each=2"]],
+      ])("goes when every test ran to the end%s", async (_, args) => {
+        expect(await run(ran, args)).toEqual({ snap: "<removed>", removed: true, exitCode: 0 });
+      });
+
+      // The name that Bun gives a test is not always the key that another runner wrote for it,
+      // so a run that left a test out can't tell which entries of a file that it did not load are that test's.
+      test.each([
+        ["is test.skip", ran + leftOut("test.skip"), update, 0],
+        ["is left out by -t", ran + leftOut("test"), [...update, "-t", "ran"], 0],
+        ["is left out by test.only", `test.only("ran", () => {});` + leftOut("test"), [...update, "--only"], 0],
+        [
+          "throws before its snapshot",
+          ran + leftOut("test", `throw new Error("before the snapshot line"); `),
+          update,
+          1,
+        ],
+        ["is the only one, and test.skip", leftOut("test.skip"), update, 0],
+        ["is left out by -t with every other test", ran + leftOut("test"), [...update, "-t", "no-test-has-it"], 1],
+      ])("stays as it is when a test %s", async (_, tests, args, exitCode) => {
+        expect(await run(tests, args)).toEqual({ snap: stored, removed: false, exitCode });
+      });
+
+      test("stays as it is without the flag", async () => {
+        expect(await run(ran, [])).toEqual({ snap: stored, removed: false, exitCode: 0 });
+      });
+
+      // Without --isolate, the tests of a module that an earlier test file imported are not registered again.
+      // So a test file with no test says nothing about the entries of its snapshot file.
+      test.each([
+        ["no test", `globalThis.loaded = true;`],
+        ["a describe with no test", `describe("empty", () => {});`],
+        ["no test and a snapshot matcher outside of a test", `expect(1).toMatchInlineSnapshot(\`1\`);`],
+      ])("stays as it is when the test file has %s", async (_, tests) => {
+        expect(await run(tests, update)).toEqual({ snap: stored, removed: false, exitCode: 0 });
+      });
+
+      test.each([
+        ["does not parse", headers[format] + '\nexports[`gone 1`] = `"g\n'],
+        ["has no entry", headers[format]],
+      ])("stays as it is when it %s", async (_, before) => {
+        expect(await run(ran, update, before)).toEqual({ snap: before, removed: false, exitCode: 0 });
+      });
+
+      // A hook of a test file with no test still runs. What it asks for says which entries the file uses.
+      test("loses only its unused entry when a hook of a test file with no test takes a snapshot", async () => {
+        const tests = `beforeAll(() => { expect("hook").toMatchSnapshot(); });`;
+        const before = file(format, { "(unnamed) 1": "hook", "gone 1": "g" });
+        expect(await run(tests, update, before)).toEqual({
+          snap: file(format, { "(unnamed) 1": "hook" }),
+          removed: true,
+          exitCode: 0,
+        });
+      });
+    });
+
+    // Jest 30.5.2 wrote this file. Bun names the two tests "shows [ 1, 2 ]" and "shows { a: 1 }".
+    test("jest: the entries of test.each titles stay when -t leaves their tests out of a test file that then takes no snapshot", async () => {
+      const written =
+        headers.jest +
+        "\nexports[`shows [1, 2] 1`] = `\n[\n  1,\n  2,\n]\n`;\n" +
+        '\nexports[`shows {"a": 1} 1`] = `\n{\n  "a": 1,\n}\n`;\n';
+      using dir = tempDir("snapshot-each-titles", {
+        "a.test.js": `
+          test.each([[[1, 2]], [{ a: 1 }]])("shows %p", value => { expect(value).toMatchSnapshot(); });
+          test("other", () => {});
+        `,
+        "__snapshots__/a.test.js.snap": written,
+      });
+      const update = ["--update-snapshots", "-t", "other", "./a.test.js"];
+      const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, ...update);
+      expect(stderr).not.toContain("removed");
+      expect(snap(dir)).toBe(written);
+      expect(exitCode).toBe(0);
+    });
+
     // The first run finds its value in the file. The second one prints another value, which replaces it.
     describe.each(formats)("%s: a value that the second run of a test replaces counts as added", format => {
       test.each([
@@ -1988,7 +2085,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         });
         const update = ["--update-snapshots", "./a.test.js"];
         const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, ...update);
-        expect(stderr).toContain("snapshots: 1 passed, 2 added\n");
+        expect(stderr).toContain("snapshots: 1 passed, 2 added, 1 removed\n");
         // Bun's format has the new entries in the order in which the tests ran.
         const after =
           format === "bun"
@@ -3415,21 +3512,25 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
   );
 });
 
-// Windows cannot create directories as deep as its path buffer is long.
-test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
-  using dir = tempDir("snapshot-long-path", {});
-  let deep = String(dir);
+/** Puts `<deep>/<sub>/snapx.test.ts` into `dir`, 16 bytes under PATH_MAX, so `<deep>/<sub>/__snapshots__/snapx.test.ts.snap` is over it. */
+function testFileWithTooLongSnapshotPath(dir: string, tests: string) {
+  let deep = dir;
   const component = Buffer.alloc(100, "a").toString();
   while (deep.length + 1 + component.length <= MAX_PATH_BYTES - 116) {
     deep = join(deep, component);
     mkdirSync(deep);
   }
-  // `<deep>/<sub>/snapx.test.ts` is 16 bytes under PATH_MAX, so
-  // `<deep>/<sub>/__snapshots__/snapx.test.ts.snap` is over it.
   const sub = Buffer.alloc(MAX_PATH_BYTES - 16 - deep.length - 1 - "/snapx.test.ts".length, "b").toString();
   mkdirSync(join(deep, sub));
-  writeFileSync(
-    join(deep, sub, "snapx.test.ts"),
+  writeFileSync(join(deep, sub, "snapx.test.ts"), tests);
+  return { deep, sub };
+}
+
+// Windows cannot create directories as deep as its path buffer is long.
+test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
+  using dir = tempDir("snapshot-long-path", {});
+  const { deep, sub } = testFileWithTooLongSnapshotPath(
+    String(dir),
     `import { test, expect } from "bun:test";\ntest("snap", () => { expect(1).toMatchSnapshot(); });\n`,
   );
 
@@ -3446,3 +3547,27 @@ test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test i
   expect(stdout + stderr).toContain("1 fail");
   expect(exitCode).toBe(1);
 });
+
+// No file has that path, so there is nothing to remove.
+test.skipIf(isWindows)(
+  "--update-snapshots passes a test file that takes no snapshot and whose snapshot file path is longer than PATH_MAX",
+  async () => {
+    using dir = tempDir("snapshot-long-path-update", {});
+    const { deep, sub } = testFileWithTooLongSnapshotPath(
+      String(dir),
+      `import { test } from "bun:test";\ntest("takes no snapshot", () => {});\n`,
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--update-snapshots", `./${sub}/snapx.test.ts`],
+      env: { ...bunEnv, CI: "false" },
+      cwd: deep,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  },
+);

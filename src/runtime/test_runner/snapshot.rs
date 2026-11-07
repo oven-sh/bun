@@ -13,7 +13,7 @@ use bun_sys::{self};
 
 use super::bun_test::{BunTest, ExecutionEntry, ScopeMode, TestScheduleEntry};
 use super::diff_format::DiffFormatter;
-use super::execution::Result as TestResult;
+use super::execution::{Basic, Result as TestResult};
 use super::expect::Expect;
 use super::expect::get_state::full_test_name;
 use super::jest::{FileColumns as _, FileList};
@@ -102,6 +102,9 @@ enum Ran {
     NotAll,
     /// A `describe()` callback threw, so the tests after the throw are not registered.
     NotAllRegistered,
+    /// The file registered no test, and the run asked the snapshot file for no entry. Without `--isolate`, the tests of a
+    /// module belong to the first test file that imports it, so such a test file says nothing about the entries.
+    NoTest,
 }
 
 /// What the flush writes.
@@ -117,6 +120,7 @@ enum Pending {
 pub(crate) enum LeftAsItIs {
     /// Only a run of every test and hook to the end has all the entries that replace a file nobody can read. This has its path.
     DoesNotParse(Box<[u8]>),
+    /// The file can't be read, opened for writing or removed.
     NotWritable(bun_sys::Error),
 }
 
@@ -143,6 +147,8 @@ pub(crate) struct Snapshots {
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
+    /// The entries that `--update-snapshots` removed because no test uses them.
+    pub(crate) removed: usize,
 
     /// The entries of the current file, in the order of the file, then the new ones.
     values: StringArrayHashMap<Entry>,
@@ -170,6 +176,7 @@ impl Snapshots {
             added: 0,
             passed: 0,
             failed: 0,
+            removed: 0,
             values: StringArrayHashMap::new(),
             counts: StringHashMap::new(),
             _current_file: None,
@@ -407,14 +414,14 @@ impl Snapshots {
         };
 
         let mut unparsed = false;
-        if !contents.is_empty() && self.parse_file(path, &contents).is_err() {
+        if !contents.is_empty() && Self::parse_file(&mut self.values, path, &contents).is_err() {
             self.values.clear();
             if !(self.update_snapshots && format == Format::Bun) {
                 return Err(Error::ParseError);
             }
             unparsed = true;
         }
-        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
+        let may_hold_entries_of_bun = format == Format::Bun || !Self::keys_are_sorted(&self.values);
         self._current_file = Some(File {
             id: file_id,
             format,
@@ -427,8 +434,8 @@ impl Snapshots {
         Ok(format)
     }
 
-    fn keys_are_sorted(&self) -> bool {
-        self.values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
+    fn keys_are_sorted(values: &StringArrayHashMap<Entry>) -> bool {
+        values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
     }
 
     pub(crate) fn may_hold_entries_of_bun(&self) -> bool {
@@ -504,7 +511,7 @@ impl Snapshots {
         Ok(Outcome::Written)
     }
 
-    fn parse_file(&mut self, snapshot_file_path: &[u8], contents: &[u8]) -> Result<(), Error> {
+    fn parse_file(values: &mut StringArrayHashMap<Entry>, snapshot_file_path: &[u8], contents: &[u8]) -> Result<(), Error> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
@@ -570,7 +577,7 @@ impl Snapshots {
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);
-                                                self.values.insert(
+                                                values.insert(
                                                     key,
                                                     Entry { value: Box::<[u8]>::from(value), checked: false, stays: false, written: false },
                                                 );
@@ -592,12 +599,15 @@ impl Snapshots {
 
     /// With `--update-snapshots`, drops the entries no test asked for. The entries of a test that did not run to the end stay.
     pub(crate) fn remove_obsolete(&mut self, files: &FileList, buntest: &BunTest) -> Result<(), LeftAsItIs> {
-        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return Ok(()) };
+        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else {
+            return self.remove_file_that_no_matcher_loaded(files, buntest);
+        };
         if !self.update_snapshots || (!file.unparsed && self.values.values().iter().all(|entry| entry.checked)) {
             return Ok(());
         }
         let ran = Self::keep_entries_of_tests(&mut self.values, file, buntest);
-        file.keeps_all |= ran == Ran::NotAllRegistered || (file.unparsed && ran != Ran::ToTheEnd);
+        file.keeps_all |=
+            matches!(ran, Ran::NotAllRegistered | Ran::NoTest) || (file.unparsed && ran != Ran::ToTheEnd);
         if file.unparsed {
             if !file.keeps_all && !self.values.is_empty() {
                 file.unparsed = false;
@@ -634,7 +644,59 @@ impl Snapshots {
             }
             file.pending = Pending::WholeFile;
         }
+        self.removed += self.values.len() - kept;
         self.values.retain(|_, entry| entry.checked || entry.stays);
+        Ok(())
+    }
+
+    /// No snapshot matcher of the test file ran, so nothing loaded its snapshot file and no test of this run uses an entry of it.
+    /// With `--update-snapshots`, a run of every test and hook to the end removes that file. Any other run keeps it:
+    /// a key of the file is not always the name that `keep_entries_of_tests` gives the test that was left out.
+    #[cold]
+    fn remove_file_that_no_matcher_loaded(&mut self, files: &FileList, buntest: &BunTest) -> Result<(), LeftAsItIs> {
+        let root = &buntest.collection.root_scope;
+        // None of these runs removes the file, so none of them reads it: a later run of the test file (see `runs_again`),
+        // a test file that did not load or registered nothing (see `Ran`), and a run in which a test or a hook did not pass.
+        let keeps_the_file = !self.update_snapshots
+            || self.runs_again
+            || root.failed
+            || root.entries.is_empty()
+            || (buntest.execution.sequences.iter())
+                .any(|sequence| !matches!(sequence.result.basic_result(), Basic::Pass | Basic::Todo));
+        if keeps_the_file {
+            return Ok(());
+        }
+
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        // No file has a path that is too long.
+        let Some((_, _, len)) = snapshot_file_path(files, buntest.file_id, path_buf.0.as_mut_slice()) else { return Ok(()) };
+        let path = &path_buf.0[..len];
+        let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(contents) => contents,
+            Err(err) if matches!(err.get_errno(), bun_sys::Errno::ENOENT | bun_sys::Errno::ENAMETOOLONG) => return Ok(()),
+            Err(err) => return Err(LeftAsItIs::NotWritable(err.with_path(path))),
+        };
+        // `values` can still hold the entries of an earlier test file, so these go into a map of their own.
+        // No test asks a file that doesn't parse for an entry, so that file stays and nothing is reported.
+        let mut entries = StringArrayHashMap::new();
+        if Self::parse_file(&mut entries, path, &contents).is_err() || entries.is_empty() {
+            return Ok(());
+        }
+        let format = Format::of_file(&contents);
+        let file = File {
+            id: buntest.file_id,
+            format,
+            pending: Pending::Nothing,
+            loaded_len: contents.len(),
+            unparsed: false,
+            keeps_all: false,
+            may_hold_entries_of_bun: format == Format::Bun || !Self::keys_are_sorted(&entries),
+        };
+        if Self::keep_entries_of_tests(&mut entries, &file, buntest) != Ran::ToTheEnd {
+            return Ok(());
+        }
+        Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable)?;
+        self.removed += entries.len();
         Ok(())
     }
 
@@ -670,6 +732,7 @@ impl Snapshots {
         // Vitest counts a todo, and a `test.fails` that throws, as tests that ran, and removes their entries.
         let is_vitest = file.format == Format::Vitest;
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut has_test = false;
         let mut scopes = vec![&buntest.collection.root_scope];
         while let Some(scope) = scopes.pop() {
             if scope.failed {
@@ -687,6 +750,7 @@ impl Snapshots {
                     }
                     TestScheduleEntry::TestCallback(test) => test,
                 };
+                has_test = true;
                 let result = result_of(test);
                 let ran_to_the_end = match test.base.mode {
                     ScopeMode::Normal => result == Some(TestResult::Pass),
@@ -707,6 +771,11 @@ impl Snapshots {
                     names.insert(&Self::escape_line_breaks(*format, name), ());
                 }
             }
+        }
+
+        // A hook of a file with no test can still take a snapshot.
+        if !has_test && !values.values().iter().any(|entry| entry.checked) {
+            return Ran::NoTest;
         }
 
         // The key of a snapshot that a hook takes has `(unnamed)` for the name of the test.

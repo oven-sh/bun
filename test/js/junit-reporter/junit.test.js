@@ -1202,6 +1202,39 @@ describe("only block", () => {
       },
     );
 
+    it.each([[[]], [["--parallel=2"]]])(
+      `reports the assertion count that a "vitest" test had when its callback ended %j`,
+      async args => {
+        using dir = tempDir("junit-compared-count", {
+          "a.test.js": `
+            import { afterEach, expect, test } from "vitest";
+            // The hook runs after the count is checked, so its assertion comes too late.
+            afterEach(() => { expect(2).toBe(2); });
+            test("asserts too late", { retry: 1 }, () => {
+              expect.assertions(3);
+              expect(1).toBe(1);
+            });
+          `,
+          "b.test.js": `test("passes", () => {});`,
+        });
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const exitCode = await proc.exited;
+        const xml = await file(join(String(dir), "junit.xml")).text();
+        expect(xml.match(/<(failure|flakyFailure|rerunFailure) [^>]*>/g)).toEqual([
+          `<failure type="AssertionError" message="Expected more assertions, but only received 1" />`,
+          `<rerunFailure type="AssertionError" message="Expected more assertions, but only received 1" />`,
+        ]);
+        // The attribute has every assertion that the last attempt made.
+        expect(xml).toMatch(/<testcase name="asserts too late"[^>]* assertions="2">/);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     it("rejects any other value", async () => {
       const [flag, bunfig] = await Promise.all([
         report([...junit, "--reporter-junit-suites=deep"]),

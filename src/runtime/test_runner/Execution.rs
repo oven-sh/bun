@@ -167,6 +167,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
+    /// The expectation and the number of expect() calls that the check which failed this attempt compared.
+    pub(crate) count_failure: Option<(ExpectAssertions, u32)>,
     pub(crate) maybe_skip: bool,
     pub(crate) context: Option<Strong>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
@@ -201,6 +203,7 @@ impl ExecutionSequence {
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
+            count_failure: None,
             maybe_skip: false,
             context: None,
             pending_matchers: 0,
@@ -335,6 +338,7 @@ impl ExecutionSequence {
         };
         if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
             self.result = failure;
+            self.count_failure = Some((self.expect_assertions, self.expect_call_count));
         }
     }
 }
@@ -863,10 +867,7 @@ impl Execution {
                 .failure
                 .take()
                 .or_else(|| {
-                    test_command::TestFailure::from_result(
-                        sequence.result,
-                        sequence.expect_call_count,
-                    )
+                    test_command::TestFailure::from_result(sequence.result, sequence.count_failure)
                 })
                 .unwrap_or_default();
             sequence.earlier_failures.push(failure);

@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, removedDirReaddir, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -483,4 +483,127 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
     ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
   });
   expect(exitCode).toBe(0);
+});
+
+// Something else can remove a directory that rm has open: another operand of
+// the same command, or a second rm on the same tree. Linux then answers
+// getdents64(2) on the open descriptor with ENOENT, which libc's readdir(3)
+// reports as the end of the directory. Two removers that race are not
+// deterministic, so `removedDirReaddir` preloads a shim that plays the other
+// one from inside getdents64.
+describe.skipIf(!removedDirReaddir.available)("a directory that is removed while the shell reads it", () => {
+  // A C compiler on a busy CI machine can take longer than the default hook timeout.
+  beforeAll(() => void removedDirReaddir.compile(), 30_000);
+
+  test("ends its listing", async () => {
+    using dir = tempDir("rm-vanishing-dir", {});
+    const log = path.join(String(dir), "shim.log");
+
+    const fixture = /* ts */ `
+    import { $ } from "bun";
+    import fs from "node:fs";
+    import path from "node:path";
+    $.nothrow();
+
+    const out: Record<string, unknown> = {};
+    for (const [key, flags, marked] of [
+      ["force", "-rf", "vanish-before-read"],
+      ["forceMidRead", "-rf", "vanish-mid-read"],
+      ["noForce", "-r", "vanish-before-read"],
+      ["otherError", "-rf", "read-fails-eio"],
+      ["stillThere", "-rf", "read-fails-enoent"],
+    ]) {
+      fs.mkdirSync(path.join(key, "keep", "deeper"), { recursive: true });
+      fs.writeFileSync(path.join(key, "keep", "deeper", "file.txt"), "x");
+      fs.mkdirSync(path.join(key, marked));
+      if (marked === "vanish-mid-read" || marked === "read-fails-enoent") {
+        fs.writeFileSync(path.join(key, marked, "inner.txt"), "x");
+      }
+      const { exitCode, stderr } = await $\`rm \${flags} \${key}\`.quiet();
+      out[key] = { exitCode, stderr: stderr.toString(), left: fs.existsSync(key) };
+    }
+    const ls = await $\`ls otherError/read-fails-eio\`.quiet();
+    out.ls = { exitCode: ls.exitCode, stderr: ls.stderr.toString() };
+
+    // Glob expansion lists every directory that a pattern can match in.
+    for (const sub of ["a", "b", "c", "d"]) {
+      fs.mkdirSync(path.join("glob", sub), { recursive: true });
+      for (const name of ["1", "2"]) fs.writeFileSync(path.join("glob", sub, name), "");
+    }
+    fs.mkdirSync(path.join("glob", "vanish-before-read"));
+    const echo = await $\`echo glob/*/*\`.quiet();
+    out.glob = {
+      exitCode: echo.exitCode,
+      stderr: echo.stderr.toString(),
+      matches: echo.stdout.toString().trim().split(" ").sort(),
+    };
+    console.log(JSON.stringify(out));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: removedDirReaddir.env(log),
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // What the shim did: if it did not interpose, nothing here was removed.
+    expect(removedDirReaddir.actions(log, String(dir))).toEqual([
+      "read-fails-eio otherError/read-fails-eio",
+      "read-fails-eio otherError/read-fails-eio",
+      "read-fails-enoent stillThere/read-fails-enoent",
+      "vanish-before-read force/vanish-before-read",
+      "vanish-before-read glob/vanish-before-read",
+      "vanish-before-read noForce/vanish-before-read",
+      "vanish-mid-read forceMidRead/vanish-mid-read",
+    ]);
+    expect(JSON.parse(stdout)).toEqual({
+      // -f: a directory that is already gone is not an error, and the rest of the tree is removed.
+      force: { exitCode: 0, stderr: "", left: false },
+      forceMidRead: { exitCode: 0, stderr: "", left: false },
+      // Without -f the directory that could not be removed is still reported.
+      noForce: { exitCode: 1, stderr: "rm: noForce/vanish-before-read: No such file or directory\n", left: true },
+      // Every other read error is still an error, for rm and for ls.
+      otherError: { exitCode: 1, stderr: "rm: otherError/read-fails-eio: Input/output error\n", left: true },
+      ls: { exitCode: 1, stderr: "ls: otherError/read-fails-eio: Input/output error\n" },
+      // A filesystem that answers ENOENT for a directory that is still there: rmdir tells the truth.
+      stillThere: { exitCode: 1, stderr: "rm: stillThere/read-fails-enoent: Directory not empty\n", left: true },
+      // The walk goes on to the other directories: it used to stop there, with the matches it had and no error.
+      glob: {
+        exitCode: 0,
+        stderr: "",
+        matches: ["a", "b", "c", "d"].flatMap(sub => [`glob/${sub}/1`, `glob/${sub}/2`]),
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The same with no shim: each operand is removed by its own worker, so
+// operands that cover each other race over every directory. A stress probe,
+// not a deterministic repro: on one core the workers do not race. Linux only:
+// on macOS and Windows the unlink-then-rmdir retry of a directory has an
+// ENOENT arm of its own, which does not ask -f. The race itself stays: -f
+// makes it harmless, and without -f a worker still reports an operand that
+// another worker removed first.
+test.skipIf(!isLinux)("rm -rf of operands that cover each other removes the tree", async () => {
+  for (let iteration = 0; iteration < 10; iteration++) {
+    const files: Record<string, string> = {};
+    for (let d = 0; d < 8; d++) {
+      for (let s = 0; s < 4; s++) {
+        for (let f = 0; f < 4; f++) files[`tree/d${d}/s${s}/f${f}`] = "";
+      }
+    }
+    using dir = tempDir("rm-overlap", files);
+    const tree = path.join(String(dir), "tree");
+    const subdirs = Array.from({ length: 8 }, (_, d) => path.join(tree, `d${d}`));
+
+    const { stderr, exitCode } = await $`rm -rf ${subdirs} ${tree} ${tree}`.quiet();
+    expect({ stderr: stderr.toString(), exitCode, left: existsSync(tree) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      left: false,
+    });
+  }
 });

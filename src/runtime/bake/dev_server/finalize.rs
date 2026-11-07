@@ -75,6 +75,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         None => Vec::new(),
     };
     bv2.deinit_without_freeing_arena();
+    dev.client_graph.css_module_importers.clear_retaining_capacity();
     // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
     dev.current_bundle = None;
     dev.log.clear_and_free();

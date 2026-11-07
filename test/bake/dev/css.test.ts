@@ -1,8 +1,80 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
+devTest("css module imported by its names, and a name added", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["a.ts"],
+    }),
+    "a.ts": `
+      import styles, { big } from "./a.module.css";
+      import * as all from "./a.module.css";
+      const name = (c: string) => c.replace(/_[\\w-]+/g, "");
+      console.log([Object.keys(styles).join(","), name(big), name(all.default.mark)].join(" "));
+      (globalThis as any).mark = styles.mark;
+      import.meta.hot.accept();
+    `,
+    "a.module.css": `
+      .mark { color: red; }
+      .big { composes: mark; font-size: 2em; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("mark,big mark big mark");
+    // The class the stylesheet has is the one the module gives.
+    const selector = await c.js<string>`document.styleSheets[0].cssRules[0].selectorText`;
+    expect(selector).toMatch(/^\.mark_/);
+    expect(selector).toBe("." + (await c.js<string>`globalThis.mark`));
+    await dev.patch("a.module.css", { find: ".big", replace: ".extra { color: blue; }\n.big" });
+    await c.expectMessage("mark,extra,big mark big mark");
+  },
+});
+
+devTest("css module edited without a change of names updates in place", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["a.ts"],
+    }),
+    "a.ts": `
+      import styles from "./a.module.css";
+      document.body.className = styles.mark;
+      console.log("ran");
+    `,
+    "a.module.css": `
+      .mark { color: red; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("ran");
+    await c.style("." + (await c.js<string>`document.body.className`)).color.expect.toBe("red");
+    // a.ts accepts nothing: sent again, it would reload the page.
+    await dev.patch("a.module.css", { find: "red", replace: "blue" });
+    await c.style("." + (await c.js<string>`document.body.className`)).color.expect.toBe("#00f");
+  },
+});
+devTest("css module's names reach a server render when one is added", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import styles from "../a.module.css";
+      export default function () {
+        return new Response(Object.keys(styles).join(","));
+      }
+    `,
+    "a.module.css": `
+      .mark { color: red; }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("mark");
+    await dev.patch("a.module.css", { find: ".mark", replace: ".extra { color: blue; }\n.mark" });
+    await dev.fetch("/").equals("extra,mark");
+  },
+});
 devTest("css file with syntax error does not kill old styles", {
   files: {
     "styles.css": `
@@ -818,3 +890,110 @@ function extractCssUrl(backgroundImage: string): string {
   }
   return url[2];
 }
+devTest("css module binding survives an edit of the importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .a { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("v1:" + Object.keys(styles).join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1:a");
+    // The css module is cached in the incremental graph and is not parsed
+    // again here. The importer must still list it as a dependency.
+    await dev.patch("index.ts", { find: "v1", replace: "v2" });
+    await c.expectMessage("v2:a");
+    await dev.patch("index.ts", { find: "v2", replace: "v3" });
+    await c.expectMessage("v3:a");
+    await dev.patch("styles.module.css", { find: "red", replace: "blue" });
+    await dev.write(
+      "styles.module.css",
+      `
+        .a { color: red; }
+        .b { color: blue; }
+      `,
+    );
+    await c.expectMessage("v3:a,b");
+  },
+});
+devTest("css module that was only composed from gets imported directly", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "base.module.css": `
+      .base { font-weight: 700; }
+    `,
+    "button.module.css": `
+      .btn { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      console.log("btn:" + styles.btn.split(" ").length);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("btn:1");
+    // base.module.css enters the graph as a child of button.module.css only.
+    await dev.write(
+      "button.module.css",
+      `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
+      `,
+    );
+    await c.expectMessage("btn:2");
+    // Now a module imports it directly. It has no module of its own yet, so it
+    // must be bundled again instead of being treated as cached.
+    await dev.write(
+      "index.ts",
+      `
+        import styles from "./button.module.css";
+        import base from "./base.module.css";
+        console.log("base:" + Object.keys(base).join(",") + " " + (styles.btn.split(" ")[0] === base.base));
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("base:base true");
+  },
+});
+devTest("plain css imported with a binding is an empty module, as in bun build", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "plain.css": `
+      body { color: red; }
+    `,
+    "other.css": `
+      h1 { color: blue; }
+    `,
+    "index.ts": `
+      import sheet from "./plain.css";
+      import * as ns from "./other.css";
+      console.log(JSON.stringify({ sheet, ns: Object.keys(ns), nsDefault: ns.default }));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
+    await c.style("body").color.expect.toBe("red");
+    await c.style("h1").color.expect.toBe("#00f");
+    // The same holds when the importer is bundled again and the stylesheets are cached.
+    await dev.patch("index.ts", { find: "JSON.stringify({", replace: `"again:" + JSON.stringify({` });
+    await c.expectMessage("again:" + JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
+  },
+});

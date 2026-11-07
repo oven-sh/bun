@@ -5947,9 +5947,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         if !self.fn_only_data_visit.is_this_nested {
-            // A REPL submission is a script even when it has `import`
-            // statements (the REPL rewrites them), so top-level `this` is
-            // the global object, as in Node's REPL.
+            // REPL input is a script even with `import` or `await`: `this` is the global object.
             if self.options.repl_mode {
                 return None;
             }
@@ -5965,12 +5963,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
                 // Instead of doing this at runtime using "fn.call(module.exports)", we
                 // do it at compile time using expression substitution here.
-                //
-                // Only the bundler's `__commonJS` wrapper and the runtime's
-                // `(function(exports, require, module, ...) {})` wrapper bind
-                // `exports`. A transform-only output (`bun build --no-bundle`,
-                // `Bun.Transpiler`) has no wrapper, so `this` stays `this`
-                // there and keeps its value as a classic script.
+                // Only the bundler's `__commonJS` wrapper and the runtime's CommonJS
+                // wrapper bind `exports`; transform-only output has no wrapper.
                 let exports_ref = self.exports_ref;
                 self.record_usage(exports_ref);
                 self.deoptimize_common_js_named_exports();

@@ -164,6 +164,8 @@ pub(crate) fn scan_imports_and_exports(
                     css_asts,
                     import_records_list,
                     input_files,
+                    // Split-borrow — see `LinkerContext::log_disjoint`.
+                    this.log_disjoint(),
                 );
 
                 continue;
@@ -1739,6 +1741,24 @@ impl<'a> ExportStarContext<'a> {
 // CSS "composes:" validation. The body reaches into
 // `bun_css::BundlerStyleSheet.{composes,local_scope,local_properties}`.
 // ──────────────────────────────────────────────────────────────────────────
+/// The cross-file `composes` checks of step 1, for the dev server, which skips the link step.
+pub(crate) fn validate_css_module_composes(
+    this: &LinkerContext,
+    source_index: crate::IndexInt,
+    log: &mut bun_ast::Log,
+) {
+    let ast = this.graph.ast.split_raw();
+    let input = this.parse_graph().input_files.split_raw();
+    __css_validation::validate_css_import_composes(
+        this,
+        source_index as usize,
+        ast.css,
+        ast.import_records,
+        input.source,
+        log,
+    );
+}
+
 mod __css_validation {
     use super::*;
     use crate::bun_css::css_properties::css_modules::Specifier;
@@ -1751,11 +1771,12 @@ mod __css_validation {
     use crate::bundled_ast::CssCol;
 
     pub(super) fn validate_css_import_composes(
-        this: &mut LinkerContext,
+        this: &LinkerContext,
         id: usize,
         css_asts: *mut [CssCol],
         import_records_list: *mut [ImportRecordList<'_>],
         input_files: *mut [Source],
+        log: &mut Log,
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
         // `other_css_ast` below may alias the same allocation when a file
@@ -1784,8 +1805,7 @@ mod __css_validation {
                 for name in compose.names.slice() {
                     let name_v = name.v();
                     if !other_css_ast.local_scope.contains(name_v) {
-                        // Split-borrow — see `LinkerContext::log_disjoint`.
-                        let _ = this.log_disjoint().add_error_fmt(
+                        let _ = log.add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
@@ -1802,7 +1822,14 @@ mod __css_validation {
                 }
             }
         }
-        validate_composes_from_properties(this, id as u32, css_ast, import_records_list, css_asts);
+        validate_composes_from_properties(
+            this,
+            id as u32,
+            css_ast,
+            import_records_list,
+            css_asts,
+            log,
+        );
     }
 
     /// CSS modules spec says that the following is undefined behavior:
@@ -1832,11 +1859,12 @@ mod __css_validation {
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
     fn validate_composes_from_properties(
-        this: &mut LinkerContext,
+        this: &LinkerContext,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         import_records_list: *mut [ImportRecordList<'_>],
         all_css_asts: *mut [CssCol],
+        log: &mut Log,
     ) {
         #[derive(Default)]
         struct PropertyInFile {
@@ -2078,9 +2106,7 @@ mod __css_validation {
             all_css_asts,
             all_symbols: &this.graph.symbols,
             all_sources: input.source,
-            // Split-borrow with `&this.graph.symbols` above —
-            // `log_disjoint` returns the disjoint `Transpiler.log` backref.
-            log: this.log_disjoint(),
+            log,
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();

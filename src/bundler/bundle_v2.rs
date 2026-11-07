@@ -5996,6 +5996,8 @@ pub mod bv2_impl {
             for source_index in &css_module_stubs {
                 let mut log = bun_ast::Log::init();
                 self.linker
+                    .validate_css_module_composes(source_index.get(), &mut log);
+                self.linker
                     .populate_css_module_lazy_export(source_index.get(), &mut log)?;
                 if log.has_errors() {
                     css_module_errors.push((*source_index, log));

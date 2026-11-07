@@ -4843,6 +4843,20 @@ impl<'a> LinkerContext<'a> {
         )
     }
 
+    /// See `linker_context/scanImportsAndExports.rs`.
+    #[inline]
+    pub(crate) fn validate_css_module_composes(
+        &self,
+        source_index: crate::IndexInt,
+        log: &mut Log,
+    ) {
+        crate::linker_context::scan_imports_and_exports::validate_css_module_composes(
+            self,
+            source_index,
+            log,
+        )
+    }
+
     /// See `linker_context/generateCodeForLazyExport.rs`.
     #[inline]
     pub(crate) fn populate_css_module_lazy_export(

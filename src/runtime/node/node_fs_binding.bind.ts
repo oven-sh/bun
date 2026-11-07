@@ -119,6 +119,7 @@ export const NodeJSFS = b.class({
       ]),
       ["cp", { ...operation(2, "Promise"), uses }] as const,
       ["cpSync", { ...operation(2, "undefined"), uses }] as const,
+      ["cpSyncCheckPaths", { ...operation(4, "int32"), uses }] as const,
       ["watch", operation(3, "FSWatcher", "undefined")] as const,
       ["watchFile", operation(3, "StatWatcher", "undefined")] as const,
       ["Dirent", getter] as const,

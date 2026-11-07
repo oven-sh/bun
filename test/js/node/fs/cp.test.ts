@@ -43,10 +43,15 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      expect(e.code).toBe("ERR_FS_EISDIR");
-      // The path field echoes the caller's string verbatim (node does not
-      // resolve or normalize it), so expect the same concatenation we passed.
-      expect(e.path).toBe(basename + "/from");
+      // fs.promises.cp builds this error in JavaScript: the path field echoes the
+      // caller's string verbatim (node does not resolve or normalize it), so
+      // expect the same concatenation we passed. fs.cpSync throws it from its
+      // native path check, where node sets `code` and no path
+      // (cp-sync-check-paths.test.ts).
+      expect({ code: e.code, path: e.path }).toEqual({
+        code: "ERR_FS_EISDIR",
+        path: name === "cpSync" ? undefined : basename + "/from",
+      });
     });
 
     test("recursive directory structure - no destination", async () => {

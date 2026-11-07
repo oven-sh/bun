@@ -1310,7 +1310,7 @@ impl Tag {
     pub const read: Tag = Tag(38);
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
-    pub(crate) const stat: Tag = Tag(41);
+    pub const stat: Tag = Tag(41);
     pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]

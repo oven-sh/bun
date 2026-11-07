@@ -2,7 +2,14 @@
 // Also hosts the option validation and SystemError construction shared with
 // internal/fs/cp (async) and the fs.cpSync/fs.cp/fs.promises.cp dispatchers,
 // ported from node lib/internal/fs/utils.js and lib/internal/errors.js.
-const { validateObject, validateBoolean, validateFunction, validateInteger } = require("internal/validators");
+const {
+  validateObject,
+  validateBoolean,
+  validateFunction,
+  validateInteger,
+  validateString,
+} = require("internal/validators");
+const binding = require("internal/fs/binding");
 const {
   chmodSync,
   copyFileSync,
@@ -16,7 +23,7 @@ const {
   unlinkSync,
   utimesSync,
 } = require("node:fs");
-const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { dirname, isAbsolute, join, resolve, sep } = require("node:path");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -178,6 +185,8 @@ function isSrcSubdir(src: string, dest: string) {
 type Stats = $Node.Stats;
 type BigIntStats = $Node.BigIntStats;
 type AnyStats = Stats | BigIntStats;
+// The walker only asks whether dest is there, and `cpSyncFn` knows that much of the path it was given.
+type DestinationStats = BigIntStats | boolean | null | undefined;
 
 interface CpOptions {
   dereference: boolean;
@@ -204,8 +213,6 @@ interface SkippedPaths {
   skipped: true;
 }
 
-function checkPathsSync(src: string, dest: string, opts: CpOptions & { filter: undefined }): CheckedPaths;
-function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPaths | SkippedPaths;
 function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPaths | SkippedPaths {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
@@ -273,29 +280,6 @@ function getStatsSync(src: string, dest: string, opts: CpOptions) {
   return { srcStat, destStat };
 }
 
-function checkParentPathsSync(src: string, srcStat: BigIntStats, dest: string) {
-  const srcParent = resolve(dirname(src));
-  const destParent = resolve(dirname(dest));
-  if (destParent === srcParent || destParent === parse(destParent).root) return;
-  let destStat: BigIntStats;
-  try {
-    destStat = statSync(destParent, { bigint: true });
-  } catch (err: any) {
-    if (err.code === "ENOENT") return;
-    throw err;
-  }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
-  return checkParentPathsSync(src, srcStat, destParent);
-}
-
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
 // verbatim and clones special files, while node rewrites relative symlink
 // targets against the source tree and raises ERR_FS_CP_SOCKET /
@@ -325,54 +309,63 @@ function treeContainsOnlyFilesAndDirsSync(root: string) {
   return true;
 }
 
-// node-correct validation before handing off to the native fast path
-// (which performs the copy but does not implement node's cp error codes).
-function tryNativeFastPathSync(src: string, dest: string, opts: CpOptions & { filter: undefined }) {
-  const checked = checkPathsSync(src, dest, opts);
-  const { srcStat, destStat } = checked;
-  checkParentPathsSync(src, srcStat, dest);
-  if (srcStat.isDirectory() && !opts.recursive) {
-    throw fsEisdirError({
-      message: `${src} is a directory (not copied)`,
-      path: src,
-      syscall: "cp",
-      errno: EISDIR,
-      code: "EISDIR",
-    });
+// What `binding.cpSyncCheckPaths` answers: `CpSyncPaths::bits` in src/runtime/node/node_fs.rs.
+const kSrcIsDirectory = 1 << 0;
+const kSrcIsFile = 1 << 1;
+const kDestExists = 1 << 2;
+const kDestIsFile = 1 << 3;
+
+// Whether `binding.cpSync` does the copy. It reads none of the options tested here.
+function copiesNatively(paths: number, src: string, opts: CpOptions) {
+  if (
+    opts.filter ||
+    opts.dereference ||
+    opts.preserveTimestamps ||
+    opts.verbatimSymlinks ||
+    opts.mode ||
+    opts.errorOnExist ||
+    !opts.force
+  ) {
+    return false;
   }
-  if (srcStat.isDirectory()) {
+  if (paths & kSrcIsDirectory) {
     // On macOS the native path clones the whole tree with a single
     // clonefile(). Only take it when the result is indistinguishable from
     // node's walker: dest must not exist (no merge semantics) and the tree
     // must contain only regular files and directories.
-    return {
-      ok: process.platform === "darwin" && !destStat && treeContainsOnlyFilesAndDirsSync(src),
-      checked,
-    };
+    return process.platform === "darwin" && !(paths & kDestExists) && treeContainsOnlyFilesAndDirsSync(src);
   }
-  // The single-file native copy is only node-equivalent for regular-file ->
-  // regular-file (or missing dest). Symlinks (node resolves relative link
-  // targets) and special files (node-specific error codes) must go through
-  // the ported implementation.
-  return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
+  // A regular file onto a regular file or onto nothing. The native copy writes into a dest that is there, where the walker unlinks it first.
+  return (paths & kSrcIsFile) !== 0 && (!(paths & kDestExists) || (paths & kDestIsFile) !== 0);
 }
 
-function cpSyncFn(src: string, dest: string, opts: CpOptions, checked?: CheckedPaths) {
-  // `checked` carries the stats from a preceding tryNativeFastPathSync so the
-  // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
-  const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
-  if (skipped) return;
-  if (checked === undefined) checkParentPathsSync(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp-sync.js#L41-L59
+function cpSyncFn(src: string, dest: string, opts: CpOptions) {
+  if (opts.filter) {
+    const shouldCopy = opts.filter(src, dest);
+    if ($isPromise(shouldCopy)) {
+      throw $ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
+    }
+    if (!shouldCopy) return;
+  }
+  // Throws as node's C++ does, where the walker below throws a SystemError: `NodeFS::cp_sync_check_paths` in src/runtime/node/node_fs.rs.
+  const paths = binding.cpSyncCheckPaths(src, dest, opts.dereference, opts.recursive);
+  // The walker joins and resolves its paths with node:path, which takes strings.
+  validateString(src, "src");
+  validateString(dest, "dest");
+  if (copiesNatively(paths, src, opts)) {
+    return binding.cpSync(src, dest, opts.recursive, false, true, 0);
+  }
+  return checkParentDir((paths & kDestExists) !== 0, src, dest, opts);
 }
 
-function checkParentDir(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function checkParentDir(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   const destParent = dirname(dest);
   if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
   return getStats(destStat, src, dest, opts);
 }
 
-function getStats(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function getStats(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   const statSyncFn = opts.dereference ? statSync : lstatSync;
   const srcStat = statSyncFn(src);
 
@@ -416,7 +409,7 @@ function getStats(destStat: BigIntStats | null | undefined, src: string, dest: s
   });
 }
 
-function onFile(srcStat: Stats, destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function onFile(srcStat: Stats, destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   if (!destStat) return copyFile(srcStat, src, dest, opts);
   return mayCopyFile(srcStat, src, dest, opts);
 }
@@ -470,7 +463,7 @@ function setDestTimestamps(src: string, dest: string) {
   return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat: Stats, destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function onDir(srcStat: Stats, destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
   if (opts.errorOnExist && !opts.force) {
     throw fsCpEExistError({
@@ -500,7 +493,7 @@ function copyDir(src: string, dest: string, opts: CpOptions) {
   }
 }
 
-function onLink(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function onLink(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   let resolvedSrc = readlinkSync(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
     resolvedSrc = resolve(dirname(src), resolvedSrc);
@@ -559,7 +552,6 @@ function copyLink(resolvedSrc: string, dest: string) {
 export default {
   cpSyncFn,
   validateCpOptions,
-  tryNativeFastPathSync,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,
   fsCpEExistError,

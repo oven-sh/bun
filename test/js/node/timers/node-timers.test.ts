@@ -399,13 +399,14 @@ describe("_repeat", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1 0\n", stderr: "", exitCode: 0 });
   });
 
+  // `node:timers` stays real under fake timers, so the fake-clock tests below use the globals.
   it.each(["ref'd", "unref'd"])("no timer stays armed after a self-clear by id (%s timeout)", kind => {
     jest.useFakeTimers();
     try {
       let fires = 0;
-      const timeout = setTimeout(() => {
+      const timeout = globalThis.setTimeout(() => {
         fires++;
-        clearTimeout(id);
+        globalThis.clearTimeout(id);
       }, 1) as TimerWithRepeat;
       const id = +timeout;
       timeout._repeat = 1;
@@ -424,7 +425,7 @@ describe("_repeat", () => {
     jest.useFakeTimers();
     try {
       let fires = 0;
-      const timeout = setTimeout(() => {
+      const timeout = globalThis.setTimeout(() => {
         fires++;
         // refresh() puts the timer back in the heap, where clearAllTimers() finds it.
         timeout.refresh();
@@ -447,7 +448,7 @@ describe("_repeat", () => {
       using graph = new Bun.ModuleGraph();
       let fires = 0;
       const timeout = graph.run(() =>
-        setTimeout(() => {
+        globalThis.setTimeout(() => {
           fires++;
           graph.dispose();
         }, 1),
@@ -474,7 +475,7 @@ describe("_repeat", () => {
     jest.useFakeTimers();
     try {
       let fires = 0;
-      const timeout = setTimeout(() => {
+      const timeout = globalThis.setTimeout(() => {
         fires++;
         inCallback(timeout);
       }, 1) as TimerWithRepeat;
@@ -482,7 +483,6 @@ describe("_repeat", () => {
 
       jest.advanceTimersByTime(5);
       expect(fires).toBe(5);
-      clearTimeout(timeout);
     } finally {
       jest.useRealTimers();
     }

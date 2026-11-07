@@ -369,6 +369,9 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+/** `routeKey` of internal/serve_cli.ts: the key in `routes` of `Bun.serve()` for a URL path. */
+export const routeKey = (path: string): string => require("internal/serve_cli").routeKey(path);
+
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; the node edge cases are handled here.
 const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(

@@ -70,8 +70,6 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
-    #[error("InvalidDependencyName")]
-    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
     #[error("InvalidPackageID")]
@@ -198,8 +196,6 @@ pub enum Error {
     Unexpected,
     #[error("NotSameFileSystem")]
     NotSameFileSystem,
-    #[error("FailedToCopyFile")]
-    FailedToCopyFile,
     #[error("InvalidBinCount")]
     InvalidBinCount,
     #[error("InvalidBinContent")]
@@ -276,7 +272,6 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
-            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",
@@ -362,7 +357,6 @@ impl Error {
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
-            Self::FailedToCopyFile => "FailedToCopyFile",
             Self::InvalidBinCount => "InvalidBinCount",
             Self::InvalidBinContent => "InvalidBinContent",
             Self::Sys(e) => <&'static str>::from(e),

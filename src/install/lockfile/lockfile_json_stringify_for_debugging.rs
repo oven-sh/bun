@@ -569,12 +569,12 @@ pub trait JsonWriter {
 /// Each impl emits the JSON encoding of `self` into `out` (no leading/trailing
 /// separator — the writer handles that).
 pub trait JsonScalar {
-    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions);
+    fn write_json(&self, out: &mut Vec<u8>);
 }
 
 impl JsonScalar for bool {
     #[inline]
-    fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {
+    fn write_json(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(if *self { b"true" } else { b"false" });
     }
 }
@@ -583,12 +583,11 @@ macro_rules! json_scalar_uint {
     ($($t:ty),+ $(,)?) => {$(
         impl JsonScalar for $t {
             #[inline]
-            fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
+            fn write_json(&self, out: &mut Vec<u8>) {
                 use std::io::Write as _;
-                // `.emit_nonportable_numbers_as_strings` quotes any integer
-                // outside ±2^53 so JS `JSON.parse` round-trips exactly.
+                // Quote any integer outside ±2^53 so JS `JSON.parse` round-trips exactly.
                 let v = *self as u64;
-                if opts.emit_nonportable_numbers_as_strings && v > (1u64 << 53) {
+                if v > (1u64 << 53) {
                     let _ = write!(out, "\"{}\"", v);
                 } else {
                     let _ = write!(out, "{}", v);
@@ -600,7 +599,7 @@ macro_rules! json_scalar_uint {
 json_scalar_uint!(u8, u16, u32, u64, usize);
 
 impl JsonScalar for &[u8] {
-    fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {
+    fn write_json(&self, out: &mut Vec<u8>) {
         encode_json_string(self, out);
     }
 }
@@ -628,21 +627,10 @@ fn encode_json_string(s: &[u8], out: &mut Vec<u8>) {
     out.push(b'"');
 }
 
-/// JSON stringify options. Only the three fields the lockfile binding sets
-/// are modelled.
-#[derive(Clone, Copy)]
-pub struct WriteStreamOptions {
-    /// `.whitespace = .indent_N` — number of spaces per nesting level. `0`
-    /// would be `.minified`; the binding always passes `2`.
-    pub indent: usize,
-    pub emit_nonportable_numbers_as_strings: bool,
-}
-
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
 /// `bun_install_jsc::install_binding::parse_lockfile`.
 pub struct WriteStream {
     pub(crate) out: Vec<u8>,
-    opts: WriteStreamOptions,
     depth: usize,
     /// Per open container: have we emitted ≥1 element yet (i.e. does the next
     /// element need a leading `,`)?
@@ -654,10 +642,9 @@ pub struct WriteStream {
 }
 
 impl WriteStream {
-    pub fn new(opts: WriteStreamOptions) -> Self {
+    pub fn new() -> Self {
         Self {
             out: Vec::new(),
-            opts,
             depth: 0,
             had_element: Vec::new(),
             after_field: false,
@@ -669,11 +656,8 @@ impl WriteStream {
     }
 
     fn newline_indent(&mut self) {
-        if self.opts.indent == 0 {
-            return;
-        }
         self.out.push(b'\n');
-        for _ in 0..self.depth * self.opts.indent {
+        for _ in 0..self.depth * 2 {
             self.out.push(b' ');
         }
     }
@@ -732,14 +716,13 @@ impl JsonWriter for WriteStream {
     fn object_field(&mut self, name: &[u8]) -> Result<(), crate::Error> {
         self.value_start();
         encode_json_string(name, &mut self.out);
-        self.out
-            .extend_from_slice(if self.opts.indent > 0 { b": " } else { b":" });
+        self.out.extend_from_slice(b": ");
         self.after_field = true;
         Ok(())
     }
     fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), crate::Error> {
         self.value_start();
-        value.write_json(&mut self.out, self.opts);
+        value.write_json(&mut self.out);
         Ok(())
     }
     fn write_null(&mut self) -> Result<(), crate::Error> {

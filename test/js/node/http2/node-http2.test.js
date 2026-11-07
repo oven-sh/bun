@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, nodeExeAtLeast, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5007,6 +5007,9 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
 { remoteCustomSettings: "x", strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
     every entry point
+{ strictSingleValueFields: "yes", maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
 { remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
   Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
     every entry point
@@ -5021,9 +5024,7 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
     connect(https), createServer, createSecureServer, performServerHandshake
 { unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
-    connect(http), connect(https), connect(createConnection)
-  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
-    createServer, createSecureServer, performServerHandshake
+    every entry point
 other calls
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
     connect("not a url", { strictSingleValueFields: "yes" })
@@ -5044,13 +5045,8 @@ other calls
   rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
     promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
 `;
-// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
-const optionChecksNode = (() => {
-  const node = nodeExe();
-  if (!node) return null;
-  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
-})();
+// Before v26.11.0 node checked the options in another order.
+const optionChecksNode = nodeExeAtLeast("26.11.0");
 
 for (const [name, runtime] of [
   ["bun", bunExe()],
@@ -6640,6 +6636,90 @@ it("res.end() calls its callback once when the client leaves before the response
     await sessionClosed.promise;
     await new Promise(resolve => server.close(resolve));
     expect(callbacks).toEqual(Array(requests).fill(1));
+  }
+});
+
+for (const secure of [true, false]) {
+  it.skipIf(!isLinux)(
+    `a session whose client is gone ends without an error on its streams${secure ? "" : ", without TLS"}`,
+    async () => {
+      // :method GET, :scheme and :path / from the static table, then a literal :authority.
+      const requestBlock = Buffer.concat([
+        Buffer.from([0x82, secure ? 0x87 : 0x86, 0x84, 0x01, 0x09]),
+        Buffer.from("localhost"),
+      ]);
+      const bytes = Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame().data,
+        new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data,
+        new http2utils.HeadersFrame(1, Buffer.from([0, 1, 97, 1, 98]), 0, true, true).data,
+      ]);
+      const streamErrors = [];
+      let streams = 0;
+      const allStreams = Promise.withResolvers();
+      const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
+      server.on("stream", stream => {
+        stream.on("error", err => streamErrors.push(err.code));
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+        if (++streams === 10) allStreams.resolve();
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      // In a process of its own: each client is gone by the time this loop answers it.
+      await using clients = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const bytes = Buffer.from("${bytes.toString("hex")}", "hex");
+          for (let i = 0; i < 10; i++) {
+            await new Promise(done => {
+              const socket = require("node:${secure ? "tls" : "net"}").connect(
+                { port: ${server.address().port}, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false },
+                () => {
+                  socket.write(bytes);
+                  socket.destroy();
+                },
+              );
+              socket.on("error", () => {}).on("close", done);
+            });
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await clients.exited;
+      // The clients can be done before this loop has accepted them, and close() drops the rest.
+      await allStreams.promise;
+      // Calls back only once every session is closed.
+      await new Promise(resolve => server.close(resolve));
+      expect({ exitCode, streams, streamErrors }).toEqual({ exitCode: 0, streams: 10, streamErrors: [] });
+    },
+  );
+}
+
+it.skipIf(!isLinux)("a session reports its own error after its client left", async () => {
+  const bytes = Buffer.concat([
+    http2utils.kClientMagic,
+    new http2utils.SettingsFrame().data,
+    new http2utils.Frame(8, 7, 0, 0).data,
+    Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]),
+  ]);
+  for (const secure of [false, true]) {
+    const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
+    const sessionError = once(server, "sessionError");
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" })
+      : net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    await once(socket, secure ? "secureConnect" : "connect");
+    socket.write(bytes);
+    socket.destroy();
+    const [err] = await sessionError;
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    await new Promise(resolve => server.close(resolve));
   }
 });
 

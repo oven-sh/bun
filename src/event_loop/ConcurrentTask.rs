@@ -231,6 +231,12 @@ pub trait Taskable {
 }
 
 impl TaskTag {
+    /// A bundle asks its plugins to resolve or load something.
+    #[inline]
+    pub fn is_plugin_request(self) -> bool {
+        self == task_tag::BundleV2PluginResolve || self == task_tag::BundleV2PluginLoad
+    }
+
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {
         task_tag::NAMES.get(self.0 as usize).copied().unwrap_or("?")
@@ -292,9 +298,8 @@ pub struct ConcurrentTask {
 impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
-            // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
-            // byte + raw pointer); caller must set a real task before use.
-            task: unsafe { bun_core::ffi::zeroed_unchecked() },
+            // A placeholder: the caller must set a real task before use.
+            task: Task::new(TaskTag(0), core::ptr::null_mut(), ContextId::NONE),
             next: Link::new(),
             auto_delete: false,
         }
@@ -336,21 +341,13 @@ pub enum AutoDeinit {
 }
 
 impl ConcurrentTask {
-    /// Heap-allocate a ConcurrentTask and return a raw pointer.
-    /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
-    #[inline]
-    pub(crate) fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
+    /// The pointer is intrusive (linked into `Queue`), so this returns it raw rather than as a `Box`.
     pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
-        let raw = ConcurrentTask::new(ConcurrentTask {
+        bun_core::heap::alloc_nn(ConcurrentTask {
             task,
             next: Link::new(),
             auto_delete: true,
-        });
-        // SAFETY: `new` heap-allocates via `heap::into_raw` — never null.
-        unsafe { core::ptr::NonNull::new_unchecked(raw) }
+        })
     }
 
     pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {

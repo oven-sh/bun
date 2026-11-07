@@ -1,8 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
-    VirtualMachineRef as VirtualMachine,
+    JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
 };
 use bun_core::String as BunString;
 use bun_sourcemap::SourceProviderMap;
@@ -80,9 +79,6 @@ fn absolute_directory(directory: &BunString) -> Box<[u8]> {
 pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
     this.sampling_profiler_directory = Some(absolute_directory(directory));
 }
-
-// `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
-// `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
@@ -296,31 +292,11 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
-pub fn Bun__setSyntheticAllocationLimitForTesting(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let [arg] = frame.arguments_as_array::<1>();
-    if frame.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "setSyntheticAllocationLimitForTesting",
-            1,
-            frame.arguments_count() as usize,
-        ));
-    }
-
-    if !arg.is_number() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "setSyntheticAllocationLimitForTesting expects a number"
-        )));
-    }
-
-    let limit: usize =
-        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {
+    let limit: usize = usize::try_from((limit as i64).max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT
         .store(limit, core::sync::atomic::Ordering::Relaxed);
-    Ok(JSValue::js_number(prev as f64))
+    prev
 }

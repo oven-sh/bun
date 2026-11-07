@@ -317,6 +317,53 @@ test.concurrent(
   },
 );
 
+// The value of such a rule is read under the alias. What it installs is still trusted by its own name.
+describe.concurrent.each(["npm:uses-what-bin@1.0.0", "catalog:"])(
+  "an override keyed by an npm: alias, with the value %s",
+  value => {
+    test.each([
+      {
+        title: "the alias in trustedDependencies doesn't run its scripts",
+        trustedDependencies: ["esbuild"],
+        runs: false,
+      },
+      { title: "the alias in the default list doesn't run its scripts", trustedDependencies: undefined, runs: false },
+      { title: "its own name in trustedDependencies does", trustedDependencies: ["uses-what-bin"], runs: true },
+    ])("$title", async ({ trustedDependencies, runs }) => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: { packages: [], catalog: { "esbuild": "npm:uses-what-bin@1.0.0", "uses-what-bin": "1.0.0" } },
+          dependencies: { "esbuild": "npm:uses-what-bin@^1.0.0" },
+          overrides: { "esbuild@npm:uses-what-bin@^1.0.0": value },
+          trustedDependencies,
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      // Without the rule it is 1.5.0.
+      const { name, version } = await file(join(packageDir, "node_modules", "esbuild", "package.json")).json();
+      expect({ name, version }).toEqual({ name: "uses-what-bin", version: "1.0.0" });
+      expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBe(runs);
+      expect(out.includes("Blocked 1 postinstall")).toBe(!runs);
+      expect(exitCode).toBe(0);
+    });
+  },
+);
+
 describe("trustedDependencies survive lockfile migration", () => {
   // `electron` is on the default trusted list, `uses-what-bin` is not. Declaring
   // `trustedDependencies: ["uses-what-bin"]` therefore has to flip both: the

@@ -1,0 +1,156 @@
+# One site sees objects of three classes that stand below each other, so its test speaks of three prototype chains at once. A callee leaves its typed path and puts the name on the prototype object in the middle:
+# objects of the class in the middle and of the one below find it, objects of the one above do not. Then the same on the lowest class under another name.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="name-appears-in-middle-of-three-classes.ts" displayPath="name-appears-in-middle-of-three-classes.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=374 constructor=f1 fields=[{key="id" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Middle" module=m0 position=504 base=L0 constructor=f2 fields=[{key="width" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Leaf" module=m0 position=623 base=L1 constructor=f3 fields=[{key="depth" declared={type=number} flags=[IsRequired]}] supertypes=[L0, L1] flags=[HasHeritage] ownFieldCount=1
+variable g0 name="damage" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Convert v2 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = ResolveHeritage v3
+    v5 = NewClosure function=f2
+    v6 = NewClass v5, v3, v4 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = ResolveHeritage v8
+    v10 = NewClosure function=f3
+    v11 = NewClass v10, v8, v9 layout=L2
+    v12 = FinishClass v11 layout=L2
+    v13 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = Integer
+    v15 = Convert v14 declared={type=number}
+    v16 = Integer
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b1(v18: number, v19: number):
+    v20 = Integer integer=400
+    v21 = Less v19, v20
+    Branch v21 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v22):
+    v23 = Construct v3, -, v22 calleeName="Base"
+    v24 = Construct v8, -, v22 calleeName="Middle"
+    v25 = Construct v13, -, v22 calleeName="Leaf"
+    v26 = Integer integer=1
+    v27 = Convert v26 declared={type=number}
+    PutModuleVariable v27 variable=g0
+    v29 = GetModuleVariable variable=g0
+    v30 = CheckInitialized v29 name="damage"
+    v31 = Integer
+    v32 = Convert v31 declared={type=number}
+    LoopHint
+    v34 = Increment v22
+    v35 = Convert v34 declared={type=number}
+    Jump -> next b1(v18, v35)
+  b3(v36):
+    v37 = Undefined
+    Return v37
+}
+function f1 name="Base" module=m0 position=459 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0|L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Convert v1 declared={type=number}
+    PropSet v4, v5 key="id"
+    v7 = Undefined
+    Return v4
+}
+function f2 name="Middle" module=m0 position=556 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: number):
+    v3 = Absent
+    v4 = GetSuperBase v0
+    v5 = SuperConstruct v4, v1, v2 layout=L1
+    v6 = Convert v5 declared={type=L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Integer integer=1
+    v8 = Add v2, v7
+    v9 = Convert v8 declared={type=number}
+    PropSet v6, v9 key="width"
+    v11 = Undefined
+    Return v11
+}
+function f3 name="Leaf" module=m0 position=675 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: number):
+    v3 = Absent
+    v4 = GetSuperBase v0
+    v5 = SuperConstruct v4, v1, v2 layout=L2
+    v6 = Convert v5 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Jump -> next b1(v6)
+  b1(v7) frequency=Unlikely:
+    v8 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v8
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f4]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+# -- generated: f0 Base Leaf
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=1 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 parent=5 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0() frequency=Rare:
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: f1 = NewClass v0 layout=L0
+# CHECK-NEXT: v2: f1 = FinishClass v1 layout=L0
+# CHECK-NEXT: v3: null|object = ResolveHeritage v2
+# CHECK-NEXT: v4: object = AssumeType v3 provenType=object
+# CHECK-NEXT: v5: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v6: f2 = NewClass v5, v2, v4 layout=L1
+# CHECK-NEXT: v7: f2 = FinishClass v6 layout=L1
+# CHECK-NEXT: v8: null|object = ResolveHeritage v7
+# CHECK-NEXT: v9: object = AssumeType v8 provenType=object
+# CHECK-NEXT: v10: f3 = NewClosure function=f3 allocationSite=2
+# CHECK-NEXT: v11: f3 = NewClass v10, v7, v9 layout=L2
+# CHECK-NEXT: v12: object = NewRuntimeError runtimeError=UninitializedThis
+# CHECK-NEXT: Throw v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Base"
+# CHECK: module=m0 position=459 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L0|L1|L2 flags=[IsFromCompiler]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# CHECK-LABEL: function {{*}}name="Leaf"
+# CHECK: module=m0 position=675 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 399]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: int[0, 399]) frequency=Unlikely:
+# CHECK-NEXT: v3: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v4: f3 = AssumeType v1 provenType=f3
+# CHECK-NEXT: v5: null|object = GetSuperBase v3
+# CHECK-NEXT: v6: f2 = AssumeType v5 provenType=f2
+# CHECK-NEXT: v7: anything ~ object = CallDirect v6, v4, v2 function=f2 accessSite=6 [isConstruction]
+# CHECK-NEXT: v8: object = NewRuntimeError runtimeError=UninitializedThis
+# CHECK-NEXT: Throw v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Base"
+# CHECK: module=m0 position=459 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f1 callPosition=459 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4: int = AssumeType v3 provenType=int
+# CHECK-NEXT: v5: fact = Entered function=f1 @459 tail
+# CHECK-NEXT: v6: f1|f2|f3 = AssumeType v2, v5 provenType=f1|f2|f3
+# CHECK-NEXT: v7: object = GetConstructPrototype v6 layout=L0
+# CHECK-NEXT: v8: object ~ L0|L1|L2 = NewObject v7 layout=L0 allocationSite=3 allocationClass=0
+# CHECK-NEXT: v9: L0|L1|L2 = AssumeType v8 provenType=L0|L1|L2
+# CHECK-NEXT: v10: boolean = HasNoFieldOutsideSlot v9
+# CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v11: guard):
+# CHECK-NEXT: v12: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v13: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlot v9, v11, v13 key="id" receivers=[L0, L1, L2] level=Expected accessSite=3
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: PropSet v9, v4 key="id" accessSite=3 receivers=[L0, L1, L2]
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Base"
+# CHECK: module=m0 position=459 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=L0|L1|L2} parameters=[{type=int}] results=[{type=undefined}] functionTypes=[f4] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f1} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="Leaf"
+# CHECK: module=m0 position=675 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: int[0, 399] = AssumeType v3 provenType=int[0, 399]
+# CHECK-NEXT: v5: object = CallDirect v0, v2, v4 function=f3
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Leaf"
+# CHECK: module=m0 position=675 kind=DerivedConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=L2} parameters=[{type=int[0, 399]}] results=[{type=undefined}] functionTypes=[f6] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f3} constructedClass=L2

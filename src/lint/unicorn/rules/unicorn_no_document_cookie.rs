@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 /// Disallows direct use of `document.cookie`.
 pub struct NoDocumentCookie;
 
-const NO_DOCUMENT_COOKIE: Message = Message::new("", "Do not use `document.cookie` directly.");
+const NO_DOCUMENT_COOKIE: &Message = &Message::new("", "Do not use `document.cookie` directly.");
 
 impl Rule for NoDocumentCookie {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-document-cookie", Kind::Suggestion);

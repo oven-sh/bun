@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// Disallow template literal placeholder syntax in regular strings.
 pub struct NoTemplateCurlyInString;
 
-const UNEXPECTED_TEMPLATE_EXPRESSION: Message = Message::new(
+const UNEXPECTED_TEMPLATE_EXPRESSION: &Message = &Message::new(
     "unexpectedTemplateExpression",
     "Unexpected template string expression.",
 );

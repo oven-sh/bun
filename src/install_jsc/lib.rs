@@ -1,12 +1,9 @@
 #![warn(unused_must_use)]
 //! JSC bridge surface for `bun_install`. Keeps `src/install/` free of
-//! `JSValue`/`JSGlobalObject`/`CallFrame` references.
-//!
-//! Host-fn bodies for hosted_git_info / npm / install_binding compile
-//! against the `bun_jsc` + `bun_install` surface and are wired into the
-//! runtime via the `dispatch_js2native` re-exports.
+//! `JSValue`/`JSGlobalObject` references.
 
-pub mod hosted_git_info_jsc;
-pub mod ini_jsc;
-pub mod install_binding;
-pub mod npm_jsc;
+pub(crate) mod generated_bindgen;
+pub(crate) mod hosted_git_info_jsc;
+pub(crate) mod ini_jsc;
+pub(crate) mod install_binding;
+pub(crate) mod npm_jsc;

@@ -1300,6 +1300,13 @@ it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limi
   });
 });
 
+it("Array.prototype as fileExtensions is an empty array", () => {
+  const { dir } = make(["index.tsx"]);
+  const routes = (fileExtensions: string[]) =>
+    Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions }).routes);
+  expect(routes(Array.prototype)).toEqual(routes([]));
+});
+
 it(".query and .params support names that look like array indices", () => {
   const { dir } = make(["posts.tsx", "[0].tsx"]);
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });

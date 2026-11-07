@@ -2031,6 +2031,36 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   expect(await exited).toBe(1);
 });
 
+// `bun add` edits its copy of the member's package.json before the install. The file on disk is still the old text.
+test.concurrent("bun add reports a duplicate workspace name at its position in the file on disk", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    // With a glob, the order that the directory lists the members in decides which one gets the error.
+    write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/pkg1", "packages/pkg2"] })),
+    // `name` is after `dependencies`, so the new dependency moves it in the copy that has the edit.
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      `{\n  "dependencies": {\n    "a-dep": "1.0.10"\n  },\n  "name": "pkg1"\n}\n`,
+    ),
+    write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg1" })),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "no-deps"],
+    cwd: join(packageDir, "packages", "pkg1"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+  expect({
+    error: stderr.match(/error: Workspace name "pkg1" already exists\n\s+at .*pkg2.package\.json:(\d+:\d+)/)?.[1],
+    note: stderr.match(/note: Package name is also declared here\n\s+at .*pkg1.package\.json:(\d+:\d+)/)?.[1],
+    exitCode,
+  }).toEqual({ error: "1:9", note: "5:11", exitCode: 1 });
+});
+
 // Auto-install reads the project from the folder of the script, not from the root.
 test.concurrent("a script that imports a missing package reports two workspaces with the same name", async () => {
   using ctx = await setupTest();
@@ -3206,20 +3236,89 @@ test.concurrent("can override npm package with workspace package under a differe
   });
 });
 
-// packages/m is a member named no-deps, and the root has `overrides: { "no-deps": "2.0.0" }`. A rule does not apply to
-// the member ("overrides do not apply to workspaces"). It does apply to every dependency on that name, as in Bun 1.4,
-// also to one that would link the member.
+// packages/m is a member named no-deps, and the root has an override for that name: `{ "no-deps": "2.0.0" }`, or the
+// rule of the case. A rule does not apply to the member ("overrides do not apply to workspaces"). It does apply to
+// every dependency on that name, as in Bun 1.4, also to one that would link the member.
 describe.each(["hoisted", "isolated"])("an override for the name of a member, %s linker", linker => {
   type Shape = {
     title: string;
     /** `version` of packages/m */
     member?: string;
+    /** The root's package.json. It has `overrides: { "no-deps": "2.0.0" }` if it has no rule of its own. */
     root?: object;
     /** packages/bar */
     bar?: object;
     /** `[from, version]`: the no-deps found from that directory of the project. */
     sees: [string, string | undefined][];
   };
+  const writeProject = (
+    { packageDir, packageJson }: TestCtx,
+    { member, root, bar }: Pick<Shape, "member" | "root" | "bar">,
+  ) =>
+    Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          ...(!(root && ("overrides" in root || "resolutions" in root)) && { overrides: { "no-deps": "2.0.0" } }),
+          ...root,
+        }),
+      ),
+      write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: member })),
+      bar && write(join(packageDir, "packages", "bar", "package.json"), JSON.stringify({ name: "bar", ...bar })),
+    ]);
+  const run = async ({ packageDir, env }: TestCtx, cwd: string, ...cmd: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd, "--linker", linker],
+      cwd: join(packageDir, cwd),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+    return { out, err };
+  };
+  const install = (ctx: TestCtx, ...args: string[]) => run(ctx, "", "install", ...args);
+  const lockfileOf = ({ packageDir }: TestCtx) => file(join(packageDir, "bun.lock")).text();
+  const removeNodeModules = ({ packageDir }: TestCtx) =>
+    Promise.all(
+      ["", "packages/bar", "packages/m"].map(dir =>
+        rm(join(packageDir, dir, "node_modules"), { recursive: true, force: true }),
+      ),
+    );
+  const expectSees = async ({ packageDir }: TestCtx, sees: Shape["sees"]) => {
+    for (const [from, version] of sees) {
+      let dir = realpathSync(join(packageDir, from));
+      while (!existsSync(join(dir, "node_modules", "no-deps", "package.json"))) {
+        if (dir === dirname(dir)) throw new Error(`no-deps is not installed for ${JSON.stringify(from)}`);
+        dir = dirname(dir);
+      }
+      const found = await file(join(dir, "node_modules", "no-deps", "package.json")).json();
+      expect([from, found]).toEqual([from, { name: "no-deps", version }]);
+    }
+  };
+  /** After an install that saved bun.lock: the next install changes nothing, and a frozen install gives the same. */
+  const expectSettled = async (ctx: TestCtx, sees: Shape["sees"]) => {
+    await expectSees(ctx, sees);
+    const lockfile = await lockfileOf(ctx);
+    expect((await install(ctx)).out).toContain("(no changes)");
+    await removeNodeModules(ctx);
+    await install(ctx, "--frozen-lockfile");
+    await expectSees(ctx, sees);
+    expect(await lockfileOf(ctx)).toBe(lockfile);
+    return lockfile;
+  };
+  /** What an install without bun.lock and node_modules writes. */
+  const cleanLockfile = async (ctx: TestCtx) => {
+    await Promise.all([removeNodeModules(ctx), rm(join(ctx.packageDir, "bun.lock"))]);
+    await install(ctx);
+    return lockfileOf(ctx);
+  };
+
   test.concurrent.each<Shape>([
     {
       title: "applies to a sibling's range that would link it",
@@ -3267,77 +3366,102 @@ describe.each(["hoisted", "isolated"])("an override for the name of a member, %s
       bar: { dependencies: { "no-deps": "^3.0.0" } },
       sees: [["packages/bar", "2.0.0"]],
     },
-  ])("$title", async ({ member, root, bar, sees }) => {
+    {
+      // The registry has no no-deps@1.0.5, so that version is the member.
+      title: "keeps the link if the member satisfies the version of the rule",
+      member: "1.0.5",
+      root: { overrides: { "no-deps": "^1.0.2" } },
+      bar: { dependencies: { "no-deps": "^1.0.0" } },
+      sees: [["packages/bar", "1.0.5"]],
+    },
+  ])("$title", async shape => {
     using ctx = await setupTest();
-    const { packageDir, packageJson, env } = ctx;
-    await Promise.all([
-      write(
-        packageJson,
-        JSON.stringify({ name: "root", workspaces: ["packages/*"], overrides: { "no-deps": "2.0.0" }, ...root }),
-      ),
-      write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: member })),
-      bar && write(join(packageDir, "packages", "bar", "package.json"), JSON.stringify({ name: "bar", ...bar })),
-    ]);
-    const install = async (...args: string[]) => {
-      await using proc = spawn({
-        cmd: [bunExe(), "install", "--linker", linker, ...args],
-        cwd: packageDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("warn:");
-      expect(exitCode).toBe(0);
-      return { out, err };
-    };
-    const check = async () => {
-      for (const [from, version] of sees) {
-        let dir = realpathSync(join(packageDir, from));
-        while (!existsSync(join(dir, "node_modules", "no-deps", "package.json"))) dir = dirname(dir);
-        const found = await file(join(dir, "node_modules", "no-deps", "package.json")).json();
-        expect([from, found]).toEqual([from, { name: "no-deps", version }]);
-      }
-    };
+    await writeProject(ctx, shape);
+    expect((await install(ctx)).err).toContain("Saved lockfile");
+    await expectSettled(ctx, shape.sees);
+  });
 
-    expect((await install()).err).toContain("Saved lockfile");
-    await check();
-    const lockfile = await file(join(packageDir, "bun.lock")).text();
-    expect((await install()).out).toContain("(no changes)");
-    await Promise.all(
-      ["", "packages/bar", "packages/m"].map(dir =>
-        rm(join(packageDir, dir, "node_modules"), { recursive: true, force: true }),
-      ),
-    );
-    await install("--frozen-lockfile");
-    await check();
-    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  // A command writes the range of the version that it resolved, and the member satisfies that range: 1.0.5 is in the
+  // `^1.0.0` of the registry's no-deps@1.0.0. The rule chose the version, and it decides for the new range too, as in
+  // a clean install.
+  describe.each([
+    { rule: '"no-deps": "1.0.0" in overrides', root: { overrides: { "no-deps": "1.0.0" } } },
+    { rule: '"bar>no-deps": "1.0.0" in overrides', root: { overrides: { "bar>no-deps": "1.0.0" } } },
+    { rule: '"no-deps": "1.0.0" in resolutions', root: { resolutions: { "no-deps": "1.0.0" } } },
+    {
+      rule: '"no-deps": "latest" in overrides',
+      root: { overrides: { "no-deps": "latest" } },
+      member: "2.0.5",
+      declared: "^1.0.0",
+      chosen: "2.0.0",
+    },
+  ])("the rule $rule decides", ({ root, member = "1.0.5", declared = "^2.0.0", chosen = "1.0.0" }) => {
+    test.concurrent.each([
+      { cmd: "update", cwd: "packages/bar" },
+      { cmd: "update no-deps", cwd: "packages/bar" },
+      { cmd: "update --latest", cwd: "packages/bar" },
+      { cmd: "add no-deps", cwd: "packages/bar" },
+      { cmd: "update -r", cwd: "" },
+      { cmd: "update --filter bar", cwd: "" },
+    ])("for the range that bun $cmd writes", async ({ cmd, cwd }) => {
+      using ctx = await setupTest();
+      await writeProject(ctx, { member, root, bar: { dependencies: { "no-deps": declared } } });
+      await install(ctx);
+      await expectSees(ctx, [["packages/bar", chosen]]);
+
+      await run(ctx, cwd, ...cmd.split(" "));
+      expect(await file(join(ctx.packageDir, "packages", "bar", "package.json")).json()).toEqual({
+        name: "bar",
+        dependencies: { "no-deps": `^${chosen}` },
+      });
+      const lockfile = await expectSettled(ctx, [["packages/bar", chosen]]);
+      expect(await cleanLockfile(ctx)).toBe(lockfile);
+    });
+  });
+
+  // The member links after a command where the resolver gives it for the range that the command wrote.
+  test.concurrent.each([
+    {
+      title: "the rule for the written range accepts the member",
+      member: "1.0.5",
+      // `no-deps@^2` decides for `^2.0.0`, and `no-deps` for the `^1.0.0` that bun update writes.
+      root: { overrides: { "no-deps": ">=1.0.0", "no-deps@^2": "1.0.0" } },
+      bar: { dependencies: { "no-deps": "^2.0.0" } },
+      cmd: "update",
+      written: { dependencies: { "no-deps": "^1.0.0" } },
+    },
+    {
+      title: "the rule is the range that the command writes",
+      member: "2.0.5",
+      root: { overrides: { "no-deps": "$no-deps" } },
+      bar: { dependencies: { "no-deps": "latest" } },
+      cmd: "update --latest",
+      written: { dependencies: { "no-deps": "^2.0.0" } },
+    },
+  ])("links the member after a command if $title", async ({ member, root, bar, cmd, written }) => {
+    using ctx = await setupTest();
+    await writeProject(ctx, { member, root, bar });
+    await install(ctx);
+
+    await run(ctx, "packages/bar", ...cmd.split(" "));
+    expect(await file(join(ctx.packageDir, "packages", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      ...written,
+    });
+    const lockfile = await expectSettled(ctx, [["packages/bar", member]]);
+    expect(await cleanLockfile(ctx)).toBe(lockfile);
   });
 
   test.concurrent.each(["workspace:*", "^1.0.0"])(
     "keeps the bun.lock that Bun 1.4 wrote for a sibling's %s",
     async spec => {
       using ctx = await setupTest();
-      const { packageDir, packageJson, env } = ctx;
-      const install = async (...args: string[]) => {
-        await using proc = spawn({
-          cmd: [bunExe(), "install", "--linker", linker, ...args],
-          cwd: packageDir,
-          stdout: "pipe",
-          stderr: "pipe",
-          env,
-        });
-        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect({ args, err, exitCode }).toEqual({ args, err: expect.not.stringContaining("error:"), exitCode: 0 });
-      };
+      const { packageDir, packageJson } = ctx;
 
       // The row of no-deps@2.0.0, with the URL and the hash of this registry.
       await write(packageJson, JSON.stringify({ name: "root", dependencies: { "no-deps": "2.0.0" } }));
-      await install("--lockfile-only");
-      const published = (await file(join(packageDir, "bun.lock")).text()).match(
-        /"no-deps": (\["no-deps@2\.0\.0".*\]),/,
-      )![1];
+      await install(ctx, "--lockfile-only");
+      const published = (await lockfileOf(ctx)).match(/"no-deps": (\["no-deps@2\.0\.0".*\]),/)![1];
 
       const lockfile = `{
   "lockfileVersion": 1,
@@ -3370,21 +3494,13 @@ describe.each(["hoisted", "isolated"])("an override for the name of a member, %s
 }
 `;
       await Promise.all([
-        write(
-          packageJson,
-          JSON.stringify({ name: "root", workspaces: ["packages/*"], overrides: { "no-deps": "2.0.0" } }),
-        ),
-        write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.5" })),
-        write(
-          join(packageDir, "packages", "bar", "package.json"),
-          JSON.stringify({ name: "bar", dependencies: { "no-deps": spec } }),
-        ),
+        writeProject(ctx, { member: "1.0.5", bar: { dependencies: { "no-deps": spec } } }),
         write(join(packageDir, "bun.lock"), lockfile),
       ]);
 
-      await install("--frozen-lockfile");
-      await install();
-      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+      await install(ctx, "--frozen-lockfile");
+      await install(ctx);
+      expect(await lockfileOf(ctx)).toBe(lockfile);
       expect(await file(join(packageDir, "packages", "bar", "node_modules", "no-deps", "package.json")).json()).toEqual(
         {
           name: "no-deps",

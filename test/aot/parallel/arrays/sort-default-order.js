@@ -1,0 +1,37 @@
+// Array.prototype.sort without a comparator: order, stability, conversions, holes, frozen arrays and what it stores.
+const log = [];
+function show(label, f) { try { log.push(label + ": " + JSON.stringify(f(), (k, v) => (v === undefined ? "<undefined>" : typeof v === "symbol" ? String(v) : typeof v === "bigint" ? v + "n" : v))); } catch (e) { log.push(label + " throws " + e.constructor.name + ": " + e.message); } }
+show("strings", () => ["b", "a", "c", "", "aa", "B", "é", "ź", "😀", "￿", "\ud800", "a\u0000", "a"].sort());
+show("wide and narrow", () => ["é", "e", "ë", "日本", "日", "z", "Z", "10", "9", "1"].sort());
+show("stable", () => { const a = [new String("x"), new String("x"), "x", new String("w")]; const b = a.slice().sort(); return b.map(v => a.indexOf(v)); });
+show("numbers", () => [10, 9, 1, 100, -1, -10, 0, -0, 1e21, 1e-7, NaN, Infinity, -Infinity, 2.5].sort());
+show("mixed", () => [3, "2", null, undefined, true, false, "null", "undefined", [1, 2], [1], {}, 10n].sort());
+show("holes", () => { const a = ["b", , "a", undefined, , "c"]; a.sort(); return [a, Object.keys(a), a.length]; });
+show("only holes", () => { const a = [, , ,]; a.sort(); return [Object.keys(a), a.length]; });
+show("only undefined", () => [undefined, undefined].sort());
+show("one", () => [{ toString() { log.push("never asked"); return "x"; } }].sort().length);
+show("conversions in order, once", () => { const seen = []; const make = n => ({ toString() { seen.push(n); return String(9 - n); } }); [make(1), make(2), make(3), make(4)].sort(); return seen; });
+show("conversion throws", () => { const a = ["b", { toString() { throw new RangeError("no"); } }, "a"]; try { a.sort(); } catch (e) { return [e.message, a.length, a[0], a[2]]; } });
+show("symbol", () => ["b", Symbol("s"), "a"].sort());
+show("conversion changes the array", () => { const a = ["c", { toString() { a[0] = "z"; a.push("q"); return "b"; } }, "a"]; a.sort(); return a; });
+show("conversion shrinks the array", () => { const a = ["c", { toString() { a.length = 1; return "b"; } }, "a"]; a.sort(); return [a.map(String), a.length]; });
+show("frozen", () => Object.freeze(["b", "a"]).sort());
+show("frozen sorted", () => Object.freeze(["a", "b"]).sort());
+show("frozen one", () => Object.freeze(["a"]).sort());
+show("sealed with a hole", () => { const a = ["b", , "a"]; Object.seal(a); return a.sort(); });
+show("not writable element", () => { const a = ["b", "a", "c"]; Object.defineProperty(a, 1, { value: "a", writable: false }); return a.sort(); });
+show("getter element", () => { const a = ["b", "a", "c"]; let reads = 0; Object.defineProperty(a, 0, { get() { reads++; return "d"; }, set(v) { log.push("set " + v); }, configurable: true }); a.sort(); return [reads, a[1], a[2]]; });
+show("returns this", () => { const a = ["b", "a"]; return a.sort() === a; });
+show("explicit undefined", () => ["b", "a"].sort(undefined));
+show("null comparator", () => ["b", "a"].sort(null));
+show("keys of an object", () => { const o = { b: 1, a: 2, c: 3 }; const k = Object.keys(o); const s = Object.keys(o).sort(); return [k, s, Object.keys(o)]; });
+show("literal in a loop", () => { const all = []; for (let i = 0; i < 3; i++) { const a = ["c", "a", "b"]; all.push(a.slice()); a.sort(); all.push(a); } return all; });
+show("subclass", () => { class L extends Array {} const l = L.from(["b", "a"]); const s = l.sort(); return [s === l, s instanceof L, s]; });
+show("array-like", () => Array.prototype.sort.call({ 0: "b", 1: "a", length: 2 }));
+show("ropes", () => { const p = "x".repeat(3); return [p + "b" + p, p + "a" + p, (p + "c").slice(1)].sort(); });
+show("long", () => { const a = []; for (let i = 0; i < 300; i++) a.push("k" + ((i * 7919) % 300)); a.sort(); return [a[0], a[1], a[150], a[299], a.every((v, i) => !i || a[i - 1] <= v)]; });
+show("long stable", () => { const a = []; for (let i = 0; i < 200; i++) a.push({ n: i, toString() { return "k" + (this.n % 5); } }); a.sort(); return a.every((v, i) => !i || String(a[i - 1]) < String(v) || (String(a[i - 1]) === String(v) && a[i - 1].n < v.n)); });
+show("large indexes", () => { const a = ["b", "a"]; a[100000] = "0"; a.sort(); return [a[0], a[1], a[2], a.length, Object.keys(a).length]; });
+show("doubles", () => [1.5, 0.25, 10.75, -2.5].sort());
+show("doubles with a hole", () => { const a = [1.5, , 0.25]; a.sort(); return [a, Object.keys(a)]; });
+console.log(log.join("\n"));

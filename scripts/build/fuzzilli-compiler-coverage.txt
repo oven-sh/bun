@@ -1,0 +1,10 @@
+# --fuzzilli-compiler-only=on: the C++ functions that report coverage to Fuzzilli: namespaces JSC::AOT and JSC::B3.
+src:*
+fun:_ZN3JSC3AOT*
+fun:_ZNK3JSC3AOT*
+fun:_ZZN3JSC3AOT*
+fun:_ZZNK3JSC3AOT*
+fun:_ZN3JSC2B3*
+fun:_ZNK3JSC2B3*
+fun:_ZZN3JSC2B3*
+fun:_ZZNK3JSC2B3*

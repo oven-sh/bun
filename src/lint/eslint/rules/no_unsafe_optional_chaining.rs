@@ -6,11 +6,11 @@ pub struct NoUnsafeOptionalChaining {
     disallow_arithmetic_operators: bool,
 }
 
-const UNSAFE_OPTIONAL_CHAIN: Message = Message::new(
+const UNSAFE_OPTIONAL_CHAIN: &Message = &Message::new(
     "unsafeOptionalChain",
     "Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.",
 );
-const UNSAFE_ARITHMETIC: Message = Message::new(
+const UNSAFE_ARITHMETIC: &Message = &Message::new(
     "unsafeArithmetic",
     "Unsafe arithmetic operation on optional chaining. It can result in NaN.",
 );

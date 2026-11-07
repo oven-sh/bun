@@ -58,10 +58,10 @@ test("an image's name is the hash of its bake directory", () => {
 // shells. These are the exact lines, so that a change to how a step renders
 // (appending, prefixing, a list of lines in PowerShell) shows up here and not
 // an hour into a bake.
-function recordSection(image: (typeof images)[number], root: string): string[] {
+function recordSection(image: (typeof images)[number], root: string, tool = "record-image"): string[] {
   const script = join(generateImage(image, root).directory, image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh");
   const lines = readFileSync(script, "utf8").split("\n");
-  const start = lines.indexOf("# ---- record-image");
+  const start = lines.indexOf(`# ---- ${tool}`);
   const end = lines.findIndex((line, index) => index > start && line.startsWith("# ---- "));
   return lines.slice(start, end < 0 ? undefined : end).filter(line => line !== "");
 }
@@ -154,5 +154,59 @@ test("the record a Windows bake writes", () => {
     `if (-not (Get-Content "$scratch\\packages")) { throw 'bootstrap: the package manager listed no packages' }`,
     `Get-Content "$scratch\\packages" | Sort-Object | ForEach-Object { "package $_" } | Out-File -Append -Encoding ascii 'C:\\bun-image.txt'`,
     "Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue",
+  ]);
+});
+
+// A bake's output is public. The filters are read out of the generated script, so they are the ones a bake applies.
+test("what a failed Visual Studio install prints of its logs", () => {
+  using dir = tempDir("ci-images", {});
+  const image = images.find(image => image.os === "windows" && image.arch === "aarch64")!;
+  const lines = recordSection(image, String(dir), "visual-studio");
+  expect(lines.slice(lines.findIndex(line => line.startsWith("$process = ")) + 1, -1)).toEqual([
+    "if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {",
+    "  foreach ($log in Get-ChildItem $env:TEMP -File | Where-Object { $_.Name -match '^dd_[a-z_]+_\\d+(_errors)?\\.log$' } | Sort-Object LastWriteTime) {",
+    '    "---- the end of $($log.Name)"',
+    "    Get-Content $log.FullName -Tail 100 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch 'telemetry' } | ForEach-Object { $_ -replace '(https?://[^\\s?]+)\\?\\S*', '$1?...' }",
+    "  }",
+    '  throw "bootstrap: the Visual Studio installer exited with code $($process.ExitCode)"',
+    "}",
+  ]);
+
+  // PowerShell's -match, -notmatch and -replace ignore case.
+  const script = lines.join("\n");
+  const names = new RegExp(script.match(/\$_\.Name -match '([^']+)'/)![1]!, "i");
+  const dropped = new RegExp(script.match(/-notmatch '([^']+)'/)![1]!, "i");
+  const [, query, replacement] = script.match(/-replace '([^']+)', '([^']+)'/)!;
+  expect(
+    [
+      "dd_bootstrapper_20261022212528.log",
+      "dd_installer_20261022212600.log",
+      "dd_installer_elevated_20261022212601.log",
+      "dd_setup_20261022212610.log",
+      "dd_setup_20261022212610_errors.log",
+      "dd_setup_20261022212610_044_Microsoft.VisualCpp.Redist.14.log",
+      "dd_setup_20261022212610_001_errors.log",
+      "dd_setup_20261022212610.log.bak",
+      "not_dd_setup_20261022212610.log",
+      "secrets.log",
+    ].filter(name => names.test(name)),
+  ).toEqual([
+    "dd_bootstrapper_20261022212528.log",
+    "dd_installer_20261022212600.log",
+    "dd_installer_elevated_20261022212601.log",
+    "dd_setup_20261022212610.log",
+    "dd_setup_20261022212610_errors.log",
+  ]);
+  expect(
+    [
+      "Telemetry property VS.Core.MachineId : 1234",
+      "Download requested: https://example.com/a/b.vsix?sv=2021&sig=abcd using WebClient",
+      "Is https://aka.ms/vs/17/release/channel reachable?",
+    ]
+      .filter(line => !dropped.test(line))
+      .map(line => line.replace(new RegExp(query!, "gi"), replacement!)),
+  ).toEqual([
+    "Download requested: https://example.com/a/b.vsix?... using WebClient",
+    "Is https://aka.ms/vs/17/release/channel reachable?",
   ]);
 });

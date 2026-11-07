@@ -9,7 +9,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedReadableStream.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -44,6 +44,9 @@ static JSReadableStream* toReadableStream(Zig::GlobalObject* globalObject, Throw
 using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
+using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
 
 // A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
 static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
@@ -214,7 +217,7 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
     scope.assertNoExceptionExceptTermination();
 }
 
-// The `lockedStream` slot (streams.classes.ts): the only way from a natively locked stream's source back to the stream.
+// The `lockedStream` slot (ReadableStream.bind.ts): the only way from a natively locked stream's source back to the stream.
 static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
 {
     if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
@@ -402,6 +405,15 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     auto* stream = toReadableStream(globalObject, scope, streamValue);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSON(globalObject, stream)));
+}
+
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = toReadableStream(globalObject, scope, streamValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSONSource(globalObject, stream)));
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)

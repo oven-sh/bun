@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Require the JSON top-level value to be an array or object
 pub struct TopLevelInterop;
 
-const TOP_LEVEL: Message = Message::new(
+const TOP_LEVEL: &Message = &Message::new(
     "topLevel",
     "Top level item should be array or object, got '{{type}}'.",
 );

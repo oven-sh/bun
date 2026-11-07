@@ -2,15 +2,15 @@
 
 #include "JSCookieMap.h"
 #include "root.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedResponse.h"
 
 namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-class JSBunRequest : public JSRequest {
+class JSBunRequest : public Bun::Bindgen::Generated::JSRequest {
 public:
-    using Base = JSRequest;
+    using Base = Bun::Bindgen::Generated::JSRequest;
 
     static JSBunRequest* create(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSObject* params);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -40,7 +40,6 @@ public:
 
 private:
     JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSC::JSObject* params);
-    void finishCreation(JSC::VM& vm);
 
     mutable JSC::WriteBarrier<JSC::JSObject> m_params;
     mutable JSC::WriteBarrier<JSC::JSObject> m_cookies;

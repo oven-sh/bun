@@ -500,10 +500,7 @@ impl StatWatcher {
             None => {
                 let arc = StatWatcherScheduler::init(vm);
                 let raw = arc.into_raw(); // VM owns this ref forever (never deref'd)
-                // SAFETY: `vm` is live; reborrow rare_data after `init` to avoid
-                // an aliasing `&mut RareData` across the call.
-                *unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot() =
-                    core::ptr::NonNull::new(raw.cast());
+                *slot = core::ptr::NonNull::new(raw.cast());
                 raw
             }
         };
@@ -611,7 +608,7 @@ impl StatWatcher {
 
     /// Stops file watching but does not free the instance.
     ///
-    /// Always runs on the JS thread (`do_close`, its context stopping,
+    /// Always runs on the JS thread (`close`, its context stopping,
     /// `shutdown_for_exit`), so this is where the watcher leaves its context —
     /// `deinit` can fire on the work-pool thread.
     pub(crate) fn close(&self) {
@@ -789,8 +786,6 @@ impl StatWatcher {
             slice = &slice[b"file://".len()..];
         }
 
-        // SAFETY: `FileSystem::instance()` is initialized at process start
-        // (`FileSystem::init` runs before any JS module loads).
         let top_level_dir = fs::FileSystem::get().top_level_dir();
         let parts: [&[u8]; 1] = [slice];
         let file_path =
@@ -827,9 +822,6 @@ impl StatWatcher {
             abort_handle: bun_jsc::AbortHandle::for_owner::<StatWatcher>(),
         });
         let this_ptr = bun_core::heap::into_raw(this);
-        // errdefer: on the error path we own the only reference.
-        // SAFETY: sole owner on that path.
-        let guard = scopeguard::guard(this_ptr, |p| drop(unsafe { bun_core::heap::take(p) }));
         // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
         // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
         // suffices (and `to_js_ptr` below creates the JS wrapper, after which
@@ -853,9 +845,9 @@ impl StatWatcher {
         // SAFETY: `this_ptr` is heap-allocated; `close()` disarms it before any drop.
         unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, this_ref.ctx.context_of(args.context)) };
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
-        InitialStatTask::create_and_schedule(this_ptr);
+        InitialStatTask::create_and_schedule(this_ptr, this_ref.ctx.ticket());
 
-        Ok(scopeguard::ScopeGuard::into_inner(guard))
+        Ok(this_ptr)
     }
 }
 
@@ -994,7 +986,7 @@ bun_threading::owned_task!(InitialStatTask, task);
 impl InitialStatTask {
     /// # Safety
     /// `watcher` must point to a live `StatWatcher`.
-    fn create_and_schedule(watcher: *mut StatWatcher) {
+    fn create_and_schedule(watcher: *mut StatWatcher, ticket: bun_jsc::Ticket) {
         // SAFETY: per fn contract; we bump its intrusive refcount, held across
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).
@@ -1002,8 +994,7 @@ impl InitialStatTask {
         WorkPool::schedule_new(InitialStatTask {
             watcher,
             // The watcher is JS-owned; its VM waits for this ticket.
-            // SAFETY: per fn contract; JS thread.
-            ticket: unsafe { (*watcher).ctx.get() }.ticket(),
+            ticket,
             task: WorkPoolTask::default(),
         });
     }

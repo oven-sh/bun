@@ -303,6 +303,24 @@ describe("udpSocket()", () => {
     }
   });
 
+  test("send() on a connected socket accepts undefined for port and address", async () => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const server = await udpSocket({ hostname: "127.0.0.1", socket: { data: (_, data) => resolve(data.toString()) } });
+    const client = await udpSocket({ hostname: "127.0.0.1", connect: { hostname: "127.0.0.1", port: server.port } });
+    try {
+      // @ts-expect-error
+      expect(client.send("hello", undefined, undefined)).toBe(true);
+      expect(await promise).toBe("hello");
+      // @ts-expect-error
+      expect(client.send("hello", undefined, undefined, "ignored")).toBe(true);
+      // @ts-expect-error
+      expect(() => client.send("hello", server.port)).toThrow("Cannot specify destination on connected socket");
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
   test("connect with valid port at range boundaries is accepted", async () => {
     for (const port of [1, 65535]) {
       const socket = await udpSocket({ connect: { hostname: "127.0.0.1", port } });

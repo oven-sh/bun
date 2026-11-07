@@ -132,6 +132,8 @@ const jsFixtures = [
   "regexp-many-single-character-alternatives.js",
   // Builtins
   "function-prototype-call-not-called-as-a-method.js",
+  // Stack traces
+  "bun-class-field-initializer-stack-frames.js",
 ];
 
 const wasmFixtures = [

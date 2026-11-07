@@ -802,6 +802,26 @@ describe("inline snapshots", () => {
       `,
     );
   });
+  // The call is found through the frame of the function that runs the field initializers of a class.
+  test("in the initializer of a class field", async () => {
+    await tester.test(
+      v => /*js*/ `
+        const decorated = (value, context) => {};
+        test("fields", () => {
+          class Plain {
+            field = expect("a").toMatchInlineSnapshot(${v("", bad, '`"a"`')});
+            static field = expect("b").toMatchInlineSnapshot(${v("", bad, '`"b"`')});
+          }
+          new Plain();
+          class Decorated {
+            @decorated field = expect("c").toMatchInlineSnapshot(${v("", bad, '`"c"`')});
+            @decorated static field = expect("d").toMatchInlineSnapshot(${v("", bad, '`"d"`')});
+          }
+          new Decorated();
+        });
+      `,
+    );
+  });
   test("inline snapshot update cases", async () => {
     await tester.test(
       // prettier-ignore

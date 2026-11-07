@@ -2758,3 +2758,313 @@ describe("ES decorators lowering matrix", () => {
     });
   });
 });
+
+// A decorated field stays a field of the class, so its initializer runs in the function that the engine makes for
+// the field initializers of a class. That function is a frame of its own, under the name V8 gives it. Without the
+// frame an error made in an initializer is reported at the constructor, or at the `class` keyword.
+describe("stack frames of field initializers in a decorated class", () => {
+  // Every case stores the first lines of a stack. A line of the fixture holds at most one `new Error("<label>")`
+  // or `<function>("<label>")`, and the expected position is where that text is.
+  const fixture = `
+    const out = {};
+    const top = (stack, count) => stack.split("\\n").slice(1, 1 + count);
+    function ds(value, context) {}
+    function mk(label) {
+      return new Error(label).stack;
+    }
+    function capture(label, below) {
+      const holder = {};
+      Error.captureStackTrace(holder, below ?? capture);
+      return holder.stack;
+    }
+    out.reference = top(new Error("reference").stack, 1);
+    out.referenceCall = top(mk("referenceCall"), 2);
+
+    class OneField {
+      @ds f = new Error("OneField").stack;
+    }
+    out.OneField = top(new OneField().f, 2);
+
+    class DecoratorOnItsOwnLine {
+      @ds
+      f = new Error("DecoratorOnItsOwnLine").stack;
+    }
+    out.DecoratorOnItsOwnLine = top(new DecoratorOnItsOwnLine().f, 2);
+
+    class MembersAhead {
+      a = 1;
+      b = 2;
+      m() {}
+      n() {}
+      static s = 3;
+      @ds f = new Error("MembersAhead").stack;
+    }
+    out.MembersAhead = top(new MembersAhead().f, 2);
+
+    class StaticField {
+      @ds static f = new Error("StaticField").stack;
+    }
+    out.StaticField = top(StaticField.f, 2);
+
+    class CallsAFunction {
+      @ds f = mk("CallsAFunction");
+    }
+    out.CallsAFunction = top(new CallsAFunction().f, 3);
+
+    class AccessorThenField {
+      @ds accessor a = new Error("AccessorThenField").stack;
+      g = 1;
+    }
+    out.AccessorThenField = top(new AccessorThenField().a, 2);
+
+    class PrivateThenField {
+      @ds #p = new Error("PrivateThenField").stack;
+      g = 1;
+      get p() {
+        return this.#p;
+      }
+    }
+    out.PrivateThenField = top(new PrivateThenField().p, 2);
+
+    class BareAccessorThenField {
+      accessor a = new Error("BareAccessorThenField").stack;
+      g = 1;
+    }
+    out.BareAccessorThenField = top(new BareAccessorThenField().a, 2);
+
+    class DecoratedThenField {
+      @ds f = new Error("DecoratedThenField").stack;
+      g = 1;
+    }
+    out.DecoratedThenField = top(new DecoratedThenField().f, 2);
+
+    class PlainFieldBesideDecoratedMethod {
+      @ds m() {}
+      f = new Error("PlainFieldBesideDecoratedMethod").stack;
+    }
+    out.PlainFieldBesideDecoratedMethod = top(new PlainFieldBesideDecoratedMethod().f, 2);
+
+    class WrittenConstructor {
+      @ds f = new Error("WrittenConstructor").stack;
+      constructor() {
+        this.constructed = true;
+      }
+    }
+    out.WrittenConstructor = top(new WrittenConstructor().f, 2);
+
+    class Base {}
+    class Derived extends Base {
+      @ds f = new Error("Derived").stack;
+    }
+    out.Derived = top(new Derived().f, 2);
+
+    class DerivedWithConstructor extends Base {
+      @ds f = new Error("DerivedWithConstructor").stack;
+      constructor() {
+        super();
+      }
+    }
+    out.DerivedWithConstructor = top(new DerivedWithConstructor().f, 2);
+
+    class Captured {
+      @ds f = capture("Captured");
+    }
+    out.Captured = top(new Captured().f, 2);
+
+    class CapturedBelowConstructor {
+      @ds f = capture("CapturedBelowConstructor", CapturedBelowConstructor);
+    }
+    out.CapturedBelowConstructor = top(new CapturedBelowConstructor().f, 1);
+
+    {
+      const keep = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_, sites) =>
+        sites.slice(0, 2).map(site => ({
+          name: site.getFunctionName() ?? "",
+          line: site.getLineNumber(),
+          column: site.getColumnNumber(),
+          function: typeof site.getFunction(),
+          this: typeof site.getThis(),
+        }));
+      out.referenceSite = new Error("referenceSite").stack;
+      class Sites {
+        @ds f = new Error("Sites").stack;
+        @ds static s = new Error("StaticSites").stack;
+      }
+      out.StaticSites = Sites.s;
+      out.Sites = new Sites().f;
+      Error.prepareStackTrace = keep;
+    }
+
+    function throwing(value, context) {
+      throw new Error("a decorator throws");
+    }
+    try {
+      class DecoratorThrows {
+        @throwing f = 1;
+      }
+    } catch (error) {
+      out.DecoratorThrows = top(error.stack, 5);
+    }
+    try {
+      class DecoratorThrowsBesideStaticField {
+        static s = 1;
+        @throwing f = 1;
+      }
+    } catch (error) {
+      out.DecoratorThrowsBesideStaticField = top(error.stack, 5);
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  const fixtureLines = fixture.split("\n");
+  // The 1-based line and column of `text` in the fixture.
+  function positionOf(text: string) {
+    const index = fixtureLines.findIndex(line => line.includes(text));
+    return { line: index + 1, column: fixtureLines[index].indexOf(text) + 1 };
+  }
+  function parseFrame(line: string) {
+    const match = /^\s+at (?:(.+?) \()?(.*?)(?::(\d+))?(?::(\d+))?\)?$/.exec(line)!;
+    return { name: match[1] ?? "", file: match[2], line: Number(match[3]), column: Number(match[4]) };
+  }
+
+  const instance = "<instance_members_initializer>";
+  const statics = "<static_initializer>";
+
+  // An unfixed debug build shows the frames the engine hides, as `<anonymous>`, so each run pins the option.
+  const runs = [".js", ".ts", ".tsx"].flatMap(extension =>
+    ["0", "1"].map(showPrivateFrames => [extension, showPrivateFrames] as const),
+  );
+
+  test.concurrent.each(runs)("test%s, hidden frames shown: %s", async (extension, showPrivateFrames) => {
+    using dir = tempDir("es-dec-field-frames", { ["test" + extension]: fixture, "tsconfig.json": "{}" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test" + extension],
+      env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: showPrivateFrames },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(filterStderr(stderr)).toBe("");
+    const out = JSON.parse(stdout);
+
+    // Where the engine puts a frame inside `new Error(..)` and inside a call is its own business. Both are
+    // measured on a line outside of every class.
+    const errorOffset = parseFrame(out.reference[0]).column - positionOf(`new Error("reference")`).column;
+    const callOffset = parseFrame(out.referenceCall[1]).column - positionOf(`mk("referenceCall")`).column;
+    const siteOffset = out.referenceSite[0].column - positionOf(`new Error("referenceSite")`).column;
+    const errorAt = (label: string) => {
+      const { line, column } = positionOf(`new Error("${label}")`);
+      return { line, column: column + errorOffset };
+    };
+    const callAt = (call: string) => {
+      const { line, column } = positionOf(call);
+      return { line, column: column + callOffset };
+    };
+    const frames = (name: string, count: number) =>
+      (out[name] as string[]).slice(0, count).map(line => {
+        const { name, line: lineNumber, column } = parseFrame(line);
+        return { name, line: lineNumber, column };
+      });
+    const namesOf = (name: string) => (out[name] as string[]).map(line => parseFrame(line).name);
+
+    const instanceFieldCases = [
+      "OneField",
+      "DecoratorOnItsOwnLine",
+      "MembersAhead",
+      "AccessorThenField",
+      "PrivateThenField",
+      "BareAccessorThenField",
+      "DecoratedThenField",
+      "PlainFieldBesideDecoratedMethod",
+      "WrittenConstructor",
+      "Derived",
+      "DerivedWithConstructor",
+    ];
+    expect(
+      Object.fromEntries(instanceFieldCases.map(name => [name, { top: frames(name, 1)[0], below: namesOf(name)[1] }])),
+    ).toEqual(
+      Object.fromEntries(
+        instanceFieldCases.map(name => [name, { top: { name: instance, ...errorAt(name) }, below: "new " + name }]),
+      ),
+    );
+
+    expect({
+      StaticField: { top: frames("StaticField", 1)[0], below: namesOf("StaticField")[1] },
+      CallsAFunction: { names: namesOf("CallsAFunction"), caller: frames("CallsAFunction", 2)[1] },
+      Captured: { top: frames("Captured", 1)[0], below: namesOf("Captured")[1] },
+      CapturedBelowConstructor: frames("CapturedBelowConstructor", 1)[0],
+    }).toEqual({
+      StaticField: { top: { name: statics, ...errorAt("StaticField") }, below: "" },
+      CallsAFunction: {
+        names: ["mk", instance, "new CallsAFunction"],
+        caller: { name: instance, ...callAt(`mk("CallsAFunction")`) },
+      },
+      Captured: { top: { name: instance, ...callAt(`capture("Captured")`) }, below: "new Captured" },
+      // Everything down to the constructor is left out, the initializer with it.
+      CapturedBelowConstructor: { name: "", ...callAt("CapturedBelowConstructor().f") },
+    });
+
+    const siteAt = (label: string) => {
+      const { line, column } = positionOf(`new Error("${label}")`);
+      return { line, column: column + siteOffset, function: "undefined", this: "undefined" };
+    };
+    expect({ Sites: out.Sites[0], SitesBelow: out.Sites[1].name, StaticSites: out.StaticSites[0] }).toEqual({
+      Sites: { name: instance, ...siteAt("Sites") },
+      SitesBelow: "Sites",
+      StaticSites: { name: statics, ...siteAt("StaticSites") },
+    });
+
+    // The decorators of a class are applied in a static block that the lowering adds. A block lists one frame.
+    for (const name of ["DecoratorThrows", "DecoratorThrowsBesideStaticField"]) {
+      const parsed = (out[name] as string[]).map(parseFrame);
+      expect(parsed.slice(0, 3).map(frame => [frame.name === statics || frame.name === "throwing" ? frame.name : "", frame.file.replace(/^.*[\\/]/, "")])).toEqual([
+        ["throwing", "test" + extension],
+        ["", "bun:wrap"],
+        [statics, "test" + extension],
+      ]);
+      if (showPrivateFrames === "0") expect(parsed.slice(3).map(frame => frame.name)).toEqual([""]);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["0", "1"])("an uncaught error, hidden frames shown: %s", async showPrivateFrames => {
+    using dir = tempDir("es-dec-field-uncaught", {
+      "test.js": [
+        "function ds(value, context) {}",
+        "const cfg = undefined;",
+        "class C {",
+        "  a = 1;",
+        "  b = 2;",
+        "  @ds f = cfg.port;",
+        "}",
+        "new C();",
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: showPrivateFrames },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = filterStderr(stderr).split(/\r?\n/);
+    const quoted = lines.findIndex(line => line.includes("@ds f = cfg.port;"));
+    expect({
+      stdout,
+      quoted: lines[quoted],
+      caret: lines[quoted + 1]?.trim(),
+      message: lines.find(line => line.startsWith("TypeError")),
+      top: lines.find(line => /^\s+at /.test(line))?.trim().replace(/\(.*[\\/]/, "("),
+    }).toEqual({
+      stdout: "",
+      quoted: "6 |   @ds f = cfg.port;",
+      caret: "^",
+      message: "TypeError: undefined is not an object (evaluating 'cfg.port')",
+      top: `at ${instance} (test.js:6:11)`,
+    });
+    expect(exitCode).toBe(1);
+  });
+});

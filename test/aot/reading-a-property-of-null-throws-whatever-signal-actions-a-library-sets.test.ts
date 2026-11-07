@@ -1,12 +1,16 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
+import { afterAll } from "./harness/default-timeout";
+import { callsItself, compiler, readers, sender } from "./harness/reads-of-null";
+import { withoutCoreDump } from "./harness/without-core-dump";
 import { describe, test } from "./supported";
 
 // Compiled code turns a fault at one of its own null checks into a TypeError, and one at the poll of a loop into a look at what
 // the thread is asked to do. A library that the program loads may set an action for the same signals, or block them: it hears of
 // everything but those, as it does without --aot.
-const compiler = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
 // A sanitizer's run time defines sigaction() and signal() itself.
 const skipped = isWindows || isASAN || !compiler;
 if (!isWindows && !compiler)
@@ -83,26 +87,6 @@ void raise_it(int n) { raise(n); }
 void read_address_8(int n) { *(volatile int*)8; }
 `;
 
-const readers = `function readX(point: { x: number } | null): number { return point!.x; }
-function readXPlusOne(point: { x: number } | null): number { return point!.x + 1; }
-const readers = [readX, readXPlusOne];
-const none: { x: number } | null = JSON.parse("null");
-`;
-
-// The build cannot tell which two of the four are called, and they are handed objects too: a read of theirs stays a load.
-const readersNobodyCanTell = `class Point { constructor(public x: number, public y: number) {} }
-const all: ((point: any) => number)[] = [
-  (point: Point | null) => point!.x,
-  (point: Point | null) => point!.x + 1,
-  (point: Point | null) => point!.x * point!.y,
-  (point: Point | null) => point!.y - 1,
-];
-const first = process.argv.length > 100 ? 2 : 0;
-const readers = [all[first], all[first + 1]];
-const none = JSON.parse("null");
-for (let i = 0; i < 1000; i++) readers[i & 1](new Point(i, i));
-`;
-
 const names = [
   "signal_default",
   "signal_ignore",
@@ -133,22 +117,23 @@ const library = dlopen(process.argv[2], {
 ${names.map(name => `  ${name}: { args: [FFIType.i32], returns: FFIType.void },\n`).join("")}}).symbols as unknown as Record<string, (signal?: number) => number>;
 `;
 
-// Every loop stands at the top level of the module.
-const program = `${open}${readersNobodyCanTell}const name = process.argv[3] as NodeJS.Signals;
+// Every loop stands at the top level of the module. The signal is named by a constant where the program listens: under a name that the build
+// does not know it could listen for any event of `process`, and the build would hold what stands behind each of them.
+const program = `${open}${readers}const name = process.argv[3] as NodeJS.Signals;
 const signal = name === "SIGBUS" ? ${process.platform === "darwin" ? 10 : 7} : 11;
 const listener = () => console.log("the listener hears", name);
 let caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("at first", caught);
 for (const step of process.argv[4].split(",")) {
-  if (step === "on") process.on(name, listener);
-  else if (step === "off") process.off(name, listener);
+  if (step === "on") name === "SIGBUS" ? process.on("SIGBUS", listener) : process.on("SIGSEGV", listener);
+  else if (step === "off") name === "SIGBUS" ? process.off("SIGBUS", listener) : process.off("SIGSEGV", listener);
   else if (step === "turn") await Bun.sleep(20);
   else library[step](signal);
   console.log(step, "leaves", library.action_in_place(signal));
 }
 caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("in the end", caught, "the library's handler ran", library.handler_calls(), "times");
 `;
 
@@ -163,11 +148,11 @@ const aLibraryBlocksSignals = `${open}for (const step of ["sighold_blocks", "sig
 const libcByName = `import { dlopen, FFIType } from "bun:ffi";
 ${readers}const libc = dlopen(process.argv[2], { signal: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.ptr } });
 let caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("at first", caught);
 libc.symbols.signal(11, null);
 caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("in the end", caught);
 `;
 
@@ -196,12 +181,12 @@ ${readers}if (Bun.isMainThread) {
   process.exit(0);
 } else {
   postMessage("started");
-  for (let i = 0; ; i++) try { readers[i & 1](none); } catch {}
+  for (let i = 0; ; i++) try { readers[i & 3](); } catch {}
 }
 `;
 
 // What the worker above does, ten times, on the first thread.
-const readsAsTheWorkerDoes = `${readers}for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch {}
+const readsAsTheWorkerDoes = `${readers}for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch {}
 `;
 
 const aWorkerStandsInALoop = `${open}const worker = new Worker("./worker.ts");
@@ -216,8 +201,9 @@ for (;;) turns = (turns + 1) | 0;
 `;
 
 // The loop has no handler around it and calls nothing of the program.
-const theHeapFillsThreeTimes = `${open}type Link = { id: number; name: string; next: Link | null };
+const theHeapFillsThreeTimes = `${open}${callsItself}type Link = { id: number; name: string; next: Link | null };
 function fill(keep: Link[]): number {
+  if (callsItself) return fill(keep);
   for (;;) keep.push({ id: keep.length, name: "n" + keep.length, next: keep.length ? keep[keep.length - 1] : null });
 }
 library[process.argv[3]](11);
@@ -233,78 +219,13 @@ for (let attempt = 0; attempt < 3; attempt++) {
 console.log("afterward, the library's handler ran", library.handler_calls(), "times");
 `;
 
-const readsNullThenAnObject = `${readers}let value: { x: number } | null = JSON.parse(process.argv[2] ?? "null");
-let caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](value); } catch { caught++; }
+const readsNullThenAnObject = `${readers}let caught = 0;
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch { caught++; }
 console.log("reads of null:", caught, "TypeErrors");
-value = JSON.parse(process.argv[3] ?? '{"x":1}');
+fill();
 caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](value); } catch { caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch { caught++; }
 console.log("reads of an object:", caught, "TypeErrors");
-`;
-
-// Runs a program until it stands at the instruction of its first null check again, after all of them, and sends it SIGSEGV there
-// as another process would, with sigqueue(). How many of its reads of null a program finds by such an instruction is the compiler's choice:
-// without $CHECKS it runs the program to its end and prints their number.
-const sender = `#define _GNU_SOURCE
-#include <elf.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/ptrace.h>
-#include <sys/uio.h>
-#include <sys/user.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-#if defined(__x86_64__)
-#define PC(registers) (registers).rip
-static const unsigned long trap = 0xcc, trap_mask = 0xff, trap_length = 1;
-#else
-#define PC(registers) (registers).pc
-static const unsigned long trap = 0xd4200000, trap_mask = 0xffffffff, trap_length = 0;
-#endif
-
-int main(int argc, char** argv)
-{
-    pid_t child = fork();
-    if (!child) {
-        if (ptrace(PTRACE_TRACEME, 0, 0, 0)) _exit(126);
-        execv(argv[1], argv + 1);
-        _exit(127);
-    }
-    unsigned long site = 0, word = 0;
-    int checks = 0, status, all = getenv("CHECKS") ? atoi(getenv("CHECKS")) : -1;
-    struct user_regs_struct registers;
-    struct iovec io = { &registers, sizeof registers };
-    for (;;) {
-        if (waitpid(child, &status, 0) < 0) return 125;
-        if (WIFEXITED(status)) { if (all < 0) printf("%d\\n", checks); return WEXITSTATUS(status); }
-        if (WIFSIGNALED(status)) { printf("ended by signal %d\\n", WTERMSIG(status)); return 0; }
-        int signal_number = WSTOPSIG(status);
-        if (signal_number == SIGSEGV && (all < 0 || checks < all)) {
-            if (!checks++) { ptrace(PTRACE_GETREGSET, child, NT_PRSTATUS, &io); site = PC(registers); }
-            if (checks == all) { word = ptrace(PTRACE_PEEKTEXT, child, site, 0); ptrace(PTRACE_POKETEXT, child, site, (word & ~trap_mask) | trap); }
-        } else if (signal_number == SIGTRAP) {
-            signal_number = 0;
-            ptrace(PTRACE_GETREGSET, child, NT_PRSTATUS, &io);
-            if (checks == all && PC(registers) - trap_length == site) {
-                ptrace(PTRACE_POKETEXT, child, site, word);
-                PC(registers) = site;
-                ptrace(PTRACE_SETREGSET, child, NT_PRSTATUS, &io);
-                siginfo_t info;
-                memset(&info, 0, sizeof info);
-                info.si_signo = signal_number = SIGSEGV;
-                info.si_code = SI_QUEUE;
-                info.si_pid = 5;
-                ptrace(PTRACE_SETSIGINFO, child, 0, &info);
-                checks++;
-            }
-        }
-        ptrace(PTRACE_CONT, child, 0, signal_number);
-    }
-}
 `;
 
 // The kernel drops a signal whose action is the default one when it is sent to the first process of a PID namespace.
@@ -319,13 +240,11 @@ const asFirstProcess = ["unshare", "--user", "--map-root-user", "--pid", "--fork
 const canBeFirstProcess =
   isLinux && !!Bun.which("unshare") && Bun.spawnSync([...asFirstProcess, "true"]).exitCode === 0;
 
-const withoutCoreDump = ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"'];
-
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
-    cmd: [...withoutCoreDump, ...cmd],
+    cmd: withoutCoreDump(cmd),
     cwd,
-    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0", ...env },
+    env: { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), BUN_ENABLE_CRASH_REPORTING: "0", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -333,21 +252,10 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
-// A reader stays a function of its own: copied into the `try` of its caller it would find null by a comparison.
 async function build(directory: string, file: string, ...furtherEntryPoints: string[]) {
   const executable = join(directory, file.replace(/\.ts$/, ""));
   const built = await run(
-    [
-      bunExe(),
-      "build",
-      "--compile",
-      "--aot",
-      "--aot-disable=InlineCalls",
-      file,
-      ...furtherEntryPoints,
-      "--outfile",
-      executable,
-    ],
+    [bunExe(), "build", "--compile", "--aot", file, ...furtherEntryPoints, "--outfile", executable],
     directory,
   );
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toMatchObject({ exitCode: 0 });
@@ -401,17 +309,29 @@ const rows: Row[] = [
 ];
 
 describe.skipIf(skipped).concurrent("reading a property of null throws a TypeError", () => {
+  // What two cases run is built once: the case that counts the signals counts them in the very executables that the others judge.
+  const shared = tempDir("aot-a-library-sets-actions", {
+    "table.ts": program,
+    "by-name.ts": libcByName,
+    "library.c": library,
+  });
+  afterAll(() => shared[Symbol.dispose]());
+  const once = <Made>(make: () => Promise<Made>) => {
+    let made: Promise<Made> | undefined;
+    return () => (made ??= make());
+  };
+  const table = once(() => build(String(shared), "table.ts"));
+  const byName = once(() => build(String(shared), "by-name.ts"));
+  const sharedLibrary = once(() => buildLibrary(String(shared)));
+
   test("whatever action a library sets for the signal", async () => {
-    using directory = tempDir("aot-a-library-sets-actions", { "main.ts": program, "library.c": library });
-    const [executable, path] = await Promise.all([
-      build(String(directory), "main.ts"),
-      buildLibrary(String(directory)),
-    ]);
+    const directory = shared;
+    const [executable, path] = await Promise.all([table(), sharedLibrary()]);
     for (const [steps, end] of rows) {
       const compiled = await run([executable, path, "SIGSEGV", steps], String(directory));
       expect({ steps, ...compiled }).toEqual({
         steps,
-        ...(await run([bunExe(), "main.ts", path, "SIGSEGV", steps], String(directory))),
+        ...(await run([bunExe(), "table.ts", path, "SIGSEGV", steps], String(directory))),
       });
       if (typeof end === "string")
         expect({ steps, end: compiled.stdout.trimEnd().split("\n").at(-1), exitCode: compiled.exitCode }).toEqual({
@@ -426,8 +346,8 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
   test.skipIf(!isLinux)(
     "when the program calls signal() of the C library by its name",
     async () => {
-      using directory = tempDir("aot-libc-by-name", { "main.ts": libcByName });
-      const executable = await build(String(directory), "main.ts");
+      const directory = shared;
+      const executable = await byName();
       const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
       expect(await run([executable, libc], String(directory))).toEqual({
         stdout: "at first 10\nin the end 10\n",
@@ -439,33 +359,28 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
     120_000,
   );
 
-  // A build that finds out what the readers are handed tests for null in place of the load, and the cases above would hold whatever a library did.
+  // A build that tests for null in front of the load raises no signal, and the cases above would hold whatever a library did.
+  // Where the sender may not trace, it exits with 126: nothing is known then, and the case fails.
   test.skipIf(!isLinux)(
     "and in each of these programs a read of null raises the signal",
     async () => {
       using directory = tempDir("aot-reads-of-null-raise-the-signal", {
-        "table.ts": program,
-        "by-name.ts": libcByName,
         "as-the-worker.ts": readsAsTheWorkerDoes,
-        "library.c": library,
         "sender.c": sender,
       });
-      const [table, byName, asTheWorker, path, built] = await Promise.all([
-        build(String(directory), "table.ts"),
-        build(String(directory), "by-name.ts"),
+      const [asTheWorker, path, built] = await Promise.all([
         build(String(directory), "as-the-worker.ts"),
-        buildLibrary(String(directory)),
+        sharedLibrary(),
         run([compiler!, "-w", "-o", "sender", "sender.c"], String(directory)),
       ]);
       expect(built).toMatchObject({ exitCode: 0 });
       const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
       for (const [reads, ...command] of [
-        [20, table, path, "SIGSEGV", "turn"],
-        [20, byName, libc],
+        [20, await table(), path, "SIGSEGV", "turn"],
+        [20, await byName(), libc],
         [10, asTheWorker],
       ] as const) {
         const counted = await run([join(String(directory), "sender"), ...command], String(directory));
-        if (counted.exitCode === 126) return console.error("SKIPPED: a process may not be traced here");
         const raised = Number(counted.stdout.trimEnd().split("\n").at(-1));
         expect({
           command,
@@ -509,7 +424,7 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
       ]);
       expect(built).toMatchObject({ exitCode: 0 });
       const counted = await run([join(String(directory), "sender"), executable], String(directory));
-      if (counted.exitCode === 126) return console.error("SKIPPED: a process may not be traced here");
+      expect(counted.exitCode).toBe(0);
       const checks = counted.stdout.trimEnd().split("\n").at(-1)!;
       expect(Number(checks)).toBeWithin(1, 11);
       const { stdout, exitCode } = await run([join(String(directory), "sender"), executable], String(directory), {

@@ -1,7 +1,7 @@
 // RUN(TYPED): lower
 // TYPED-LABEL: function {{*}}name="typed"
 // TYPED-NEXT: ([[v]]: anything):
-// TYPED: [[converted]] = Convert [[v]] declared={type=number} illTypedCause=FromLooseType
+// TYPED: [[converted]] = Convert [[v]] declared={type=number} @
 // TYPED-NEXT: = NewObject -, [[converted]] layout={{*}}fields=[0]
 
 // RUN(INFERRED): lower

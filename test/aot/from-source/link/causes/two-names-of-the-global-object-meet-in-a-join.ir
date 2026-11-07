@@ -1,0 +1,11 @@
+# the global object is chosen among its names and read by a written name: nothing leaves
+# -- source: two-names-of-the-global-object-meet-in-a-join.ts
+# declare const self: any;
+# declare const global: any;
+# const chosen = typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : {};
+# console.log(typeof chosen.Uint8Array);
+# -- end of source
+# RUN: causes
+# CHECK: unseen-code cannot-run
+# RUN(NEVER): causes
+# NEVER-NOT: cause 

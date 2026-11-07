@@ -1,6 +1,6 @@
 use super::answers::{
     CheckedMember, GaveUp, IndexSignature, ListedMember, MemberLookup, MemberName,
-    MemberTypedOtherwise, ObjectMember, PositionTypes, WrittenType,
+    MemberTypedOtherwise, MethodsAbove, ObjectMember, PositionTypes, WrittenType,
 };
 use super::queries::Queries;
 use super::type_shape::{ShapeKind, TypeShape};
@@ -70,6 +70,7 @@ fn replace_written_type(lookup: MemberLookup, written: WrittenType) -> MemberLoo
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    #[inline]
     pub(super) fn declared_type_of_this(&mut self, ty: TypeId) -> TypeId {
         if let TypeData::ThisParam(symbol) = self.c.data(ty) {
             return self.c.declared_type(*symbol);
@@ -102,34 +103,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&list))
     }
 
-    pub(super) fn compute_checked_members(
-        &mut self,
-        ty: TypeId,
-    ) -> Result<(&'c [CheckedMember], bool), GaveUp> {
-        let ty = self.declared_type_of_this(ty);
-        let shape = self.type_shape(ty)?;
-        if !shape.has_members() {
-            return Ok((&[], false));
-        }
-        let Some(members) = self.c.members(ty) else {
-            return Ok((&[], false));
-        };
-        let skips_private_names = receiver_kind(shape) == ReceiverKind::Object;
-        let props = &members.shape().props;
-        let mut list = Vec::with_capacity(props.len());
-        let mut has_inferred_member = false;
-        for prop in props.iter() {
-            let is_private = matches!(self.member_name(prop.name), MemberName::Private(_));
-            if is_private && skips_private_names {
-                continue;
-            }
-            list.push(self.checked_member_of_prop(prop, members.mapper));
-            has_inferred_member = has_inferred_member || self.is_inferred_member(prop);
-        }
-        Ok((self.list(&list), has_inferred_member))
-    }
-
-    /// As `compute_checked_members`, in a list that its caller lets go of.
     pub(super) fn compute_checked_members_for_now(
         &mut self,
         ty: TypeId,
@@ -155,13 +128,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(list)
     }
 
-    /// `members_typed_otherwise` without the list of either class: the names that the class declares are looked up in
-    /// both, and so are the few that it inherits with another type. `None`: the lists have to be compared.
     pub(super) fn compute_members_typed_otherwise(
         &mut self,
         instance: TypeId,
         base: TypeId,
-    ) -> Result<Option<Vec<MemberTypedOtherwise>>, GaveUp> {
+    ) -> Result<Option<(Vec<MemberTypedOtherwise>, Option<MethodsAbove>)>, GaveUp> {
         let instance = self.declared_type_of_this(instance);
         let base = self.declared_type_of_this(base);
         let (&TypeData::Ref { target: class, .. }, &TypeData::Ref { target: above, .. }) =
@@ -178,17 +149,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         else {
             return Ok(None);
         };
-        // FOR SPEED: where `this` decides the types of much of what is inherited, as it does for every method without a
-        // return type, the lists say the same for less.
         if typed_by_this.len() * 4 > declared_above {
             return Ok(None);
         }
-        // No class of the row has a type parameter but `this`, so a member that the class inherits has the type it has in
-        // the class above, unless that depends on `this`.
         let inherited = typed_by_this.iter().copied();
-        let names: Vec<Atom> = (declared.shape.props.iter().map(|prop| prop.name))
+        let mut names: Vec<Atom> = (declared.shape.props.iter().map(|prop| prop.name))
             .chain(inherited.filter(|&name| declared.prop(name).is_none()))
             .collect();
+        let mut methods = crate::util::FxHashSet::default();
+        let mut at = Some(above);
+        while let Some(current) =
+            at.filter(|it| !self.memo.classes_compared_with_an_heir.contains(it))
+        {
+            let declared_there = self.memo.methods_typed_by_this.get(&current).copied();
+            for &name in declared_there.unwrap_or_default() {
+                if methods.insert(name) && declared.prop(name).is_none() {
+                    names.push(name);
+                }
+            }
+            at = self.c.declared_by_plain_class(current).and_then(|it| it.1);
+        }
+        if !methods.is_empty() {
+            let mut seen = crate::util::FxHashSet::default();
+            names.retain(|&name| seen.insert(name));
+        }
+        let mut is_every_type_known = true;
         let mut found = Vec::new();
         for name in names {
             let Some((in_base, mapper)) = self.c.get_property_of_type_ex(base, name, true) else {
@@ -200,6 +185,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 continue;
             };
             let from = self.checked_member_of_prop(in_class, mapper);
+            is_every_type_known &= from.checked.is_ok() && to.checked.is_ok();
             if let (MemberName::String(_), Ok(from), Ok(checked)) =
                 (to.name, from.checked, to.checked)
                 && from != checked
@@ -211,17 +197,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     kind_in_base: to.kind,
                     checked: from,
                     in_base: checked,
+                    is_method_above: methods.contains(&name),
                 };
                 found.push(((place, self.atom_bytes(name)), member));
             }
         }
         found.sort_unstable_by_key(|member| member.0);
-        Ok(Some(found.into_iter().map(|member| member.1).collect()))
+        let found = found.into_iter().map(|member| member.1).collect();
+        let methods = MethodsAbove {
+            class: above,
+            count: methods.len(),
+        };
+        Ok(Some((found, is_every_type_known.then_some(methods))))
     }
 
-    /// The names in the list of the plain class `class` under which the type depends on what `this` is. It may name
-    /// more. With it, how many properties `class` and the classes above it declare. `None` if one of them isn't plain,
-    /// or has another type parameter.
     fn names_typed_by_this(&mut self, class: Sym) -> Option<(&'c [Atom], usize)> {
         let mut heirs: SmallVec<[Sym; 8]> = SmallVec::new();
         let (mut names, mut count): (&'c [Atom], usize) = (&[], 0);
@@ -239,14 +228,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let reference = self.c.declared_type(current);
             let mapper = self.c.mapper_of_reference(reference, current)?;
             let mut all = Vec::new();
+            let mut methods = Vec::new();
             for prop in &declared.shape.props {
                 let with_this = self.checked_member_of_prop(prop, MapperId::IDENTITY);
                 let with_class = self.checked_member_of_prop(prop, mapper);
                 match (with_this.checked, with_class.checked) {
                     (Ok(with_this), Ok(with_class)) if with_this == with_class => {}
+                    (Ok(with_this), Ok(with_class))
+                        if self.are_functions_of_one_declaration(with_this, with_class) =>
+                    {
+                        methods.push(prop.name);
+                    }
                     _ => all.push(prop.name),
                 }
             }
+            let methods = self.list(&methods);
+            self.memo.methods_typed_by_this.insert(current, methods);
             if !all.is_empty() || names.iter().any(|&name| declared.prop(name).is_some()) {
                 all.extend((names.iter().copied()).filter(|&name| declared.prop(name).is_none()));
                 names = self.list(&all);
@@ -304,9 +301,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             debug_assert!(false, "a listed member belongs to a type with members");
             return PositionTypes::unwritten(Err(GaveUp::Unresolved));
         };
-        let prop = &members.shape().props[member.property_index as usize];
-        self.member_of_prop(prop, members.mapper, members.mapper)
-            .types
+        let listed = members.shape().props.get(member.property_index as usize);
+        let Some(prop) = listed.filter(|prop| prop.name == member.name.atom()) else {
+            self.c.discard_until_recheck();
+            assert!(
+                self.c.was_discarded(),
+                "the members of a type have changed under a task that runs alone"
+            );
+            return PositionTypes::unwritten(Err(GaveUp::Unresolved));
+        };
+        self.types_of_prop(prop, members.mapper, members.mapper)
     }
 
     pub(super) fn compute_index_signatures(
@@ -321,6 +325,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Ok(&[]);
         };
         let members = self.c.structured(members);
+        if members.index_infos().is_empty() {
+            return Ok(&[]);
+        }
         let mut list = Vec::with_capacity(members.index_infos().len());
         for info in members.index_infos() {
             if !info.is_enum_number_index_info {

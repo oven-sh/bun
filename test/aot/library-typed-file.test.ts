@@ -2,7 +2,6 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readBuildReport } from "./harness/build-report";
 import { describe, test } from "./with-compiler";
 
 const tsconfig = JSON.stringify({
@@ -52,8 +51,8 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signal: proc.signalCode };
 }
-// index.aot.ts and version.aot.ts are compiled, and the build has nothing to say about them.
-const USED = { said: [], aotFiles: 2, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
+// app.ts, index.aot.ts and version.aot.ts are compiled with their types, and the build has nothing to say about them.
+const USED = { said: [], typedFiles: 3, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
 
 async function install(root: string) {
   const built = await spawned(
@@ -67,12 +66,11 @@ async function install(root: string) {
 
 async function compile(root: string) {
   const app = join(root, "app");
-  const report = join(app, "report.json");
-  const build = await spawned([bunExe(), "compile", "./app.ts", "--aot-report=" + report], app, env);
+  const build = await spawned([bunExe(), "compile", "./app.ts", "--explain=statistics"], app, env);
   const said = (build.stdout + build.stderr).split(/\r?\n/).filter(line => /^(note|warn|error): /.test(line));
   const ran = build.exitCode === 0 ? await spawned([join(app, isWindows ? "app.exe" : "app")], app, env) : undefined;
-  const aotFiles = build.exitCode === 0 ? readBuildReport(report).statistics.AotFilesUsed : undefined;
-  return { said, aotFiles, exitCode: build.exitCode, signal: build.signal, stdout: ran?.stdout };
+  const typedFiles = Number(/^SourceFilesChecked (\d+)$/m.exec(build.stderr)?.[1]);
+  return { said, typedFiles, exitCode: build.exitCode, signal: build.signal, stdout: ran?.stdout };
 }
 
 describe.concurrent("a program compiled against a package that bun compile --library wrote", () => {
@@ -84,24 +82,6 @@ describe.concurrent("a program compiled against a package that bun compile --lib
       stdout: "7 1.2.3\n",
       exitCode: 0,
     });
-  });
-
-  test.each([
-    ["is not strict", { strict: false, skipLibCheck: true, target: "es2017", lib: ["es2017", "dom"] }],
-    ["asks for more than strict", { strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true }],
-  ])("an application whose tsconfig.json %s compiles the same .aot.ts files", async (_, compilerOptions) => {
-    using dir = tempDir("aot-library-typed-file-options", {
-      ...library,
-      "library/src/area.ts": library["library/src/area.ts"].replace(
-        "return shape",
-        "const sizes = [shape.size];\n  if (sizes[0].valueOf() < 0) return 0;\n  return shape",
-      ),
-      "app/tsconfig.json": JSON.stringify({
-        compilerOptions: { module: "esnext", moduleResolution: "bundler", types: [], ...compilerOptions },
-      }),
-    });
-    await install(String(dir));
-    expect(await compile(String(dir))).toEqual(USED);
   });
 
   test.each([

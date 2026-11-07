@@ -1,7 +1,8 @@
 use super::statements::value_import_symbols;
+use crate::atom::known;
 use crate::bind::{Binding, Bound, Decl, ImplicitReferenceKind, Parent, SymbolId};
 use crate::fold::Decisions;
-use crate::hir::{ExprId, File, Flags, ImportEqualsId, ImportId, NodeData};
+use crate::hir::{Expr, ExprId, ExprKind, File, Flags, ImportEqualsId, ImportId, NodeData};
 use crate::util::PositionSet;
 
 pub(super) struct ImportUses {
@@ -48,6 +49,28 @@ impl ImportUses {
         let only_dead = used.filter(|&index| !self.used_live.contains(index));
         only_dead.map(|index| SymbolId(index as u32)).collect()
     }
+}
+
+pub fn find_imports_of_unused_names(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+) -> Vec<ImportId> {
+    let names_eval = |e: &Expr| matches!(e.kind, ExprKind::Ident(name) if name == known::eval);
+    if hir.exprs.iter().any(names_eval) {
+        return Vec::new();
+    }
+    let uses = compute_import_uses(hir, bound, decisions);
+    let imports = (0..hir.imports.len() as u32).map(ImportId);
+    imports
+        .filter(|&import| {
+            let mut symbols = value_import_symbols(hir, bound, import).peekable();
+            !hir[import].type_only
+                && hir[import].namespace.is_none()
+                && symbols.peek().is_some()
+                && symbols.all(|symbol| !uses.used_anywhere.contains(symbol.idx()))
+        })
+        .collect()
 }
 
 fn find_import_symbols(hir: &File<'_>, bound: &Bound<'_>, is_import: &mut PositionSet) {
@@ -167,7 +190,9 @@ pub(super) fn compute_import_uses(
             continue;
         };
         let is_live = match reference.kind {
-            ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => {
+            ImplicitReferenceKind::JsxFactory
+            | ImplicitReferenceKind::JsxFragment
+            | ImplicitReferenceKind::DefinedPath => {
                 !matches!(reference.node, NodeData::Expr(e) if decisions.is_dead_expr(e))
             }
             ImplicitReferenceKind::DecoratorMetadata(_) => true,

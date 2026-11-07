@@ -1664,9 +1664,9 @@ absent: main.ts:8 diagnostic TS2373 = Semantic StopsBuild
 main.ts:8 type `fallback` = "outer"
 main.ts:8 binding `seen` = string
 
-# What such a field does is reported, whatever the target: it is defined again as undefined, and it is initialized in front of the constructor's body.
-main.ts:11 diagnostic TS2612 = Semantic StopsBuild
-main.ts:12 diagnostic TS2729 = Semantic StopsBuild
+# What such a field does is not reported where tsc says nothing of it under the target: it is defined again as undefined, and it is initialized in front of the constructor's body.
+absent: main.ts:11 diagnostic TS2612 = Semantic StopsBuild
+absent: main.ts:12 diagnostic TS2729 = Semantic StopsBuild
 //// diagnostic-class/old-target-class-fields/main.ts
 // `bun run` leaves class fields where they are written unless `useDefineForClassFields` is false, and a default value in front of the body, whatever the target. No rule about where tsc would move them counts.
 const limit = 3;
@@ -1676,7 +1676,7 @@ class Limited { max = limit; text: string; constructor(limit: string) { this.tex
 class Late extends Limited { extra = 1; constructor(flag: boolean) { if (flag) { super("yes"); } else { super("no"); } } }
 function pick(options?: { name?: string }, name = options?.name ?? fallback) { var fallback = 1; return name + fallback; }
 function split({ a, ...others }: { a: number; b: number }, seen = fallback) { var fallback = 2; return [a, others, seen, fallback]; }
-// What such a field does is reported, whatever the target: it is defined again as undefined, and it is initialized in front of the constructor's body.
+// What such a field does is not reported where tsc says nothing of it under the target: it is defined again as undefined, and it is initialized in front of the constructor's body.
 class Base { x: number = 5; }
 class Redeclared extends Base { x!: number; }
 class FromParameter { doubled = this.n * 2; constructor(public n: number) {} }
@@ -2597,12 +2597,12 @@ function f(a) { "use strict"; }
 function f(a = 1) { "use sloppy"; }
 function f(a,) {}
 (a) =>⏎1;
-// ECMAScript rejects the next four. bun run starts them: its transpiler removes the "use strict" directive of a function.
+//// early-errors/parameters.rejected.js
+// A "use strict" directive behind parameters that are not plain names. bun run starts these four: its transpiler removes the directive of a function.
 function f(a = 1) { "use strict"; }
 function f({ a }) { "use strict"; }
 (a = 1) => { "use strict"; };
 function f(...a) { "use strict"; }
-//// early-errors/parameters.rejected.js
 // A rest parameter that is not last or has a default, and a line break before =>.
 function f(...a, b) {}
 function f(...a = []) {}
@@ -2761,9 +2761,6 @@ function f() { "use strict"; 010; }
 "use strict"; var a = "\101";
 class C { m() { 010; } }
 class C { a = "\8"; }
-// ECMAScript rejects the next two. bun run starts them: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
-function f(eval) { "use strict"; }
-function f() { "use strict"; delete f; }
 //// early-errors/strict-mode.accepted.js
 // Strict mode code allows delete of a property, reserved words as property names, 0o10 and "\0".
 var a = {}; delete a.b;
@@ -2786,6 +2783,9 @@ function f() { "use strict"; var public; }
 class C { m() { with ({}) {} } }
 class C { m() { var let; } }
 class C extends (function () { with ({}) {} }) {}
+// bun run starts the next two: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
+function f(eval) { "use strict"; }
+function f() { "use strict"; delete f; }
 //// early-errors/strict-mode.rejected.js
 // Strict mode code, here a module: with, delete of a name, eval and arguments as targets or declared names, reserved words as names.
 export {}; with ({}) {}
@@ -2877,7 +2877,7 @@ export const Level = { Info: 0, Warn: 2 };
 // The types of the package `level`, imported by main.ts. No code edge reaches it.
 export enum Level { Info = 1, Warn = 2 }
 //// exact-optional-of-the-file/inner/deletes.ts
-// What may be deleted is a rule that only reports, so it is asked of the file.
+// The folder leaves `exactOptionalPropertyTypes` off. A build has one checker, which has the option once: nothing is reported here.
 export interface Box { value: number | undefined; size: number }
 export function clear(box: Box): number { delete box.value; return box.size; }
 export function shrink(box: Box): void { delete box.size; }
@@ -2885,10 +2885,11 @@ export function shrink(box: Box): void { delete box.size; }
 { "extends": "../../tsconfig.json" }
 //// exact-optional-of-the-file/main.queries.txt
 # `inner/` is written with `strict` alone, the program with `exactOptionalPropertyTypes` too.
-# What may be deleted is a rule that only reports, so it is asked of the file.
+# A build has one checker, and the entry point's tsconfig.json sets the option for it. The files of a folder that sets it differently are not checked.
 main.ts:4 diagnostic TS2790 = Semantic StopsBuild
+inner/deletes.ts:0 role `` = Inferred
 absent: inner/deletes.ts:3 diagnostic TS2790 = Semantic StopsBuild
-inner/deletes.ts:4 diagnostic TS2790 = Semantic StopsBuild
+absent: inner/deletes.ts:4 diagnostic TS2790 = Semantic StopsBuild
 //// exact-optional-of-the-file/main.ts
 // `inner/` is written with `strict` alone, the program with `exactOptionalPropertyTypes` too.
 import { clear, type Box } from "./inner/deletes.ts";
@@ -3605,16 +3606,16 @@ class Node { value = 0; }
 export class Declared { root; #count; constructor() { this.root = new Node(); this.#count = 1; } count() { return this.#count; } }
 export class Stored { constructor() { this.root = new Node(); } }
 //// lenient-options/inner/index-by-string.ts
-// `noImplicitAny` is asked of the file that holds the access.
+// The folder is written without `strict`, so it is not checked: nothing is reported here.
 export const pick = (from: { a: number }, key: string) => from[key];
 //// lenient-options/inner/possibly-undefined.ts
-// What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+// The folder is written without `strict`, so it is not checked: nothing is reported here, and what is declared stays what is answered.
 export function size(sizes: Map<string, { n: number }>, key: string): number { return sizes.get(key).n; }
 export function later(flag: boolean): number { let n: number; if (flag) n = 1; return n; }
 export function sign(n: number): number { if (n > 0) return 1; if (n < 0) return -1; }
 export function pick(from: { a: number }) { return { a: 1, ...from }; }
 //// lenient-options/inner/starts-empty.ts
-// Without `noImplicitAny` a variable that starts as `[]` or `null` is no `never[]` and no `null` because the program has `strictNullChecks`: it holds what is stored.
+// The folder is written without `strict`, so it is not checked. A variable that starts as `[]` or `null` is no `never[]` and no `null`: it holds what is stored.
 export function evens(list: number[]): number[] { const out = []; for (const n of list) if (n % 2 === 0) out.push(n); return out; }
 export function last(list: string[]): string | null { let found = null; for (const s of list) found = s; return found; }
 export function first(list: string[]): string | undefined { let found = undefined; for (const s of list) { found = s; break; } return found; }
@@ -3622,7 +3623,7 @@ export function anything() { let value; value = {}; value.more = 1; return value
 //// lenient-options/inner/tsconfig.json
 { "extends": "../../tsconfig.json", "compilerOptions": { "strict": false } }
 //// lenient-options/main.queries.txt
-# `inner/` is written without `strict`, the program with it.
+# `inner/` is written without `strict`, the program with it. That leaves `strictNullChecks` off, which the one checker of a build has once: the TypeScript files of `inner/` are not checked.
 main.ts:0 option noImplicitAny `` = true
 inner/fields.js:0 option noImplicitAny `` = false
 
@@ -3632,24 +3633,26 @@ inner/fields.js:3 class member `Declared` = #count Field Member 3 unwritten chec
 inner/fields.js:3 returns `count` = number
 inner/fields.js:4 class member `Stored` = root Field ThisStore 4 unwritten checked Node
 
-# Without `noImplicitAny` a variable that starts as `[]` or `null` is no `never[]` and no `null` because the program has `strictNullChecks`: it holds what is stored.
-inner/starts-empty.ts:0 role `` = Checked
+# A variable that starts as `[]` or `null` is no `never[]` and no `null` because the program has `strictNullChecks`: it holds what is stored.
+inner/starts-empty.ts:0 role `` = Inferred
 inner/starts-empty.ts:2 binding `out` = any[]
-inner/starts-empty.ts:3 binding `found` = any
-inner/starts-empty.ts:4 binding `found` = any
+inner/starts-empty.ts:3 binding `found` = string
+inner/starts-empty.ts:4 binding `found` = string
 absent: inner/starts-empty.ts:2 diagnostic TS2345 = Semantic StopsBuild
 absent: inner/starts-empty.ts:3 diagnostic TS2322 = Semantic StopsBuild
 absent: inner/starts-empty.ts:4 diagnostic TS2322 = Semantic StopsBuild
-inner/starts-empty.ts:5 binding `value` = any
+inner/starts-empty.ts:5 binding `value` = { more?: number; }
 
 # An object literal of a JavaScript file takes every name.
 inner/dictionary.js:4 type `table[String(key)]` = any
 inner/dictionary.js:5 type `table[key]` = any
 
-# `noImplicitAny` is asked of the file that holds the access.
+# Nothing is reported in a file that is not checked.
+inner/index-by-string.ts:0 role `` = Inferred
 absent: inner/index-by-string.ts:2 diagnostic TS7053 = Style StopsBuild
 
-# What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+# What is declared stays what is answered.
+inner/possibly-undefined.ts:0 role `` = Inferred
 inner/possibly-undefined.ts:2 type `sizes.get(key).n` = number
 absent: inner/possibly-undefined.ts:2 diagnostic TS2532 = Semantic StopsBuild
 absent: inner/possibly-undefined.ts:3 diagnostic TS2454 = Semantic StopsBuild

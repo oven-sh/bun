@@ -458,6 +458,109 @@ test.concurrent.each([
   ]);
 });
 
+// A registry that serves `packages[name][version]`, a manifest without its name and version, from memory.
+function serveInlinePackages(packages: Record<string, Record<string, object>>) {
+  return Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      const tarball = pathname.match(/^\/(.+)-(\d+\.\d+\.\d+)\.tgz$/);
+      if (tarball) {
+        const [, name, version] = tarball;
+        const manifest = { name, version, ...packages[name][version] };
+        const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+        return new Response(await archive.bytes());
+      }
+      const name = pathname.slice(1);
+      const versions = Object.fromEntries(
+        Object.entries(packages[name]).map(([version, manifest]) => [
+          version,
+          { name, version, ...manifest, dist: { tarball: `${origin}/${name}-${version}.tgz` } },
+        ]),
+      );
+      return Response.json({ name, "dist-tags": { latest: Object.keys(versions).at(-1) }, versions });
+    },
+  });
+}
+
+// `b` is reached under `a` (its peer `a` is the ancestor, a cycle) and under the workspace (its peer `a`
+// is a sibling, found by the early dedupe). Both link the one `a` entry, so both are one `b` entry. The
+// peers that pass through `a` (`q` auto-installed by `a`, `r` from `c` after `b` was reached) used to
+// reach only the second `b`, which split the two into `b@1.0.0+<hash>` entries with the same tree (#46208).
+test.concurrent("a package whose peer is an ancestor is installed once", async () => {
+  using server = serveInlinePackages({
+    a: { "1.0.0": { dependencies: { b: "1.0.0", c: "1.0.0" }, peerDependencies: { q: "*" } } },
+    b: { "1.0.0": { peerDependencies: { a: "*" } } },
+    c: { "1.0.0": { peerDependencies: { r: "*" } } },
+    q: { "1.0.0": {} },
+    r: { "1.0.0": {} },
+  });
+  using dir = tempDir("isolated-peer-ancestor", {
+    "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+    "packages/mobile/package.json": JSON.stringify({
+      name: "mobile",
+      dependencies: { a: "1.0.0", b: "1.0.0", r: "1.0.0" },
+    }),
+    "bunfig.toml": `[install]\nlinker = "isolated"\ncache = "./.bun-cache"\nregistry = "${server.url.href}"\n`,
+  });
+
+  await runBunInstall({ ...bunEnv, BUN_INSTALL_CACHE_DIR: undefined }, String(dir));
+
+  const store = join(String(dir), "node_modules", ".bun");
+  const entries = (await readdirSorted(store)).filter(entry => /^[ab]@/.test(entry));
+  expect(entries).toEqual([
+    expect.stringMatching(/^a@1\.0\.0\+[0-9a-f]{16}$/),
+    expect.stringMatching(/^b@1\.0\.0\+[0-9a-f]{16}$/),
+  ]);
+  const [aEntry, bEntry] = entries;
+  expect(readlinkSync(join(store, bEntry, "node_modules", "a"))).toBe(join("..", "..", aEntry, "node_modules", "a"));
+  expect(readlinkSync(join(store, aEntry, "node_modules", "b"))).toBe(join("..", "..", bEntry, "node_modules", "b"));
+  expect(readlinkSync(join(String(dir), "packages", "mobile", "node_modules", "b"))).toBe(
+    join("..", "..", "..", "node_modules", ".bun", bEntry, "node_modules", "b"),
+  );
+});
+
+// `y` links the ancestor `a`, which carries a mark for `w`'s peer `q`: q@1.0.0 from the project, or an
+// auto-installed q@2.0.0. `x`, between the two, provides q@2.0.0. `v` must take the package its nearest
+// ancestor provides. A far mark below `x`, or a mark that still reads as auto-installed, would give it
+// the far q@1.0.0 or its own q@1.0.0 (`z` puts that version in the lockfile).
+test.concurrent.each([
+  ["the project provides q@1.0.0", { a: "1.0.0", q: "1.0.0" }, "*", "*", "1.0.0"],
+  ["w auto-installs q@2.0.0", { a: "1.0.0", z: "1.0.0" }, "2.x", "1.x", "2.0.0"],
+])(
+  "a peer that a cycle passes down does not shadow a nearer provider when %s",
+  async (_, rootDependencies, wRange, vRange, wVersion) => {
+    using server = serveInlinePackages({
+      a: { "1.0.0": { dependencies: { w: "1.0.0", x: "1.0.0" } } },
+      w: { "1.0.0": { peerDependencies: { q: wRange } } },
+      x: { "1.0.0": { dependencies: { q: "2.0.0", y: "1.0.0" } } },
+      y: { "1.0.0": { dependencies: { a: "1.0.0", v: "1.0.0" } } },
+      v: { "1.0.0": { peerDependencies: { q: vRange } } },
+      q: { "1.0.0": {}, "2.0.0": {} },
+      z: { "1.0.0": { dependencies: { q: "1.0.0" } } },
+    });
+    using dir = tempDir("isolated-peer-cycle-provider", {
+      "package.json": JSON.stringify({ name: "app", dependencies: rootDependencies }),
+      "bunfig.toml": `[install]\nlinker = "isolated"\ncache = "./.bun-cache"\nregistry = "${server.url.href}"\n`,
+    });
+
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_CACHE_DIR: undefined }, String(dir));
+
+    const store = join(String(dir), "node_modules", ".bun");
+    const entries = await readdirSorted(store);
+    const [vEntry] = entries.filter(entry => entry.startsWith("v@"));
+    const [wEntry] = entries.filter(entry => entry.startsWith("w@"));
+    expect(
+      await Promise.all(
+        [vEntry, wEntry].map(entry => file(join(store, entry, "node_modules", "q", "package.json")).json()),
+      ),
+    ).toEqual([
+      { name: "q", version: "2.0.0" },
+      { name: "q", version: wVersion },
+    ]);
+  },
+);
+
 test.concurrent("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
   // `dedupe-divergent-peers` pulls in two declarers of the peer name
   // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and

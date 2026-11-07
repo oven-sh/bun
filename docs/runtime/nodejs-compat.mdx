@@ -41,6 +41,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
+Recursive `fs.promises.readdir` with `withFileTypes: true` lists directory symlinks without descending into their targets. Callback and synchronous overloads retain the Node symlink-following behavior.
+
 🟢 Fully implemented. 98% of Node.js's test suite passes. `Stats` objects lack the `Temporal.Instant` getters (`atimeInstant` and friends).
 
 ### [`node:http`](https://nodejs.org/api/http.html)
@@ -132,6 +134,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 🟡 `monitorEventLoopDelay()`, `createHistogram()`, `timerify()` and `PerformanceObserver` (`mark`, `measure`, `function`, `net`, `http` and `http2` entries) are implemented. Bun never emits `gc`, `dns` or `resource` entries. `eventLoopUtilization()` always returns zeros, and `performance.nodeTiming` holds placeholder values. The Node-specific additions to the global `performance` object only appear once `node:perf_hooks` has been imported.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
+
+`process.report` preserves the full original startup command line, including the executable, flags, script, and user arguments, independently of later `process.argv` or `process.execArgv` changes.
 
 🟡 See [`process`](#process) Global.
 

@@ -1307,7 +1307,10 @@ pub struct WakeTarget {
 
 #[derive(Clone, Copy)]
 pub struct DependencyGroup {
+    /// The package.json key, e.g. `"devDependencies"`. Use this for JSON lookups.
     pub prop: &'static [u8],
+    /// The snake_case manifest field name, e.g. `"dev_dependencies"`, as
+    /// accepted by `PackageVersion::dep_group`. Never a package.json key.
     pub field: &'static [u8],
     pub behavior: Behavior,
 }

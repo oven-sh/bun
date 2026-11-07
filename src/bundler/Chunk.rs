@@ -264,6 +264,18 @@ impl<'a> Chunk<'a> {
         self.entry_point.is_entry_point() && self.entry_point.source_index() == source_index
     }
 
+    /// `source_index` prints in this chunk as its own unwrapped entry point (README: Pattern 5).
+    #[inline]
+    pub(crate) fn prints_entry_point_file_in_place(
+        &self,
+        source_index: u32,
+        wrap: crate::WrapKind,
+    ) -> bool {
+        wrap == crate::WrapKind::None
+            && self.is_entry_point_file(source_index)
+            && self.files_with_parts_in_chunk.contains(&source_index)
+    }
+
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
     pub(crate) fn id(&self) -> bun_core::fmt::ContentHash {
         self.template

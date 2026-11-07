@@ -249,6 +249,31 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
     },
   });
 
+  // The script of the page only loads the external module that such an entry
+  // point re-exports. The output of the entry point has the `export * from`.
+  itBundled("html/script-that-is-also-an-entry-point-with-external-export-star", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./lib.js"></script>
+  </head>
+</html>`,
+      "/lib.js": `export * from "pkx"; console.log("lib");`,
+    },
+    entryPoints: ["/index.html", "/lib.js"],
+    external: ["pkx"],
+    onAfterBundle(api) {
+      const jsMatch = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      const script = api.readFile("out/" + jsMatch![1]);
+      expect(script).toMatch(/import\s*"pkx"/);
+      expect(script).not.toContain("export");
+      api.expectFile("out/lib.js").toContain('export * from "pkx"');
+    },
+  });
+
   // Test CSS imports
   itBundled("html/css-imports", {
     outdir: "out/",

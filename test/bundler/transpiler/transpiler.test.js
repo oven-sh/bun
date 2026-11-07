@@ -6197,6 +6197,12 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
   it("between a numeric literal and 'in'", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
+
+  it("after a non-ASCII identifier and before 'of'", () => {
+    const output = minifier.transformSync("for (const slóð of paths) console.log(slóð)");
+    expect(output).toContain("slóð of paths");
+    expect(() => new Function(output)).not.toThrow();
+  });
 });
 
 it("transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight", async () => {

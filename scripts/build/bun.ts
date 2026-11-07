@@ -179,11 +179,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
   depsByName.set(rustArgon2.name, rustArgon2Dep);
+  const shimReproExe =
+    cfg.windows && !binaryChecksWarnOnly(cfg) && binaryVerifyTools(cfg) !== undefined
+      ? resolve(cfg.buildDir, "shim-repro", "bun-shim-impl.exe")
+      : undefined;
   const rustObjects = emitRust(n, cfg, {
     codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
-    shimValidations: emitShimVerify(n, cfg),
+    shimValidations: emitShimVerify(n, cfg, shimReproExe),
+    shimReproExe,
   });
 
   // ─── Step 2: resolve all deps ───
@@ -750,14 +755,14 @@ function emitStrippedVerify(n: Ninja, cfg: Config, strippedExe: string | undefin
  * The same scan for the Windows `.bin/` shim, against `shimExpectations()`. Returns the stamp, which the shim's
  * rustc edge names as a validation: whenever the shim is relinked, it is checked.
  */
-function emitShimVerify(n: Ninja, cfg: Config): string[] {
+function emitShimVerify(n: Ninja, cfg: Config, compareWith: string | undefined): string[] {
   const tools = binaryVerifyTools(cfg);
   if (!cfg.windows || tools === undefined) return [];
   const name = "bun-shim-impl";
   const exe = windowsShimPath(cfg);
   const stamp = resolve(cfg.buildDir, `${name}.binary-verified`);
   const spec = resolve(cfg.buildDir, `${name}.verify.json`);
-  writeIfChanged(spec, JSON.stringify({ name, exe, tools, expect: shimExpectations() }, null, 2) + "\n");
+  writeIfChanged(spec, JSON.stringify({ name, exe, tools, expect: shimExpectations(), compareWith }, null, 2) + "\n");
   const q = (p: string) => quote(p, cfg.windows);
   n.rule("shim_verify", {
     command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${name} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
@@ -766,7 +771,7 @@ function emitShimVerify(n: Ninja, cfg: Config): string[] {
   n.build({
     outputs: [stamp],
     rule: "shim_verify",
-    inputs: [exe],
+    inputs: compareWith === undefined ? [exe] : [exe, compareWith],
     implicitInputs: [spec, verifyBinaryPath, resolve(import.meta.dirname, "binary-expectations.ts")],
     vars: { spec: q(spec) },
   });

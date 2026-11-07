@@ -4805,6 +4805,13 @@ impl Formatter<'_> {
     fn print_with_serializer(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         let global = self.global_this;
         let Some(serializers) = self.serializers else { return Ok(false) };
+        // A getter that threw leaves its accessor, a cell that is not a JS value. Script must never get one.
+        if value.is_cell() {
+            let js_type = value.js_type();
+            if !js_type.is_object() && !matches!(js_type, JSType::String | JSType::HeapBigInt | JSType::Symbol) {
+                return Ok(false);
+            }
+        }
         let mut iter = serializers.array_iterator(global)?;
         while let Some(plugin) = iter.next()? {
             if !plugin.is_object() {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("spawn with spoofed array length", () => {
   test("Bun.spawnSync throws on array with length near u32 max", () => {
@@ -21,5 +22,160 @@ describe("spawn with spoofed array length", () => {
     const result = Bun.spawnSync(["echo", "hello"]);
     expect(result.stdout.toString().trim()).toBe("hello");
     expect(result.exitCode).toBe(0);
+  });
+});
+
+describe("cmd in the options object", () => {
+  const notAnArray = { name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "cmd must be an array" };
+  class Cmd extends Array<string> {}
+
+  function outcome(call: () => any) {
+    try {
+      call().kill?.();
+      return "did not throw";
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  }
+
+  const nonArrays: [string, () => unknown][] = [
+    ["a string", () => "zz"],
+    ["a String object", () => new String("zz")],
+    ["a Buffer", () => Buffer.from("zz")],
+    ["a Uint8Array", () => new Uint8Array([122, 122])],
+    ["a Set", () => new Set(["zz"])],
+    ["a function", () => () => {}],
+    ["42", () => 42],
+    ["0", () => 0],
+    ["true", () => true],
+    ["false", () => false],
+    ["a plain object", () => ({})],
+    ["a symbol", () => Symbol()],
+    ["a bigint", () => 10n],
+    ["an array-like object", () => ({ 0: bunExe(), 1: "--version", length: 2 })],
+    [
+      "an arguments object",
+      () =>
+        (function (..._: string[]) {
+          return arguments;
+        })(bunExe(), "--version"),
+    ],
+    ["a Proxy of an array-like object", () => new Proxy({ 0: bunExe(), 1: "--version", length: 2 }, {})],
+  ];
+
+  const fns: [string, (...args: any[]) => any][] = [
+    ["Bun.spawn", Bun.spawn],
+    ["Bun.spawnSync", Bun.spawnSync],
+  ];
+
+  describe.each(fns)("%s", (_, fn) => {
+    test.each(nonArrays)("rejects %s", (_, cmd) => {
+      // PATH and cwd are an empty directory, so a build that walks `cmd` resolves no bare name.
+      // The bunExe() rows would run `bun --version`.
+      using dir = tempDir("spawn-non-array-cmd", {});
+      const options = {
+        cmd: cmd(),
+        env: { PATH: String(dir) },
+        cwd: String(dir),
+        stdio: ["ignore", "ignore", "ignore"],
+      };
+      expect(outcome(() => fn(options))).toEqual(notAnArray);
+    });
+
+    test("does not run the traps of a Proxy that it rejects", () => {
+      const traps: string[] = [];
+      const cmd = new Proxy({ 0: bunExe(), 1: "--version", length: 2 } as Record<PropertyKey, unknown>, {
+        get(target, key, receiver) {
+          traps.push(`get ${String(key)}`);
+          return Reflect.get(target, key, receiver);
+        },
+        has(target, key) {
+          traps.push(`has ${String(key)}`);
+          return Reflect.has(target, key);
+        },
+      });
+      const options = { cmd, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] };
+      expect({ outcome: outcome(() => fn(options)), traps }).toEqual({ outcome: notAnArray, traps: [] });
+    });
+
+    test("reports cmd before it reads another option", () => {
+      const read: string[] = [];
+      const options = {
+        get cmd() {
+          read.push("cmd");
+          return "zz";
+        },
+        get argv0() {
+          read.push("argv0");
+          return undefined;
+        },
+        get cwd() {
+          read.push("cwd");
+          return undefined;
+        },
+        get signal() {
+          read.push("signal");
+          return AbortSignal.abort();
+        },
+        get onExit() {
+          read.push("onExit");
+          return 5;
+        },
+        get env() {
+          read.push("env");
+          return 5;
+        },
+      };
+      expect({ outcome: outcome(() => fn(options)), read }).toEqual({ outcome: notAnArray, read: ["cmd"] });
+    });
+
+    test.each<[string, unknown[], string]>([
+      ["{ cmd: [] }", [{ cmd: [] }], "cmd must not be empty"],
+      ["an empty Array subclass", [{ cmd: new Cmd() }], "cmd must not be empty"],
+      ["a Proxy of an empty array", [{ cmd: new Proxy([], {}) }], "cmd must not be empty"],
+      ["a Proxy of a Proxy of an empty array", [{ cmd: new Proxy(new Proxy([], {}), {}) }], "cmd must not be empty"],
+      ['{ cmd: "" }', [{ cmd: "" }], "cmd must be an array"],
+      ["{ cmd: null }", [{ cmd: null }], "cmd must be an array"],
+      ["{}", [{}], "cmd must be an array"],
+      ["a positional string", ["zz"], "cmd must be an array"],
+    ])("still rejects %s", (_, args, message) => {
+      expect(outcome(() => fn(...args))).toEqual({ ...notAnArray, message });
+    });
+
+    const revoked = { name: "TypeError", code: undefined, message: expect.stringContaining("revoked") };
+
+    test("throws for a Proxy of an array that is revoked before the call", () => {
+      const { proxy, revoke } = Proxy.revocable([bunExe(), "--version"], {});
+      revoke();
+      expect(outcome(() => fn({ cmd: proxy }))).toEqual(revoked);
+    });
+
+    test("throws for a Proxy of an array that a later option getter revokes", () => {
+      const { proxy, revoke } = Proxy.revocable([bunExe(), "--version"], {});
+      const options = {
+        cmd: proxy,
+        get argv0() {
+          revoke();
+          return undefined;
+        },
+      };
+      expect(outcome(() => fn(options))).toEqual(revoked);
+    });
+  });
+
+  describe.each<[string, () => string[]]>([
+    ["an Array subclass", () => new Cmd(bunExe(), "-e", "console.log('ran')")],
+    ["a Proxy of an array", () => new Proxy([bunExe(), "-e", "console.log('ran')"], {})],
+  ])("%s", (_, cmd) => {
+    test.concurrent("runs with Bun.spawn", async () => {
+      await using proc = Bun.spawn({ cmd: cmd(), env: bunEnv, stderr: "ignore" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    });
+
+    test.concurrent("runs with Bun.spawnSync", () => {
+      const { stdout, exitCode } = Bun.spawnSync({ cmd: cmd(), env: bunEnv, stderr: "ignore" });
+      expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    });
   });
 });

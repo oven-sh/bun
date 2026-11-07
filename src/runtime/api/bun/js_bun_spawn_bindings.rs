@@ -150,6 +150,19 @@ fn get_argv0(
     })
 }
 
+/// What `Array.isArray` accepts.
+fn is_array_or_proxy_of_array(mut value: JSValue) -> bool {
+    loop {
+        if value.is_array() {
+            return true;
+        }
+        if !value.is_cell() || value.js_type() != jsc::JSType::ProxyObject {
+            return false;
+        }
+        value = value.get_proxy_target();
+    }
+}
+
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
 ///
 /// `storage` receives ownership of every NUL-terminated string whose pointer is
@@ -164,11 +177,7 @@ fn get_argv(
     argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
-    if args.is_empty_or_undefined_or_null() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
-        );
-    }
+    debug_assert!(is_array_or_proxy_of_array(args));
 
     let mut cmds_array = args.array_iterator(global_this)?;
 
@@ -255,11 +264,6 @@ fn get_argv(
         arg_index += 1;
     }
 
-    if argv.is_empty() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
-        );
-    }
     Ok(())
 }
 
@@ -438,7 +442,9 @@ fn spawn_maybe_sync(
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("cmd must be an array")));
-        } else if let Some(cmd_value_) = args.get_truthy(cx.global(), "cmd")? {
+        } else if let Some(cmd_value_) = args.get_truthy(cx.global(), "cmd")?
+            && is_array_or_proxy_of_array(cmd_value_)
+        {
             cmd_value = cmd_value_;
         } else {
             return Err(cx

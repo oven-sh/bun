@@ -2,20 +2,22 @@ use bun_sema::util::SharedSort;
 
 use super::ReportInput;
 use super::format::PathPrinter;
-use super::source_texts::ModuleLocator;
+use super::json::JsonWriter;
+use super::names::Names;
+use super::source_texts::{ModuleLocator, ModuleOrigin};
 use crate::diagnostics::SourcePosition;
 use crate::engine::{Position, SourceLocation, position_of};
 use crate::ir::ids::{FunctionId, ModuleId};
-use crate::link::{ModuleOrigin, ProgramNames};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum PathStyle {
+    #[cfg(test)]
     Native,
     Posix,
 }
 
 pub(super) struct Positions<'a> {
-    names: &'a ProgramNames,
+    names: Names<'a>,
     pub(super) locator: ModuleLocator<'a>,
     printer: PathPrinter,
     style: PathStyle,
@@ -25,7 +27,7 @@ pub(super) struct Positions<'a> {
 impl<'a> Positions<'a> {
     pub(super) fn new(input: &ReportInput<'a>, style: PathStyle) -> Positions<'a> {
         Positions {
-            names: input.names,
+            names: Names::new(input),
             locator: ModuleLocator::new(input.texts),
             printer: PathPrinter::new(),
             style,
@@ -51,6 +53,7 @@ impl<'a> Positions<'a> {
         let path = self.names.module_path(module);
         let path = match self.style {
             PathStyle::Posix => self.printer.posix_path(path),
+            #[cfg(test)]
             PathStyle::Native => {
                 let mut shown = Vec::new();
                 self.printer.write_path(&mut shown, path);
@@ -66,9 +69,8 @@ impl<'a> Positions<'a> {
     }
 }
 
-/// A report for users neither counts nor lists a site in one of Bun's own modules. A site without a location is in the module of its function.
 pub(super) fn is_listed_site(
-    names: &ProgramNames,
+    names: Names<'_>,
     location: SourceLocation,
     function: Option<FunctionId>,
 ) -> bool {
@@ -91,7 +93,6 @@ pub(super) fn resolve_ascending<T: Clone>(
         .enumerate()
         .filter_map(|(index, &position)| Some((position?, index)))
         .collect();
-    // Ascending, so the locator scans the text of each module once.
     order.shared_sort_unstable();
 
     let mut resolved: Vec<Option<T>> = vec![None; wanted.len()];
@@ -117,6 +118,20 @@ pub(super) fn write_shown_position(out: &mut Vec<u8>, position: Option<&SourcePo
     out.extend_from_slice(format!(":{}:{}", position.line, position.column).as_bytes());
 }
 
+pub(super) fn write_position_members(
+    json: &mut JsonWriter,
+    position: Option<&SourcePosition>,
+    column_key: &str,
+) {
+    let (file, line, column) = match position {
+        Some(position) => (&position.path[..], position.line, position.column),
+        None => (&[][..], 0, 0),
+    };
+    json.string("file", file);
+    json.number("line", u64::from(line));
+    json.number(column_key, u64::from(column));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +143,12 @@ mod tests {
             module: ModuleId::new(module),
             offset,
         })
+    }
+
+    fn position_members(position: Option<&SourcePosition>, column_key: &str) -> BString {
+        let mut json = JsonWriter::object();
+        write_position_members(&mut json, position, column_key);
+        BString::from(json.finish())
     }
 
     #[test]
@@ -166,5 +187,26 @@ mod tests {
         let mut out = Vec::new();
         write_shown_position(&mut out, None);
         assert_eq!(BString::from(out), "(no location)");
+    }
+
+    #[test]
+    fn present_position_has_three_members() {
+        let position = SourcePosition {
+            path: b"src/a.ts".to_vec(),
+            line: 3,
+            column: 5,
+        };
+        assert_eq!(
+            position_members(Some(&position), "column"),
+            r#"{"file":"src/a.ts","line":3,"column":5}"#
+        );
+    }
+
+    #[test]
+    fn absent_position_has_empty_file_and_zeros() {
+        assert_eq!(
+            position_members(None, "col"),
+            r#"{"file":"","line":0,"col":0}"#
+        );
     }
 }

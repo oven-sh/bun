@@ -65,3 +65,62 @@ test("a test run", async () => {
   const { stdout } = await run([bunExe(), "test", "--aot", "./main.test.mjs"], String(directory), env);
   expect(stdout.split("\n").filter(line => line && !line.startsWith("bun test "))).toEqual(printed);
 }, 240_000);
+
+// Both import one file, so both hold one Database.
+test("a test file and what it imports hold one database", async () => {
+  using directory = tempDir("sqlite-exports-layers", {
+    "package.json": `{}`,
+    "data.sqlite": "",
+    "another.mjs": files["another.mjs"],
+    "main.test.mjs": `import { test } from "bun:test";
+import theDefault, { db } from "./data.sqlite" with { type: "sqlite" };
+import inAnotherFile from "./another.mjs";
+console.log(db === theDefault, db === inAnotherFile, db.constructor.name);
+test("runs", () => {});
+`,
+  });
+  const shown = async (flags: string[]) => {
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
+    const { stdout } = await run([bunExe(), "test", ...flags, "./main.test.mjs"], String(directory), env);
+    return stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
+  };
+  expect(await shown([])).toEqual(["true true Database"]);
+  expect(await shown(["--aot"])).toEqual(["true true Database"]);
+}, 240_000);
+
+// Without `embed`, an executable looks for the file from its working directory, as the written path says, and never where the source lay.
+test("an executable opens the database below its working directory", async () => {
+  using directory = tempDir("sqlite-working-directory", {
+    "source/main.mjs": `import db from "./data.sqlite" with { type: "sqlite" };
+console.log(db.query("select place from places").get().place);
+`,
+    "make.mjs": `import { Database } from "bun:sqlite";
+for (const place of ["source", "elsewhere"]) {
+  const db = new Database(place + "/data.sqlite");
+  db.exec("create table places (place text)");
+  db.query("insert into places values (?)").run(place);
+  db.close();
+}
+`,
+    "elsewhere/keep": "",
+    "empty/keep": "",
+  });
+  const root = String(directory);
+  const builtIn = async (flags: string[], name: string) => {
+    const executable = join(root, isWindows ? `${name}.exe` : `${name}.out`);
+    const build = [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--outfile", executable];
+    expect(await run(build, join(root, "source"), bunEnv)).toMatchObject({ exitCode: 0 });
+    return executable;
+  };
+  const absentAtBuild = [await builtIn([], "plain-absent"), await builtIn(["--aot"], "compiled-absent")];
+  expect(await run([bunExe(), "./make.mjs"], root, bunEnv)).toMatchObject({ exitCode: 0 });
+  const presentAtBuild = [await builtIn([], "plain-present"), await builtIn(["--aot"], "compiled-present")];
+  for (const executable of [...absentAtBuild, ...presentAtBuild]) {
+    const found = await run([executable], join(root, "elsewhere"), bunEnv);
+    expect({ executable, stdout: found.stdout.trim() }).toEqual({ executable, stdout: "elsewhere" });
+    const missing = await run([executable], join(root, "empty"), bunEnv);
+    expect(missing.stderr).toContain("Cannot find module './data.sqlite'");
+    expect(missing.exitCode).not.toBe(0);
+    expect(await Bun.file(join(root, "empty", "data.sqlite")).exists()).toBe(false);
+  }
+}, 240_000);

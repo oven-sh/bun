@@ -95,6 +95,39 @@ was still b1007f1177, #46528 still edb9ce8f7a and CONFLICTING). None changes the
 - #47776 (Dylan Conway, "Remove libuv on Windows"): deletes the `LIBUS_USE_LIBUV` blocks of quic.c
   (lines 166 to 200 and 643 to 671 on main) and rewords three comments in quic.h. Far from the
   cut's hunks.
+- #47183 (another robobun session, open against main since 2026-10-28, "http3: raise the lsquic
+  limit on stashed out-of-order CRYPTO frames"): adds patches/lsquic/crypto-stash-limit.patch and
+  its entry in the patch list of scripts/build/deps/lsquic.ts (line 153), `US_QUIC_MAX_CRYPTO_STASH`
+  in quic.h (after `us_quic_stream_header_count`), one line in quic.c (`us_create_quic_socket_context`)
+  and in node_quic_shim.c (`us_nq_settings_init`). No overlap with the cut's hunks. It matters for
+  the curl probe: see "Container reset of 2026-11-07" below.
+
+Container reset of 2026-11-07 (between 08:30Z and 12:30Z): the worktree was on main, /tmp was
+empty, build/debug held an image build of 2026-09-18. Restored from the notes ref, checked out v5,
+and ran on 1689b23582 / edb9ce8f7a in the new container:
+- Cold `bun bd`: 20 min and 18 GB of disk. A rebuild after `git checkout --no-overlay <base> --
+  src/ packages/` (5 files, 2 of them Rust): 8 to 10 min.
+- quic-stream.test.ts 128 pass. Red run 114 pass / 14 fail, the same 14 names. test/js/node/quic/
+  194 pass, serve-http3.test.ts 117 pass, fetch-http3-client.test.ts 107 pass and 1 skip.
+- probe-burst and probe-large: every row of section 2 as before, on both binaries.
+- The curl probe is different here. This container's curl-h3 8.19.0 has ngtcp2 1.21.0 and OpenSSL
+  3.6.1. It sends the ClientHello as about 30 out-of-order CRYPTO frames in two Initial packets
+  (1 and 2 byte frames around the SNI). lsquic 4.9.4 stashes at most 10 and then closes the
+  handshake: `mini-conn: cannot stash more CRYPTO frames, at 10 already, while max is 10`,
+  CONNECTION_CLOSE with INTERNAL_ERROR, seen with `BUN_DEBUG_lsquic=1` on the server. curl logs
+  `ingress, read_pkt -> ERR_DRAINING` and `Failed to connect` (exit 7). That is about half of all
+  curl handshakes, on the base and on the PR binary alike (29 and 26 of 60 single connections), and
+  with a 1 KB `link` that loses nothing. The transfers that waited for the failed attempt go to
+  curl's next connection. #47183 is the fix for that limit. It is NOT the header-queue bug and
+  not caused by the cut. The old container never showed it on the PR binary (10 of 10 runs with
+  60 x 200), so its curl-h3 was probably built with an older ngtcp2.
+- probe-curl.sh got `CLEAN=1`: it repeats a run until no transfer has exit code 7, so that all 60
+  requests share the first connection. Plain mode on the PR binary: 57 to 60 x 200 in 15 runs,
+  the others `Failed to connect`, never a reset, server `refused: 0`. Plain mode on the base, 12
+  runs: 17 to 19 x 200, the others reset, 0 to 2 `Failed to connect`.
+- The pr-body.md curl row and the sentence under the table now describe this (CLEAN runs only).
+  Measure both again on main after the merge, and if #47183 is in main by then, drop the sentence
+  and use plain mode.
 
 NOT run again on edb9ce8f7a: the release builds and the gdb counts of section 3. Their numbers
 below are of 2026-10-30 on 001958b155. Section 1 to 3 run in full on main after the merge.
@@ -110,6 +143,12 @@ Pitfalls:
 - In the container of 2026-10-30 a debug build took 5 min, a release build 7 min, an incremental
   one 2 min. Earlier containers needed 40 min for a debug build. On 2026-11-02 the first debug
   build after the merge of main with the WebKit upgrade took 8 min and 10 GB of disk.
+- In the container of 2026-11-07 a cold debug build takes 20 min and a rebuild after a change of
+  lsquic_sys/lib.rs 8 to 10 min. Plan about 90 min for the four builds of sections 1 and 3.
+- A fresh container has only `main` and an empty /tmp. The wakeup note has the restore command.
+  /tmp/bun-debug-pr and /tmp/bun-debug-base are gone too: section 1 makes them again.
+- In a shell one-liner, never write `out=$(mktemp) && server ... &`: the `&` puts the assignment
+  into the background list too, and `$out` is empty in the parent shell.
 
 ## 1. Debug builds and tests
 
@@ -180,7 +219,9 @@ Numbers of 2026-10-30 on base 001958b155 / cut 524abcc7e3 (the src/ tree of 92d1
 | `$B probe-burst.mjs 16 3000 hello` | 0 lost | 0 lost |
 | `$B probe-burst.mjs 100 1200 hello` | 0 lost | 0 lost |
 | `$B probe-large.mjs 54 2000 10` | lost 10 of 10 (`103 true, 200 false`) | lost 0 |
-| `./probe-curl.sh $B 60 3000`, 10 runs on the base | 17 to 22 x 200 (17 in 7 of 10 runs), the others `reset by server (error 0x102 INTERNAL_ERROR)` or `Failed to connect` (curl tries a second connection) | 60 x 200 in every run |
+| `CLEAN=1 ./probe-curl.sh $B 60 3000`, 6 runs each (2026-11-07, new container) | 17 to 21 x 200, the others `reset by server (error 0x102 INTERNAL_ERROR)`, server `refused` 39 to 43 | 60 x 200 in every run, `refused: 0` |
+| `./probe-curl.sh $B 60 3000` (plain), old container, 10 runs | 17 to 22 x 200 (17 in 7 of 10 runs), the others reset or `Failed to connect` | 60 x 200 in every run |
+| the same, new container (12 and 15 runs) | 17 to 19 x 200, the others reset, 0 to 2 `Failed to connect` (lsquic's CRYPTO stash limit, see Status) | 57 to 60 x 200, the others `Failed to connect`, no reset |
 | `$B probe-destroy-direct.mjs 12 100 2000 5` | connectionLost 12 (`QPACK decompression error`) | connectionLost 12 (the case that is not fixed) |
 
 The system bun (1.4.3) on the first row: refused 15, 24 `103`s, 9 `200`s, 24 bodies, no error.
@@ -245,6 +286,9 @@ Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992, same code as 524abcc7e3
   sections 1 to 3 (replace the numbers of 2026-10-30 when they differ). The self-review counts (32
   raised, 26 addressed) are final unless the cut changes. Visible part at
   most 250 words (`python3 -c "print(len(open('/tmp/pr-body.md').read().split('<details>')[0].split()))"`).
+  The curl row of the Counts table is from `CLEAN=1 ./probe-curl.sh`, 6 runs per build. The
+  sentence under the table explains curl's `Failed to connect` (lsquic's CRYPTO stash limit,
+  #47183). If #47183 is in main by then, run plain mode and delete that sentence.
 - Before the PR, on the main-based cut: the local checks of section 1b (clippy, cargo check, source
   lints, prettier, rustfmt, tsc, `comment-cop-scan.py origin/main`). The body's Tests paragraph
   names clippy and cargo check, so both have to be run on that cut.

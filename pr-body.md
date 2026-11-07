@@ -25,15 +25,17 @@
 
 **What the loss looks like.** Released builds (1.4.3) drop the block with no error: for the 24 requests above the client gets 24 `103`s, 9 `200`s and 24 bodies. The reset with `H3_INTERNAL_ERROR` is the rule of #46528 for a body behind a refused block. In a debug build lsquic logs `cannot send headers while previous header block is pending`.
 
-**Counts.** Debug builds, Linux x64. `onheaders` answers each request with a `103` that has one `link` field, then a `200`. The first two rows give the same count in every run (10 and 6 runs). The curl row is from 10 runs.
+**Counts.** Debug builds, Linux x64. `onheaders` answers each request with a `103` that has one `link` field, then a `200`. The first two rows give the same count in every run (10 and 6 runs). The curl row counts 6 runs of each build in which curl's first handshake passes.
 
 | | before | with this change |
 |---|---|---|
 | 24 streams, 6 KB `link`, a body | 15 of 24 responses lost | 0 lost |
 | 100 streams, 3 KB `link` | 81 of 100 lost | 0 lost |
-| `curl --http3-only --parallel`, 60 GETs, 3 KB `link` (curl 8.19.0, ngtcp2) | 17 to 22 of 60 get the `200`. The others get `reset by server (error 0x102 INTERNAL_ERROR)` or, for a few, `Failed to connect` | 60 of 60 get the `200` |
+| `curl --http3-only --parallel`, 60 GETs on one connection, 3 KB `link` (curl 8.19.0, ngtcp2 1.21.0) | 17 to 21 of 60 get the `200`. The others get `reset by server (error 0x102 INTERNAL_ERROR)` | 60 of 60 get the `200` |
 | 16 streams with a 3 KB `link`, or 100 streams with 1.2 KB | 0 lost | 0 lost |
 | one stream, a `103` with 108 KB of fields | lost in 10 of 10 runs | lost in 0 of 10 |
+
+In both builds lsquic closes about half of curl's handshakes, and curl reports `Failed to connect` for them. ngtcp2 sends its ClientHello as out-of-order CRYPTO frames, and lsquic stops at 10 stashed frames (`cannot stash more CRYPTO frames, at 10 already, while max is 10`). #47183 raises that limit. The curl row leaves those runs out.
 
 **Node.** Node gives every block to nghttp3's frame queue and returns `true`: [`SendHeaders`](https://github.com/nodejs/node/blob/v26.3.0/src/quic/http3.cc#L562-L631), [`conn_submit_headers_data`](https://github.com/ngtcp2/nghttp3/blob/v1.15.0/lib/nghttp3_conn.c#L2414-L2456). This is read from source, not run: the Node in the test container has no `node:quic`.
 

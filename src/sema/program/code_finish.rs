@@ -57,13 +57,14 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
                 payloads[file.idx()] = Some(payload);
             }
         }
-        let loaded = ProgramFiles {
+        CodeGraph {
+            is_compile_build: true,
             entry_points: slice_in(&entry_points, arena),
             compiled_files: slice_in(&compiled_files, arena),
             is_compiled: file_set_in(modules.len(), &compiled_files, arena),
             host_modules: sorted_set_in(host_modules, arena),
-        };
-        CodeGraph::new(loaded, session.keep(payloads))
+            host_payloads: session.keep(payloads),
+        }
     }
 
     fn remove_code_only_edges(&self, module: &mut Module<'s>, arena: &'s Arena) {
@@ -124,16 +125,14 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             jsx,
             jsx_mode: analyzed.jsx_mode,
             declared_module_type: analyzed.declared_module_type,
+            type_where_imported: analyzed.type_where_imported,
+            runs_inside_require: analyzed.runs_inside_require,
             is_package_type_module: analyzed.is_package_type_module,
             package: entry.package,
             side_effects: entry.side_effects,
             host_module: entry.host_module,
             loader: entry.key.loader,
             is_aot_source: analyzed.is_aot_source,
-            import_meta_main: analyzed.import_meta_main,
-            is_called_before_it_runs: analyzed.is_called_before_it_runs,
-            stored_by_mocks: analyzed.stored_by_mocks,
-            is_only_imported: analyzed.is_only_imported,
         });
         module.compiled = Some(compiled);
 
@@ -152,8 +151,6 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
     }
 }
 
-/// `CompiledModule::code_answers` and `CompiledModule::implied_answers` of a file of a load that still finds files.
-/// `target_files`: `None` where nothing has asked for the file so far. Such a site is erased if that is how the load ends.
 pub(super) fn find_answers_so_far<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
@@ -203,7 +200,7 @@ impl<'s> Files<'s> {
         if !self.code_graph.is_compile_build {
             return;
         }
-        let entry_points = self.code_graph.viewed().entry_points.iter().copied();
+        let entry_points = self.code_graph.entry_points.iter().copied();
         let all_files = (0..self.modules.len() as u32).map(FileId);
         let mut stack: Vec<(FileId, usize)> = Vec::new();
         for root in entry_points.chain(all_files) {

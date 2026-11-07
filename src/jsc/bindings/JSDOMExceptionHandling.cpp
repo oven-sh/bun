@@ -106,6 +106,20 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     return errorMessage;
 }
 
+JSValue createDOMExceptionObject(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
+{
+    // FIXME: All callers to createDOMException need to pass in the correct global object.
+    // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
+    // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
+    // https://bugs.webkit.org/show_bug.cgi?id=222229
+    JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
+    JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
+
+    ASSERT(errorObject);
+    addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+    return errorObject;
+}
+
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -168,18 +182,8 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::WORKER_INVALID_EXEC_ARGV:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message);
 
-    default: {
-        // FIXME: All callers to createDOMException need to pass in the correct global object.
-        // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
-        // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
-        // https://bugs.webkit.org/show_bug.cgi?id=222229
-        JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
-        JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
-
-        ASSERT(errorObject);
-        addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
-        return errorObject;
-    }
+    default:
+        return createDOMExceptionObject(lexicalGlobalObject, ec, message);
     }
     return {};
 }

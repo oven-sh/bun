@@ -1,0 +1,18 @@
+# in a turn of a loop a value is tested behind which a store and a call stand, so the turn cannot start over. The arms walk the branch of their block, and the blocks behind it, which read off the value again, are walked once with the proof and once closed
+# one test of the shape a turn. The closed copy of the loop, which stands first, tests nothing
+# the function is handed to sink. f1 = total
+# -- source: way-of-a-closed-arm-stays-apart-to-the-end-of-its-turn.ts
+# declare function sink(...values: unknown[]): void;
+# class Item { seen: boolean; v: number; constructor(v: number) { this.seen = false; this.v = v; } }
+# function total(items: Item[]) { let odd = 0; let even = 0; for (let i = 0; i < items.length; i++) { const n = items[i]; n.seen = true; sink(); if (n.v & 1) odd += n.v; else even += n.v; } return odd + even; }
+# sink(total, new Item(1));
+# -- end of source
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = ShapeTest
+# CHECK: = GetSlot {{*}}key="v"
+# RUN(ONCE): walk f1 mechanisms=all-ParameterGuards
+# ONCE-LABEL: code f1:Body
+# ONCE-COUNT-1: = ShapeTest
+# ONCE-NOT: = ShapeTest

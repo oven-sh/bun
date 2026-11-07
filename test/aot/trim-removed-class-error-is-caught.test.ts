@@ -6,20 +6,26 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const handlers = `catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`;
-const joined = (name: string) => `const key = ${JSON.stringify([name.slice(0, 2), name.slice(2)])}.join("");\n`;
-const key = joined("Glob");
+// The build reads a name that is joined from written strings, so the names come from the command line.
+const names = ["Glob", "SHA256", "escapeHTML", "semver", "localeCompare", "toLocaleString", "toLocaleDateString"];
+const fromTheRun = (name: string) => `const key = process.argv[${2 + names.indexOf(name)}];\n`;
+const key = fromTheRun("Glob");
 const makeGlob = (Class: string) => `console.log("made", new ${Class}("*.js").match("a.js"));`;
 
 if (!canTrim)
   console.error("SKIPPED: trim-removed-class-error-is-caught.test.ts: this build of Bun doesn't support --trim");
 
-async function buildAndRun(files: Record<string, string>, build: (executable: string) => string[]) {
+async function buildAndRun(
+  files: Record<string, string>,
+  build: (executable: string) => string[],
+  words: string[] = [],
+) {
   using dir = tempDir("aot-trim-removed-class", files);
   const folder = String(dir);
   const executable = join(folder, isWindows ? "trimmed.exe" : "trimmed");
   const built = await run(build(executable), folder);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  return await run([executable], folder);
+  return await run([executable, ...words], folder);
 }
 
 /** One program: each part in a block of its own, behind a line with its name. */
@@ -40,7 +46,7 @@ const partsOf = (stdout: string) =>
       .map(part => [part.slice(0, part.indexOf("\n")), part.slice(part.indexOf("\n") + 1)]),
   );
 
-// Each part joins the name of an API from two strings and uses the API under that key inside a `try` block.
+// Each part takes the name of an API from the command line and uses the API under that key inside a `try` block.
 // --trim may keep the API or remove it. If it removes the API, the use throws ERR_FEATURE_REMOVED, and the `catch` and `finally` blocks run.
 {
   const parts = [
@@ -79,18 +85,21 @@ const partsOf = (stdout: string) =>
       "another module reads the class",
       `import { find } from "./find.mjs";\ntry { ${makeGlob("(find())")} } ${handlers}`,
     ],
-    ["a class without arguments", `${joined("SHA256")}try { console.log("made", typeof new Bun[key]()); } ${handlers}`],
-    ["a function", `${joined("escapeHTML")}try { console.log("made", Bun[key]("<a>")); } ${handlers}`],
+    [
+      "a class without arguments",
+      `${fromTheRun("SHA256")}try { console.log("made", typeof new Bun[key]()); } ${handlers}`,
+    ],
+    ["a function", `${fromTheRun("escapeHTML")}try { console.log("made", Bun[key]("<a>")); } ${handlers}`],
     [
       "a function of a namespace",
-      `${joined("semver")}try { console.log("made", Bun[key].satisfies("1.2.3", "^1")); } ${handlers}`,
+      `${fromTheRun("semver")}try { console.log("made", Bun[key].satisfies("1.2.3", "^1")); } ${handlers}`,
     ],
-    ["a method of a string", `${joined("localeCompare")}try { console.log("made", "a"[key]("b")); } ${handlers}`],
-    ["a method of a number", `${joined("toLocaleString")}try { console.log("made", (5)[key]()); } ${handlers}`],
-    ["a method of a bigint", `${joined("toLocaleString")}try { console.log("made", 5n[key]()); } ${handlers}`],
+    ["a method of a string", `${fromTheRun("localeCompare")}try { console.log("made", "a"[key]("b")); } ${handlers}`],
+    ["a method of a number", `${fromTheRun("toLocaleString")}try { console.log("made", (5)[key]()); } ${handlers}`],
+    ["a method of a bigint", `${fromTheRun("toLocaleString")}try { console.log("made", 5n[key]()); } ${handlers}`],
     [
       "a method of a date",
-      `${joined("toLocaleDateString")}try { console.log("made", typeof new Date(0)[key]()); } ${handlers}`,
+      `${fromTheRun("toLocaleDateString")}try { console.log("made", typeof new Date(0)[key]()); } ${handlers}`,
     ],
   ] as const;
   test.skipIf(!canTrim).concurrent(
@@ -98,7 +107,7 @@ const partsOf = (stdout: string) =>
     async () => {
       const files = { "program.mjs": programOf(parts), "find.mjs": `${key}export const find = () => Bun[key];\n` };
       const flags = ["build", "--compile", "--aot", "--trim", "program.mjs", "--outfile"];
-      const { stdout, ...rest } = await buildAndRun(files, executable => [bunExe(), ...flags, executable]);
+      const { stdout, ...rest } = await buildAndRun(files, executable => [bunExe(), ...flags, executable], names);
       expect({ ...rest, parts: partsOf(stdout) }).toEqual({
         parts: Object.fromEntries(
           parts.map(([name]) => [

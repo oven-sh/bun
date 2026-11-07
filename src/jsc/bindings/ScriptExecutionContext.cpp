@@ -10,6 +10,7 @@
 #include "GlobalEventScope.h"
 #include "EventLoopTask.h"
 #include "Performance.h"
+#include "SubtleCrypto.h"
 #include "ZigGlobalObject.h"
 #include "ModuleGraph.h"
 #include <wtf/SetForScope.h>
@@ -338,6 +339,10 @@ void ScriptExecutionContext::prepareForDestruction()
     // Event listeners would keep DOMWrapperWorld objects alive for too long. Also, they have references to JS objects,
     // which become dangling once Heap is destroyed.
     removeAllEventListeners();
+
+    // The promise of a WebCrypto operation that is under way is a GC root.
+    if (auto* subtleCrypto = m_globalObject->existingSubtleCrypto())
+        subtleCrypto->clearPendingPromises();
 }
 
 void ScriptExecutionContext::removeAllEventListeners()

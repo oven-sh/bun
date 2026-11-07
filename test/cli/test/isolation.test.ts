@@ -2391,6 +2391,33 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
+  test("a WebCrypto operation left under way", async () => {
+    using dir = tempDir(
+      "isolate-leak-webcrypto",
+      makeLeakFixture(`
+        const key = await crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]);
+        // It takes minutes, so it outlasts the run.
+        crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("a WebCrypto operation left under way in a ShadowRealm", async () => {
+    using dir = tempDir(
+      "isolate-leak-webcrypto-realm",
+      makeLeakFixture(`
+        const started = Promise.withResolvers();
+        new ShadowRealm().evaluate(\`(started, settled) => void crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]).then(key => {
+          crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512).then(settled);
+          started();
+        })\`)(started.resolve, () => {});
+        await started.promise;
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
   test("long setTimeout/setInterval left pending", async () => {
     using dir = tempDir(
       "isolate-leak-timers",

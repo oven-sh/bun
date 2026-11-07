@@ -759,6 +759,11 @@ void SubtleCrypto::PendingPromises::remove(DeferredPromise* index)
     m_entries.remove(index);
 }
 
+void SubtleCrypto::clearPendingPromises()
+{
+    m_pendingPromises = {};
+}
+
 RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto> weakThis)
 {
     if (weakThis)

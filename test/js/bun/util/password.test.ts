@@ -562,6 +562,26 @@ for (let algorithmValue of algorithms) {
   });
 }
 
+test("verify reads the hash as a hash of the algorithm it is given", async () => {
+  const argon2 = ["argon2id", "argon2i", "argon2d"] as const;
+  const bcrypt = password.hashSync("hello", { algorithm: "bcrypt", cost: 4 });
+  for (const algorithm of argon2) {
+    const hash = password.hashSync("hello", { algorithm, memoryCost: 8, timeCost: 1 });
+    for (const label of argon2) {
+      expect(password.verifySync("hello", hash, label)).toBeTrue();
+      expect(await password.verify("hello", hash, label)).toBeTrue();
+    }
+    expect(password.verifySync("hello", hash, "bcrypt")).toBeFalse();
+    expect(await password.verify("hello", hash, "bcrypt")).toBeFalse();
+    expect(() => password.verifySync("hello", bcrypt, algorithm)).toThrow(
+      expect.objectContaining({ code: "PASSWORD_INVALID_ENCODING" }),
+    );
+    await expect(password.verify("hello", bcrypt, algorithm)).rejects.toMatchObject({
+      code: "PASSWORD_INVALID_ENCODING",
+    });
+  }
+});
+
 test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
   // Hash with small, fast parameters so this test stays cheap on debug builds.
   const hashed = password.hashSync("correct horse", {

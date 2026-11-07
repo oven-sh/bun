@@ -1024,6 +1024,7 @@ export default b.declarations(
       "overridableRequire",
       "require",
       "requireESM",
+      "requireFromModulePrototype",
     ),
   }),
   b.excluded("builtins/Bake", "renderRoutesForProdStatic"),

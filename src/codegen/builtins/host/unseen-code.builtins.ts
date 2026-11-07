@@ -65,6 +65,7 @@ const seenCodeEntries = [
   "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphFrameOfFrame",
   "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphOfFrame",
   "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionLoaderHookWatchpoints",
   "native:NewCppFunction:NodeVM.cpp:jsFunctionSetNewContextsHaveGC",
   "native:NewCppFunction:Worker.cpp:jsFunctionPostMessage",
   "native:Bindgen:napi_body.bind.ts:threadsafeFunctionLiveCount",

@@ -37,6 +37,7 @@ using namespace JSC;
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
     macro(_events) \
+    macro(_resolveFilename) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
     macro(armedTimeout) \
@@ -142,6 +143,7 @@ using namespace JSC;
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
     macro(natives) \
+    macro(nodeModulePrototype) \
     macro(nodeName) \
     macro(nodeType) \
     macro(normalize) \
@@ -183,6 +185,7 @@ using namespace JSC;
     macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \
     macro(requireESM) \
+    macro(requireFromModulePrototype) \
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \

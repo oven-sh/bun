@@ -8,6 +8,8 @@
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectPropertyConditionSet.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -42,9 +44,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
-
-JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
-JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
 // This is a list of builtin module names that do not have the node prefix. It
 // also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
@@ -414,52 +413,77 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     }
 }
 
-JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
-    (JSGlobalObject * lexicalGlobalObject,
-        EncodedJSValue thisValue,
-        PropertyName propertyName))
+// A patcher that is taken off puts the default back (`Module._resolveFilename = original`): that ends its replacement.
+static bool isDefaultResolveFilename(JSValue value)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
-        return JSValue::encode(globalObject->m_moduleResolveFilenameOverride.get());
-    }
-    return JSValue::encode(
-        globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(
-            globalObject));
+    auto* function = dynamicDowncast<JSFunction>(value);
+    return function && function->isHostFunction() && function->nativeFunction().untaggedPtr() == &jsFunctionResolveFileName;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
-    (JSGlobalObject * lexicalGlobalObject,
-        EncodedJSValue thisValue, EncodedJSValue encodedValue,
-        PropertyName propertyName))
+// From here on require() reads the property at each call.
+static void loaderHookDidChange(Zig::GlobalObject* globalObject, LoaderHook hook)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto value = JSValue::decode(encodedValue);
-    bool isOriginal = false;
-    if (value.isCallable()) {
-        JSC::CallData callData = JSC::getCallData(value);
-
-        if (callData.type == JSC::CallData::Type::Native) {
-            if (callData.native.function.untaggedPtr() == &jsFunctionResolveFileName) {
-                isOriginal = true;
-            }
-        }
-    }
-
-    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::ResolveFilename, !isOriginal);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (isOriginal) {
-        globalObject->hasOverriddenModuleResolveFilenameFunction = false;
-        globalObject->m_moduleResolveFilenameOverride.clear();
-    } else {
-        globalObject->m_moduleResolveFilenameOverride.set(
-            lexicalGlobalObject->vm(), globalObject, value);
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    switch (hook) {
+    case LoaderHook::ResolveFilename:
         globalObject->hasOverriddenModuleResolveFilenameFunction = true;
+        Bun::willChangeRequireOverride(globalObject, AOT::RequireOverride::ResolveFilename, true);
+        return;
+    case LoaderHook::Require:
+        globalObject->putDirect(vm, names.overridableRequirePrivateName(), globalObject->getDirect(vm, names.requireFromModulePrototypePrivateName()), 0);
+        Bun::willChangeRequireOverride(globalObject, AOT::RequireOverride::RequireFunction, true);
+        return;
     }
+}
 
-    return true;
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LoaderHookWatchpoint);
+
+LoaderHookWatchpoint::LoaderHookWatchpoint(Zig::GlobalObject* globalObject, const ObjectPropertyCondition& condition, LoaderHook hook)
+    : AdaptiveInferredPropertyValueWatchpointBase(condition)
+    , m_globalObject(globalObject)
+    , m_hook(hook)
+{
+}
+
+bool LoaderHookWatchpoint::isValid() const
+{
+    return !m_globalObject->isPendingDestruction();
+}
+
+// The engine calls this from inside the store that changes the property, so it runs no code of the program.
+void LoaderHookWatchpoint::handleFire(VM&, const FireDetail&)
+{
+    loaderHookDidChange(m_globalObject, m_hook);
+}
+
+// `holder[name]` is an own data property that holds the default function of the hook.
+static void watchLoaderHook(Zig::GlobalObject* globalObject, std::unique_ptr<LoaderHookWatchpoint>& watchpoint, JSObject* holder, const Identifier& name, LoaderHook hook)
+{
+    VM& vm = globalObject->vm();
+    ObjectPropertyCondition condition = generateConditionForSelfEquivalence(vm, nullptr, holder, name.impl());
+    if (!condition || !condition.isWatchable(PropertyCondition::EnsureWatchability)) {
+        loaderHookDidChange(globalObject, hook);
+        return;
+    }
+    watchpoint = makeUnique<LoaderHookWatchpoint>(globalObject, condition, hook);
+    watchpoint->install(vm);
+}
+
+JSValue replacedModuleResolveFilename(JSGlobalObject* lexicalGlobalObject, Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    const Identifier& name = WebCore::builtinNames(vm)._resolveFilenamePublicName();
+    unsigned attributes;
+    JSValue value = constructor->getDirect(vm, name, attributes);
+    if (!value || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+        // An accessor, or a name that only the prototype chain has.
+        value = constructor->get(lexicalGlobalObject, name);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return isDefaultResolveFilename(value) ? JSValue() : value;
 }
 
 PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent)
@@ -586,42 +610,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     return NodeModuleModule__findPath(globalObject, &request_bun_str, paths);
 }
 
-// These two setters are only used if you directly hit
-// `Module.prototype.require` or `module.require`. When accessing the cjs
-// require argument, this is a bound version of `require`, which calls into the
-// overridden one.
-//
-// This require function also intentionally does not have .resolve on it, nor
-// does it have any of the other properties.
-//
-// Note: allowing require to be overridable at all is only needed for Next.js to
-// work (they do Module.prototype.require = ...)
-
-JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(globalObject->getDirect(
-        globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value,
-        JSC::PropertyName propertyName))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::RequireFunction, true);
-    RETURN_IF_EXCEPTION(scope, false);
-    globalObject->putDirect(globalObject->vm(),
-        WebCore::clientData(globalObject->vm())
-            ->builtinNames()
-            .overridableRequirePrivateName(),
-        JSValue::decode(value), 0);
-    return true;
-}
-
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
     // See getBuiltinModulesObject for why this needs a top exception scope.
@@ -704,7 +692,7 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
     return globalPaths;
 }
 
-// Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
+// Like the runMain setter: writing back the default (e.g. copying Module's statics onto a
 // subclass, as jest-runtime does) is not an override.
 // A wrapper that is not the default is a string compiled around every CommonJS module.
 static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
@@ -792,18 +780,22 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
+// Module.prototype.require starts as the loader, which has no `resolve` nor any other property of a module's `require`.
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    auto& names = WebCore::builtinNames(vm);
+    // A Structure of its own: a change to another object of the same shape would fire the watchpoint too.
+    auto* prototype = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, globalObject->objectPrototype(), 2));
 
-    prototype->putDirectCustomAccessor(
-        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-            setterRequireFunction),
-        0);
-
+    prototype->putDirect(vm, names.requirePublicName(), globalObject->getDirect(vm, names.overridableRequirePrivateName()), 0);
     Bun::putDirectNamed(vm, prototype, "_compile"_s, globalObject->modulePrototypeUnderscoreCompileFunction());
+
+    globalObject->putDirect(vm, names.nodeModulePrototypePrivateName(), prototype, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    globalObject->putDirect(vm, names.requireFromModulePrototypePrivateName(),
+        JSFunction::create(vm, globalObject, WebCore::commonJSRequireFromModulePrototypeCodeGenerator(vm), globalObject),
+        PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    watchLoaderHook(globalObject, globalObject->m_modulePrototypeRequireWatchpoint, prototype, names.requirePublicName(), LoaderHook::Require);
 
     return prototype;
 }
@@ -999,7 +991,7 @@ _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        &Bun::Bindgen::Generated::ResolverJsc::jsNodeModulePaths Function 1
 _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
-_resolveFilename        nodeModuleResolveFilename         CustomAccessor
+_resolveFilename        jsFunctionResolveFileName         Function 2
 _resolveLookupPaths     jsFunctionResolveLookupPaths      Function 2
 _stat                   &Bun::Bindgen::Generated::NodeModuleModule::jsStat Function 1
 builtinModules          getBuiltinModulesObject           PropertyCallback
@@ -1157,10 +1149,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 {
     globalObject->m_nodeModuleConstructor.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSObject* moduleConstructor = JSModuleConstructor::create(
-                init.vm, static_cast<Zig::GlobalObject*>(init.owner));
+            auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
+            JSObject* moduleConstructor = JSModuleConstructor::create(init.vm, globalObject);
             init.set(moduleConstructor);
             JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
+            // A watchpoint needs an own property: this lookup makes one from the row of the static table.
+            const Identifier& name = WebCore::builtinNames(init.vm)._resolveFilenamePublicName();
+            PropertySlot slot(moduleConstructor, PropertySlot::InternalMethodType::VMInquiry, &init.vm);
+            moduleConstructor->getOwnPropertySlot(moduleConstructor, globalObject, name, slot);
+            watchLoaderHook(globalObject, globalObject->m_moduleResolveFilenameWatchpoint, moduleConstructor, name, LoaderHook::ResolveFilename);
         });
 
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
@@ -1179,15 +1176,6 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
                 jsFunctionRunMain, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic);
             init.set(runMainFunction);
-        });
-
-    globalObject->m_moduleResolveFilenameFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
-            JSFunction* resolveFilenameFunction = JSFunction::create(
-                init.vm, init.owner, 2, "_resolveFilename"_s,
-                jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
-                JSC::NoIntrinsic);
-            init.set(resolveFilenameFunction);
         });
 
     globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
@@ -1221,6 +1209,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
                 ->hasOverriddenModuleResolveFilenameFunction));
+}
+
+// For tests: "armed", "fired" or "not watched" for each hook, and undefined before the holder of the hook exists.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLoaderHookWatchpoints,
+    (JSGlobalObject * lexicalGlobalObject,
+        CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& names = WebCore::builtinNames(vm);
+    auto state = [&](bool holderExists, bool readsProperty, const std::unique_ptr<LoaderHookWatchpoint>& watchpoint) -> JSValue {
+        if (!holderExists)
+            return jsUndefined();
+        if (!readsProperty)
+            return jsNontrivialString(vm, "armed"_s);
+        return jsNontrivialString(vm, watchpoint ? "fired"_s : "not watched"_s);
+    };
+    JSValue forwarder = globalObject->getDirect(vm, names.requireFromModulePrototypePrivateName());
+    bool callsForwarder = forwarder && globalObject->getDirect(vm, names.overridableRequirePrivateName()) == forwarder;
+    JSObject* states = constructEmptyObject(lexicalGlobalObject);
+    states->putDirect(vm, names._resolveFilenamePublicName(), state(globalObject->m_nodeModuleConstructor.isInitialized(), globalObject->hasOverriddenModuleResolveFilenameFunction, globalObject->m_moduleResolveFilenameWatchpoint));
+    states->putDirect(vm, names.requirePublicName(), state(!!forwarder, callsForwarder, globalObject->m_modulePrototypeRequireWatchpoint));
+    return JSValue::encode(states);
 }
 
 extern "C" bool Bun__streamIterEnabled();

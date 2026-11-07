@@ -46,6 +46,7 @@
 #include "BunCompiledModules.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
+#include "NodeModuleModule.h"
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
 #include "wtf/text/StringView.h"
@@ -276,45 +277,48 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!isESM) {
         if (globalObject) [[likely]] {
             if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
-                JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
-                JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
-                if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
-                    return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
-                }
-
-                MarkedArgumentBuffer args;
-                args.append(moduleName);
-                args.append(parentModule);
-                args.append(jsBoolean(false));
-                args.append(resolveFilenameOptions);
-
-                JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-                JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
+                JSValue overrideHandler = Bun::replacedModuleResolveFilename(lexicalGlobalObject, globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
-                if (!isRequireDotResolve) {
-                    JSString* string = result.toString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    auto str = string->value(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    // The override bypasses the resolver, which is what normally rejects null bytes.
-                    if (str->contains('\0')) [[unlikely]] {
-                        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
-                        return {};
+                if (overrideHandler) {
+                    JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
+                    if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
+                        return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
                     }
-                    WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
-                    if (!prefixed.isNull()) {
-                        return JSValue::encode(jsString(vm, prefixed));
-                    }
-                    // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
-                    if (Bun::hasCompiledModules()) [[unlikely]] {
-                        if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
-                            string = jsString(vm, known);
-                    }
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
+
+                    MarkedArgumentBuffer args;
+                    args.append(moduleName);
+                    args.append(parentModule);
+                    args.append(jsBoolean(false));
+                    args.append(resolveFilenameOptions);
+
+                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
                     RETURN_IF_EXCEPTION(scope, {});
-                    return JSC::JSValue::encode(string);
+                    if (!isRequireDotResolve) {
+                        JSString* string = result.toString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        auto str = string->value(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        // The override bypasses the resolver, which is what normally rejects null bytes.
+                        if (str->contains('\0')) [[unlikely]] {
+                            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
+                            return {};
+                        }
+                        WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
+                        if (!prefixed.isNull()) {
+                            return JSValue::encode(jsString(vm, prefixed));
+                        }
+                        // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
+                        if (Bun::hasCompiledModules()) [[unlikely]] {
+                            if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
+                                string = jsString(vm, known);
+                        }
+                        throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        return JSC::JSValue::encode(string);
+                    }
+                    return JSC::JSValue::encode(result);
                 }
-                return JSC::JSValue::encode(result);
             }
         }
 

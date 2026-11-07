@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -99,9 +99,9 @@ describe.concurrent("node-module-module", () => {
   });
 
   // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this
-  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `_resolveFilename`
-  // / `runMain` setters with their current values, which must not count as overriding them (an overridden wrapper
-  // re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
+  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `runMain` setters
+  // with their current values, which must not count as overriding them (an overridden wrapper re-wraps every
+  // CommonJS module from source and bypasses the --isolate SourceProvider cache).
   test("Module's enumerable statics can be copied onto a subclass without overriding the CJS wrapper", async () => {
     using dir = tempDir("module-statics-copy", {
       "dep.cjs": `module.exports = "dep";`,
@@ -1126,6 +1126,321 @@ console.log("survived", require("./late.js"));`,
       leftInCache: false,
     });
     expect(exitCode).toBe(0);
+  });
+
+  // A tool can put its patch on one of these two hooks in every way the language has. require() asks what the
+  // property holds when it runs, as Node.js does. module-hooks-install-fixture.cjs runs one case in a fresh process,
+  // and Node.js prints the line that is expected here for every case: where a Node.js of v26.3.0 or later is
+  // installed, each case runs under it too.
+  describe("require() calls what Module._resolveFilename and Module.prototype.require hold", () => {
+    const files = {
+      ...Object.fromEntries(["a", "b", "c", "d", "e", "f"].map(letter => [letter + ".js", "exports.v = 42;"])),
+      "g.js": `exports.v = require(__dirname + "/a.js").v;`,
+      "nested/h.js": `exports.v = require("./i.js").v;`,
+      "nested/i.js": "exports.v = 42;",
+      "data.json5x": `{"v":42}`,
+      "preload.cjs": `
+        const Module = require("node:module");
+        const [holder, key] = process.argv[4] === "Module._resolveFilename" ? [Module, "_resolveFilename"] : [Module.prototype, "require"];
+        const original = holder[key];
+        globalThis.callsOfPreloadPatch = 0;
+        const patch = function () {
+          globalThis.callsOfPreloadPatch++;
+          return original.apply(this, arguments);
+        };
+        Object.defineProperty(holder, key, { value: patch, writable: true, configurable: true, enumerable: true });
+      `,
+    };
+    async function runFixture(exe, fixture, name, hook) {
+      using dir = tempDir("module-hooks-install", files);
+      const flags = name.includes("--require preload") ? ["--require", path.join(String(dir), "preload.cjs")] : [];
+      await using proc = Bun.spawn({
+        cmd: [exe, ...flags, path.join(import.meta.dir, fixture), String(dir), name, ...(hook ? [hook] : [])],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    const printed = value => ({ stdout: JSON.stringify(value), stderr: "", exitCode: 0 });
+
+    const called = { calls: 1, readsBackPatch: true, exported: 42 };
+    const notCalled = { calls: 0, readsBackPatch: false, exported: 42 };
+    const node = nodeExeAtLeast("26.3.0");
+    describe.each([["bun", bunExe()], ...(node ? [["node", node]] : [])])("%s", (_, exe) => {
+      const runCase = (name, hook) => runFixture(exe, "module-hooks-install-fixture.cjs", name, hook);
+      describe.each(["Module._resolveFilename", "Module.prototype.require"])("%s", hook => {
+        const isResolveFilename = hook === "Module._resolveFilename";
+        // require.resolve() asks Module._resolveFilename and never Module.prototype.require.
+        const notAFunction = isResolveFilename
+          ? {
+              require: "TypeError: Module._resolveFilename is not a function",
+              resolve: "TypeError: Module._resolveFilename is not a function",
+            }
+          : { require: "TypeError: mod.require is not a function", resolve: "b.js" };
+        test.each([
+          ["o[k] = patch", called],
+          ["Object.defineProperty(o, k, { value: patch, ... })", called],
+          ["Object.defineProperty(o, k, { get: () => patch, ... })", called],
+          ["Reflect.set(o, k, patch)", called],
+          ["Object.assign(o, { [k]: patch })", called],
+          ["delete o[k]; o[k] = patch", called],
+          ["o[k] = other; Object.defineProperty(o, k, { value: patch, ... })", called],
+          ["o[k] = patch; o[k] = original", notCalled],
+          ["o[k] = patch; Object.defineProperty(o, k, { value: original, ... })", notCalled],
+          [
+            "each kind of require() asks a patch installed with Object.defineProperty",
+            {
+              "require": 1,
+              "module.require": 1,
+              "require.resolve": isResolveFilename ? 1 : 0,
+              "createRequire()": 1,
+              "createRequire().resolve": isResolveFilename ? 1 : 0,
+              "process.mainModule.require": 1,
+              "a require() in a required file": 2,
+            },
+          ],
+          ["the property is deleted", notAFunction],
+          ["the property is defined as 42", notAFunction],
+          [
+            "a getter sees the object that the hook is read from",
+            { receiver: isResolveFilename ? "Module" : "the module that calls require()", calls: 1 },
+          ],
+          ["the getter throws", { require: "RangeError: from the getter" }],
+          ["the property is deleted and the prototype of the holder has the name", { calls: 1, exported: 42 }],
+          [
+            "writes that do not reach the property of the holder",
+            {
+              inherited: { calls: 0, heirOwnsIt: true, holderHasOriginal: true },
+              otherReceiver: { calls: 0, receiverOwnsIt: true, holderHasOriginal: true },
+              frozen: { calls: 0, holderHasOriginal: true },
+            },
+          ],
+          ["an accessor without a setter is assigned to", { calls: 0, holderHasOriginal: true }],
+          ["the own keys of the holder are listed before the patch is assigned", { calls: 1 }],
+          ["the holder gets and loses other keys before the patch is assigned", { before: 0, calls: 1 }],
+          ["one statement assigns the patch, the original and the patch again", [1, 0, 1]],
+          ...[
+            "the hook is the patch as a value, the patch from a getter, deleted, the original and the patch in turn",
+            "the same in turn after the own keys of the holder are listed",
+          ].map(name => [
+            name,
+            { asValue: 1, fromGetter: 1, deleted: notAFunction.require, originalBack: 0, patchAgain: 1 },
+          ]),
+          ["a patch that hands on its arguments hands on the second one", { calls: 1, exported: 42 }],
+          [
+            "a relative request in a file of another folder",
+            { exported: 42, askedBy: ["module-hooks-install-fixture.cjs", "h.js"] },
+          ],
+          [
+            "this hook is assigned and the other hook is defined",
+            { "Module.prototype.require": 1, "Module._resolveFilename": 1 },
+          ],
+          [
+            "mock.method() of node:test takes the hook and restore() gives it back",
+            { exported: 42, calls: 1, callsAfterRestore: 0, originalIsBack: true },
+          ],
+          ["a patch that a Worker defines is called in the Worker alone", { inWorker: 1, outside: 0 }],
+          ["a --require preload has defined a patch", { calls: 1 }],
+        ])("%s", async (name, expected) => {
+          expect(await runCase(name, hook)).toEqual(printed(expected));
+        });
+      });
+
+      test("a patch of Module.prototype.require gets every argument of module.require()", async () => {
+        const counts = [0, 1, 2, 3, 4];
+        expect(await runCase("a patch of Module.prototype.require gets every argument of module.require()")).toEqual(
+          printed({ assigned: counts, defined: counts }),
+        );
+      });
+
+      test("both are data properties", async () => {
+        const descriptor = { value: "function", writable: true, enumerable: true, configurable: true };
+        expect(await runCase("the descriptors")).toEqual(printed([descriptor, descriptor]));
+      });
+
+      test("require() takes its arguments as before once Module.prototype is read", async () => {
+        expect(await runCase("Module.prototype is read and nothing is patched")).toEqual(
+          printed({
+            oneArgument: 42,
+            noArgument: 'TypeError: The "id" argument must be of type string. Received undefined',
+            twoArguments: 42,
+          }),
+        );
+      });
+    });
+
+    // What no program sees in its own result: require() reads neither property before a program has changed it.
+    describe("the watchpoints", () => {
+      const fired = {
+        before: "armed, armed",
+        _resolveFilename: { state: "fired, armed", calls: 1, callsWithTheOriginalBack: 0 },
+        require: { state: "fired, fired", calls: 1, callsWithTheOriginalBack: 0 },
+        after: "fired, fired",
+        slowPath: true,
+      };
+      test.each([
+        [
+          "a program that stores no hook",
+          {
+            "before node:module": "none, none",
+            "node:module is loaded": "armed, none",
+            "a hook is read and createRequire() loads a file": "armed, none",
+            "Module and Module.prototype are read, spread and listed": "armed, armed",
+            "an heir is written, a module is made and another key is added": "armed, armed",
+            "another object with the same keys changes": "armed, armed",
+            slowPath: false,
+          },
+        ],
+        ["an assignment", fired],
+        ["Object.defineProperty with a value", fired],
+        ["Object.defineProperty with a getter", fired],
+        ["delete and an assignment", fired],
+        [
+          "another key of Module is added and deleted many times",
+          { afterTen: "armed, none", afterManyMore: "fired, none", exported: 42 },
+        ],
+        [
+          "a Worker fires its own watchpoint",
+          { inWorker: { state: "fired, none", calls: 1 }, outside: "armed, armed", calls: 0 },
+        ],
+      ])("%s", async (name, expected) => {
+        expect(await runFixture(bunExe(), "module-hooks-watchpoint-fixture.cjs", name)).toEqual(printed(expected));
+      });
+    });
+
+    test.each([
+      ["Module._resolveFilename", "Module", "_resolveFilename"],
+      ["Module.prototype.require", "Module.prototype", "require"],
+    ])("a patch of %s that arrives while optimized code requires is called", async (_, holder, key) => {
+      using dir = tempDir("module-hooks-install-jit", {
+        "a.js": "exports.v = 42;",
+        "main.cjs": `
+          const { noInline, numberOfDFGCompiles } = require("bun:jsc");
+          const Module = require("node:module");
+          const file = require("node:path").join(__dirname, "a.js");
+          function load() {
+            return require(file).v;
+          }
+          noInline(load);
+          // Until the optimizing JIT has compiled the function that requires.
+          const deadline = Date.now() + 20_000;
+          while (!numberOfDFGCompiles(load) && Date.now() < deadline) for (let i = 0; i < 500; i++) load();
+          const original = ${holder}.${key};
+          let calls = 0;
+          const patch = function () {
+            calls++;
+            return original.apply(this, arguments);
+          };
+          Object.defineProperty(${holder}, "${key}", { value: patch, writable: true, configurable: true, enumerable: true });
+          let sum = 0;
+          for (let i = 0; i < 10; i++) sum += load();
+          console.log(JSON.stringify({ compiled: numberOfDFGCompiles(load) > 0, calls, sum }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual(printed({ compiled: true, calls: 10, sum: 420 }));
+    });
+
+    // Node.js prints {"createRequire(import.meta.url)":2} for this file: it has no import.meta.require.
+    test("patches installed with Object.defineProperty in an ES module", async () => {
+      using dir = tempDir("module-hooks-install-esm", {
+        "a.js": "exports.v = 42;",
+        "b.js": "exports.v = 42;",
+        "main.mjs": `
+          import Module, { createRequire } from "node:module";
+          import path from "node:path";
+          let calls = 0;
+          for (const [holder, key] of [[Module, "_resolveFilename"], [Module.prototype, "require"]]) {
+            const original = holder[key];
+            const patch = function () {
+              calls++;
+              return original.apply(this, arguments);
+            };
+            Object.defineProperty(holder, key, { value: patch, writable: true, configurable: true, enumerable: true });
+          }
+          const asked = {};
+          createRequire(import.meta.url)(path.join(import.meta.dirname, "a.js"));
+          asked["createRequire(import.meta.url)"] = calls;
+          if (import.meta.require) {
+            import.meta.require(path.join(import.meta.dirname, "b.js"));
+            asked["import.meta.require"] = calls - asked["createRequire(import.meta.url)"];
+          }
+          console.log(JSON.stringify(asked));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual(
+        printed({ "createRequire(import.meta.url)": 2, "import.meta.require": 2 }),
+      );
+    });
+
+    test("spyOn() takes both and mockRestore() gives them back", async () => {
+      using dir = tempDir("module-hooks-install-spy", {
+        ...Object.fromEntries(["a", "b", "c", "d"].map(letter => [letter + ".js", "exports.v = 42;"])),
+        "spy.test.js": `
+          const { test, expect, spyOn } = require("bun:test");
+          const Module = require("node:module");
+          const path = require("node:path");
+          const hooks = [
+            ["_resolveFilename", Module],
+            ["require", Module.prototype],
+          ];
+          test.each(hooks)("%s", (key, holder) => {
+            const original = holder[key];
+            const spy = spyOn(holder, key);
+            expect(require(path.join(__dirname, "a.js")).v).toBe(42);
+            expect(spy).toHaveBeenCalledTimes(1);
+            spy.mockRestore();
+            expect(holder[key]).toBe(original);
+            expect(require(path.join(__dirname, "b.js")).v).toBe(42);
+            expect(spy).toHaveBeenCalledTimes(0);
+          });
+          // module-alias assigns its resolver in strict mode, also where a test spies on the hook.
+          test.each(hooks)("a patch that is assigned while a spy is on %s", (key, holder) => {
+            "use strict";
+            const original = holder[key];
+            const spy = spyOn(holder, key);
+            let calls = 0;
+            holder[key] = function () {
+              calls++;
+              return original.apply(this, arguments);
+            };
+            expect(require(path.join(__dirname, "c.js")).v).toBe(42);
+            expect(calls).toBe(1);
+            spy.mockRestore();
+            expect(holder[key]).toBe(original);
+            expect(require(path.join(__dirname, "d.js")).v).toBe(42);
+            expect(calls).toBe(1);
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./spy.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("4 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 
   test.each([

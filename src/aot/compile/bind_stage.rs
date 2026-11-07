@@ -261,6 +261,11 @@ impl Build<'_> {
                     && !self.options.aot.host_runs_files_from_disk
                     && (self.options.aot.loads_code_from_disk || self.options.aot.runs_in_place)
                     && !graph.importers_of_uncompiled_code().is_empty();
+                // `Object.defineProperty`, `delete` and a spy store a loader function as an assignment does.
+                let stored_by_tests = tests_store_loader_functions(
+                    &self.options.load.replaced_builtins,
+                    &self.options.load.replaced_exports,
+                );
                 let input = ProgramReachInput {
                     files: view.files(),
                     sources: view.sources,
@@ -271,7 +276,8 @@ impl Build<'_> {
                     reads_main_module_without_its_name: (self.options.load)
                         .reads_main_module_without_its_name,
                     stores_path_of_main_module: self.options.load.stores_path_of_main_module,
-                    stores_loader_functions: self.options.load.stores_loader_functions,
+                    stores_loader_functions: self.options.load.stores_loader_functions
+                        || stored_by_tests,
                     asks_loader_functions_once_stored: self.options.load.runs_tests,
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                     any_file_is_named_at_run_time: code_on_disk_names_files
@@ -295,10 +301,7 @@ impl Build<'_> {
                 let asks_loader_functions = self.options.load.runs_tests
                     && (reached.stores_loader_functions
                         || self.options.load.stores_loader_functions
-                        || tests_store_loader_functions(
-                            &self.options.load.replaced_builtins,
-                            &self.options.load.replaced_exports,
-                        ));
+                        || stored_by_tests);
                 graph.set_asks_loader_functions(asks_loader_functions);
                 self.replaced_builtins.stores_loader_functions |= asks_loader_functions;
                 self.replaced_builtins.evicts_any_module |= graph.may_evict_every_module();

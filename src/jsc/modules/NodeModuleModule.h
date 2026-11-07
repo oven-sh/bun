@@ -10,6 +10,7 @@
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
+#include <JavaScriptCore/AdaptiveInferredPropertyValueWatchpointBase.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
@@ -18,6 +19,25 @@ using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionLoaderHookWatchpoints);
+// On Module._resolveFilename and on Module.prototype.require: fires once, at the first change of any kind, and from then on require() reads the property.
+enum class LoaderHook : bool { ResolveFilename, Require };
+class LoaderHookWatchpoint final : public JSC::AdaptiveInferredPropertyValueWatchpointBase {
+    WTF_MAKE_TZONE_ALLOCATED(LoaderHookWatchpoint);
+
+public:
+    LoaderHookWatchpoint(Zig::GlobalObject*, const JSC::ObjectPropertyCondition&, LoaderHook);
+
+private:
+    bool isValid() const final;
+    void handleFire(JSC::VM&, const JSC::FireDetail&) final;
+
+    Zig::GlobalObject* m_globalObject;
+    LoaderHook m_hook;
+};
+
+// What Module._resolveFilename holds once `hasOverriddenModuleResolveFilenameFunction` is set, or empty for the default function.
+JSC::JSValue replacedModuleResolveFilename(JSC::JSGlobalObject* lexicalGlobalObject, Zig::GlobalObject*);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 

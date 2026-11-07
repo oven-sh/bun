@@ -41,6 +41,7 @@ class SecureContextCache;
 class GCProfilerObserver;
 
 struct ModuleGraphState;
+class LoaderHookWatchpoint;
 } // namespace Bun
 
 namespace v8 {
@@ -407,9 +408,6 @@ public:
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
-    /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
-    V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
@@ -679,6 +677,9 @@ private:
     RefPtr<WebCore::Performance> m_performance { nullptr };
 
 public:
+    // Fire at the first change of any kind to `require("module")._resolveFilename` and to `require("module").prototype.require`
+    std::unique_ptr<Bun::LoaderHookWatchpoint> m_moduleResolveFilenameWatchpoint;
+    std::unique_ptr<Bun::LoaderHookWatchpoint> m_modulePrototypeRequireWatchpoint;
     // De-optimization once `require("module")._resolveFilename` is written to
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to

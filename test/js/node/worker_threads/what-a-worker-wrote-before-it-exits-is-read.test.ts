@@ -61,6 +61,80 @@ describe("node:worker_threads: the worker writes to its stdout and stderr and ca
     patience,
   );
 
+  // The listener throws on its first call. A 'readable' listener is first called where the stream's end is pushed,
+  // and it reads nothing: `left` is what read() returns behind 'exit', and worker.stdout ends behind that.
+  test.each([
+    ["data", { stdout: "out 1\nout 2\n", ended: ["stdout", "stderr"], left: "", endedAfterRead: ["stdout", "stderr"] }],
+    ["readable", { stdout: "", ended: ["stderr"], left: "out 1\nout 2\n", endedAfterRead: ["stderr", "stdout"] }],
+  ])(
+    "a '%s' listener of worker.stdout that throws there costs no output, and 'exit' follows",
+    async (event, { stdout: readFromStdout, ended, left, endedAfterRead }) => {
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(import.meta.dir, "a-stdout-listener-throws-behind-the-end-of-the-thread-fixture.ts"),
+          event,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({
+          code: 3,
+          uncaught: [`thrown by the '${event}' listener`],
+          stdout: readFromStdout,
+          stderr: "err 1\nerr 2\n",
+          ended,
+          left,
+          endedAfterRead,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    patience,
+  );
+
+  // The exit handler of the Worker pushes the end of each stream, and a 'readable' listener is called there.
+  test(
+    "'readable' listeners of both streams that throw at the end of their stream are both reported, and 'exit' follows",
+    async () => {
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("node:worker_threads");
+          const uncaught = [];
+          process.on("uncaughtException", error => void uncaught.push(error.message));
+          const worker = new Worker("process.exit(3)", { eval: true, stdout: true, stderr: true });
+          for (const name of ["stdout", "stderr"]) {
+            let calls = 0;
+            worker[name].on("readable", () => {
+              if (calls++ === 0) throw new Error("thrown by the listener of " + name);
+            });
+          }
+          // The errors are reported behind 'exit'.
+          worker.on("exit", code => setImmediate(() => console.log(JSON.stringify({ code, uncaught }))));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({
+          code: 3,
+          uncaught: ["thrown by the listener of stdout", "thrown by the listener of stderr"],
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    patience,
+  );
+
   test(
     "the process prints all of it where the streams are not asked for",
     async () => {

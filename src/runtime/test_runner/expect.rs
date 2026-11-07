@@ -2487,7 +2487,11 @@ pub(crate) struct ExpectArrayContaining {
 
 impl ExpectArrayContaining {
     fn create(global_this: &JSGlobalObject, flags: Flags, array_value: JSValue) -> JsResult<JSValue> {
-        if !array_value.js_type().is_array() {
+        let js_type = array_value.js_type();
+        let is_array = js_type.is_array()
+            || (js_type == bun_jsc::JSType::ProxyObject
+                && super::pretty_format::is_array(global_this, array_value)?);
+        if !is_array {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n",

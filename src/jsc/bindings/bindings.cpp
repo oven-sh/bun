@@ -351,6 +351,61 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
     return false;
 }
 
+// PASS when each element of the sample is deep-equal to an element of the other array.
+static ALWAYS_INLINE AsymmetricMatcherResult arrayContainsEach(JSGlobalObject* globalObject, ThrowScope& throwScope, JSObject* expectedArray, unsigned expectedLength, JSObject* otherArray, unsigned otherLength)
+{
+    // A empty array is all array's subset
+    if (expectedLength == 0) {
+        return AsymmetricMatcherResult::PASS;
+    }
+
+    // O(m*n) but works for now
+    for (unsigned m = 0; m < expectedLength; m++) {
+        JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+        bool found = false;
+
+        for (unsigned n = 0; n < otherLength; n++) {
+            JSValue otherValue = otherArray->getIndex(globalObject, n);
+            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+            Vector<std::pair<JSValue, JSValue>, 16> stack;
+            MarkedArgumentBuffer gcBuffer;
+            bool foundNow = Bun__deepEquals<false, true, false>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
+            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+            if (foundNow) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            return AsymmetricMatcherResult::FAIL;
+        }
+    }
+
+    return AsymmetricMatcherResult::PASS;
+}
+
+// For expect.arrayContaining(): a Proxy of an array is an array, as the sample and as the value.
+static NEVER_INLINE AsymmetricMatcherResult proxiedArrayContains(JSGlobalObject* globalObject, ThrowScope& scope, JSValue expectedValue, JSValue otherValue)
+{
+    bool expectedIsArray = isArray(globalObject, expectedValue);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    bool otherIsArray = expectedIsArray && isArray(globalObject, otherValue);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    if (!otherIsArray)
+        return AsymmetricMatcherResult::FAIL;
+
+    JSObject* expectedArray = asObject(expectedValue);
+    JSObject* otherArray = asObject(otherValue);
+    constexpr uint64_t maxLength = std::numeric_limits<unsigned>::max();
+    uint64_t expectedLength = JSC::toLength(globalObject, expectedArray);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    uint64_t otherLength = JSC::toLength(globalObject, otherArray);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    return arrayContainsEach(globalObject, scope, expectedArray, static_cast<unsigned>(std::min(expectedLength, maxLength)), otherArray, static_cast<unsigned>(std::min(otherLength, maxLength)));
+}
+
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
     using namespace Bun::Bindgen::Generated;
@@ -512,45 +567,17 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
         // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
-        JSArray* expectedArray = dynamicDowncast<JSArray>(expectedArrayValue);
-        JSArray* otherArray = dynamicDowncast<JSArray>(otherProp);
-        if (expectedArray && otherArray) {
-            unsigned expectedLength = expectedArray->length();
-            unsigned otherLength = otherArray->length();
-
-            // A empty array is all array's subset
-            if (expectedLength == 0) {
-                return AsymmetricMatcherResult::PASS;
+        if (JSArray* expectedArray = dynamicDowncast<JSArray>(expectedArrayValue)) [[likely]] {
+            if (JSArray* otherArray = dynamicDowncast<JSArray>(otherProp)) {
+                return arrayContainsEach(globalObject, throwScope, expectedArray, expectedArray->length(), otherArray, otherArray->length());
             }
-
-            // O(m*n) but works for now
-            for (unsigned m = 0; m < expectedLength; m++) {
-                JSValue expectedValue = expectedArray->getIndex(globalObject, m);
-                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                bool found = false;
-
-                for (unsigned n = 0; n < otherLength; n++) {
-                    JSValue otherValue = otherArray->getIndex(globalObject, n);
-                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                    Vector<std::pair<JSValue, JSValue>, 16> stack;
-                    MarkedArgumentBuffer gcBuffer;
-                    bool foundNow = Bun__deepEquals<false, true, false>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
-                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                    if (foundNow) {
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (!found) {
-                    return AsymmetricMatcherResult::FAIL;
-                }
+            // Only a Proxy can be an array without being a JSArray.
+            if (!dynamicDowncast<ProxyObject>(otherProp)) [[likely]] {
+                return AsymmetricMatcherResult::FAIL;
             }
-
-            return AsymmetricMatcherResult::PASS;
         }
 
-        return AsymmetricMatcherResult::FAIL;
+        return proxiedArrayContains(globalObject, throwScope, expectedArrayValue, otherProp);
     } else if (auto* expectObjectContaining = dynamicDowncast<JSExpectObjectContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
@@ -2448,6 +2475,17 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     return std::nullopt;
 }
 
+// For the array gate of Bun__deepMatch. A Proxy of an array has no indexed storage: its length is the `length` that it serves.
+static NEVER_INLINE bool arrayLengthsMatchSlow(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* obj, JSObject* subsetObj)
+{
+    VM& vm = globalObject->vm();
+    JSValue objLength = obj->type() == ProxyObjectType ? obj->get(globalObject, vm.propertyNames->length) : jsNumber(obj->getArrayLength());
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue subsetLength = subsetObj->type() == ProxyObjectType ? subsetObj->get(globalObject, vm.propertyNames->length) : jsNumber(subsetObj->getArrayLength());
+    RETURN_IF_EXCEPTION(scope, false);
+    return JSValue::strictEqual(globalObject, objLength, subsetLength);
+}
+
 // The other combinations are instantiated by their uses in this file. This one is
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
@@ -2496,7 +2534,7 @@ bool Bun__deepMatch(
         }
     }
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
@@ -2508,13 +2546,26 @@ bool Bun__deepMatch(
     // arrays should match exactly
     bool objIsArray = isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+        // An array pattern needs an array. An object pattern can be satisfied by one.
+        if (!objIsArray) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        if (hasIndexedProperties(obj->indexingType()) && hasIndexedProperties(subsetObj->indexingType())) [[likely]] {
+            ASSERT(obj->type() != ProxyObjectType && subsetObj->type() != ProxyObjectType);
+            if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+                return false;
+            }
+        } else {
+            bool sameLength = arrayLengthsMatchSlow(globalObject, throwScope, obj, subsetObj);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!sameLength) {
+                return false;
+            }
+        }
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {

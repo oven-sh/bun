@@ -362,6 +362,10 @@ test("RSA-OAEP takes BLAKE2b-512, which an RSA signature does not", () => {
   for (const options of [{ oaepHash: "blake2b512" }, { mgf1Hash: "BLAKE2B-512" }, both]) {
     const encrypted = crypto.publicEncrypt({ key: rsaPubPem, ...options }, input);
     expect(crypto.privateDecrypt({ key: rsaKeyPem, ...options }, encrypted)).toEqual(input);
+    // Each option is in use: the defaults do not open what it sealed.
+    expect(() => crypto.privateDecrypt(rsaKeyPem, encrypted)).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_RSA_OAEP_DECODING_ERROR" }),
+    );
   }
 
   const pss = { key: rsaKeyPem, padding: constants.RSA_PKCS1_PSS_PADDING };

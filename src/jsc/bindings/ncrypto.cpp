@@ -3433,10 +3433,7 @@ bool EVPKeyCtxPointer::setRsaOaepLabel(DataPointer&& data)
     return false;
 }
 
-// Not upstream: when the digest of a signature meets an RSA key, OpenSSL refuses one that is not on its list for RSA, under every
-// padding, and Node reports ERR_OSSL_DIGEST_NOT_ALLOWED. BoringSSL has such a list only for the DigestInfo of
-// PKCS#1 v1.5, so PSS takes any digest. Of BoringSSL's digests, the ones off OpenSSL's list are the ones without a NID.
-// https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/providers/implementations/signature/rsa_sig.c#L389-L394
+// Not upstream: OpenSSL refuses a digest off its RSA list under every padding, BoringSSL only under PKCS#1 v1.5. Off the list here means no NID.
 static NEVER_INLINE bool rsaRefusesDigestWithoutNid(const EVP_PKEY* key)
 {
     int type = EVPKeyPointer::id(key);

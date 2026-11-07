@@ -1922,6 +1922,7 @@ describe.each([
 describe.each([
   ["a detached ArrayBuffer", buffer => buffer],
   ["a view on a detached ArrayBuffer", buffer => new Uint8Array(buffer)],
+  ["a DataView on a detached ArrayBuffer", buffer => new DataView(buffer)],
 ])("%s is an empty buffer", (kind, wrap) => {
   const detached = () => {
     const buffer = new ArrayBuffer(8);

@@ -2245,6 +2245,38 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // The parser makes a function that a block declares a `let` that holds a function without a name. The compiler moves
+  // one that captures nothing to module level, where its rest parameter had no name: the component was left as written.
+  test("a component with a rest parameter in a function that a block declares is compiled", async () => {
+    const result = await compiled(
+      {
+        "src/InABlock.tsx": `
+          export function InABlock({ items }) {
+            if (items.length > 0) {
+              function count(...rest) {
+                return rest.length;
+              }
+              return <ul title={count(...items)}>{items.map(item => <li key={item}>{item}</li>)}</ul>;
+            }
+            return null;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { InABlock } from "./src/InABlock";
+          test("which are compiled", () => {
+            const all = { InABlock };
+            ${printCompiled}
+            expect(InABlock({ items: [1, 2] }).props.title).toBe(2);
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("InABlock");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

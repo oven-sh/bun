@@ -218,6 +218,18 @@ const SLOT_COUNT_DIVERGENCE: Record<string, number[]> = Object.assign(Object.cre
   "hoisting-invalid-tdz-let": [1],
 });
 
+// Fixtures that upstream expects not to compile and that Bun compiles on
+// purpose, with the memo slot counts Bun produces. The fixture still has to
+// produce them. Each entry must say why.
+const COMPILED_ERROR_FIXTURE: Record<string, number[]> = Object.assign(Object.create(null), {
+  // Upstream's known bug (facebook/react#34099 added the repro): a rest
+  // parameter gets its name in PromoteUsedTemporaries, which never sees a
+  // function that OutlineFunctions moved to module level. Bun names it in
+  // lowering, as facebook/react#38087 does. That PR renames this fixture:
+  // remove the entry when a fixture sync brings the new name.
+  "error.bug-invariant-unnamed-temporary": [1],
+});
+
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the
 // nested-block statement mangler before the React Compiler sees the function
 // body, so the compiler is handed a different (but equivalent) AST. Per-function
@@ -445,6 +457,16 @@ describe("react-compiler upstream fixtures", () => {
 
       if (SNAPSHOT_BUN_OUTPUT) {
         expect({ buildError, output }).toMatchSnapshot();
+      }
+
+      const compiledOnPurpose = COMPILED_ERROR_FIXTURE[name];
+      if (compiledOnPurpose != null) {
+        expect({ fixture: name, buildError, slotCounts: slotCounts(output) }).toEqual({
+          fixture: name,
+          buildError: null,
+          slotCounts: compiledOnPurpose,
+        });
+        return;
       }
 
       if (isErrorFixture || isBailFixture) {

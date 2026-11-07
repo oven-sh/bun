@@ -677,7 +677,7 @@ impl Expect {
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
         let entry = test.or_else(|| parent.phase.entry(buntest).map(core::ptr::NonNull::from));
         // SAFETY: `buntest` owns the entries of its sequences.
-        entry.is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest())
+        entry.is_some_and(|entry| unsafe { entry.as_ref() }.flavor == bun_test::Flavor::Vitest)
     }
 
     /// Whether to side with Vitest where it and Jest disagree: the running test was registered through `"vitest"`.

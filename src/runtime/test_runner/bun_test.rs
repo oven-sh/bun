@@ -219,10 +219,7 @@ pub(crate) mod js_fns {
                 Signature::Str(sig_bytes),
                 ScopeFunctions::ParseArgumentsCfg {
                     callback: ScopeFunctions::CallbackMode::Require,
-                    kind: match flavor {
-                        Flavor::Jest => ScopeFunctions::FunctionKind::Hook,
-                        Flavor::Vitest => ScopeFunctions::FunctionKind::VitestHook,
-                    },
+                    kind: ScopeFunctions::FunctionKind::hook(flavor),
                     inherited: Default::default(),
                 },
             )?;
@@ -247,11 +244,10 @@ pub(crate) mod js_fns {
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
             let cfg = ExecutionEntryCfg {
-                calling,
                 fixtures,
                 timeout: args.options.timeout,
                 around: tag.around().map(|around| (around, AroundPhase::SetUp)),
-                ..Default::default()
+                ..ExecutionEntryCfg::new(flavor, calling)
             };
 
             let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
@@ -333,7 +329,7 @@ pub(crate) mod js_fns {
                         let context = sequence_ref.context(global_this, &strong, group_index, entry_data.sequence_index);
                         if let Some(context) = TestContext::from_js(context) {
                             // SAFETY: `sequence.context` keeps the wrapper, which owns the payload, alive.
-                            unsafe { &*context }.defer(bun_test, when, callback, cfg.timeout);
+                            unsafe { &*context }.defer(bun_test, when, callback, cfg.timeout, flavor);
                         }
                         return Ok(());
                     }
@@ -835,7 +831,7 @@ impl BunTest {
             ExecutionEntry::create(
                 None,
                 None,
-                ExecutionEntryCfg { calling: Calling::Vitest { context: false }, ..Default::default() },
+                ExecutionEntryCfg::new(Flavor::OF_FIXTURES, Calling::Vitest { context: false }),
                 None,
                 BaseScopeCfg::default(),
                 AddedInPhase::Collection,
@@ -848,7 +844,7 @@ impl BunTest {
         if self.file_end.is_none() || self.phase != Phase::Execution || self.execution.group_index + 1 >= self.execution.groups.len() {
             return false;
         }
-        let entry = self.create_vitest_entry(callback, timeout, false).as_ptr();
+        let entry = self.create_extra_entry(callback, timeout, false, Flavor::OF_FIXTURES).as_ptr();
         if let Some(file_end) = self.file_end.as_deref_mut() {
             // SAFETY: just allocated.
             unsafe {
@@ -860,11 +856,12 @@ impl BunTest {
         true
     }
 
-    pub(crate) fn create_vitest_entry(&mut self, callback: JSValue, timeout: u32, context: bool) -> NonNull<ExecutionEntry> {
+    /// An entry made while a sequence runs. `flavor` is the module of what registers `callback`.
+    pub(crate) fn create_extra_entry(&mut self, callback: JSValue, timeout: u32, context: bool, flavor: Flavor) -> NonNull<ExecutionEntry> {
         let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
             None,
             Some(callback),
-            ExecutionEntryCfg { timeout, calling: Calling::Vitest { context }, ..Default::default() },
+            ExecutionEntryCfg { timeout, ..ExecutionEntryCfg::new(flavor, Calling::Vitest { context }) },
             None,
             BaseScopeCfg::default(),
             AddedInPhase::Execution,
@@ -1543,7 +1540,8 @@ impl BunTest {
             return;
         };
         // SAFETY: entries outlive the sequences that run them.
-        let (calling, timeout, scope) = unsafe { (hook.as_ref().calling, hook.as_ref().timeout, hook.as_ref().base.parent) };
+        let (calling, flavor, timeout, scope) =
+            unsafe { (hook.as_ref().calling, hook.as_ref().flavor, hook.as_ref().timeout, hook.as_ref().base.parent) };
         if !calling.is_vitest() {
             return;
         }
@@ -1556,7 +1554,7 @@ impl BunTest {
             && let Some(context) = sequence.context.as_ref().and_then(|context| TestContext::from_js(context.get()))
         {
             // SAFETY: `sequence.context` keeps the wrapper, which owns the payload, alive.
-            unsafe { &*context }.defer(self, Deferred::Teardown, returned, timeout);
+            unsafe { &*context }.defer(self, Deferred::Teardown, returned, timeout, flavor);
         }
     }
 
@@ -1953,7 +1951,12 @@ pub(crate) enum Flavor {
     Jest,
     Vitest,
 }
+impl Flavor {
+    /// What runs for a fixture follows its test, and `ScopeFunctions::extend` returns a `test` of Vitest's in every module.
+    pub(crate) const OF_FIXTURES: Flavor = Flavor::Vitest;
+}
 
+/// How an entry's callback is called: Vitest's way for an around hook of any module. The module is `ExecutionEntry::flavor`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Calling {
     Jest { done: bool },
@@ -2276,8 +2279,7 @@ impl DescribeScope {
             HookTag::BeforeAll if is_vitest => {
                 let slot_cfg = ExecutionEntryCfg {
                     timeout: cfg.timeout,
-                    calling: Calling::Vitest { context: false },
-                    ..Default::default()
+                    ..ExecutionEntryCfg::new(cfg.flavor, Calling::Vitest { context: false })
                 };
                 let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
                 self.after_all.insert(first_teardown_slot, slot);
@@ -2286,9 +2288,8 @@ impl DescribeScope {
             HookTag::AroundAll => {
                 let slot_cfg = ExecutionEntryCfg {
                     timeout: cfg.timeout,
-                    calling: Calling::Vitest { context: false },
                     around: Some((Around::All, AroundPhase::TearDown)),
-                    ..Default::default()
+                    ..ExecutionEntryCfg::new(cfg.flavor, Calling::Vitest { context: false })
                 };
                 let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
                 self.around_all_teardown.insert(0, slot);
@@ -2333,10 +2334,11 @@ pub(crate) enum HookTag {
     AroundAll,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
+    pub(crate) flavor: Flavor,
     pub(crate) calling: Calling,
     pub(crate) around: Option<(Around, AroundPhase)>,
     pub(crate) fixtures: Option<JSValue>,
@@ -2344,6 +2346,12 @@ pub(crate) struct ExecutionEntryCfg {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+}
+impl ExecutionEntryCfg {
+    /// There is no default: every entry names the module it is registered through.
+    pub(crate) fn new(flavor: Flavor, calling: Calling) -> ExecutionEntryCfg {
+        ExecutionEntryCfg { timeout: 0, flavor, calling, around: None, fixtures: None, retry_count: 0, repeat_count: 0 }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -2358,6 +2366,8 @@ pub(crate) struct ExecutionEntry {
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
+    /// The module it was registered through, whose rules apply while it runs. The exception: `test.extend()` and `test.for()` tests are Vitest's in every module.
+    pub(crate) flavor: Flavor,
     pub(crate) calling: Calling,
     pub(crate) around: Option<(Around, AroundPhase)>,
     pub(crate) fixtures: Option<Strong>,
@@ -2386,10 +2396,12 @@ impl ExecutionEntry {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {
+        debug_assert!(cfg.flavor == Flavor::Jest || cfg.calling.is_vitest(), "Vitest has no done callback");
         let mut entry = Box::new(ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
             timeout: cfg.timeout,
+            flavor: cfg.flavor,
             calling: cfg.calling,
             around: cfg.around,
             fixtures: None,

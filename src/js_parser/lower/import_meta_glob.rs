@@ -12,7 +12,6 @@ use bun_glob::BunGlobWalker;
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::{fs, path_buffer_pool};
 
-use crate::lexer::T;
 use crate::p::P;
 use crate::parser::TransposeState;
 
@@ -883,6 +882,37 @@ fn is_import_meta_glob(expr: Expr) -> bool {
     )
 }
 
+/// Inlined at every assignment, so it only rules out what can't hold a property of `import.meta`.
+#[inline]
+fn may_assign_to_import_meta(target: Expr) -> bool {
+    match target.data {
+        ExprData::EDot(dot) => matches!(dot.target.data, ExprData::EImportMeta(_)),
+        ExprData::EIndex(index) => matches!(index.target.data, ExprData::EImportMeta(_)),
+        ExprData::EArray(_) | ExprData::EObject(_) => true,
+        _ => false,
+    }
+}
+
+/// The parser has already dropped parentheses and TypeScript assertions, and a template without substitutions is a
+/// string. A target with a default value is an assignment of its own.
+#[cold]
+fn assigns_to_import_meta_glob(target: Expr) -> bool {
+    match target.data {
+        ExprData::EDot(_) => is_import_meta_glob(target),
+        ExprData::EIndex(index) => {
+            matches!(index.target.data, ExprData::EImportMeta(_))
+                && matches!(index.index.data, ExprData::EString(key) if key.eql_comptime(b"glob"))
+        }
+        ExprData::EArray(array) => {
+            (array.items.slice().iter()).any(|&item| assigns_to_import_meta_glob(item))
+        }
+        ExprData::EObject(object) => (object.properties.slice().iter())
+            .any(|property| property.value.is_some_and(assigns_to_import_meta_glob)),
+        ExprData::ESpread(rest) => assigns_to_import_meta_glob(rest.value),
+        _ => false,
+    }
+}
+
 /// Lets `Object.keys(import.meta.glob(...))` skip the imports. `call.target` must already be visited.
 pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) -> bool {
     let ExprData::EDot(dot) = call.target.data else {
@@ -933,16 +963,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             )
     }
 
-    #[cold]
-    pub(crate) fn did_parse_import_meta_property(&mut self, name: &[u8]) {
-        if name == b"glob"
-            && matches!(
-                self.lexer.token,
-                T::TEquals
-                    | T::TQuestionQuestionEquals
-                    | T::TBarBarEquals
-                    | T::TAmpersandAmpersandEquals
-            )
+    /// `target` is the left side of `=`, `??=`, `||=` or `&&=`, or the head of a `for-of` loop. Runs in the parse pass,
+    /// so the whole file is decided before the visit pass reaches its first call.
+    #[inline]
+    pub(crate) fn did_parse_assign_target(&mut self, target: Expr) {
+        if self.has_import_meta
+            && may_assign_to_import_meta(target)
+            && assigns_to_import_meta_glob(target)
         {
             self.import_meta_glob_use = ImportMetaGlobUse::Assigned;
         }

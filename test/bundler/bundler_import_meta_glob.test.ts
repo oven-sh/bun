@@ -271,6 +271,29 @@ describe("bundler", () => {
     run: { stdout: "own ./modules/*.ts" },
   });
 
+  itBundled("import-meta-glob/TheAssignmentCanHaveAComputedKeyOrAPattern", {
+    entryPoints: ["/entry.ts"],
+    files: {
+      ...modules,
+      "/entry.ts": `
+        import { destructured } from "./destructured.ts";
+        import { replaced } from "./replaced.ts";
+        const load = () => import.meta.glob("./modules/*.ts", { eager: true });
+        import.meta["glob"] = pattern => "own " + pattern;
+        console.log([load(), destructured, replaced].join(" | "));`,
+      "/destructured.ts": `
+        ({ glob: import.meta.glob } = { glob: pattern => "destructured " + pattern });
+        export const destructured = import.meta.glob("./modules/*.ts", { eager: true });`,
+      // The other files of the bundle keep their calls replaced.
+      "/replaced.ts": `export const replaced = Object.keys(import.meta.glob("./modules/*.ts")).join();`,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("DROP");
+    },
+    run: { stdout: "own ./modules/*.ts | destructured ./modules/*.ts | ./modules/a.ts,./modules/b.ts" },
+  });
+
   itBundled("import-meta-glob/NotCalled", {
     entryPoints: ["/entry.ts"],
     files: {

@@ -658,6 +658,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.forbid_initializers(decls_ptr.slice(), "of", false)?;
+                if let Some(js_ast::StmtData::SExpr(head)) = init_.map(|init| init.data) {
+                    p.did_parse_assign_target(head.value);
+                }
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;

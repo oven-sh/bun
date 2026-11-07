@@ -209,13 +209,13 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  async function evaluateEach(codes: string[]) {
-    const modules = (dir: string) => codes.map((code, i) => [`${dir}/${i}.js`, `export default ${code};`]);
+  async function evaluateEach(codes: string[], extension = "js") {
+    const modules = (dir: string) => codes.map((code, i) => [`${dir}/${i}.${extension}`, `export default ${code};`]);
     const { stdout, stderr, exitCode } = await runEntry(
       `const out = [];
        for (const dir of ["./each", "../node_modules/each"])
          for (let i = 0; i < ${codes.length}; i++)
-           out.push(await import(dir + "/" + i + ".js").then(
+           out.push(await import(dir + "/" + i + ".${extension}").then(
              module => module.default ?? null,
              error => error.name + ": " + error.message));
        console.log(JSON.stringify(out));`,
@@ -251,6 +251,80 @@ describe.concurrent("import.meta.glob", () => {
         `(import.meta.glob = pattern => [pattern], Object.keys(import.meta.glob("../dir/*.ts")))`,
       ]),
     ).toEqual(["own ../dir/*.ts", "own whatever", "own ../dir/*.ts", "own ../dir/*.ts", ["0"]]);
+  });
+
+  test("the assignment can use a computed key, a pattern, parentheses, a type assertion or a for-of head", async () => {
+    const own = `pattern => "own " + pattern`;
+    const call = `import.meta.glob("../dir/*.ts")`;
+    const [javascript, typescript] = await Promise.all([
+      evaluateEach([
+        `(import.meta["glob"] = ${own}, ${call})`,
+        "(import.meta[`glob`] ??= " + own + ", " + call + ")",
+        `(({ glob: import.meta.glob } = { glob: ${own} }), ${call})`,
+        `([import.meta.glob] = [${own}], ${call})`,
+        `([{ nested: [import.meta["glob"]] }] = [{ nested: [${own}] }], ${call})`,
+        `((import.meta.glob) = ${own}, ${call})`,
+        `(() => { for (import.meta.glob of [${own}]); return ${call}; })()`,
+        `(() => { const load = () => ${call}; [import.meta.glob] = [${own}]; return load(); })()`,
+        // `&&=` only replaces a truthy value, so one is set first in a way that doesn't count.
+        `(Object.assign(import.meta, { glob: 1 }), import.meta.glob &&= ${own}, ${call})`,
+      ]),
+      evaluateEach(
+        [
+          `((import.meta.glob as any) = ${own}, ${call})`,
+          `(import.meta.glob! = ${own}, ${call})`,
+          `((<any>import.meta.glob) = ${own}, ${call})`,
+        ],
+        "ts",
+      ),
+    ]);
+    expect({ javascript, typescript }).toEqual({
+      javascript: Array(9).fill("own ../dir/*.ts"),
+      typescript: Array(3).fill("own ../dir/*.ts"),
+    });
+  });
+
+  test("a file with such an assignment imports nothing for an eager call, also as a CommonJS module", async () => {
+    const { stdout, stderr, exitCode } = await runEntry(
+      `const load = () => import.meta.glob("./loud/*.ts", { eager: true });
+       [import.meta.glob] = [pattern => "own " + pattern];
+       console.log([load(), require("./own.cjs"), globalThis.loud ?? "not imported"].join(" | "));`,
+      {
+        "proj/src/loud/x.ts": `globalThis.loud = "imported";`,
+        "proj/src/own.cjs": `
+          import.meta["glob"] = pattern => "own " + pattern;
+          module.exports = import.meta.glob("./loud/*.ts", { eager: true });`,
+      },
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "own ./loud/*.ts | own ./loud/*.ts | not imported",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("only an assignment written in the file counts, whether or not it runs", async () => {
+    const keys = `Object.keys(import.meta.glob("/src/dir/[ab].ts"))`;
+    const attempt = `(() => { try { return ${keys}; } catch (error) { return error.name; } })()`;
+    expect(
+      await evaluateEach([
+        `[${attempt}, import.meta.glob = () => ({})][0]`,
+        `[${attempt}, import.meta["glob"] = () => ({})][0]`,
+        `(() => { if (false) [import.meta.glob] = []; return ${attempt}; })()`,
+        `(() => { [...import.meta.glob] = []; return ${attempt}; })()`,
+        // As in Vite, the call is replaced when the function is set some other way. Only an indirect call reaches it.
+        `(Object.assign(import.meta, { glob: pattern => "own " + pattern }), [${keys}, (0, import.meta.glob)("indirect")])`,
+        // The other modules of the same run keep their calls replaced.
+        keys,
+      ]),
+    ).toEqual([
+      "TypeError",
+      "TypeError",
+      "TypeError",
+      "TypeError",
+      [["/src/dir/a.ts", "/src/dir/b.ts"], "own indirect"],
+      ["/src/dir/a.ts", "/src/dir/b.ts"],
+    ]);
   });
 
   test("feature detection succeeds in modules whose calls are replaced", async () => {

@@ -442,7 +442,8 @@ pub mod api {
         pub factory: Box<[u8]>,
         pub runtime: JsxRuntime,
         pub fragment: Box<[u8]>,
-        pub development: bool,
+        /// `None`: whoever built this did not say development or production.
+        pub development: Option<bool>,
         pub import_source: Box<[u8]>,
         pub side_effects: bool,
     }

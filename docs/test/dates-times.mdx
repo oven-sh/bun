@@ -139,7 +139,7 @@ If a timer callback throws, the function that ran the timer rethrows the error. 
 
 Bun restores the real timers and the real time at the end of each test file.
 
-Fake timers or a system time set at the top level of a [preload](/test/configuration#preload-scripts) stay on from file to file. Without `--isolate`, every file shares that one clock. It keeps the time and the pending timers that the previous file left behind, and it lasts until a file calls `useFakeTimers()`, `useRealTimers()` or `setSystemTime()` itself. To start every test with fake timers, call `useFakeTimers()` in a `beforeEach()` in the preload.
+Fake timers or a system time set at the top level of a [preload](/test/configuration#preload-scripts) stay on from file to file. Without `--isolate`, every file shares that one clock. It keeps the time and the pending timers that the previous file left behind, and it lasts until a file calls `useFakeTimers()`, `useRealTimers()` or `setSystemTime()` itself. It fakes `requestAnimationFrame` in every file that has a DOM, whichever [test environment](/test/dom#test-environments) the preload ran in. To start every test with fake timers, call `useFakeTimers()` in a `beforeEach()` in the preload.
 
 ### Timers scheduled after an `await`
 

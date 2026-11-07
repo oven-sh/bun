@@ -89,6 +89,9 @@ impl Api {
         Api::PerformanceObject,
     ];
 
+    /// Only a DOM library defines these two.
+    const FRAMES: [Api; 2] = [Api::RequestAnimationFrame, Api::CancelAnimationFrame];
+
     /// Indexed by `Api as usize`. A `None` name is accepted but there's nothing to fake for it.
     const NAMES: [(&'static str, Option<Api>); 17] = [
         ("setTimeout", Some(Api::SetTimeout)),
@@ -142,9 +145,8 @@ impl Api {
         }
     }
 
-    /// Only a DOM library defines these two.
     fn is_frame(self) -> bool {
-        matches!(self, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
+        Self::FRAMES.contains(&self)
     }
 }
 
@@ -1069,12 +1071,14 @@ impl FakeTimers {
 
     /// The names of `global` are where the test environment wants them. Each fake that `take_off_frames` took off goes on
     /// again, over the function that `global` has for it now. It stays off if there is none. Where the program's value
-    /// is in place of the fake as before, the record is as before too.
+    /// is in place of the fake as before, the record is as before too. A frame function that this clock was told to fake
+    /// when `global` had none gets its fake now.
     #[optimize(size)]
     pub(crate) fn put_on_frames(global: &JSGlobalObject) -> JsResult<()> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow below ends at its statement, and none spans a getter.
-        if unsafe { (*all).fake_timers.detached.is_empty() } {
+        let faked = unsafe { (*all).fake_timers.faked };
+        if !Api::FRAMES.iter().any(|&api| faked.contains(api)) {
             return Ok(());
         }
         let _reading = ReadingGlobals::begin();
@@ -1094,16 +1098,10 @@ impl FakeTimers {
             let original = match as_before {
                 Some(original) => original,
                 None => {
-                    let installed = api.owner(global).get(global, api.property())?;
-                    let installed = installed.unwrap_or(JSValue::UNDEFINED);
-                    let original = original_of(originals, installed).unwrap_or(installed);
-                    // SAFETY: as above.
-                    if !original.is_callable()
-                        || unsafe { (*all).fake_timers.is_installed(installed) }
-                    {
+                    let Some(original) = Self::frame_to_replace(global, originals, api)? else {
                         index += 1;
                         continue;
-                    }
+                    };
                     api.put(global, fake);
                     original
                 }
@@ -1118,7 +1116,43 @@ impl FakeTimers {
                 fake,
             });
         }
+        for api in Api::FRAMES {
+            // SAFETY: as above.
+            let this = unsafe { &(*all).fake_timers };
+            if !faked.contains(api)
+                || this.replaced.iter().any(|replaced| replaced.api == api)
+                || this.detached.iter().any(|frame| frame.api == api)
+            {
+                continue;
+            }
+            let Some(original) = Self::frame_to_replace(global, originals, api)? else {
+                continue;
+            };
+            let fake = bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?;
+            Bun__FakeTimers__setOriginal(global, originals, fake, original);
+            api.put(global, fake);
+            // SAFETY: as above.
+            unsafe { &mut (*all).fake_timers }.replaced.push(Replaced {
+                api,
+                original: Strong::create(original, global),
+                fake: Strong::create(fake, global),
+            });
+        }
         Ok(())
+    }
+
+    /// The function that `global` has for a frame fake to replace, which is not a fake of this clock. Runs a getter.
+    fn frame_to_replace(
+        global: &JSGlobalObject,
+        originals: JSValue,
+        api: Api,
+    ) -> JsResult<Option<JSValue>> {
+        let installed = api.owner(global).get(global, api.property())?;
+        let installed = installed.unwrap_or(JSValue::UNDEFINED);
+        let original = original_of(originals, installed).unwrap_or(installed);
+        // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+        let is_of_this_clock = unsafe { (*timer_all()).fake_timers.is_installed(installed) };
+        Ok((original.is_callable() && !is_of_this_clock).then_some(original))
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.

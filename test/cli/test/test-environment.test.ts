@@ -1458,6 +1458,16 @@ describe.concurrent("test environment", () => {
           expect(ran).toEqual(passed("1 fake", "2 fake", "2 happy-dom#1 frame", "3 of the preload"));
         });
 
+        test("those that it turned on without a window are on requestAnimationFrame of a file's window", async () => {
+          const ran = await run({
+            "preload.js": fakeTimers,
+            "1.test.js": logs("1"),
+            "2.test.js": `${inWindow}${undoes("2", "vi.useRealTimers()")}`,
+            "3.test.js": logs("3"),
+          });
+          expect(ran).toEqual(passed("1 undefined", "2 fake", "2 happy-dom#1 frame", "3 undefined"));
+        });
+
         test("those of its beforeAll() leave a node file no requestAnimationFrame", async () => {
           const ran = await run({
             "preload.js": `import { beforeAll, vi } from "bun:test"; beforeAll(() => void vi.useFakeTimers());`,

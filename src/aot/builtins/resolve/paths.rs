@@ -1,6 +1,6 @@
 use super::module_objects::{find_listed_module, find_module_object_in};
 use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver};
-use super::{BuiltinPath, SourceDialect};
+use super::{BUN_OF_TEST_FILE, BuiltinPath, SourceDialect};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability,
 };
@@ -198,6 +198,12 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn is_bun_of_test_file(&self, object: ExprId) -> bool {
+        let input = self.input;
+        let object = input.hir.skip_type_assertions(object);
+        matches!(input.hir[object].kind, ExprKind::Ident(name) if input.atoms.bytes(name) == BUN_OF_TEST_FILE)
+    }
+
     pub(super) fn compute_member_state(&self, expr: ExprId) -> ExprState {
         let input = self.input;
         let Some((object, key)) = input.hir.member_key(expr) else {
@@ -249,6 +255,14 @@ impl Resolver<'_, '_> {
         let Some(path) = self.find_member(holder, key.name) else {
             return ExprState::Unresolved;
         };
+        if table::canonical_id(path.id) == table::canonical_id(BuiltinId::BunJest)
+            && self.is_bun_of_test_file(object)
+        {
+            return ExprState::of_path(Some(BuiltinPath {
+                id: BuiltinId::CompilerHelpersAskRunOfTestFile,
+                mutability: Mutability::AlwaysLocked,
+            }));
+        }
         if above.is_some() && table::has_flag(path.id, BuiltinFlags::IS_OWN_PROPERTY_OF_INSTANCES) {
             return ExprState::Unresolved;
         }

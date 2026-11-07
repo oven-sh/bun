@@ -14,13 +14,13 @@ test("Bun.jest(path) is what the file imports from bun:test", () => {
   expect(jestOf(path)).toBe(module);
 });
 
-test("whatever the second argument is, Bun.jest(path, x) answers the same module", () => {
+test("whatever stands behind the path, Bun.jest answers the same module", () => {
   const module = jestOf(path);
   for (const second of [undefined, null, false, true, 0, 1, "", "expect", {}, []]) {
     expect(jestOf(path, second)).toBe(module);
-    expect(jestOf(path, second, undefined)).toBe(module);
-    expect(jestOf(path, second, false)).toBe(module);
+    for (const third of [undefined, false, true, 1, [path]]) expect(jestOf(path, second, third)).toBe(module);
   }
+  expect([path].map(jestOf)).toEqual([module]);
 });
 
 test("Bun.jest still refuses what is no absolute path", () => {

@@ -114,7 +114,9 @@ const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+  // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas.
   if (/[\\/]test[\\/]aot[\\/]/.test(Bun.main)) {
+    bunEnv.Malloc = "1";
     // The slow unwinder aborts in a frame of compiled code and cuts the report off.
     bunEnv.ASAN_OPTIONS += ":detect_leaks=0:fast_unwind_on_fatal=1";
   }

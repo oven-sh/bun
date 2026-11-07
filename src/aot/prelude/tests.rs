@@ -46,6 +46,7 @@ fn files_are_listed_once() {
         "decorators.ts",
         "iterator-consumers.ts",
         "rejected-imports.ts",
+        "test-files.ts",
         "written-lists.ts",
     ];
     assert_eq!(names, expected);

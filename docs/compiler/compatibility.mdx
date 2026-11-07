@@ -524,7 +524,7 @@ The call sites that `Error.prepareStackTrace` gets are the same: `getFunction()`
 
 ## Error messages
 
-The class of an error, its line and its stack trace are the same, except for the frames of some built-ins. The functions of `Math`, `regexp.exec()`, `regexp.test()` and `array.pop()`, among others, are compiled into the function that calls them and have no frame of their own. When `Math.max(value)` calls `value.valueOf()`, a trace taken there has your function right below `valueOf`, where `bun run` has a frame for `max`.
+The class of an error, its line and its stack trace are the same, except for the frames of some built-ins and for what [Smaller differences](#smaller-differences) lists. The functions of `Math`, `regexp.exec()`, `regexp.test()` and `array.pop()`, among others, are compiled into the function that calls them and have no frame of their own. When `Math.max(value)` calls `value.valueOf()`, a trace taken there has your function right below `valueOf`, where `bun run` has a frame for `max`.
 
 Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
 
@@ -578,6 +578,7 @@ Few programs notice these.
 | `typeof name;` as a statement, where `name` is a getter on `globalThis`           | The transpiler drops the statement, so the getter isn't called               | The getter is called, as the language says       |
 | `f.name` after `const f = true ? () => 3 : null` or `const f = null ?? (() => 1)` | `"f"`: the transpiler drops the test, so the engine sees `const f = () => 3` | `""`, as the language says                       |
 | `error.stack` after `fn.displayName = "x"` or `defineProperty(fn, "name", ..)`    | The name that you set                                                        | The name that you wrote                          |
+| In `error.stack`, the frame around a `using` whose `[Symbol.dispose]()` throws    | A place near the end of the scope, and sometimes one after it                | The name that the `using` declares               |
 | `fn.name` and `Class.name`, built with `--obfuscate`                              | The name that you wrote                                                      | `""`, which is what the flag is for              |
 | `new Below()` after `Object.setPrototypeOf(Below, CString)`, of `bun:ffi`         | The string that `new CString()` returns                                      | Throws a `TypeError`: `this` has to be an object |
 | A name imported from a CommonJS file that was still running, after a later import | What the file had exported when that import was linked                       | What the file had exported when it ended         |

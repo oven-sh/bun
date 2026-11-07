@@ -579,12 +579,7 @@ fn loads_compiled_file_below_vitest(vm: &VirtualMachine) -> bool {
 }
 
 /// `Bun.jest(path)`
-pub(crate) fn jest(
-    cx: &mut JsScope<'_>,
-    path: Option<&[u8]>,
-    by_who_loads: bool,
-    own_globals: bool,
-) -> JsResult<JSValue> {
+pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValue> {
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
@@ -603,18 +598,17 @@ pub(crate) fn jest(
         }
     }
 
-    if own_globals && bun_jsc::compiled_program::compiled_program().is_some() {
-        let left_alone = vm.transpiler.options.own_test_globals;
-        return Ok(JSValue::js_number(f64::from(left_alone)));
-    }
-
-    let is_of_vitest = by_who_loads
-        && bun_jsc::compiled_program::compiled_program().is_some()
-        && loads_compiled_file_below_vitest(vm);
-    jsc::from_js_host_call(global_object, || match is_of_vitest {
-        true => Jest::Bun__Jest__vitestModuleObject(global_object),
-        false => Jest::Bun__Jest__testModuleObject(global_object),
+    jsc::from_js_host_call(global_object, || {
+        Jest::Bun__Jest__testModuleObject(global_object)
     })
+}
+
+pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
+    let vm = VirtualMachine::get();
+    match own_globals {
+        true => vm.transpiler.options.own_test_globals,
+        false => u32::from(loads_compiled_file_below_vitest(vm)),
+    }
 }
 
 /// `setDefaultTimeout(milliseconds)` and `jest.setTimeout(milliseconds)`

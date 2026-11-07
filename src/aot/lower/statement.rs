@@ -171,6 +171,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             } => self.lower_try(statement, block, param, handler, finalizer),
             StmtKind::Throw(expression) => {
                 let value = self.lower_expression(expression);
+                self.set_position(self.file.last_token_position_of(expression));
                 self.emit_throw(value);
             }
             StmtKind::Break(_) => self.lower_break(statement),

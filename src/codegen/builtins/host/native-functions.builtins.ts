@@ -369,12 +369,11 @@ export default b.declarations(
 
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {
-    // It hands all that it was called with to Bun.jest(path, byWhoLoads, ownGlobals), which answers with a number where the third is true.
-    args: { filename: b.any.optional, byWhoLoads: b.any.optional, ownGlobals: b.any.optional },
-    returns: b.union(b.builtin("bun:test"), b.object, b.f64),
+    args: { filename: b.any.optional },
+    returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
-    uses: { filename: converted, byWhoLoads: b.inspected, ownGlobals: b.inspected },
+    uses: { filename: converted },
     implementation: b.hostCall,
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),

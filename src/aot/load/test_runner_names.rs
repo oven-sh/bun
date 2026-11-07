@@ -12,7 +12,10 @@ use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 
-use crate::builtins::resolve::{GLOBALS_LEFT_ALONE, LOADED_BELOW_VITEST, LOADED_BY_WORKER};
+use crate::builtins::resolve::{
+    BUN_OF_TEST_FILE as LOCAL_NAME_OF_BUN, GLOBALS_LEFT_ALONE, LOADED_BELOW_VITEST,
+    LOADED_BY_WORKER,
+};
 use crate::load::hoisted_mocks;
 use crate::load::react_compiler::module_items::{
     POSITION, finish_file, put_around_body, write_constant, write_import,
@@ -24,7 +27,6 @@ const MODULE_OF_CHAI: &[u8] = b"chai";
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
 const NAME_OF_VITEST_PREFIX: &[u8] = b"%vitest:";
 const MODULE_OF_BUN: &[u8] = b"bun";
-const LOCAL_NAME_OF_BUN: &[u8] = b"%bun";
 
 #[inline]
 pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
@@ -153,7 +155,6 @@ fn find_how_use_reads(request: &TransformRequest<'_, '_>, expression: ExprId) ->
 #[derive(Copy, Clone)]
 struct Flavor {
     variable: Atom,
-    path: Atom,
     lacks_name: Runner,
 }
 
@@ -166,7 +167,6 @@ enum Runner {
 #[derive(Copy, Clone)]
 struct OwnGlobal {
     variable: Atom,
-    path: Atom,
     bit: u32,
 }
 
@@ -194,7 +194,7 @@ fn choose_by_flavor(
         ask(file, variable, value)
     });
     let flavor = asked.flavor.map(|flavor| {
-        let value = write_question(file, atoms, flavor.path);
+        let value = write_question(file, atoms);
         let operand = ask(file, flavor.variable, value);
         let op = UnOp::Not;
         match flavor.lacks_name {
@@ -203,7 +203,7 @@ fn choose_by_flavor(
         }
     });
     let own_global = asked.own_global.map(|own| {
-        let value = write_question_of_own_globals(file, atoms, own.path);
+        let value = write_question_of_own_globals(file, atoms);
         let left = ask(file, own.variable, value);
         let bit = file.number(f64::from(own.bit));
         let right = file.expr(ExprKind::Number(bit), pos, end);
@@ -319,7 +319,6 @@ fn write_question_of_realm(file: &mut FileBuilder, atoms: &Interner<'_>) -> Expr
 fn write_call_of_jest(
     file: &mut FileBuilder,
     atoms: &Interner<'_>,
-    path: Atom,
     asks_for_own_globals: bool,
 ) -> ExprId {
     let add = |file: &mut FileBuilder, kind: ExprKind| file.expr(kind, POSITION, POSITION);
@@ -330,13 +329,14 @@ fn write_call_of_jest(
     }
     let callee = file.dot((bun, Chain::No), (known::jest, POSITION), POSITION);
     let callee = add(file, callee);
-    let path = add(file, ExprKind::String(path));
-    let by_who_loads = add(file, ExprKind::True);
-    let mut args = vec![path, by_who_loads];
-    if asks_for_own_globals {
-        args.push(add(file, ExprKind::True));
-    }
-    let args = file.list(&args);
+    let own_globals = add(
+        file,
+        match asks_for_own_globals {
+            true => ExprKind::True,
+            false => ExprKind::False,
+        },
+    );
+    let args = file.list(&[own_globals]);
     let call = file.add_call(Call {
         callee,
         args,
@@ -348,36 +348,24 @@ fn write_call_of_jest(
     add(file, ExprKind::Call(call))
 }
 
-fn write_question_of_own_globals(
-    file: &mut FileBuilder,
-    atoms: &Interner<'_>,
-    path: Atom,
-) -> ExprId {
-    let left = write_call_of_jest(file, atoms, path, true);
+fn write_question_of_own_globals(file: &mut FileBuilder, atoms: &Interner<'_>) -> ExprId {
+    let left = write_call_of_jest(file, atoms, true);
     let zero = file.number(0.0);
     let right = file.expr(ExprKind::Number(zero), POSITION, POSITION);
     let op = BinOp::BitOr;
     file.expr(ExprKind::Binary { op, left, right }, POSITION, POSITION)
 }
 
-fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>, path: Atom) -> ExprId {
-    let add = |file: &mut FileBuilder, kind: ExprKind| file.expr(kind, POSITION, POSITION);
-    let module = write_call_of_jest(file, atoms, path, false);
-    let member = file.dot(
-        (module, Chain::No),
-        (atoms.intern(b"suite"), POSITION),
-        POSITION,
-    );
-    let operand = add(file, member);
-    let op = UnOp::Typeof;
-    let left = add(file, ExprKind::Unary { op, operand });
-    let right = add(file, ExprKind::String(atoms.intern(b"function")));
+fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>) -> ExprId {
+    let left = write_call_of_jest(file, atoms, false);
+    let one = file.number(1.0);
+    let right = file.expr(ExprKind::Number(one), POSITION, POSITION);
     let op = BinOp::EqEqEq;
-    add(file, ExprKind::Binary { op, left, right })
+    file.expr(ExprKind::Binary { op, left, right }, POSITION, POSITION)
 }
 
 fn write_flavor(file: &mut FileBuilder, atoms: &Interner<'_>, flavor: Flavor) -> StmtId {
-    let init = write_question(file, atoms, flavor.path);
+    let init = write_question(file, atoms);
     write_answer(file, flavor.variable, init)
 }
 fn write_answer(file: &mut FileBuilder, variable: Atom, init: ExprId) -> StmtId {
@@ -599,10 +587,8 @@ pub(crate) fn import_used_names<'s>(
         *request.hir = finish_file(file, arena, atoms);
         return TreeChange::Changed;
     }
-    let path = atoms.intern(request.path);
     let flavor = asks_flavor_of_run.then(|| Flavor {
         variable: atoms.intern(LOADED_BELOW_VITEST),
-        path,
         lacks_name: Runner::Vitest,
     });
     let left_alone = atoms.intern(GLOBALS_LEFT_ALONE);
@@ -616,7 +602,6 @@ pub(crate) fn import_used_names<'s>(
         let text = core::str::from_utf8(given[name]).unwrap_or("");
         let own_global = keeps_own_globals.then(|| OwnGlobal {
             variable: left_alone,
-            path,
             bit: bits[name],
         });
         if flavor.is_some()
@@ -726,7 +711,7 @@ pub(crate) fn import_used_names<'s>(
         added.push(write_answer(&mut file, variable, init));
     }
     if asks_for_own_globals {
-        let init = write_question_of_own_globals(&mut file, atoms, path);
+        let init = write_question_of_own_globals(&mut file, atoms);
         added.push(write_answer(&mut file, left_alone, init));
     }
     added.extend(of_chai);

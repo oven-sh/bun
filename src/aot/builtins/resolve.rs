@@ -162,6 +162,7 @@ impl ImportTargets {
 pub const LOADED_BELOW_VITEST: &[u8] = b"%loaded-below-vitest";
 pub const LOADED_BY_WORKER: &[u8] = b"%loaded-by-worker";
 pub const GLOBALS_LEFT_ALONE: &[u8] = b"%globals-left-alone";
+pub const BUN_OF_TEST_FILE: &[u8] = b"%bun";
 
 pub struct ResolveInput<'a, 's> {
     pub hir: &'a hir::File<'s>,

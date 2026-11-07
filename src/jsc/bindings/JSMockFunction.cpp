@@ -3243,7 +3243,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     JSValue storage = getOwnPropertyStorage(globalObject, object, propertyKey, spyAttributes);
     RETURN_IF_EXCEPTION(scope, {});
     // The object itself answers for an array's `length` or a typed array's elements, so an accessor in its storage would be ignored.
-    if (storage && !isOpaque && (parseIndex(propertyKey) ? object->structure()->typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero() : !object->getDirect(vm, propertyKey))) {
+    bool answersForItsElements = object->structure()->typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero();
+#if ENABLE(AOT)
+    if (object->type() == CompiledObjectType)
+        answersForItsElements = false;
+#endif
+    if (storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey))) {
         throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` property because it cannot be redefined"_s));
         return {};
     }

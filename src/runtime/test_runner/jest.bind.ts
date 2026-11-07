@@ -7,17 +7,14 @@ export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
 
 const js = { capability: "js", throws: true } as const;
 
+/** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything. */
+export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.any, ...js });
 /**
- * `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything.
- * `byWhoLoads` is for a file that `bun test --aot` compiled: the module that `bun test` would take the file's globals from if it transpiled the file now.
- * `ownGlobals` is for such a file too: instead of the module, `RuntimeFeatures::own_test_globals` as it would transpile the file with now.
+ * What a file that `bun test --aot` compiled asks of the run while it loads. No object holds it: src/aot/prelude/test-files.ts names it. It answers with a number and hands out nothing.
+ * `ownGlobals`: `RuntimeFeatures::own_test_globals` as `bun test` would transpile the file with now.
+ * Otherwise 1 where `bun test` would take the file's globals from the module of Vitest if it transpiled the file now, else 0.
  */
-export const jest = b.fn({
-  args: { path: b.string.utf8.otherAsNull, byWhoLoads: b.bool.loose, ownGlobals: b.bool.loose },
-  returns: b.any,
-  length: 1,
-  ...js,
-});
+export const askedByCompiledTestFile = b.fn({ args: { ownGlobals: b.bool }, returns: b.u32 });
 /** Also `jest.setTimeout`. */
 export const setDefaultTimeout = b.fn({
   export: "Bun__Jest__setDefaultTimeout",

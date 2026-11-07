@@ -299,16 +299,17 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::Dot { obj, chain: Chain::No, .. } | ExprKind::Index { obj, chain: Chain::No, .. }
                 if obj == name
         );
-        if !is_object || bound.get_assignment_target(hir, access).is_some() {
+        let used = bound.outermost_type_assertion(hir, access);
+        if !is_object || bound.get_assignment_target(hir, used).is_some() {
             return false;
         }
-        match bound.parent_of_expr(access) {
+        match bound.parent_of_expr(used) {
             Parent::Expr(parent) => match hir[parent].kind {
                 ExprKind::Unary {
                     op: UnOp::Delete, ..
                 } => false,
-                ExprKind::Call(call) => hir[call].callee != access,
-                ExprKind::TaggedTemplate(template) => hir[template].callee != access,
+                ExprKind::Call(call) => hir[call].callee != used,
+                ExprKind::TaggedTemplate(template) => hir[template].callee != used,
                 _ => true,
             },
             _ => true,

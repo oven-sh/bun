@@ -16,6 +16,18 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/the-frame-around-a-disposal-that-throws-points-at-the-resource.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-runner-points-where-what-is-thrown-ends.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-spy-takes-an-accessor-under-an-index-of-an-object-of-compiled-code.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/what-require-resolve-answers-does-not-hang-on-the-working-directory.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -563,10 +575,6 @@
   "aot/an-addon-in-the-executable-is-loaded-under-any-name.test.ts": {
     "default": 35500,
     "asan": 142000
-  },
-  "aot/an-asan-build-takes-its-memory-from-the-system.test.ts": {
-    "default": 60000,
-    "asan": 240000
   },
   "aot/an-await-waits-for-what-a-mock-or-a-spy-gives.test.ts": {
     "default": 6000,

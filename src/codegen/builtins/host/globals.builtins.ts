@@ -1638,11 +1638,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       jest: {
-        args: { path: b.any.optional, byWhoLoads: b.any.optional, ownGlobals: b.any.optional },
-        returns: b.union(testModule, b.f64),
+        args: { path: b.any.optional },
+        returns: testModule,
         capability: "js",
         throws: true,
-        uses: { path: converted, byWhoLoads: b.inspected, ownGlobals: b.inspected },
+        uses: { path: converted },
         implementation: b.hostCall,
       },
       listen: {

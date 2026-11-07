@@ -142,7 +142,10 @@ export default b.declarations(
     "bun:test/vitest",
     "%Expect%",
   ),
-  extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult")),
+  extendAll(
+    ["Test"],
+    ...nativeBindings("Bindgen", "jest.bind.ts", "askedByCompiledTestFile", "fileGeneration", "nodeTestMarkResult"),
+  ),
   extendAll(
     bundlerFeatures,
     ...nativeBindings(

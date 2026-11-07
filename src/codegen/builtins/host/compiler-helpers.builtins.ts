@@ -274,6 +274,13 @@ export default b.declarations(
       uses: { reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
       implementation: b.compiled("prelude/rejected-imports", "importRejectedByLoader"),
     },
+    askRunOfTestFile: {
+      args: { ownGlobals: b.bool },
+      returns: b.f64,
+      capability: "none",
+      uses: { ownGlobals: b.inspected },
+      implementation: b.compiled("prelude/test-files", "askRunOfTestFile"),
+    },
     ...helpersIn("prelude/decorators", {
       decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },

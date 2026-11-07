@@ -9,6 +9,7 @@ test("Bun.jest answers the module whatever stands behind the path", async () => 
   for (const [args, printed] of [
     [["main.js"], "object object object object"],
     [["test", "mapped.test.js"], "B function"],
+    [["test", "--aot", "mapped.test.js"], "B function"],
   ] as const) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],

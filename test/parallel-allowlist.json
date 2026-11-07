@@ -1161,7 +1161,6 @@
     "aot/worker-behind-dead-code.test.ts",
     "aot/worker-of-text-in-a-trimmed-executable.test.ts",
     "aot/write-unknown-key.test.ts",
-    "aot/an-asan-build-takes-its-memory-from-the-system.test.ts",
     "aot/asset-names.test.ts",
     "aot/augmented-package.test.ts",
     "aot/awaited-import.test.ts",
@@ -1525,6 +1524,9 @@
     "aot/a-build-that-succeeds-says-nothing-of-its-own-faults.test.ts",
     "aot/a-path-made-by-one-climb-out-of-the-root-is-for-the-files-in-the-root.test.ts",
     "aot/a-path-that-climbs-above-all-that-an-executable-holds-names-nothing.test.ts",
-    "aot/what-require-resolve-answers-does-not-hang-on-the-working-directory.test.ts"
+    "aot/what-require-resolve-answers-does-not-hang-on-the-working-directory.test.ts",
+    "aot/a-spy-takes-an-accessor-under-an-index-of-an-object-of-compiled-code.test.ts",
+    "aot/the-frame-around-a-disposal-that-throws-points-at-the-resource.test.ts",
+    "aot/the-runner-points-where-what-is-thrown-ends.test.ts"
   ]
 }

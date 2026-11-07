@@ -981,6 +981,58 @@ describe("Bun.build", () => {
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
+  // Without `outdir` an output is in memory. Its type is sent where the type of `new Blob(bytes, { type })` is.
+  test("an in-memory BuildArtifact is sent with its content type", async () => {
+    const build = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+      sourcemap: "external",
+    });
+    const output = build.outputs.find(output => output.kind === "entry-point")!;
+    const sourcemap = build.outputs.find(output => output.kind === "sourcemap")!;
+
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/output": new Response(output),
+        "/slice": new Response(output.slice(0, 4)),
+        "/sourcemap": new Response(sourcemap),
+      },
+      async fetch(req) {
+        if (req.method === "GET") return new Response(output.stream());
+        await req.arrayBuffer();
+        return new Response(req.headers.get("content-type") ?? "none");
+      },
+    });
+    const received = async (path: string) => {
+      const res = await fetch(new URL(path, server.url));
+      await res.arrayBuffer();
+      return res.headers.get("content-type");
+    };
+    const sent = async (init: RequestInit) => (await fetch(server.url, { method: "POST", ...init })).text();
+
+    expect({
+      route: await received("/output"),
+      routeOfSlice: await received("/slice"),
+      routeOfSourcemap: await received("/sourcemap"),
+      handlerStream: await received("/stream"),
+      upload: await sent({ body: output }),
+      uploadOfRequest: await (await fetch(new Request(server.url, { method: "POST", body: output }))).text(),
+      uploadOfStream: await sent({ body: output.stream() }),
+      uploadWithHeader: await sent({ body: output, headers: { "content-type": "text/plain" } }),
+      blobOfStream: (await new Response(output.stream()).blob()).type,
+    }).toEqual({
+      route: "text/javascript;charset=utf-8",
+      routeOfSlice: "text/javascript;charset=utf-8",
+      routeOfSourcemap: "application/json;charset=utf-8",
+      handlerStream: "text/javascript;charset=utf-8",
+      upload: "text/javascript;charset=utf-8",
+      uploadOfRequest: "text/javascript;charset=utf-8",
+      uploadOfStream: "text/javascript;charset=utf-8",
+      uploadWithHeader: "text/plain",
+      blobOfStream: "text/javascript;charset=utf-8",
+    });
+  });
+
   test.todo("new Response(BuildArtifact) sets etag", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],

@@ -124,6 +124,8 @@ Bun.serve({
 });
 ```
 
+A path segment is a parameter only when it starts with `:`, and the parameter captures the whole segment. A `:` anywhere else in a segment is matched literally, so `/files:batchGet/:id` has a single parameter, `id`. A parameter segment cannot contain a second `:` (for example `/range/:from-:to`); `Bun.serve()` throws for such routes.
+
 Bun automatically decodes percent-encoded route parameter values, including Unicode characters. Bun replaces invalid Unicode with the Unicode replacement character (`\uFFFD`).
 
 ### Static responses

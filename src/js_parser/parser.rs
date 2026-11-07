@@ -1311,9 +1311,6 @@ pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
     pub(crate) is_inside_switch: bool,
     pub(crate) is_outside_fn_or_arrow: bool,
-
-    /// Inside an `async function*`, `return undefined` awaits its operand and
-    /// `return;` does not, so the two are not interchangeable there.
     pub(crate) is_async_generator: bool,
 
     /// This is used to silence unresolvable imports due to "require" calls inside

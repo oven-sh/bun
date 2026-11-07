@@ -143,7 +143,8 @@ bitflags::bitflags! {
         ///
         /// Also if we know a typeof operator was originally an identifier, then
         /// we know that this typeof operator always has no side effects (even if
-        /// we consider the identifier by itself to have a side effect).
+        /// we consider the identifier by itself to have a side effect), unless the
+        /// identifier has `must_keep_due_to_with_stmt`.
         ///
         /// Note that there *is* actually a case where "typeof x" can throw an error:
         /// when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
@@ -420,7 +421,8 @@ impl Identifier {
 
     /// If we're inside a "with" statement, this identifier may be a property
     /// access. In that case it would be incorrect to remove this identifier since
-    /// the property access may be a getter or setter with side effects.
+    /// the property access may be a getter or setter with side effects. A "typeof"
+    /// of it stays too: the lookup alone can run a proxy trap of the object.
     #[inline]
     pub const fn must_keep_due_to_with_stmt(self) -> bool {
         self.ref_.user_bit(0)

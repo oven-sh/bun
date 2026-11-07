@@ -2053,7 +2053,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if let Some(val) = decl.value {
                                 let id_ref = b_id.r#ref;
                                 stmts.push(Stmt::assign(
-                                    Expr::init_identifier(id_ref, decl.binding.loc),
+                                    p.var_store_target(decl.binding.loc, id_ref),
                                     val,
                                 ));
                                 decl.value = None;

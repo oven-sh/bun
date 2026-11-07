@@ -14,11 +14,9 @@ mod tests;
 
 pub use call_sites::{
     RequireCall, RequireCallForm, find_module_printed_as_require, find_require_call,
-    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
+    is_in_with_scope, is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
 };
-pub(crate) use call_sites::{
-    call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
-};
+pub(crate) use call_sites::{call_site_arguments, call_site_kind, is_free_common_js};
 pub use encoders::{ENCODERS, Encoder};
 pub use jsx::{
     AutomaticJsx, JsxCallee, JsxImport, JsxImportSet, JsxMode, KeyAttribute, find_key_attribute,

@@ -88,6 +88,45 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     run: { stdout: `[["arg,dep",1],["arg,dep",9]]` },
   });
+  // A name in a `with` body is looked up on the object first, which can run a
+  // proxy trap. An unused `typeof` of such a name stays, and so does an unused
+  // read of a `var` that the body declares.
+  const withLookupsSource = /* js */ `
+    const lookups = [];
+    const scope = new Proxy({}, {
+      has(target, key) {
+        if (/^[pv][0-9]+$/.test(key)) lookups.push(key);
+        return false;
+      },
+    });
+    function use() {}
+    with (scope) {
+      typeof p1;
+      typeof p2 === "undefined";
+      if (typeof p3) {}
+      use(!typeof p4, void typeof p5, (typeof p6, 0));
+      { var v1; v1; typeof v1; }
+      for (var v2; ; ) { v2; break; }
+      label: do var v3 = 1; while (v3, 0);
+    }
+    console.log(lookups.join(" "));
+  `;
+  itBundled("minify/WithStatementKeepsTypeofAndVarReads", {
+    files: {
+      "/entry.js": withLookupsSource,
+    },
+    format: "cjs",
+    run: { stdout: "p1 p2 p3 p4 p5 p6 v1 v1 v2 v3 v3" },
+  });
+  itBundled("minify/WithStatementKeepsTypeofAndVarReadsMinified", {
+    files: {
+      "/entry.js": withLookupsSource,
+    },
+    format: "cjs",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: { stdout: "p1 p2 p3 p4 p5 p6 v1 v1 v2 v3 v3" },
+  });
   // `bun build --no-bundle` keeps the export names. They were pinned after the
   // reserved names were computed, so a local in a nested function could take
   // one of them and shadow the export it reads.

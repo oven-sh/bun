@@ -2,6 +2,10 @@
 // path. Run with BUN_JSC_validateExceptionChecks=1 on a debug build: any unchecked JSC
 // throw scope kills the process, truncating the expected output.
 
+import { createSecretKey, type webcrypto } from "node:crypto";
+
+type KeyUsage = webcrypto.KeyUsage;
+
 const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, [
   "encrypt",
   "decrypt",
@@ -32,6 +36,24 @@ const thrower = {
   },
 };
 
+const hmac = { name: "HMAC", hash: "SHA-256" };
+const secret = createSecretKey(new Uint8Array(32));
+const boom = (): never => {
+  throw new Error("boom");
+};
+const generateKey = (keyUsages: unknown) => crypto.subtle.generateKey(hmac, false, keyUsages as KeyUsage[]);
+// keyUsages with one entry: `usage` after ToString, or a toString that throws.
+const coerced = (usage: string) => [{ toString: () => usage }] as unknown as KeyUsage[];
+const throwing = [{ toString: boom }] as unknown as KeyUsage[];
+const throwingGetter = (key: PropertyKey) => Object.defineProperty({}, key, { get: boom });
+// An object whose Symbol.iterator is `method`.
+const iterable = (method: () => unknown) => ({ [Symbol.iterator]: method });
+// The `next` of an iterator that gives `usage`, then is done.
+const steps = (usage: string) => {
+  let done = false;
+  return () => (done ? { done, value: undefined } : ((done = true), { done: false, value: usage }));
+};
+
 const cases: Record<string, () => Promise<unknown>> = {
   "encrypt ok": () => crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, new Uint8Array(8)),
   "encrypt bogus": () => crypto.subtle.encrypt(bad, aes, new Uint8Array(8)),
@@ -54,6 +76,29 @@ const cases: Record<string, () => Promise<unknown>> = {
   "generateKey bogus": () => crypto.subtle.generateKey(bad, false, ["sign"]),
   "generateKey nested bogus hash": () => crypto.subtle.generateKey(badHash, false, ["sign"]),
   "generateKey thrower": () => crypto.subtle.generateKey(thrower, false, ["sign"]),
+  // Each way the conversion of keyUsages ends: for an array, for a Set, and for the steps of the iterator protocol.
+  "generateKey usage from toString": () => generateKey(coerced("sign")),
+  "generateKey usage toString throws": () => generateKey(throwing),
+  "generateKey usage not known": () => generateKey(coerced("bogus")),
+  "generateKey usage is a symbol": () => generateKey([Symbol("sign")]),
+  "generateKey usage is a hole": () => generateKey([, "sign"]),
+  "generateKey usages not an object": () => generateKey("sign"),
+  "generateKey usages from a Set": () => generateKey(new Set(["sign"])),
+  "generateKey usages from a Set without an entry": () => generateKey(new Set()),
+  "generateKey usage not known in a Set": () => generateKey(new Set(["bogus"])),
+  "generateKey usages from an iterator": () => generateKey(iterable(() => ({ next: steps("sign") }))),
+  "generateKey usage not known from an iterator": () => generateKey(iterable(() => ({ next: steps("bogus") }))),
+  "generateKey usages not iterable": () => generateKey({}),
+  "generateKey usages Symbol.iterator getter throws": () => generateKey(throwingGetter(Symbol.iterator)),
+  "generateKey usages Symbol.iterator throws": () => generateKey(iterable(boom)),
+  "generateKey usages iterator is not an object": () => generateKey(iterable(() => 1)),
+  "generateKey usages next getter throws": () => generateKey(iterable(() => throwingGetter("next"))),
+  "generateKey usages next is not a function": () => generateKey(iterable(() => ({ next: 1 }))),
+  "generateKey usages next throws": () => generateKey(iterable(() => ({ next: boom }))),
+  "generateKey usages step is not an object": () => generateKey(iterable(() => ({ next: () => 1 }))),
+  "generateKey usages done getter throws": () => generateKey(iterable(() => ({ next: () => throwingGetter("done") }))),
+  "generateKey usages value getter throws": () =>
+    generateKey(iterable(() => ({ next: () => throwingGetter("value") }))),
 
   "deriveKey ok": () => crypto.subtle.deriveKey(pbkdf2, pb, { name: "AES-GCM", length: 256 }, false, ["encrypt"]),
   "deriveKey bogus algorithm": () =>
@@ -122,6 +167,14 @@ const cases: Record<string, () => Promise<unknown>> = {
     crypto.subtle.unwrapKey("raw", new Uint8Array(40), kw, bad, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]),
   "unwrapKey bogus unwrapped type": () =>
     crypto.subtle.unwrapKey("raw", new Uint8Array(40), kw, "AES-KW", bad, false, ["sign"]),
+
+  "toCryptoKey ok": async () => secret.toCryptoKey(hmac, false, ["sign"]),
+  "toCryptoKey bogus": async () => secret.toCryptoKey(bad, false, ["sign"]),
+  "toCryptoKey thrower": async () => secret.toCryptoKey(thrower, false, ["sign"]),
+  "toCryptoKey usage from toString": async () => secret.toCryptoKey(hmac, false, coerced("sign")),
+  "toCryptoKey usage toString throws": async () => secret.toCryptoKey(hmac, false, throwing),
+  "toCryptoKey usage not known": async () => secret.toCryptoKey(hmac, false, coerced("bogus")),
+  "toCryptoKey AES-CFB-8": async () => secret.toCryptoKey("AES-CFB-8", false, coerced("bogus")),
 };
 
 for (const [name, run] of Object.entries(cases)) {

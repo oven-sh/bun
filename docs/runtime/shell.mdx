@@ -431,6 +431,8 @@ for await (let line of $`echo "Hello World!"`.lines()) {
 }
 ```
 
+A newline at the end of the output ends the last line. It does not add an empty line. `.lines()` reads the output after the command exits.
+
 You can also use `.lines()` on a piped command:
 
 ```js

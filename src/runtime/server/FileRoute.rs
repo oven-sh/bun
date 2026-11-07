@@ -3,8 +3,8 @@ use core::mem::size_of;
 
 use bun_core::{StringView, strings};
 use bun_http::{Headers, Method};
-use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
+use bun_http_types::{ETag, HTTPDate};
 use bun_io::Closer;
 use bun_io::FileType;
 use bun_ptr::{RefPtr, ThisPtr};
@@ -509,10 +509,7 @@ pub(crate) fn status_for_preconditions(
             if !ETag::if_match(etag, im) {
                 return 412;
             }
-        } else if let Some(ius) = req
-            .header(b"if-unmodified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
-        {
+        } else if let Some(ius) = req.header(b"if-unmodified-since").and_then(HTTPDate::parse) {
             if let Some(lm) = last_modified_ms {
                 if lm / 1000 > ius / 1000 {
                     return 412;
@@ -530,10 +527,7 @@ pub(crate) fn status_for_preconditions(
                 return 304;
             }
             // Did not match: fall through to Range/200 without consulting IMS.
-        } else if let Some(ims) = req
-            .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
-        {
+        } else if let Some(ims) = req.header(b"if-modified-since").and_then(HTTPDate::parse) {
             // Compare at second precision: the Last-Modified we emit is
             // second-granular (HTTP-date), so a sub-second mtime would never
             // satisfy `<=` against the client's echoed value otherwise.

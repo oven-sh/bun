@@ -600,6 +600,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
 ///
 /// Returns the fake if it is to stay on the property. Returns empty if no fake replaced `dying`, if `under` is a
 /// builtin that is its own fake, or if nothing is left to fake, which an exception can be the reason for.
+#[optimize(size)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__handOver(
     global: &JSGlobalObject,
@@ -667,6 +668,7 @@ extern "C" fn Bun__FakeTimers__handOver(
 /// `vi.unstubAllGlobals()` is about to put back what the first stub of `globalThis[name]` replaced. If a fake was put
 /// on that global after the stub, returns the fake, and sets `replaced` to what the fake replaced: the stub, or a spy
 /// over the stub.
+#[optimize(size)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__takeFromOverStub(
     global: &JSGlobalObject,
@@ -692,6 +694,7 @@ extern "C" fn Bun__FakeTimers__takeFromOverStub(
 /// The end of a test file stubs `globalThis[name]` with `stub` again, for the preload. If `vi.unstubAllGlobals()` took
 /// `stub` from under a fake, it goes back there: the fake replaces `stub`, and this returns what `stub` then replaces.
 /// Returns empty for every other stub.
+#[optimize(size)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__putStubUnder(
     global: &JSGlobalObject,
@@ -1180,6 +1183,7 @@ impl FakeTimers {
     }
 
     /// Nothing is left for the fake of `api` to replace.
+    #[optimize(size)]
     fn forget_replaced(&mut self, global: &JSGlobalObject, api: Api) {
         let Some(index) = self.replaced.iter().position(|replaced| replaced.api == api) else {
             return;
@@ -1192,6 +1196,7 @@ impl FakeTimers {
 
     /// Whether each fake is where `install` put it. A spy or a stub that is undone leaves it there, but a test file can
     /// also write over it.
+    #[optimize(size)]
     fn is_whole(&self, global: &JSGlobalObject) -> bool {
         self.replaced.iter().all(|replaced| {
             let api = replaced.api;

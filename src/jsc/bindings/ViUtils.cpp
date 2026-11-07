@@ -90,7 +90,7 @@ bool stubReplacesWhatSpyReplaced(Zig::GlobalObject* globalObject, const Identifi
 
     auto* originals = uncheckedDowncast<JSMap>(globalObject->mockModule.stubbedGlobals.get());
     JSValue key = identifierToJSValue(vm, name);
-    JSValue original = originals->get(globalObject, key);
+    JSValue original = JSValue::decode(JSC__JSMap__get(originals, globalObject, JSValue::encode(key)));
     RETURN_IF_EXCEPTION(scope, false);
     // The stub replaced the spy if the spy is what unstubAllGlobals() would put back.
     auto* descriptor = original.getObject();
@@ -155,9 +155,9 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
         RETURN_IF_EXCEPTION(scope, );
     }
     // Only a fake timer function and a spy keep what they replaced, and can be over the stub.
-    auto& mocks = defaultGlobalObject(globalObject)->mockModule;
-    if (mocks.fakeTimersAreInstalled || mocks.hasSpiedOnGlobal) [[unlikely]] {
-        bool staysAsItIs = handOverFromStub(defaultGlobalObject(globalObject), name, existed ? &descriptor : nullptr);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (zigGlobalObject->mockModule.fakeTimersAreInstalled || zigGlobalObject->mockModule.hasSpiedOnGlobal) [[unlikely]] {
+        bool staysAsItIs = handOverFromStub(zigGlobalObject, name, existed ? &descriptor : nullptr);
         RETURN_IF_EXCEPTION(scope, );
         if (staysAsItIs)
             return;
@@ -487,13 +487,13 @@ extern "C" JSC::EncodedJSValue ViUtils__replacedByStub(Zig::GlobalObject* global
     auto* originals = uncheckedDowncast<JSC::JSMap>(stubbedGlobals);
     // The map's keys are what vi.stubGlobal() made of its names, so a lookup of this one runs no script.
     JSC::JSValue key = JSC::identifierToJSValue(vm, JSC::Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)));
-    bool isStubbed = originals->has(globalObject, key);
+    bool isStubbed = Bun::hasOriginal(globalObject, originals, key);
     scope.assertNoException();
     if (!isStubbed)
         return {};
-    JSC::JSValue original = originals->get(globalObject, key);
+    JSC::JSValue original = JSC::JSValue::decode(JSC__JSMap__get(originals, globalObject, JSC::JSValue::encode(key)));
     scope.assertNoException();
-    auto* descriptor = original.getObject();
+    auto* descriptor = original ? original.getObject() : nullptr;
     JSC::JSValue replaced = descriptor ? descriptor->getDirect(vm, vm.propertyNames->value) : JSC::JSValue();
     return JSC::JSValue::encode(replaced ? replaced : JSC::jsUndefined());
 }

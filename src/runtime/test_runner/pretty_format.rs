@@ -569,21 +569,6 @@ impl bun_io::Write for CountedWriter<'_> {
     }
 }
 
-struct ExpectedText<'a> {
-    rest: &'a [u8],
-    differs: &'a core::cell::Cell<bool>,
-}
-
-impl bun_io::Write for ExpectedText<'_> {
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        match self.rest.strip_prefix(buf) {
-            Some(rest) => self.rest = rest,
-            None => self.differs.set(true),
-        }
-        Ok(())
-    }
-}
-
 impl JestPrettyFormat {
     /// Prints Bun's own snapshot format.
     fn bun_formatter(global: &JSGlobalObject) -> console_object::Formatter<'_> {
@@ -635,8 +620,12 @@ impl JestPrettyFormat {
                 return Ok(true);
             }
         }
-        if let Some(differs) = formatter.snapshot.like_older_bun {
-            formatter.failed |= differs.get();
+        if let Some(saved) = formatter.snapshot.like_older_bun {
+            formatter.failed |= saved.differs.get();
+            if matches!(tag, Tag::Object) && Self::is_node_vm_global_proxy_of_bun_1_4_4(global, saved, value)? {
+                let _ = writer.write_all(b"NodeVMGlobalProxy {}");
+                return Ok(true);
+            }
         } else if matches!(tag, Tag::Object | Tag::Array | Tag::JSON) {
             match super::dom_format::print_in_bun_snapshot(formatter, writer, value) {
                 Ok(false) => {}
@@ -650,15 +639,28 @@ impl JestPrettyFormat {
     }
 
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
-    /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// The older forms are those of the last release before each print changed: DOM nodes as plain objects, accessors as `[native code]`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
-        let differs = core::cell::Cell::new(false);
-        let mut expected = ExpectedText { rest: saved, differs: &differs };
+        let expected =
+            console_object::SavedText { rest: core::cell::Cell::new(saved), differs: core::cell::Cell::new(false) };
         let mut formatter = Self::bun_formatter(global);
-        formatter.snapshot.like_older_bun = Some(&differs);
-        formatter.format_value::<false>(value, &mut expected)?;
-        Ok(!differs.get() && expected.rest.is_empty())
+        formatter.snapshot.like_older_bun = Some(&expected);
+        formatter.format_value::<false>(value, &mut &expected)?;
+        Ok(!expected.differs.get() && expected.rest.get().is_empty())
+    }
+
+    /// Bun 1.4.4 had the class `NodeVMGlobalProxy` for the global of a `node:vm` context, whose name is `JSGlobalProxy` now.
+    #[cold]
+    fn is_node_vm_global_proxy_of_bun_1_4_4(
+        global: &JSGlobalObject,
+        saved: &console_object::SavedText<'_>,
+        value: JSValue,
+    ) -> JsResult<bool> {
+        Ok(saved.rest.get().starts_with(b"NodeVMGlobalProxy {}")
+            && value.js_type() == JSType::GlobalProxy
+            && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject")
+            && value.get_class_name(global)?.eq_ascii(b"JSGlobalProxy"))
     }
 
     /// Returns true if an older Bun would have printed the same text, so `did_older_bun_print` can be skipped.

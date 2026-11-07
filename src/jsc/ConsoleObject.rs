@@ -1447,7 +1447,7 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
+pub use formatter::{Formatter, SavedText, Tag, TagOptions, TagPayload, TagResult, visited};
 
 pub mod formatter {
     use super::*;
@@ -1547,6 +1547,34 @@ pub mod formatter {
         };
     }
 
+    /// The text an older Bun saved for a snapshot. Printing the value the way that Bun did consumes it.
+    pub struct SavedText<'a> {
+        pub rest: core::cell::Cell<&'a [u8]>,
+        /// Turns true once the output has diverged, and stays true.
+        pub differs: core::cell::Cell<bool>,
+    }
+
+    impl bun_io::Write for &SavedText<'_> {
+        fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+            match self.rest.get().strip_prefix(buf) {
+                Some(rest) => self.rest.set(rest),
+                None => self.differs.set(true),
+            }
+            Ok(())
+        }
+    }
+
+    impl SavedText<'_> {
+        /// Bun 1.4.4 named a class that native code makes `Function` (`URL`, a mock function), but a few by their own name (`Bun.Cookie`).
+        #[cold]
+        fn names_it_function(&self, class: JSValue, as_function: &[u8]) -> bool {
+            self.rest.get().starts_with(as_function)
+                && class
+                    .get_class_info_name()
+                    .is_some_and(|name| name != b"Function")
+        }
+    }
+
     /// What `bun:test` adds to [`Formatter::is_snapshot`]. The `Formatter` is on the stack, which roots the values.
     #[derive(Clone, Copy)]
     pub struct Snapshot<'a> {
@@ -1564,8 +1592,8 @@ pub mod formatter {
         pub config: Option<JSValue>,
         /// Bytes copied between buffers so far.
         pub copied: usize,
-        /// Print what older versions of Bun printed. The cell turns true once the output has diverged, so printing can stop.
-        pub like_older_bun: Option<&'a core::cell::Cell<bool>>,
+        /// Print what older versions of Bun printed. Printing can stop once the output has diverged from the saved text.
+        pub like_older_bun: Option<&'a SavedText<'a>>,
         pub same_as_older_bun: bool,
         /// Bytes written so far. Only failure messages track it.
         pub output_length: Option<&'a core::cell::Cell<usize>>,
@@ -1582,6 +1610,27 @@ pub mod formatter {
                 same_as_older_bun: true,
                 output_length: None,
             }
+        }
+    }
+
+    impl Snapshot<'_> {
+        /// The name in `[class Name]` and in `Any<Name>`. `as_function` is the text that follows if the name is `Function`.
+        pub fn class_name(
+            &mut self,
+            global: &JSGlobalObject,
+            class: JSValue,
+            as_function: &[u8],
+        ) -> JsResult<BunString> {
+            if class.js_type() == jsc::JSType::InternalFunction {
+                match self.like_older_bun {
+                    Some(saved) if saved.names_it_function(class, as_function) => {
+                        return Ok(BunString::static_("Function"));
+                    }
+                    Some(_) => {}
+                    None => self.same_as_older_bun = false,
+                }
+            }
+            class.get_class_name(global)
         }
     }
 
@@ -4130,17 +4179,8 @@ pub mod formatter {
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
             let printable = if self.is_snapshot {
-                // Older versions printed a mock function, `URL` and the like as `[class Function]`.
-                let was_function = value.js_type() == jsc::JSType::InternalFunction
-                    && value
-                        .get_class_info_name()
-                        .is_some_and(|name| name != b"Function");
-                if was_function && self.snapshot.like_older_bun.is_some() {
-                    BunString::static_("Function")
-                } else {
-                    self.snapshot.same_as_older_bun &= !was_function;
-                    value.get_class_name(self.global_this)?
-                }
+                self.snapshot
+                    .class_name(self.global_this, value, b"[class Function]")?
             } else {
                 value.get_name(self.global_this)?
             };

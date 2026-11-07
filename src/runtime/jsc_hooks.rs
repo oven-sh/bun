@@ -2039,12 +2039,21 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         Ok(true)
     }
+    // Bun 1.1.43 to 1.4.4 printed a `Response` and a `BuildArtifact` in a snapshot, and then the same value again as an object.
+    fn is_printed_again_as_object(formatter: &mut bun_jsc::Formatter<'_>) -> bool {
+        if formatter.is_snapshot && formatter.snapshot.like_older_bun.is_none() {
+            formatter.snapshot.same_as_older_bun = false;
+        }
+        formatter.snapshot.like_older_bun.is_some()
+    }
     let global = formatter.global_this;
 
     if let Some(response) = value.as_class_ref::<Response>() {
         let mut w = AsFmt::new(writer_);
         let result = response.write_format::<_, _, C>(formatter, &mut w);
-        return rethrow_pending(global, result.is_err());
+        return Ok(
+            rethrow_pending(global, result.is_err())? && !is_printed_again_as_object(formatter)
+        );
     }
     if let Some(request) = value.as_class_ref::<Request>() {
         let mut w = AsFmt::new(writer_);
@@ -2054,7 +2063,9 @@ fn console_print_runtime_object_inner<const C: bool>(
     if let Some(build) = value.as_class_ref::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
         let result = build.write_format::<_, _, C>(value, formatter, &mut w);
-        return rethrow_pending(global, result.is_err());
+        return Ok(
+            rethrow_pending(global, result.is_err())? && !is_printed_again_as_object(formatter)
+        );
     }
     if let Some(blob) = value.as_class_ref::<Blob>() {
         let mut w = AsFmt::new(writer_);

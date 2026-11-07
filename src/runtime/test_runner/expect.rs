@@ -2745,7 +2745,11 @@ pub(crate) fn print_asymmetric_matcher<const ENABLE_ANSI_COLORS: bool>(
 
         print_label(formatter, writer, matcher.flags, "Any<", "NotAny<");
 
-        let class_name = constructor_value.get_class_name(formatter.global_this)?;
+        let class_name = if formatter.is_snapshot {
+            formatter.snapshot.class_name(formatter.global_this, constructor_value, b"Function>")?
+        } else {
+            constructor_value.get_class_name(formatter.global_this)?
+        };
         formatter.add_for_new_line(class_name.length() + 1);
         let (cyan, reset) = if ENABLE_ANSI_COLORS {
             (bun_core::pretty_fmt!("<cyan>", true), bun_core::pretty_fmt!("<r>", true))

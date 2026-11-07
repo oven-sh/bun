@@ -121,11 +121,10 @@ fn parse_async_args<A: FsArgument>(
     let args = A::from_js_async(global, &mut slice)?;
 
     if A::HAVE_ABORT_SIGNAL {
-        if let Some(abort_error) = args
-            .signal()
-            .and_then(|signal| signal.node_abort_error_if_aborted(global))
-        {
-            return Ok(ParsedAsyncArgs::Rejected(abort_error));
+        if let Some(signal) = args.signal() {
+            if let Some(abort_error) = signal.node_abort_error_if_aborted(global)? {
+                return Ok(ParsedAsyncArgs::Rejected(abort_error));
+            }
         }
     }
     if let Some(err) = slice.deferred_error.take() {

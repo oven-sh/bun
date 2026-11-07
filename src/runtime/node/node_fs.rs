@@ -181,6 +181,7 @@ mod node {
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
 use super::util::validators;
+use super::util::validators::AbortSignalOption;
 
 // Trait imports for inherent-looking method calls on upstream types:
 //   - `bun_sys::FdExt`       → `Fd::close()`
@@ -1381,7 +1382,12 @@ mod _async_tasks {
             // SAFETY: parsed with `will_be_async`.
             Ok(unsafe { ThreadIsolated::new(args) })
         }
-        fn signal(&self) -> Option<&AbortSignal> {
+        /// `options.signal` of an async call. The JS thread asks it before the task is scheduled.
+        fn signal(&self) -> Option<&args::FileSignal> {
+            None
+        }
+        /// Takes the signal out. `AsyncFSTask::then` asks it once more, after it has dropped the arguments.
+        fn take_signal(&mut self) -> Option<args::FileSignal> {
             None
         }
         /// Runs on the JS thread before the result reaches JS. See [`PinnedArrayBuffer::write_back`].
@@ -1474,10 +1480,10 @@ mod _async_tasks {
             self.buffers.write_back(bytes_read as usize);
         }
     }
-    // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
-    // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
-    // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
-    // SAFETY: as for `impl_fs_argument!`; the `AbortSignal` ref is thread-safe.
+    // `ReadFile`, `WriteFile` and `AppendFile` carry `options.signal` (`args::FileSignal`). `parse_async_args` asks it
+    // through `signal()`, `AsyncFSTask::then` through `take_signal()`.
+    // SAFETY: as for `impl_fs_argument!`; the `AbortSignal` ref is thread-safe. A signal that is no `AbortSignal`
+    // is GC-protected, and only the JS thread reads and drops it.
     unsafe impl ThreadIsolatedArg for args::ReadFile<'static> {}
     // SAFETY: see above.
     unsafe impl ThreadIsolatedArg for args::WriteFile<'static> {}
@@ -1490,8 +1496,12 @@ mod _async_tasks {
             args::ReadFile::from_js(ctx, arguments)
         }
         #[inline]
-        fn signal(&self) -> Option<&AbortSignal> {
-            self.signal.as_deref()
+        fn signal(&self) -> Option<&args::FileSignal> {
+            self.signal.as_ref()
+        }
+        #[inline]
+        fn take_signal(&mut self) -> Option<args::FileSignal> {
+            self.signal.take()
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.path), None]
@@ -1504,8 +1514,12 @@ mod _async_tasks {
             args::WriteFile::from_js(ctx, arguments)
         }
         #[inline]
-        fn signal(&self) -> Option<&AbortSignal> {
-            self.signal.as_deref()
+        fn signal(&self) -> Option<&args::FileSignal> {
+            self.signal.as_ref()
+        }
+        #[inline]
+        fn take_signal(&mut self) -> Option<args::FileSignal> {
+            self.signal.take()
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.file), None]
@@ -1519,8 +1533,12 @@ mod _async_tasks {
                 .map(args::AppendFile)
         }
         #[inline]
-        fn signal(&self) -> Option<&AbortSignal> {
-            self.0.signal.as_deref()
+        fn signal(&self) -> Option<&args::FileSignal> {
+            self.0.signal.as_ref()
+        }
+        #[inline]
+        fn take_signal(&mut self) -> Option<args::FileSignal> {
+            self.0.signal.take()
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.0.file), None]
@@ -1826,20 +1844,25 @@ mod _async_tasks {
             };
             completion.ensure_still_alive();
 
-            let aborted = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
-                this.args
-                    .signal()
-                    .and_then(|signal| signal.node_abort_error_if_aborted(global_object))
+            let signal = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
+                this.args.take_signal()
             } else {
                 None
             };
 
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            // Asking a signal that is no `AbortSignal` of Bun's runs code of the program too, so that comes after the drop.
             drop(this);
 
+            let aborted = match signal {
+                Some(signal) => signal.node_abort_error_if_aborted(global_object),
+                None => Ok(None),
+            };
             match aborted {
-                Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
-                None => completion.settle(global_object, converted, success),
+                Ok(None) => completion.settle(global_object, converted, success),
+                Ok(Some(abort_error)) => completion.reject(global_object, Ok(abort_error)),
+                // A getter of the signal threw.
+                Err(error) => completion.reject(global_object, Err(error)),
             }
         }
     }
@@ -1849,11 +1872,7 @@ mod _async_tasks {
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        /// NewAsyncFSTask supports cancelable operations via AbortSignal,
-        /// so long as a "signal" field exists. The task wrapper will ensure
-        /// a promise rejection happens if signaled, but if `function` is
-        /// already called, no guarantees are made. It is recommended for
-        /// the functions to check .signal.aborted() for early returns.
+        /// `then` rejects with an `AbortError` if `options.signal` is aborted by the time the operation completes.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
         /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
@@ -4481,22 +4500,71 @@ pub(crate) mod args {
         }
     }
 
-    /// Node's sync forms only type-check `options.signal`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L340-L342
-    #[inline(always)]
+    /// `options.signal` of an async `readFile`, `writeFile` or `appendFile`.
+    pub(crate) enum FileSignal {
+        /// An `AbortSignal` of Bun's, with a ref and a pending activity. Any thread reads its flag.
+        Native(AbortSignalRef),
+        /// Any other object that has `aborted`. Reading it runs code of the program, so only the JS thread does.
+        NonNative(bun_jsc::Protected),
+    }
+    impl FileSignal {
+        /// What a thread of the pool can know.
+        pub(crate) fn aborted(&self) -> bool {
+            match self {
+                Self::Native(signal) => signal.aborted(),
+                Self::NonNative(_) => false,
+            }
+        }
+
+        /// Node's `checkAborted`, for the JS thread: an `AbortError` whose `cause` is `signal.reason`.
+        pub(crate) fn node_abort_error_if_aborted(
+            &self,
+            global: &JSGlobalObject,
+        ) -> JsResult<Option<JSValue>> {
+            match self {
+                Self::Native(signal) => Ok(signal.node_abort_error_if_aborted(global)),
+                Self::NonNative(signal) => {
+                    let signal = signal.value();
+                    let aborted = signal.get(global, "aborted")?;
+                    if !aborted.is_some_and(JSValue::to_boolean) {
+                        return Ok(None);
+                    }
+                    let reason = signal.get(global, "reason")?.unwrap_or(JSValue::UNDEFINED);
+                    Ok(Some(AbortSignal::node_abort_error(global, reason)))
+                }
+            }
+        }
+    }
+    impl Drop for FileSignal {
+        fn drop(&mut self) {
+            if let Self::Native(signal) = self {
+                signal.pending_activity_unref();
+            }
+        }
+    }
+
+    /// As Node's `getOptions` checks it, so a sync parse keeps none. Bun only: null and "" are not given.
+    #[inline]
     fn signal_option(
         ctx: &JSGlobalObject,
-        value: JSValue,
+        options: JSValue,
         will_be_async: bool,
-    ) -> JsResult<Option<AbortSignalRef>> {
-        let Some(signal) = AbortSignal::from_js(value) else {
-            return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
+    ) -> JsResult<Option<FileSignal>> {
+        let Some(value) = options.fast_get_truthy(ctx, bun_jsc::BuiltinName::signal)? else {
+            return Ok(None);
         };
+        let signal = validators::validate_abort_signal(ctx, value)?;
         if !will_be_async {
             return Ok(None);
         }
-        let signal = AbortSignal::opaque_ref(signal).ref_();
-        signal.pending_activity_ref();
-        Ok(Some(signal))
+        Ok(Some(match signal {
+            AbortSignalOption::Native(signal) => {
+                let signal = signal.ref_();
+                signal.pending_activity_ref();
+                FileSignal::Native(signal)
+            }
+            AbortSignalOption::NonNative => FileSignal::NonNative(bun_jsc::Protected::new(value)),
+        }))
     }
 
     /// Asynchronously reads the entire contents of a file.
@@ -4511,7 +4579,7 @@ pub(crate) mod args {
         pub(crate) max_size: Option<BlobSizeType>,
         pub(crate) limit_size_for_javascript: bool,
         pub(crate) flag: FileSystemFlags,
-        pub(crate) signal: Option<AbortSignalRef>,
+        pub(crate) signal: Option<FileSignal>,
     }
     impl Default for ReadFile<'_> {
         fn default() -> Self {
@@ -4523,14 +4591,6 @@ pub(crate) mod args {
                 limit_size_for_javascript: false,
                 flag: FileSystemFlags::R,
                 signal: None,
-            }
-        }
-    }
-    impl Drop for ReadFile<'_> {
-        fn drop(&mut self) {
-            // Release the AbortSignal ref taken in `from_js`.
-            if let Some(signal) = self.signal.take() {
-                signal.pending_activity_unref();
             }
         }
     }
@@ -4548,11 +4608,7 @@ pub(crate) mod args {
             })?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
-            let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s {
-                    signal.pending_activity_unref(); /* unref via Drop */
-                }
-            });
+            let mut signal = None;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
                 if arg.is_string() {
@@ -4562,28 +4618,22 @@ pub(crate) mod args {
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        *abort_signal = signal_option(ctx, value, arguments.will_be_async)?;
-                    }
+                    signal = signal_option(ctx, arg, arguments.will_be_async)?;
                 }
             }
-            let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(ReadFile {
                 path,
                 encoding,
                 flag,
                 limit_size_for_javascript: true,
-                signal: abort_signal,
+                signal,
                 ..Default::default()
             })
         }
     }
     impl ReadFile<'_> {
         pub(crate) fn aborted(&self) -> bool {
-            if let Some(signal) = &self.signal {
-                return signal.aborted();
-            }
-            false
+            self.signal.as_ref().is_some_and(FileSignal::aborted)
         }
     }
 
@@ -4595,15 +4645,7 @@ pub(crate) mod args {
         /// Encoded at the time of construction.
         pub(crate) data: StringOrBuffer<'a>,
         pub(crate) dirfd: FD,
-        pub(crate) signal: Option<AbortSignalRef>,
-    }
-    impl Drop for WriteFile<'_> {
-        fn drop(&mut self) {
-            // Release the AbortSignal ref taken in `from_js`.
-            if let Some(signal) = self.signal.take() {
-                signal.pending_activity_unref();
-            }
-        }
+        pub(crate) signal: Option<FileSignal>,
     }
     impl WriteFile<'static> {
         pub(crate) fn from_js(
@@ -4630,11 +4672,7 @@ pub(crate) mod args {
             let mut encoding = Encoding::Buffer;
             let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
-            let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s {
-                    signal.pending_activity_unref(); /* unref via Drop */
-                }
-            });
+            let mut signal = None;
             let mut flush = false;
             if data_value.is_string() {
                 encoding = Encoding::Utf8;
@@ -4651,9 +4689,7 @@ pub(crate) mod args {
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        *abort_signal = signal_option(ctx, value, arguments.will_be_async)?;
-                    }
+                    signal = signal_option(ctx, arg, arguments.will_be_async)?;
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
@@ -4674,24 +4710,20 @@ pub(crate) mod args {
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
-            let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {
                 file: path,
                 flag,
                 mode,
                 data,
                 dirfd: FD::cwd(),
-                signal: abort_signal,
+                signal,
                 flush,
             })
         }
     }
     impl WriteFile<'_> {
         pub(crate) fn aborted(&self) -> bool {
-            if let Some(signal) = &self.signal {
-                return signal.aborted();
-            }
-            false
+            self.signal.as_ref().is_some_and(FileSignal::aborted)
         }
     }
 

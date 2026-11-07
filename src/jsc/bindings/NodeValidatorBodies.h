@@ -212,6 +212,20 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validatePort(JSC:
     return JSValue::encode(jsNumber(static_cast<int32_t>(port_num)));
 }
 
+// Node's validateAbortSignal for a value that is no AbortSignal of Bun's. False: it threw Node's error, or a trap of a proxy threw.
+template<typename NameOf> ALWAYS_INLINE bool validateNonNativeAbortSignal(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue signal, const NameOf& nameOf)
+{
+    auto* object = signal.getObject();
+    bool isSignal = object && !object->isCallable() && object->hasProperty(globalObject, Identifier::fromString(JSC::getVM(globalObject), "aborted"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isSignal) return true;
+
+    WTF::String name = nameOf();
+    RETURN_IF_EXCEPTION(scope, false);
+    Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "AbortSignal"_s, signal);
+    return false;
+}
+
 template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validateAbortSignal(JSC::JSGlobalObject* globalObject, const Arguments& arguments)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -220,16 +234,8 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validateAbortSign
     JSValue signal = arguments.at(0);
     JSValue name = arguments.at(1);
 
-    if (!signal.isUndefined()) {
-        auto* object = signal.getObject();
-        if (!object) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
-        if (object->inherits<WebCore::JSAbortSignal>()) {
-            return JSValue::encode(jsUndefined());
-        }
-
-        auto propin = object->hasProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!propin) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
+    if (!signal.isUndefined() && !signal.inherits<WebCore::JSAbortSignal>()) {
+        if (!validateNonNativeAbortSignal(scope, globalObject, signal, [&] { return name.toWTFString(globalObject); })) return {};
     }
 
     return JSValue::encode(jsUndefined());

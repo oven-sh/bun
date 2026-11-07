@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{self as jsc, AbortSignal, JSGlobalObject, JSValue, JsError, JsResult};
 
 #[cold]
 pub(crate) fn throw_err_invalid_arg_value(
@@ -401,6 +401,27 @@ pub(crate) fn validate_function(
         return Err(global.throw_invalid_argument_type_value(name, "function", value));
     }
     Ok(value)
+}
+
+/// What Node's `validateAbortSignal` takes for a signal.
+pub(crate) enum AbortSignalOption<'a> {
+    /// An `AbortSignal` of Bun's, borrowed from the value. Native code reads it on any thread.
+    Native(&'a AbortSignal),
+    /// Any other object that has `aborted`: a polyfill, the signal of happy-dom or jsdom.
+    NonNative,
+}
+
+/// Node's `validateAbortSignal(value, "options.signal")` for a `value` that is not `undefined`.
+#[inline]
+pub(crate) fn validate_abort_signal<'a>(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<AbortSignalOption<'a>> {
+    if let Some(signal) = AbortSignal::from_js(value) {
+        return Ok(AbortSignalOption::Native(AbortSignal::opaque_ref(signal)));
+    }
+    jsc::cpp::Bun__validateNonNativeAbortSignal(global, value)?;
+    Ok(AbortSignalOption::NonNative)
 }
 
 /// Rust has no field reflection; enums opt in via this trait.

@@ -439,6 +439,8 @@ const r2WithEndpoint = new S3Client({
 });
 ```
 
+With `virtualHostedStyle`, the `bucket` property of a file is the `bucket` option when you set one. Otherwise Bun reads the bucket from the hostname of the endpoint, for hostnames of the two forms above. For any other hostname, for example a custom domain, the property is `undefined`.
+
 ---
 
 ## Credentials

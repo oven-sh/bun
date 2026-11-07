@@ -125,8 +125,9 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-/// 5: Added the `name_detached` byte, so a view of a File has no name after a clone
-const SERIALIZATION_VERSION: u8 = 5;
+/// 5: The layout of 4, written only for a view of a File (`name_detached`). An older Bun reads it as 4.
+const SERIALIZATION_VERSION: u8 = 4;
+const SERIALIZATION_VERSION_NAME_DETACHED: u8 = 5;
 
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
 use crate::generated_bindgen::blob::{
@@ -639,7 +640,11 @@ impl BlobExt for Blob {
             false
         };
 
-        writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
+        writer.write_int_le::<u8>(if self.name_detached.get() {
+            SERIALIZATION_VERSION_NAME_DETACHED
+        } else {
+            SERIALIZATION_VERSION
+        })?;
         writer.write_int_le::<u64>(if is_memory_backed {
             0
         } else {
@@ -696,8 +701,6 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(0)?;
             }
         }
-
-        writer.write_int_le::<u8>(self.name_detached.get() as u8)?;
         Ok(())
     }
     fn from_url_search_params(
@@ -3684,11 +3687,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             break 'versions;
         }
 
-        if version == 4 {
-            break 'versions;
-        }
-
-        blob.name_detached.set(reader.read_int_le::<u8>()? != 0);
+        blob.name_detached
+            .set(version == SERIALIZATION_VERSION_NAME_DETACHED);
     }
 
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot

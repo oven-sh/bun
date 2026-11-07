@@ -1166,7 +1166,15 @@ describe("a Blob made from a File is a plain Blob", () => {
     expect([wrapped.name, structuredClone(wrapped).name]).toEqual(["public.csv", "public.csv"]);
   });
 
-  test("a File record serialized before version 5 still deserializes", async () => {
+  test("only a view of a File changes the record: its version is 5, with the layout of version 4", () => {
+    const type = "application/pdf";
+    const view = Buffer.from(serialize(makeFile().slice(0, 5)));
+    const plain = Buffer.from(serialize(new Blob(["0123456789"], { type }).slice(0, 5)));
+    const differing = [...plain.keys()].filter(i => plain[i] !== view[i]).map(i => [plain[i], view[i]]);
+    expect({ sameLength: plain.length === view.length, differing }).toEqual({ sameLength: true, differing: [[4, 5]] });
+  });
+
+  test("a version 4 File record deserializes", async () => {
     // A version 4 record of new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 }).
     const version4 = Buffer.from(
       "0e000000fe0400000000000000000f0000006170706c69636174696f6e2f70646601010a000000" +

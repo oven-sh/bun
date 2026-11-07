@@ -452,13 +452,13 @@ Bun formats a `test.for` or `describe.for` title the way Vitest does. The main d
 | `$name`, and the row has no `name` property        | left as is                    | `undefined`                                                                   |
 | `$#`                                               | the test case's index         | left as is. Use `%#`                                                          |
 | `$0`, `$1` with an array row                       | left as is                    | the row's first and second value                                              |
-| A row that is `null` or `undefined`                | one value: `%s` prints `null` | no value: `%s` prints `undefined`                                             |
+| A row that is `null`                               | one value: `%s` prints `null` | no value: `%s` prints `undefined`                                             |
 
-A value that is cut short shows how many entries it leaves out. With `%o`, an array of the numbers 0 to 29 prints as `[ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(20) ]`.
+An object or array that is cut short shows how many entries it leaves out. With `%o`, an array of the numbers 0 to 29 prints as `[ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(20) ]`.
 
 In a `test.for` title, write a single `%` to print a percent sign, as in `100% of %i`. A `%` that isn't part of a specifier is printed as is.
 
-`test.each` and `describe.each` from `"vitest"` print what the `test.for` column shows. The exception is the last row: for them, a row that is `null` or `undefined` is one value.
+`test.each` and `describe.each` from `"vitest"` print what the `test.for` column shows. The exception is the last row: for them, a `null` row is one value.
 
 ## Fixtures
 
@@ -710,7 +710,7 @@ describe("math", () => {
 | `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
 | `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
 
-When a test runs [concurrently](/test#concurrent-test-execution) with other tests, `expect` can't tell which test called it. `currentTestName` is then `undefined`, in `expect.getState()` and on `this` in a custom matcher. The three assertion properties stay at `0`, `null` and `false`. The `expect` of the [test context](#test-context) knows its test, so use that one in concurrent tests.
+When a test runs [concurrently](/test#concurrent-test-execution) with other tests, `expect` can't tell which test called it. `currentTestName` is then `undefined`, in `expect.getState()` and on `this` in a custom matcher. The three assertion properties stay at `0`, `null` and `false`. The `expect` of the [test context](#test-context) knows its test, so use that one in concurrent tests. Every `getState()` call returns the same object, so copy the values you need before the next `await`.
 
 `expect.setState(state)` merges your own properties into the object `expect.getState()` returns. It can also set the three assertion properties above. Custom matchers don't get your own properties on `this`.
 

@@ -1705,7 +1705,8 @@ declare module "bun:test" {
      *
      * When a test runs concurrently with other tests, `expect` can't tell which test called it.
      * `currentTestName` is then `undefined`, and the three counters stay at `0`, `null` and `false`.
-     * The `expect` of the {@link TestContext} knows its test.
+     * The `expect` of the {@link TestContext} knows its test. Its `getState()` writes into the same object,
+     * so copy the values you need before the next `await`.
      */
     getState(): ExpectState & Record<string, unknown>;
 
@@ -1725,7 +1726,8 @@ declare module "bun:test" {
     /**
      * The enclosing `describe` blocks' names and the current test's name, joined by a space.
      *
-     * `undefined` outside a test, and in a test that runs concurrently with other tests.
+     * `undefined` outside a test. In a test that runs concurrently with other tests, it is `undefined`
+     * unless you read it through the `expect` of the {@link TestContext}.
      */
     currentTestName?: string;
     /** The number passed to `expect.assertions()`, if it was called in the current test. */

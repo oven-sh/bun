@@ -511,6 +511,102 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  // `${` in a JS template literal starts an interpolation, so the sources
+  // here go to the parser as a raw array.
+  describe("${...}", () => {
+    const cmd = (source: string) => JSON.parse(parse({ raw: [source] })).stmts[0].exprs[0].cmd;
+    const args = (source: string) => cmd("echo " + source).name_and_args.slice(1);
+    const compound = (atoms: object[], glob_hint = false) => ({
+      compound: { atoms, brace_expansion_hint: false, glob_hint },
+    });
+    const param = (name: string, op: string, word: object[]) => ({ param: { name, op, word } });
+
+    test("${NAME} is the atom of $NAME", () => {
+      expect(args("${X} ${1} a${X}b")).toEqual([
+        { simple: { Var: "X" } },
+        { simple: { VarArgv: 1 } },
+        compound([{ Text: "a" }, { Var: "X" }, { Text: "b" }]),
+      ]);
+    });
+
+    test.each([":-", "-", ":+", "+", ":=", "=", ":?", "?"])("${NAME%sword}", op => {
+      expect(args("${X" + op + "a}")).toEqual([{ simple: param("X", op, [{ Text: "a" }]) }]);
+    });
+
+    test("the parameter, the quotes and the parts of the word", () => {
+      expect(args('"${1:?no $Y}" a${X:-}b ${X:-\'\'"q"$(echo) c}')).toEqual([
+        { simple: { param: { argv: 1, op: ":?", word: [{ Text: "no " }, { Var: "Y" }] } } },
+        compound([{ Text: "a" }, param("X", ":-", []), { Text: "b" }]),
+        {
+          simple: param("X", ":-", [
+            { quoted_empty: {} },
+            { Text: "q" },
+            { cmd_subst: { script: { stmts: [{ exprs: [{ cmd: cmd("echo") }] }] }, quoted: false } },
+            { param_space: " " },
+            { Text: "c" },
+          ]),
+        },
+      ]);
+    });
+
+    test("a * in the word gives the atom the glob hint", () => {
+      expect(args("${X:-*} x${Y:+${X:-a **}} ${X:-a b}")).toEqual([
+        compound([param("X", ":-", [{ asterisk: {} }])], true),
+        compound(
+          [
+            { Text: "x" },
+            param("Y", ":+", [param("X", ":-", [{ Text: "a" }, { param_space: " " }, { double_asterisk: {} }])]),
+          ],
+          true,
+        ),
+        { simple: param("X", ":-", [{ Text: "a" }, { param_space: " " }, { Text: "b" }]) },
+      ]);
+      expect(args('"${X:-a b}" "${X:-*}"')).toEqual([
+        { simple: param("X", ":-", [{ Text: "a b" }]) },
+        { simple: param("X", ":-", [{ Text: "*" }]) },
+      ]);
+    });
+
+    // As in sh: the `~` is `$HOME` when it is the whole word or a `/` follows it.
+    test("a tilde starts the word", () => {
+      expect(args("${X:-~} ${X:-~/a~} ${X:=~}")).toEqual([
+        { simple: param("X", ":-", [{ tilde: {} }]) },
+        { simple: param("X", ":-", [{ tilde: {} }, { Text: "/a~" }]) },
+        { simple: param("X", ":=", [{ tilde: {} }]) },
+      ]);
+      expect(args('${X:-a~} ${X:-~a} ${X:-~$Y} ${X:-~ a} ${X:-~""} ${X:-~"/a"} "${X:-~}"')).toEqual([
+        { simple: param("X", ":-", [{ Text: "a~" }]) },
+        { simple: param("X", ":-", [{ Text: "~a" }]) },
+        { simple: param("X", ":-", [{ Text: "~" }, { Var: "Y" }]) },
+        { simple: param("X", ":-", [{ Text: "~" }, { param_space: " " }, { Text: "a" }]) },
+        { simple: param("X", ":-", [{ Text: "~" }, { quoted_empty: {} }]) },
+        { simple: param("X", ":-", [{ Text: "~" }, { Text: "/a" }]) },
+        { simple: param("X", ":-", [{ Text: "~" }]) },
+      ]);
+    });
+
+    test("in an assignment value and a redirect target", () => {
+      const parsed = cmd("A=${X:-a} B=b${X:+c} echo > ${Y:-f}");
+      expect(parsed.assigns).toEqual([
+        { label: "A", value: { simple: param("X", ":-", [{ Text: "a" }]) } },
+        { label: "B", value: compound([{ Text: "b" }, param("X", ":+", [{ Text: "c" }])]) },
+      ]);
+      expect(parsed.redirect_file).toEqual({ atom: { simple: param("Y", ":-", [{ Text: "f" }]) } });
+    });
+
+    // A form whose word does not parse makes the parser read the script with every `${` as text.
+    test("a script that does not parse with a form is parsed as text", () => {
+      const source = "A=${X:-a; echo b} > f";
+      expect(JSON.parse(parse({ raw: [source] })).stmts[0].exprs[0].assign).toEqual([
+        { label: "A", value: compound([{ Text: "$" }, { brace_begin: {} }, { Text: "X:-a" }]) },
+      ]);
+      // With a `?` form in the script, the error of the pass that read the forms is the result.
+      expect(() => parse({ raw: ["echo ${G?}; " + source] })).toThrow(
+        'expected a command or assignment but got: "Redirect"',
+      );
+    });
+  });
+
   describe("if_clause", () => {
     test("basic", () => {
       const expected = {

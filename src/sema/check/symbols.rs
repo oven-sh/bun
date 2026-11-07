@@ -2281,33 +2281,25 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getUndefinedProperty`. It's created once per name, from the first property it's requested
-    /// for, and keeps that property's declarations.
+    /// `getUndefinedProperty`: `name?: undefined` with the declarations and the `readonly` of `prop`,
+    /// the sibling it stands in for. TypeScript 7.1 caches it per source symbol. Before that, it was
+    /// created once per name and per checker, from the first property it was requested for, so the
+    /// result depended on which files shared a checker.
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
-        // Which files share a checker depends on the number of threads.
-        let is_shared = !self.p.files.is_compile_build();
-        if is_shared && let Some(cached) = self.undefined_properties.get(&prop.name) {
-            return cached.clone_in(self.arena);
-        }
         // `undefinedOrMissingType`, which isn't widened again wherever it's copied to.
         let missing = if self.p.files.options.exact_optional_property_types {
             TypeId::MISSING
         } else {
             TypeId::UNDEFINED
         };
-        let result = Prop {
+        Prop {
             name: prop.name,
             // `createSymbolWithType`
             flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
             source: Self::copy_of(missing, &[prop], true, self.arena),
             mapper: MapperId::IDENTITY,
             name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
-        };
-        if is_shared {
-            self.undefined_properties
-                .insert(prop.name, result.clone_in(self.arena));
         }
-        result
     }
 
     /// `getWidenedTypeOfObjectLiteral`

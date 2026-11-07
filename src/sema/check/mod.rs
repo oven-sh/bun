@@ -1110,7 +1110,6 @@ impl<'s> Program<'s> {
             })),
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
-            undefined_properties: Default::default(),
             synthetic_default_import_types: Default::default(),
             referenced_properties: Default::default(),
             tracked_names: Default::default(),
@@ -1859,8 +1858,6 @@ pub struct Checker<'p, 's> {
     /// non-cacheable is in flight. See `cache_provisionally`.
     provisional: FxHashMap<Query, Provisional>,
     aliases_in_tables: errors_declaration_emit::AliasesInTables,
-    /// `undefinedProperties`
-    undefined_properties: FxHashMap<Atom, Prop<'s>>,
     /// `cachedTypes[CachedTypeKindSyntheticType]`, keyed by a module's type. True if the cached
     /// type has a synthetic `default`.
     synthetic_default_import_types: FxHashMap<TypeId, bool>,

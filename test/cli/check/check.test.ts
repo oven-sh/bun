@@ -1222,6 +1222,46 @@ module.exports = Base;
     expect(exitCode).toBe(1);
   });
 
+  // Widening `{ kind: "b" }` next to `{ kind: "a", reason: "x" }` gives it a `reason?: undefined` property. TypeScript
+  // 7.1 makes it from the sibling, so it's `readonly` in an `as const` table. Before that, a checker made one per
+  // name, from the first table that needed it, so the mutable table in `a.ts` made `reason` writable in `b.ts` if the
+  // two files shared a checker. That depends on the number of threads.
+  const tables = {
+    each:
+      `declare function each<T>(rows: readonly T[]): (run: (row: T) => void) => void;\n` +
+      `declare function eachConst<const T>(rows: readonly T[]): (run: (row: T) => void) => void;\n`,
+    mutable: `each([{ kind: "a", reason: "x" }, { kind: "b" }])((row) => { void row; });\n`,
+    readonly:
+      `eachConst([{ kind: "a", reason: "x" }, { kind: "b" }] as const)((row) => {\n` +
+      `  if (row.kind === "b") row.reason = undefined;\n});\n`,
+  };
+  const readonlyReason = (file: string, line: number) =>
+    `${file}(${line},29): error TS2540: Cannot assign to 'reason' because it is a read-only property.`;
+
+  test("an `as const` table keeps a property readonly that a mutable table in the same file widened first", async () => {
+    using dir = project({ "tables.ts": tables.each + tables.mutable + tables.readonly });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    expect(stdout).toBe(readonlyReason("tables.ts", 5));
+    expect(exitCode).toBe(1);
+  });
+
+  test("an `as const` table keeps a property readonly whether or not another file shares its checker", async () => {
+    const filler = (name: string) =>
+      `export {};\n` + Array.from({ length: 4000 }, (_, i) => `const ${name}${i}: number = ${i} + 1;\n`).join("");
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["a.ts", "b.ts", "y.ts", "z.ts"] }),
+      "a.ts": tables.each + tables.mutable + "export {};\n",
+      "b.ts": tables.each + tables.readonly + "export {};\n",
+      "y.ts": filler("y"),
+      "z.ts": filler("z"),
+    });
+    const threads = [1, 2, 2, 3, 3, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(readonlyReason("b.ts", 4));
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // The annotation of `t` refers to `X`, which contains `B0`, so TypeScript reports a cycle at `t`. It's the only
   // error. The other files come later in program order, and their checks get to `t` too. Only `d.ts`'s check reports
   // the cycle, so it has to walk the whole cycle itself, whichever check runs first.
@@ -8018,7 +8058,7 @@ export const b: number = obj;
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(3,14): error TS2322: Type '{ obj: { items: ({ x: number; y?: undefined; err?: undefined; } | { x: number; y: number; err?: undefined; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'.
-        a.ts(4,14): error TS2322: Type '{ obj: { items: ({ y?: undefined; err?: undefined; x: number; } | { err?: undefined; x: number; y: number; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'."
+        a.ts(4,14): error TS2322: Type '{ obj: { items: ({ x: number; y?: undefined; err?: undefined; } | { x: number; y: number; err?: undefined; } | { y?: undefined; x: number; err: boolean; })[]; }; }' is not assignable to type 'number'."
       `);
       expect(exitCode).toBe(1);
     });

@@ -495,8 +495,7 @@ public:
             this->putDirect(vm, vm.propertyNames->length, length, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
     }
 
-    // Vitest's `original?.name || "Mock"`, read once. Vitest also converts a `name` that is an object, which calls into it.
-    // An RPC client answers every key with a function that sends a request, so here such a name is "Mock".
+    // Vitest's `original?.name || "Mock"`. A `name` that is an object is not converted, because that calls into it.
     JSString* vitestNameOf(JSGlobalObject* global, JSC::JSValue original)
     {
         auto& vm = this->vm();

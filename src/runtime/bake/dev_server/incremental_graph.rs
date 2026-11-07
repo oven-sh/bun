@@ -1873,7 +1873,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
                                 entry_points.append_css(k.slice())?;
-                                // A CSS module gets names from the file that changed: the server graphs bundle their copies too.
                                 // SAFETY: cross-graph access via `owner()`; `server_graph` is a disjoint sibling field.
                                 let server_graph = unsafe { &mut (*self.owner()).server_graph };
                                 if let Some(server_index) =
@@ -1923,7 +1922,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// Server side: queues the file for each graph that bundles it.
+    /// Server side: queues the file for each graph that bundles it. For a CSS module, that is each graph that holds its class names.
     fn append_server_entry_points(
         &self,
         index: usize,

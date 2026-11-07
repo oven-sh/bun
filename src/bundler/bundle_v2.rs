@@ -5931,8 +5931,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                // The root of a chunk gets no chunk and no class-name module. It fails in the graph of its copy, like
-                // a parse error, so a fix bundles that copy. Any other stylesheet has its record in the client graph.
+                // A root fails in the graph of its copy, like a parse error. Any other file stays in the client graph.
                 for (index, log) in &invalid_css_module_imports {
                     let graph = if start.css_entry_points.swap_remove(index) {
                         asts.items_target()[index.get() as usize].bake_graph()
@@ -8206,8 +8205,7 @@ pub mod bv2_impl {
 
     const SSR_PRETTY_PREFIX: &[u8] = b"ssr:";
 
-    /// The path that CSS module names hash. Under the dev server, the SSR graph's copy of a stylesheet gets the names of the other copies.
-    /// A production build keeps the prefix: equal names make its client and SSR CSS chunks byte-equal, which is `DuplicateOutputPath`.
+    /// The path that CSS module names hash. Only the dev server drops `ssr:`: in a build, equal names make equal CSS chunks.
     pub(crate) fn css_module_name_path(
         pretty: &[u8],
         target: options::Target,

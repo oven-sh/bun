@@ -209,7 +209,7 @@ import "./styles.css";
 import "./more-styles.css";
 ```
 
-This generates `./app.css` and `./app.js` in the output directory. Bun bundles all CSS files imported from JavaScript into a single CSS file per entry point. If you import the same CSS file from multiple JavaScript files, Bun includes it only once in the output CSS file.
+This generates `./app.css` and `./app.js` in the output directory. Bun bundles all CSS files imported from JavaScript into a single CSS file per entry point. If you import the same CSS file from multiple JavaScript files, Bun includes it only once in the output CSS file, at the first place it is imported. See [Importing CSS from JavaScript](/bundler/css#importing-css-from-javascript) for the full ordering rules, including CSS behind `import()`.
 
 ## Plugins
 

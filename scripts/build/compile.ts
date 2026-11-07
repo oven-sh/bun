@@ -457,7 +457,7 @@ export function pch(
      * implicit, restat propagates the change to PCH and it rebuilds in the
      * same run.
      *
-     * Cost: PCH also rebuilds on unrelated dep bumps (brotli etc.). Rare
+     * Cost: PCH also rebuilds on unrelated dep bumps (zstd etc.). Rare
      * enough to accept for correctness.
      */
     implicitInputs?: string[];

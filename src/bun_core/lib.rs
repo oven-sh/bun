@@ -358,6 +358,18 @@ pub mod vec {
         v.extend((0..n).map(f));
     }
 
+    /// `len` zeroed elements, or an error if there is no memory for them.
+    ///
+    /// The allocator is asked for zeroed memory, so pages that come fresh from
+    /// the OS are not written to: a large table of which little gets used
+    /// costs little.
+    #[inline]
+    pub fn try_zeroed<T: crate::Zeroable>(len: usize) -> Result<Vec<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<[T]>::try_new_zeroed_slice(len).map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
+    }
+
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
     /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
     ///
@@ -633,7 +645,7 @@ pub use bun_alloc::{
 pub use Global::*;
 pub use bun_opaque::{assert_ffi_discr, assert_ffi_layout};
 pub use error::{Error, Error as CrateError, Result as CrateResult};
-pub use ffi::{Zeroable, boxed_zeroed};
+pub use ffi::{Zeroable, boxed_zeroed, try_boxed_zeroed};
 pub use result::coreutils_error_map;
 pub use tty::Winsize;
 pub use util::*;
@@ -2573,6 +2585,14 @@ pub mod ffi {
     pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
         // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
         unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
+    /// [`boxed_zeroed`], or an error if there is no memory for it.
+    #[inline]
+    pub fn try_boxed_zeroed<T: Zeroable>() -> Result<Box<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<T>::try_new_zeroed().map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() })
     }
 
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return

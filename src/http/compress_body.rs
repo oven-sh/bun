@@ -191,30 +191,22 @@ fn compress_brotli(
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
-    use bun_brotli::c;
     let quality = level.unwrap_or(DEFAULT_BROTLI_QUALITY);
-    let window = c::BROTLI_DEFAULT_WINDOW;
-    let mode = c::BrotliEncoderMode::generic;
+    let window = bun_brotli::DEFAULT_WINDOW;
+    let mode = bun_brotli::EncoderMode::Generic;
 
-    let bound = c::BrotliEncoderMaxCompressedSize(input.len());
-    // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
-    // size_t — fall back to a heap buffer in that case.
-    if bound != 0 && bound <= state.shared_buffer.len() {
-        if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
-        {
-            return Ok(CompressOutput::Shared(n));
-        }
+    let bound =
+        bun_brotli::max_compressed_size(input.len()).ok_or(crate::Error::CompressionFailed)?;
+    if bound <= state.shared_buffer.len() {
+        return bun_brotli::compress(quality, window, mode, input, &mut state.shared_buffer)
+            .map(CompressOutput::Shared)
+            .ok_or(crate::Error::CompressionFailed);
     }
 
-    let cap = if bound != 0 {
-        bound
-    } else {
-        input.len() + 1024
-    };
     spill
-        .try_reserve_exact(cap)
+        .try_reserve_exact(bound)
         .map_err(|_| bun_alloc::AllocError)?;
-    match bun_brotli::encode_append(quality, window, mode, input, spill) {
+    match bun_brotli::compress_append(quality, window, mode, input, spill) {
         Some(_) => Ok(CompressOutput::Spilled),
         None => Err(crate::Error::CompressionFailed),
     }

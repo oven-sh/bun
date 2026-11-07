@@ -29,6 +29,7 @@
 
 #include "root.h"
 #include "Event.h"
+#include "EventTarget.h"
 
 namespace WebCore {
 

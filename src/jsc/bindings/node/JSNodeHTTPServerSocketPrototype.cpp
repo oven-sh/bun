@@ -4,6 +4,7 @@
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "libusockets.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
 #include <cmath>

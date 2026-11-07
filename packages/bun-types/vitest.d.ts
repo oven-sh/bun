@@ -551,8 +551,8 @@ declare module "vitest" {
     /**
      * Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first.
      *
-     * `expect.assertions()` and `expect.hasAssertions()` are checked before `fn` runs, so an assertion in `fn` doesn't
-     * count for them.
+     * A count that the test set with `expect.assertions()` or `expect.hasAssertions()` is checked before `fn` runs, so
+     * an assertion in `fn` doesn't count for it.
      */
     onTestFinished(fn: OnTestFinishedHandler, timeout?: number): void;
     /** Like `onTestFinished()`, but only runs if the test failed. */
@@ -789,8 +789,8 @@ declare module "vitest" {
   /**
    * Runs `fn` after the current test, its `afterEach` hooks and its fixture teardown.
    *
-   * `expect.assertions()` and `expect.hasAssertions()` are checked before `fn` runs, so an assertion in `fn` doesn't count
-   * for them.
+   * A count that the test set with `expect.assertions()` or `expect.hasAssertions()` is checked before `fn` runs, so an
+   * assertion in `fn` doesn't count for it.
    */
   export function onTestFinished(fn: OnTestFinishedHandler, timeout?: number): void;
   /** Like `onTestFinished()`, but only runs if the test failed. */

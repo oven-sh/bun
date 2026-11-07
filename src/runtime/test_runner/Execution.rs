@@ -167,6 +167,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
+    /// The expectation and the number of expect() calls that the check which failed this attempt compared.
+    pub(crate) count_failure: Option<(ExpectAssertions, u32)>,
     pub(crate) maybe_skip: bool,
     pub(crate) context: Option<Strong>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
@@ -201,6 +203,7 @@ impl ExecutionSequence {
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
+            count_failure: None,
             maybe_skip: false,
             context: None,
             pending_matchers: 0,
@@ -302,14 +305,10 @@ impl ExecutionSequence {
         }
     }
 
-    fn test_context(&self) -> Option<&TestContext> {
+    fn take_deferred(&self) -> Option<NonNull<ExecutionEntry>> {
         let context = TestContext::from_js(self.context.as_ref()?.get())?;
         // SAFETY: `self.context` keeps the wrapper, which owns the payload, alive.
-        Some(unsafe { &*context })
-    }
-
-    fn take_deferred(&self) -> Option<NonNull<ExecutionEntry>> {
-        self.test_context()?.take_deferred(self.attempt_failed())
+        unsafe { &*context }.take_deferred(self.attempt_failed())
     }
 
     /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included.
@@ -317,6 +316,8 @@ impl ExecutionSequence {
         if self.entry_mode() != ScopeMode::Fails || self.result == Result::Skip {
             return;
         }
+        self.check_expect_assertions();
+        self.expect_assertions = ExpectAssertions::NotSet;
         self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
@@ -333,19 +334,15 @@ impl ExecutionSequence {
             }
         };
         if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
-            if let Some(context) = self.test_context() {
-                // What runs after this check can assert and set a count, and the report is about what was compared here.
-                context.count_failed(self.attempt, self.expect_assertions, self.expect_call_count);
-            }
             self.result = failure;
+            self.count_failure = Some((self.expect_assertions, self.expect_call_count));
         }
     }
 
-    /// The expectation and the number of `expect()` calls that the check which failed this attempt compared.
-    pub(crate) fn checked_count(&self) -> (ExpectAssertions, u32) {
-        self.test_context()
-            .and_then(|context| context.count_failure(self.attempt))
-            .unwrap_or((self.expect_assertions, self.expect_call_count))
+    /// A test that is called as in Vitest has its count checked when its callback ends.
+    pub(crate) fn is_called_as_in_vitest(&self) -> bool {
+        // SAFETY: arena-owned entry
+        self.test_entry.is_some_and(|test| unsafe { test.as_ref() }.calling.is_vitest())
     }
 }
 
@@ -690,14 +687,17 @@ impl Execution {
         }
 
         if sequence.active_entry.is_none() {
-            // A deferred callback reads the result, so the count is checked before each one is taken, and at the end.
-            sequence.check_expect_assertions();
+            // A deferred callback reads the result, so a test that is not called as in Vitest is checked before each one.
+            if !sequence.is_called_as_in_vitest() {
+                sequence.check_expect_assertions();
+            }
             sequence.active_entry = sequence.take_deferred();
         }
 
         if sequence.active_entry.is_none() {
             // just completed the sequence
             sequence.flip_fails();
+            sequence.check_expect_assertions();
             if sequence.result == Result::Pending {
                 sequence.result = match sequence.entry_mode() {
                     ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
@@ -875,10 +875,7 @@ impl Execution {
                 .failure
                 .take()
                 .or_else(|| {
-                    test_command::TestFailure::from_result(
-                        sequence.result,
-                        sequence.checked_count().1,
-                    )
+                    test_command::TestFailure::from_result(sequence.result, sequence.count_failure)
                 })
                 .unwrap_or_default();
             sequence.earlier_failures.push(failure);

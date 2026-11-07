@@ -1,6 +1,5 @@
 //! Vitest's test context. A test shares one with its hooks, and keeps it across retries and repeats.
 
-use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
@@ -18,7 +17,7 @@ use super::bun_test::{
     Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
     ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
 };
-use super::execution::{ExecutionSequence, ExpectAssertions, Result as ExecutionResult};
+use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
 use super::expect::expect_deferred::ExpectDeferred;
 use super::jest::FileColumns as _;
@@ -48,15 +47,6 @@ pub(crate) struct TestContext {
     /// `BunTest::extra_execution_entries` owns the entries.
     deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,
     fixtures: JsCell<Vec<usize>>,
-    count_failure: Cell<Option<CountFailure>>,
-}
-
-/// What the check of `expect.assertions()` or `expect.hasAssertions()` that failed an attempt compared.
-#[derive(Copy, Clone)]
-struct CountFailure {
-    attempt: u32,
-    expected: ExpectAssertions,
-    received: u32,
 }
 
 pub(crate) use crate::generated_bindgen::test_context::js_TestContext as js;
@@ -99,7 +89,6 @@ impl TestContext {
             sequence_index,
             deferred: JsCell::new(Vec::new()),
             fixtures: JsCell::new(Vec::new()),
-            count_failure: Cell::new(None),
         }
         .to_js(global)
     }
@@ -177,15 +166,6 @@ impl TestContext {
         let when = if unsafe { sequence.as_ref() }.is_before_run_test() { Deferred::AroundFixture } else { Deferred::Fixture };
         self.defer(buntest.get(), when, tear_down, timeout);
         true
-    }
-
-    pub(crate) fn count_failed(&self, attempt: u32, expected: ExpectAssertions, received: u32) {
-        self.count_failure.set(Some(CountFailure { attempt, expected, received }));
-    }
-
-    pub(crate) fn count_failure(&self, attempt: u32) -> Option<(ExpectAssertions, u32)> {
-        let failure = self.count_failure.get().filter(|failure| failure.attempt == attempt)?;
-        Some((failure.expected, failure.received))
     }
 
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {

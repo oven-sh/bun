@@ -482,6 +482,15 @@ describe.concurrent("test context", () => {
   const tooFew = "AssertionError: expected 1 assertion, but test ended with 0 assertions";
   const tooMany = "AssertionError: expected 1 assertion, but test ended with 2 assertions";
   const none = "AssertionError: received 0 assertions, but expected at least one assertion to be called";
+  const late = (assertions: number) =>
+    `note: ${assertions} assertion${assertions === 1 ? " ran after the count was checked and was" : "s ran after the count was checked and were"} not counted. The check is after the afterEach hooks. Make the assertion in the test or in an afterEach hook.`;
+  const lateInVitest = `note: 1 assertion ran after the test callback and was not counted. A test from "vitest", test.extend() or test.for() checks the count when its callback ends. Make the assertion in the test callback.`;
+  // The errors, the notes and the results of a report, in the order in which it prints them.
+  const reportOf = (stderr: string) =>
+    stderr
+      .split("\n")
+      .filter(line => /^(\((pass|fail|skip|todo)\) |\w*[eE]rror: |note: )/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
 
   // As in Jest, the assertion counts of a "bun:test" test are checked when its last hook is done.
   test(`onTestFinished, onTestFailed and the rest of aroundEach read the assertion count of a "bun:test" test`, async () => {
@@ -501,6 +510,8 @@ describe.concurrent("test context", () => {
           test("met", () => { watch(); expect.assertions(1); expect(1).toBe(1); });
           test.fails("test.fails", () => { watch(); expect.assertions(1); });
           test.failing("test.failing that throws", () => { watch(); expect.assertions(1); throw new Error("expected"); });
+          test.failing("test.failing that throws and meets its count", () => { watch(); expect.assertions(1); expect(1).toBe(1); throw new Error("expected"); });
+          test.failing("test.failing that times out", async () => { watch(); await new Promise(() => {}); }, { timeout: 20 });
           let attempt = 0;
           test("retried", () => { watch(); expect.assertions(1); if (++attempt === 2) expect(1).toBe(1); }, { retry: 1 });
           describe("afterEach throws", () => {
@@ -509,6 +520,8 @@ describe.concurrent("test context", () => {
           });
           // It fails because it passed, which is known after the callbacks. Vitest does the same for test.fails.
           test.failing("test.failing that passes", () => { watch(); });
+          // Vitest has one error here.
+          test("the errors of a count that is not met", () => { onTestFailed(({ task }) => console.log("errors:", task.result.errors)); expect.assertions(1); });
         `,
       }),
       runTests({
@@ -558,12 +571,17 @@ describe.concurrent("test context", () => {
         "test.fails: onTestFailed fail",
         "test.failing that throws: onTestFinished fail",
         "test.failing that throws: onTestFailed fail",
+        "test.failing that throws and meets its count: onTestFinished fail",
+        "test.failing that throws and meets its count: onTestFailed fail",
+        "test.failing that times out: onTestFinished fail",
+        "test.failing that times out: onTestFailed fail",
         "retried: onTestFinished fail",
         "retried: onTestFailed fail",
         "retried: onTestFinished pass",
         "test.failing that does not throw: onTestFinished fail",
         "test.failing that does not throw: onTestFailed fail",
         "test.failing that passes: onTestFinished pass",
+        "errors: undefined",
       ],
       results: [
         "(fail) too few",
@@ -572,11 +590,14 @@ describe.concurrent("test context", () => {
         "(pass) met",
         "(pass) test.fails",
         "(fail) test.failing that throws",
+        "(pass) test.failing that throws and meets its count",
+        "(fail) test.failing that times out",
         "(pass) retried (attempt 2)",
         "(fail) afterEach throws > test.failing that does not throw",
         "(fail) test.failing that passes",
+        "(fail) the errors of a count that is not met",
       ],
-      errors: [tooFew, tooMany, none, tooFew, "error: afterEach"],
+      errors: [tooFew, tooMany, none, tooFew, "error: afterEach", tooFew],
       exitCode: 1,
     });
     expect({ log: around.log, results: around.results, errors: around.errors, exitCode: around.exitCode }).toEqual({
@@ -607,7 +628,6 @@ describe.concurrent("test context", () => {
 
   test("where an assertion count is set and where it is met, for each way a test is called", async () => {
     // A row sets a count of 1 in one place. A column makes the one assertion in one place. Both lists are in the order they run.
-    const setters = ["test", "afterEach", 'onTestFinished of "bun:test"', "onTestFinished of the context"];
     const asserters = [
       "nobody",
       "test",
@@ -618,17 +638,16 @@ describe.concurrent("test context", () => {
       "onTestFailed",
       "rest of aroundEach",
     ];
-    // What runs after the hooks reads the result. So its assertions come too late for a count that a hook set.
-    const afterTheTest = {
+    // As in Jest: a count is checked when the last hook is done. What runs after the hooks reads the result, so it asserts too late.
+    const jest = {
+      "test": "fail pass pass pass fail fail fail fail",
       "afterEach": "fail pass pass pass fail fail fail fail",
       'onTestFinished of "bun:test"': "fail pass pass pass fail fail fail fail",
       // A count that is set after the hooks is checked when the callback that set it is done.
       "onTestFinished of the context": "fail pass pass pass pass pass fail fail",
     };
-    // As in Jest: a count that the test sets is checked when the last hook is done.
-    const jest = { "test": "fail pass pass pass fail fail fail fail", ...afterTheTest };
     // As in Vitest: a count that the test sets is checked when its callback ends.
-    const vitest = { "test": "fail pass fail fail fail fail fail fail", ...afterTheTest };
+    const vitest = { "test": "fail pass fail fail fail fail fail fail" };
     const flavors: Record<string, { test: string; grid: Record<string, string> }> = {
       "bun:test": { test: "bun.test", grid: jest },
       "vitest": { test: "vitest.test", grid: vitest },
@@ -640,7 +659,7 @@ describe.concurrent("test context", () => {
       import * as vitest from "vitest";
       const { describe, afterEach, expect } = ${flavor === "vitest" ? "vitest" : "bun"};
       const test = ${flavors[flavor].test};
-      for (const sets of ${JSON.stringify(setters)}) {
+      for (const sets of ${JSON.stringify(Object.keys(flavors[flavor].grid))}) {
         for (const asserts of ${JSON.stringify(asserters)}) {
           const name = ${JSON.stringify(flavor + (watched ? ", watched" : ""))} + " | " + sets + " | " + asserts;
           const uses = site => site === sets || site === asserts;
@@ -673,7 +692,7 @@ describe.concurrent("test context", () => {
       // The failures are listed again at the end of the run.
       if (!verdicts.has(name)) verdicts.set(name, verdict);
     }
-    const gridOf = (flavor: string) =>
+    const gridOf = (flavor: string, setters: string[]) =>
       Object.fromEntries(
         setters.map(sets => [
           sets,
@@ -681,8 +700,8 @@ describe.concurrent("test context", () => {
         ]),
       );
     for (const [flavor, { grid }] of Object.entries(flavors)) {
-      expect({ flavor, grid: gridOf(flavor) }).toEqual({ flavor, grid });
-      expect({ flavor, grid: gridOf(flavor + ", watched") }).toEqual({ flavor, grid });
+      expect({ flavor, grid: gridOf(flavor, Object.keys(grid)) }).toEqual({ flavor, grid });
+      expect({ flavor, grid: gridOf(flavor + ", watched", Object.keys(grid)) }).toEqual({ flavor, grid });
     }
     const failed = [...verdicts].filter(([, verdict]) => verdict === "fail").map(([name]) => name);
     // Every failure was known when onTestFailed had to run, and the report has the numbers that were compared.
@@ -691,8 +710,8 @@ describe.concurrent("test context", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("after the hooks of a test, an assertion is not counted, and a count that is set is checked when its callback is done", async () => {
-    const { log, results, errors, stderr, exitCode } = await runTests({
+  test(`after the hooks of a "bun:test" test, an assertion is not counted, and a count that is set is checked when its callback is done`, async () => {
+    const { log, stderr, exitCode } = await runTests({
       "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
@@ -701,6 +720,8 @@ describe.concurrent("test context", () => {
         const watch = () => onTestFailed(({ task }) => console.log("failed:", task.name));
         describe("an assertion", () => {
           test("the one that is expected", () => { watch(); expect.assertions(1); onTestFinished(() => { expect(1).toBe(1); }); });
+          test("one of three, after one that is in time", () => { watch(); expect.assertions(3); expect(1).toBe(1); onTestFinished(() => { expect(2).toBe(2); }); });
+          test("none, after two that are in time", () => { watch(); expect.assertions(1); expect(1).toBe(1); expect(2).toBe(2); onTestFinished(() => {}); });
           test("one too many", () => { watch(); expect.assertions(1); expect(1).toBe(1); onTestFinished(() => { expect(2).toBe(2); }); });
           test("one where none is expected", () => { watch(); expect.assertions(0); onTestFinished(() => { expect(1).toBe(1); }); });
           test("two in onTestFailed", () => {
@@ -711,6 +732,21 @@ describe.concurrent("test context", () => {
             watch();
             expect.assertions(1);
             onTestFinished(() => { bun.onTestFinished(() => { expect(1).toBe(1); }); });
+          });
+          // What decides is when an assertion runs, not where it is written.
+          describe("that the test callback wrote", () => {
+            const written = () => {
+              const { promise, resolve } = Promise.withResolvers();
+              promise.then(() => { expect(1).toBe(1); });
+              return async () => { resolve(); await promise; };
+            };
+            test("runs while onTestFinished waits", () => { watch(); expect.assertions(1); onTestFinished(written()); });
+            test('runs while onTestFinished of "bun:test" waits', () => { watch(); expect.assertions(1); bun.onTestFinished(written()); });
+            describe("runs after runTest()", () => {
+              let run;
+              aroundEach(async runTest => { await runTest(); await run(); });
+              test("in aroundEach", () => { watch(); expect.assertions(1); run = written(); });
+            });
           });
         });
         describe("a count", () => {
@@ -729,8 +765,6 @@ describe.concurrent("test context", () => {
             aroundEach(async (runTest, ctx) => { await runTest(); ctx.expect.hasAssertions(); });
             test("after runTest()", () => { watch(); });
           });
-          vitest.test('in a test of "vitest"', () => { watch(); onTestFinished(() => { expect.assertions(1); }); });
-          vitest.test('that a test of "vitest" met', () => { watch(); expect(1).toBe(1); onTestFinished(() => { expect.hasAssertions(); }); });
           // test.fails takes the failure as the one that it expects.
           test.fails("in test.fails", () => { watch(); onTestFinished(() => { expect.assertions(1); }); });
         });
@@ -752,54 +786,73 @@ describe.concurrent("test context", () => {
         });
       `,
     });
-    expect({ log, results, errors, exitCode }).toEqual({
+    // A failed check is reported with the numbers that it compared. The user saw the later assertions run, so a note says why they are not in the count.
+    expect({ log, report: reportOf(stderr), exitCode }).toEqual({
       log: [
         "failed: the one that is expected",
+        "failed: one of three, after one that is in time",
+        "failed: none, after two that are in time",
         "in onTestFailed",
         'failed: in onTestFinished of "bun:test", registered too late',
+        "failed: runs while onTestFinished waits",
+        "failed: in aroundEach",
         "failed: expect.assertions()",
         "failed: expect.hasAssertions()",
         "failed: setState({ expectedAssertionsNumber })",
         "failed: setState({ isExpectingAssertions })",
         "failed: that the next callback meets",
-        'failed: in a test of "vitest"',
         "failed: in test.fails",
         "failed: removes a count that is not met",
       ],
-      results: [
+      report: [
+        tooFew,
+        late(1),
         "(fail) an assertion > the one that is expected",
+        "AssertionError: expected 3 assertions, but test ended with 1 assertion",
+        late(1),
+        "(fail) an assertion > one of three, after one that is in time",
+        tooMany,
+        "(fail) an assertion > none, after two that are in time",
         "(pass) an assertion > one too many",
         "(pass) an assertion > one where none is expected",
+        none,
+        late(2),
         "(fail) an assertion > two in onTestFailed",
+        tooFew,
+        late(1),
         '(fail) an assertion > in onTestFinished of "bun:test", registered too late',
+        tooFew,
+        late(1),
+        "(fail) an assertion > that the test callback wrote > runs while onTestFinished waits",
+        '(pass) an assertion > that the test callback wrote > runs while onTestFinished of "bun:test" waits',
+        tooFew,
+        late(1),
+        "(fail) an assertion > that the test callback wrote > runs after runTest() > in aroundEach",
+        tooFew,
         "(fail) a count > expect.assertions()",
+        none,
         "(fail) a count > expect.hasAssertions()",
+        tooFew,
         "(fail) a count > setState({ expectedAssertionsNumber })",
+        none,
         "(fail) a count > setState({ isExpectingAssertions })",
         "(pass) a count > that the test met",
         "(pass) a count > that its callback meets",
+        tooFew,
+        late(1),
         "(fail) a count > that the next callback meets",
         // Its onTestFailed callbacks had their turn before the rest of aroundEach, as for an error that is thrown there.
+        none,
         "(fail) a count > of the context > after runTest()",
-        '(fail) a count > in a test of "vitest"',
-        '(pass) a count > that a test of "vitest" met',
         "(pass) a count > in test.fails",
         "(pass) expect.setState() > puts back what expect.getState() returned in a test of bun:test",
         "(pass) expect.setState() > puts back what expect.getState() returned in a test of vitest",
         "(pass) expect.setState() > puts back what expect.getState() returned in a test of test.extend()",
+        tooFew,
         "(fail) expect.setState() > removes a count that is not met",
       ],
-      // A failed check is reported with the numbers that it compared.
-      errors: [tooFew, none, tooFew, tooFew, none, tooFew, none, tooFew, none, tooFew, tooFew],
       exitCode: 1,
     });
-    // The user saw these assertions run, so the report says why they are not in the count.
-    expect(stderr.split("\n").filter(line => line.startsWith("note: "))).toEqual([
-      "note: 1 assertion ran after the count was checked and was not counted",
-      "note: 2 assertions ran after the count was checked and were not counted",
-      "note: 1 assertion ran after the count was checked and was not counted",
-      "note: 1 assertion ran after the count was checked and was not counted",
-    ]);
   });
 
   // `test.extend()` and `test.for()` of "bun:test" call their tests like "vitest" does.
@@ -816,41 +869,82 @@ describe.concurrent("test context", () => {
   ])(
     "a count that a test with a context sets is checked when its callback ends, as in Vitest: %s",
     async (_, imports) => {
-      const { log, results, errors, stderr, exitCode } = await runTests({
+      const { log, stderr, exitCode } = await runTests({
         "a.test.js": `
           ${imports}
           describe("afterEach asserts", () => {
             afterEach(() => { expect(1).toBe(1); });
             test("too few", ({ onTestFailed }) => { onTestFailed(() => console.log("failed")); expect.assertions(1); });
+            test("one of three", () => { expect.assertions(3); expect(1).toBe(1); });
             test("met", () => { expect.assertions(1); expect(1).toBe(1); });
           });
           describe("afterEach removes the count", () => {
             afterEach(() => { expect.setState({ expectedAssertionsNumber: null }); });
             test("too late", () => { expect.assertions(1); });
           });
-          // Unlike Vitest, which does not check a count that is set after the callback.
-          describe("afterEach sets a count", () => {
-            afterEach(() => { expect.hasAssertions(); });
-            test("checked after the hooks", ({ onTestFailed }) => { onTestFailed(() => console.log("failed, after the hooks")); });
-          });
         `,
       });
-      expect({ log, results, errors, exitCode }).toEqual({
-        log: ["failed", "failed, after the hooks"],
-        results: [
+      expect({ log, report: reportOf(stderr), exitCode }).toEqual({
+        log: ["failed"],
+        report: [
+          tooFew,
+          lateInVitest,
           "(fail) afterEach asserts > too few",
+          "AssertionError: expected 3 assertions, but test ended with 1 assertion",
+          lateInVitest,
+          "(fail) afterEach asserts > one of three",
           "(pass) afterEach asserts > met",
+          tooFew,
           "(fail) afterEach removes the count > too late",
-          "(fail) afterEach sets a count > checked after the hooks",
         ],
-        errors: [tooFew, tooFew, none],
         exitCode: 1,
       });
-      expect(stderr.split("\n").filter(line => line.startsWith("note: "))).toEqual([
-        "note: 1 assertion ran after the count was checked and was not counted",
-      ]);
     },
   );
+
+  test("the teardown of a fixture asserts too late for a count that its test set", async () => {
+    const { stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, expect } from "bun:test";
+        const test = base.extend({ value: async ({}, use) => { await use(1); expect(1).toBe(1); } });
+        test("uses the fixture", ({ value }) => { expect.assertions(value); });
+      `,
+    });
+    expect({ report: reportOf(stderr), exitCode }).toEqual({
+      report: [tooFew, lateInVitest, "(fail) uses the fixture"],
+      exitCode: 1,
+    });
+  });
+
+  test.each([
+    [`"vitest"`, `import { test, expect, describe, afterEach, onTestFinished } from "vitest";`],
+    [
+      `test.extend() of "bun:test"`,
+      `import { test as base, expect, describe, afterEach } from "bun:test"; import { onTestFinished } from "vitest"; const test = base.extend({});`,
+    ],
+  ])("a test that is called as in Vitest is not checked before its deferred callbacks: %s", async (_, imports) => {
+    const { results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        ${imports}
+        describe("afterEach sets a count", () => {
+          afterEach(() => { expect.hasAssertions(); });
+          test("that onTestFinished meets", () => { onTestFinished(() => { expect(1).toBe(1); }); });
+        });
+        test("onTestFinished sets a count that the next onTestFinished meets", () => {
+          onTestFinished(() => { expect(1).toBe(1); });
+          onTestFinished(() => { expect.assertions(1); });
+        });
+      `,
+    });
+    expect({ results, errors, exitCode }).toEqual({
+      results: [
+        "(pass) afterEach sets a count > that onTestFinished meets",
+        "(pass) onTestFinished sets a count that the next onTestFinished meets",
+      ],
+      errors: [],
+      exitCode: 0,
+    });
+  });
 
   test("the module of a hook does not change when the assertion count of its test is checked", async () => {
     const { results, errors, exitCode } = await runTests({
@@ -878,10 +972,6 @@ describe.concurrent("test context", () => {
             bun.afterEach(() => { expect(1).toBe(1); });
             vitest.test("not counted", () => { expect.assertions(1); });
           });
-          describe('afterEach of "bun:test" sets a count', () => {
-            bun.afterEach(() => { expect.hasAssertions(); });
-            vitest.test("checked", () => {});
-          });
         });
       `,
     });
@@ -891,9 +981,8 @@ describe.concurrent("test context", () => {
         '(fail) test of "bun:test" > afterEach of "vitest" sets a count > checked',
         '(pass) test of "bun:test" > afterEach asserts, inside aroundEach > counted',
         '(fail) test of "vitest" > afterEach of "bun:test" asserts > not counted',
-        '(fail) test of "vitest" > afterEach of "bun:test" sets a count > checked',
       ],
-      errors: [none, tooFew, none],
+      errors: [none, tooFew],
       exitCode: 1,
     });
   });

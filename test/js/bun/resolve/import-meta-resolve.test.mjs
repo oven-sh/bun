@@ -103,3 +103,61 @@ fileUrlRelTo(() => import.meta.resolve("./something.node"), "./something.node");
 
 throws(() => import.meta.resolve("adsjfdasdf"), "nonexistant package");
 throws(() => import.meta.resolve(""), "empty specifier");
+
+wrapped("detached import.meta.resolve retains its module", () => {
+  const { resolve } = import.meta;
+  const receiver = {
+    get path() {
+      throw new Error("resolve must not inspect the receiver");
+    },
+  };
+  for (const specifier of ["./missing.mjs", "./with space/🅱️un.mjs", "node:path", "path"]) {
+    const expected = specifier.startsWith(".") ? new URL(specifier, import.meta.url).href : "node:path";
+    assert.strictEqual(resolve(specifier), expected);
+    for (const value of [undefined, null, receiver, import.meta]) {
+      assert.strictEqual(resolve.call(value, specifier), expected);
+      assert.strictEqual(resolve.apply(value, [specifier]), expected);
+      assert.strictEqual(resolve.bind(value)(specifier), expected);
+    }
+  }
+  assert.strictEqual(import.meta.resolve, resolve);
+  assert.strictEqual(resolve.name, "resolve");
+  assert.deepStrictEqual(Object.getOwnPropertyDescriptor(resolve, "name"), {
+    value: "resolve",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  assert.strictEqual(resolve.bind(null).name, "bound resolve");
+  assert.strictEqual(resolve.length, 1);
+});
+
+wrapped("import.meta.resolve retains its origin after visible path changes", () => {
+  const { resolve } = import.meta;
+  const descriptor = Object.getOwnPropertyDescriptor(import.meta, "path");
+  Object.defineProperty(import.meta, "path", { value: "ignored", configurable: true });
+  try {
+    assert.strictEqual(resolve("./missing.mjs"), new URL("./missing.mjs", import.meta.url).href);
+  } finally {
+    if (descriptor) Object.defineProperty(import.meta, "path", descriptor);
+    else delete import.meta.path;
+  }
+});
+
+wrapped("import.meta.resolve is a writable configurable data property", () => {
+  const { resolve } = import.meta;
+  assert.deepStrictEqual(Object.getOwnPropertyDescriptor(import.meta, "resolve"), {
+    value: resolve,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  try {
+    import.meta.resolve = null;
+    assert.strictEqual(import.meta.resolve, null);
+    assert.strictEqual(delete import.meta.resolve, true);
+    assert.strictEqual(import.meta.resolve, undefined);
+  } finally {
+    import.meta.resolve = resolve;
+  }
+});

@@ -143,6 +143,68 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
   });
 
+  // A process that holds the terminal in raw mode (`bun repl`, a CLI with a
+  // readline question or a spinner) can run `bun init` with inherited stdio.
+  // Enter is a lone CR there, and Ctrl+C is a key of that process.
+  // Not on Windows: Bun.Terminal#setRawMode does nothing on a ConPTY
+  // (terminal-platform-gaps.test.ts), so the test cannot leave the terminal raw.
+  test.skipIf(isWindows)("bun init text questions end at Enter on a terminal left in raw mode", async () => {
+    await using temp = tempDir("bun-init-raw-terminal", {});
+    const ICANON = process.platform === "linux" ? 0x2 : 0x100;
+    const ECHO = 0x8;
+    const ISIG = process.platform === "linux" ? 0x1 : 0x80;
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const menu = Promise.withResolvers<void>();
+    const namePrompt = Promise.withResolvers<void>();
+    const entryPrompt = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("Select a project template")) menu.resolve();
+        // The question ends with the default answer, and the terminal is in line mode before it is written.
+        if (/package name .*: /.test(output)) namePrompt.resolve();
+        if (/entry point .*: /.test(output)) entryPrompt.resolve();
+      },
+    });
+    terminal.setRawMode(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      terminal,
+    });
+    // Fail with the child's output if it exits before a prompt we wait for.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun init exited before the prompt (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([menu.promise, exitedEarly]);
+    terminal.write("3");
+    await Promise.race([namePrompt.promise, exitedEarly]);
+    const atQuestion = terminal.localFlags;
+    terminal.write("my-lib\r");
+    await Promise.race([entryPrompt.promise, exitedEarly]);
+    // Ctrl+C is in the answer, and `bun init` takes it as in its menu: it exits before it writes a file.
+    terminal.write("\x03\r");
+
+    const exitCode = await proc.exited;
+    expect({
+      lineMode: (atQuestion & (ICANON | ECHO)) === (ICANON | ECHO),
+      signals: (atQuestion & ISIG) !== 0,
+      raw: (terminal.localFlags & (ICANON | ECHO | ISIG)) === 0,
+      wrotePackageJson: fs.existsSync(path.join(temp, "package.json")),
+      exitCode,
+    }).toEqual({ lineMode: true, signals: false, raw: true, wrotePackageJson: false, exitCode: 0 });
+    // The terminal echoes the answer, and the next question starts on a new line.
+    expect(Bun.stripANSI(output).replaceAll("\r", "")).toMatch(/package name .*my-lib\nentry point /);
+  });
+
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
       "mydir": {

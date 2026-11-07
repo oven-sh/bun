@@ -19,6 +19,8 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -876,7 +878,7 @@ public:
 
     bool isSpyOf(JSObject* target, const Identifier& key) const { return m_spyTarget.get() == target && m_spyIdentifier == key; }
     bool isLayered() const { return m_spyAttributes & SpyAttributeLayered; }
-    JSArray* layers() const { return isLayered() ? uncheckedDowncast<JSArray>(m_spyOriginal.get()) : nullptr; }
+    InternalFieldTuple* layers() const { return isLayered() ? uncheckedDowncast<InternalFieldTuple>(m_spyOriginal.get()) : nullptr; }
     // What restoring puts back while no record says otherwise.
     SlotContent covered() const { return { m_spyOriginal.get(), m_spyAttributes & ~spyAttributeMask }; }
     void setCovered(SlotContent content)
@@ -887,7 +889,7 @@ public:
             m_spyOriginal.clear();
         m_spyAttributes = (m_spyAttributes & spyAttributeMask) | content.attributes;
     }
-    void setLayers(JSArray* layers)
+    void setLayers(InternalFieldTuple* layers)
     {
         m_spyOriginal.set(vm(), this, layers);
         m_spyAttributes |= SpyAttributeLayered;
@@ -1111,7 +1113,8 @@ extern "C" void Bun__FakeTimers__setLayers(JSC::JSGlobalObject*, JSC::EncodedJSV
 // A spy, vi.stubGlobal() and a fake timer each replace a property and remember what was there, to put it back later. When two of
 // them replace the same property and the lower one is undone first, the upper one's memory names a value that is gone. So from the
 // moment a second one lands on a property, they share this record instead: what each of them put on the property, bottom to top,
-// over `base`. A JSArray that script never sees: base storage, base attributes, flags, then four elements for each layer.
+// over `base`. Its owners point at an InternalFieldTuple, whose first field is the record as a JSCellButterfly: base storage, base
+// attributes, flags, then four elements for each layer.
 class PropertyLayers {
 public:
     enum class Kind : int32_t {
@@ -1141,46 +1144,52 @@ public:
     bool isOverUninstalledFake { false };
     Vector<Layer, 6> layers;
 
-    static JSArray* create(Zig::GlobalObject* globalObject, SlotContent base)
+    // The cell that the owners of this record's layers will point at.
+    InternalFieldTuple* create(Zig::GlobalObject* globalObject) const
     {
-        PropertyLayers record;
-        record.base = base;
-        auto* cell = constructEmptyArray(globalObject, nullptr);
-        record.save(globalObject, cell);
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* cell = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
+        save(globalObject, cell);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return cell;
     }
 
     PropertyLayers() = default;
 
-    explicit PropertyLayers(JSArray* cell)
+    explicit PropertyLayers(InternalFieldTuple* cell)
     {
-        base = contentAt(cell, 0);
-        isOverUninstalledFake = intAt(cell, 2);
-        for (unsigned i = headerLength; i < cell->length(); i += layerLength) {
-            JSValue owner = cell->getIndexQuickly(i + 1);
-            layers.append({ static_cast<Kind>(intAt(cell, i)), owner.isNull() ? JSValue() : owner, contentAt(cell, i + 2), !(intAt(cell, i + 3) & notCovered) });
+        auto* elements = uncheckedDowncast<JSCellButterfly>(cell->getInternalField(0));
+        base = contentAt(elements, 0);
+        isOverUninstalledFake = intAt(elements, 2);
+        for (unsigned i = headerLength; i < elements->length(); i += layerLength) {
+            JSValue owner = elements->get(i + 1);
+            layers.append({ static_cast<Kind>(intAt(elements, i)), owner.isNull() ? JSValue() : owner, contentAt(elements, i + 2), !(intAt(elements, i + 3) & notCovered) });
         }
     }
 
-    void save(Zig::GlobalObject* globalObject, JSArray* cell) const
+    void save(Zig::GlobalObject* globalObject, InternalFieldTuple* cell) const
     {
         auto& vm = JSC::getVM(globalObject);
-        // `layers` can be the only reference to what it holds while the array is rewritten.
-        DeferGC deferGC(vm);
-        unsigned index = 0;
-        auto put = [&](JSValue value) { cell->putDirectIndex(globalObject, index++, value); };
-        auto putContent = [&](SlotContent content, int32_t flags) {
-            put(content.storage ? content.storage : jsNull());
-            put(jsNumber(static_cast<int32_t>(content.attributes) | (content.storage ? 0 : noProperty) | flags));
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        MarkedArgumentBuffer elements;
+        auto appendContent = [&](SlotContent content, int32_t flags) {
+            elements.append(content.storage ? content.storage : jsNull());
+            elements.append(jsNumber(static_cast<int32_t>(content.attributes) | (content.storage ? 0 : noProperty) | flags));
         };
-        putContent(base, 0);
-        put(jsNumber(isOverUninstalledFake ? 1 : 0));
+        appendContent(base, 0);
+        elements.append(jsNumber(isOverUninstalledFake ? 1 : 0));
         for (auto& layer : layers) {
-            put(jsNumber(static_cast<int32_t>(layer.kind)));
-            put(layer.owner ? layer.owner : jsNull());
-            putContent(layer.content, layer.isCovered ? 0 : notCovered);
+            elements.append(jsNumber(static_cast<int32_t>(layer.kind)));
+            elements.append(layer.owner ? layer.owner : jsNull());
+            appendContent(layer.content, layer.isCovered ? 0 : notCovered);
         }
-        cell->setLength(globalObject, index);
+        auto* saved = elements.hasOverflowed() ? nullptr : JSCellButterfly::tryCreateFromArgList(vm, elements);
+        if (!saved) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        cell->putInternalField(vm, 0, saved);
     }
 
     bool hasOwners() const
@@ -1263,16 +1272,15 @@ private:
     static constexpr int32_t noProperty = 1 << 20;
     static constexpr int32_t notCovered = 1 << 21;
 
-    // The array holds doubles when every other element is a number too.
-    static int32_t intAt(JSArray* cell, unsigned index)
+    static int32_t intAt(JSCellButterfly* elements, unsigned index)
     {
-        return static_cast<int32_t>(cell->getIndexQuickly(index).asNumber());
+        return elements->get(index).asInt32();
     }
 
-    static SlotContent contentAt(JSArray* cell, unsigned index)
+    static SlotContent contentAt(JSCellButterfly* elements, unsigned index)
     {
-        int32_t meta = intAt(cell, index + 1);
-        return { meta & noProperty ? JSValue() : cell->getIndexQuickly(index), static_cast<unsigned>(meta & ~(noProperty | notCovered)) };
+        int32_t meta = intAt(elements, index + 1);
+        return { meta & noProperty ? JSValue() : elements->get(index), static_cast<unsigned>(meta & ~(noProperty | notCovered)) };
     }
 };
 
@@ -1305,9 +1313,10 @@ static JSMap* stubbedGlobalsOf(Zig::GlobalObject* globalObject, JSObject* object
 }
 
 // Every owner of a layer points at the record it is in.
-static void setLayersOfOwners(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, const PropertyLayers& record, JSArray* cell)
+static void setLayersOfOwners(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, const PropertyLayers& record, InternalFieldTuple* cell)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto& layer : record.layers) {
         switch (layer.kind) {
         case PropertyLayers::Kind::Spy:
@@ -1317,8 +1326,10 @@ static void setLayersOfOwners(Zig::GlobalObject* globalObject, JSObject* object,
             Bun__FakeTimers__setLayers(globalObject, JSValue::encode(layer.owner), JSValue::encode(cell));
             break;
         case PropertyLayers::Kind::Stub:
-            if (auto* stubbed = stubbedGlobalsOf(globalObject, object))
+            if (auto* stubbed = stubbedGlobalsOf(globalObject, object)) {
                 JSC__JSMap__set(stubbed, globalObject, JSValue::encode(identifierToJSValue(vm, key)), JSValue::encode(cell));
+                RETURN_IF_EXCEPTION(scope, );
+            }
             break;
         case PropertyLayers::Kind::Value:
             break;
@@ -1341,7 +1352,7 @@ static SlotContent contentOfDescriptor(JSGlobalObject* globalObject, JSValue sav
 
 // The record that a stub or a fake landing on `object[key]` joins, or null if nothing else replaces the property. `content` is what
 // the property holds. `stub` is the name's entry in stubbedGlobals, if it has one.
-static JSArray* layersForLanding(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, SlotContent content, JSValue stub)
+static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, SlotContent content, JSValue stub)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     EncodedJSValue fakeOriginal {}, fakeLayers {};
@@ -1353,12 +1364,12 @@ static JSArray* layersForLanding(Zig::GlobalObject* globalObject, JSObject* obje
     auto* spy = liveSpyOn(content, object, key);
 
     // An owner whose record is over an uninstalled fake is off the property, and so is that record.
-    JSArray* candidates[] = {
-        fake && JSValue::decode(fakeLayers) ? uncheckedDowncast<JSArray>(JSValue::decode(fakeLayers)) : nullptr,
-        stub && stub.inherits<JSArray>() ? uncheckedDowncast<JSArray>(stub) : nullptr,
+    InternalFieldTuple* candidates[] = {
+        fake && JSValue::decode(fakeLayers) ? uncheckedDowncast<InternalFieldTuple>(JSValue::decode(fakeLayers)) : nullptr,
+        stub && stub.inherits<InternalFieldTuple>() ? uncheckedDowncast<InternalFieldTuple>(stub) : nullptr,
         spy ? spy->layers() : nullptr,
     };
-    for (JSArray* cell : candidates) {
+    for (auto* cell : candidates) {
         if (!cell)
             continue;
         PropertyLayers record(cell);
@@ -1367,16 +1378,16 @@ static JSArray* layersForLanding(Zig::GlobalObject* globalObject, JSObject* obje
         if (spy && !spy->isLayered()) {
             record.adopt(spy);
             record.save(globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, nullptr);
             spy->setLayers(cell);
         }
         return cell;
     }
     if (fake && JSValue::decode(fakeLayers))
         fake = JSValue();
-    if (stub && stub.inherits<JSArray>())
+    if (stub && stub.inherits<InternalFieldTuple>())
         stub = JSValue();
 
-    JSArray* cell = nullptr;
     PropertyLayers record;
     if (spy && !spy->isLayered()) {
         SlotContent covered = spy->covered();
@@ -1400,14 +1411,15 @@ static JSArray* layersForLanding(Zig::GlobalObject* globalObject, JSObject* obje
     } else
         return nullptr;
 
-    cell = PropertyLayers::create(globalObject, record.base);
-    record.save(globalObject, cell);
+    auto* cell = record.create(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     setLayersOfOwners(globalObject, object, key, record, cell);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return cell;
 }
 
 // Takes `owner`'s layer out of the record and leaves on the property what is right without it.
-static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, JSArray* cell, PropertyLayers::Kind kind, JSValue owner, PropertyLayers::Undo undo)
+static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, InternalFieldTuple* cell, PropertyLayers::Kind kind, JSValue owner, PropertyLayers::Undo undo)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     PropertyLayers record(cell);
@@ -1419,7 +1431,7 @@ static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, 
     }
     size_t index = record.find(kind, owner);
     if (index == notFound)
-        return;
+        RELEASE_AND_RETURN(scope, record.save(globalObject, cell));
 
     std::optional<SlotContent> toPut;
     if (index == record.layers.size() - 1) {
@@ -1432,9 +1444,10 @@ static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, 
         over.isOverUninstalledFake = true;
         over.layers.appendRange(record.layers.begin() + index + 1, record.layers.end());
         if (over.hasOwners()) {
-            auto* overCell = PropertyLayers::create(globalObject, over.base);
-            over.save(globalObject, overCell);
+            auto* overCell = over.create(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
             setLayersOfOwners(globalObject, object, key, over, overCell);
+            RETURN_IF_EXCEPTION(scope, );
         }
         toPut = record.under(index);
         record.layers.shrink(index);
@@ -1456,6 +1469,7 @@ static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, 
     while (!record.layers.isEmpty() && record.layers.last().kind == PropertyLayers::Kind::Value)
         record.layers.removeLast();
     record.save(globalObject, cell);
+    RETURN_IF_EXCEPTION(scope, );
     if (toPut)
         RELEASE_AND_RETURN(scope, putContent(globalObject, object, key, *toPut));
 }
@@ -1472,7 +1486,7 @@ JSValue layersOfStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier&
     JSObject* object = globalObject;
     SlotContent content = contentOf(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, {});
-    JSArray* cell = layersForLanding(globalObject, object, key, content, stub);
+    auto* cell = layersForLanding(globalObject, object, key, content, stub);
     RETURN_IF_EXCEPTION(scope, {});
     // A name that is stubbed already has its layer, in this record or over an uninstalled fake.
     if (!cell || stub)
@@ -1481,6 +1495,7 @@ JSValue layersOfStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier&
     record.cover(content);
     record.add(PropertyLayers::Kind::Stub, JSValue());
     record.save(globalObject, cell);
+    RETURN_IF_EXCEPTION(scope, {});
     return cell;
 }
 
@@ -1489,8 +1504,8 @@ bool removeStubbedGlobalFromLayers(Zig::GlobalObject* globalObject, const Identi
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = globalObject;
-    if (stub.inherits<JSArray>()) {
-        removeFromLayers(globalObject, object, key, uncheckedDowncast<JSArray>(stub), PropertyLayers::Kind::Stub, JSValue(), PropertyLayers::Undo::Own);
+    if (stub.inherits<InternalFieldTuple>()) {
+        removeFromLayers(globalObject, object, key, uncheckedDowncast<InternalFieldTuple>(stub), PropertyLayers::Kind::Stub, JSValue(), PropertyLayers::Undo::Own);
         RETURN_IF_EXCEPTION(scope, true);
         return true;
     }
@@ -1506,7 +1521,7 @@ bool removeStubbedGlobalFromLayers(Zig::GlobalObject* globalObject, const Identi
     return true;
 }
 
-static JSArray* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue fake, JSValue original, bool wasLayered, JSValue& base)
+static InternalFieldTuple* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue fake, JSValue original, bool wasLayered, JSValue& base)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1527,17 +1542,22 @@ static JSArray* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, 
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
-    JSArray* cell = layersForLanding(globalObject, object, key, content, stub);
+    auto* cell = layersForLanding(globalObject, object, key, content, stub);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!cell) {
-        if (!wasLayered)
-            return nullptr;
-        cell = PropertyLayers::create(globalObject, content);
-    }
-    PropertyLayers record(cell);
+    PropertyLayers record;
+    if (cell)
+        record = PropertyLayers(cell);
+    else if (wasLayered)
+        record.base = content;
+    else
+        return nullptr;
     record.cover(content);
     record.add(PropertyLayers::Kind::Fake, fake);
-    record.save(globalObject, cell);
+    if (cell)
+        record.save(globalObject, cell);
+    else
+        cell = record.create(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     base = record.base.storage && !record.base.storage.inherits<GetterSetter>() ? record.base.storage : jsUndefined();
     return cell;
 }
@@ -1553,7 +1573,7 @@ extern "C" JSC::EncodedJSValue JSMock__layersOfFake(Zig::GlobalObject* globalObj
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue base;
-    JSArray* layers = layersOfFake(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), JSValue::decode(fake), JSValue::decode(original), wasLayered, base);
+    auto* layers = layersOfFake(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), JSValue::decode(fake), JSValue::decode(original), wasLayered, base);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         return {};
@@ -1565,7 +1585,7 @@ extern "C" JSC::EncodedJSValue JSMock__layersOfFake(Zig::GlobalObject* globalObj
 // What useRealTimers() would leave on the property, as useFakeTimers() would read it there.
 extern "C" JSC::EncodedJSValue JSMock__valueUnderFake(JSC::EncodedJSValue layers, JSC::EncodedJSValue fake)
 {
-    PropertyLayers record(uncheckedDowncast<JSArray>(JSValue::decode(layers)));
+    PropertyLayers record(uncheckedDowncast<InternalFieldTuple>(JSValue::decode(layers)));
     size_t index = record.find(PropertyLayers::Kind::Fake, JSValue::decode(fake));
     SlotContent under = index == notFound ? record.base : record.under(index);
     if (auto* spy = PropertyLayers::spyOf(under))
@@ -1577,7 +1597,7 @@ extern "C" void JSMock__removeFakeFromLayers(Zig::GlobalObject* globalObject, JS
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    removeFromLayers(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), uncheckedDowncast<JSArray>(JSValue::decode(layers)), PropertyLayers::Kind::Fake, JSValue::decode(fake), isUseRealTimers ? PropertyLayers::Undo::RealTimers : PropertyLayers::Undo::Own);
+    removeFromLayers(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), uncheckedDowncast<InternalFieldTuple>(JSValue::decode(layers)), PropertyLayers::Kind::Fake, JSValue::decode(fake), isUseRealTimers ? PropertyLayers::Undo::RealTimers : PropertyLayers::Undo::Own);
     (void)scope.tryClearException();
 }
 

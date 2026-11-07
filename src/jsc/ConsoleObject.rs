@@ -2633,7 +2633,7 @@ pub mod formatter {
         pub(crate) fn write_indent(&mut self, indent: u32) {
             let mut total_remain: u32 = indent;
             while total_remain > 0 {
-                let written: u8 = total_remain.min(32) as u8;
+                let written: u8 = total_remain.min(MAX_INDENT_PER_WRITE) as u8;
                 if self
                     .ctx
                     .write_all(&INDENTATION_BUF[0..(written as usize) * 2])
@@ -2657,6 +2657,33 @@ pub mod formatter {
             if self.ctx.write_all(b" ").is_err() {
                 self.failed = true;
             }
+        }
+
+        /// Starts a line of JSX children. An element on one line has no break: its children follow each other.
+        #[inline(never)]
+        pub(crate) fn jsx_line_break(&mut self, single_line: bool, indent: u32) {
+            if single_line {
+                return;
+            }
+            let levels = indent.min(MAX_INDENT_PER_WRITE);
+            self.write_all(&LINE_FEED_AND_INDENTATION_BUF[..1 + (levels as usize) * 2]);
+            if indent > levels {
+                self.write_indent(indent - levels);
+            }
+        }
+
+        // Inlined: behind a call, `print_array` keeps its writer in memory.
+        #[inline(always)]
+        pub(crate) fn more_items<const ENABLE_ANSI_COLORS: bool>(&mut self, count: u64) {
+            self.pretty::<ENABLE_ANSI_COLORS>(
+                "... N more items".len(),
+                format_args!(
+                    "{}... {} more items{}",
+                    pfmt!("<r><d>", ENABLE_ANSI_COLORS),
+                    count,
+                    pfmt!("<r>", ENABLE_ANSI_COLORS)
+                ),
+            );
         }
 
         // `fmt_len` (the length ignoring formatted values) is a runtime
@@ -2700,6 +2727,19 @@ pub mod formatter {
 
     const INDENTATION_BUF: [u8; 64] = [b' '; 64];
 
+    /// The indent levels that one write of `INDENTATION_BUF` covers.
+    const MAX_INDENT_PER_WRITE: u32 = (INDENTATION_BUF.len() / 2) as u32;
+
+    /// A line feed, then `INDENTATION_BUF`: a line break and its indent in one write.
+    static LINE_FEED_AND_INDENTATION_BUF: [u8; 1 + INDENTATION_BUF.len()] = {
+        let mut buf = [b' '; 1 + INDENTATION_BUF.len()];
+        buf[0] = b'\n';
+        buf
+    };
+
+    /// The items of an Array, and the children of a JSX list on one line, that print before `... N more items`.
+    const MAX_ITEMS_PRINTED: u32 = 100;
+
     /// Free-function indent writer for callsites where a `WrappedWriter`
     /// already holds `&mut self.estimated_line_length`, which would otherwise
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
@@ -2708,7 +2748,7 @@ pub mod formatter {
     fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
-            let written: u8 = total_remain.min(32) as u8;
+            let written: u8 = total_remain.min(MAX_INDENT_PER_WRITE) as u8;
             writer.write_all(&INDENTATION_BUF[0..(written as usize) * 2])?;
             total_remain = total_remain.saturating_sub(u32::from(written));
         }
@@ -4332,7 +4372,7 @@ pub mod formatter {
                         }
                         continue;
                     }
-                    if nonempty_count >= 100 {
+                    if nonempty_count >= MAX_ITEMS_PRINTED {
                         writer.print_comma::<C>();
                         if self.single_line {
                             writer.space();
@@ -4341,15 +4381,7 @@ pub mod formatter {
                             *writer.estimated_line_length = 0;
                             writer.write_indent(self.indent);
                         }
-                        writer.pretty::<C>(
-                            "... N more items".len(),
-                            format_args!(
-                                "{}... {} more items{}",
-                                pf!("<r><d>"),
-                                len - u64::from(i),
-                                pf!("<r>")
-                            ),
-                        );
+                        writer.more_items::<C>(len - u64::from(i));
                         break;
                     }
                     nonempty_count += 1;
@@ -5181,13 +5213,21 @@ pub mod formatter {
                         let print_children =
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
 
-                        if print_children && !self.single_line {
+                        if print_children {
                             'print_children: {
                                 match tag.tag.tag() {
                                     Tag::String => {
                                         let children_string =
                                             children.to_js_string_view(self.global_this)?;
                                         if children_string.is_empty() {
+                                            // The default layout leaves the tag open here: https://github.com/oven-sh/bun/pull/38935
+                                            if self.single_line {
+                                                writer.write_all(b" />");
+                                                if writer.failed {
+                                                    self.failed = true;
+                                                }
+                                                return Ok(());
+                                            }
                                             break 'print_children;
                                         }
                                         if C {
@@ -5197,23 +5237,17 @@ pub mod formatter {
                                         if children_string.length() < 128 {
                                             writer.write_string(&children_string);
                                         } else {
-                                            self.indent += 1;
-                                            writer.write_all(b"\n");
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
-                                            self.indent = self.indent.saturating_sub(1);
+                                            writer
+                                                .jsx_line_break(self.single_line, self.indent + 1);
                                             writer.write_string(&children_string);
-                                            writer.write_all(b"\n");
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
+                                            writer.jsx_line_break(self.single_line, self.indent);
                                         }
                                     }
                                     Tag::JSX => {
-                                        writer.write_all(b">\n");
+                                        writer.write_all(b">");
                                         {
                                             self.indent += 1;
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
+                                            writer.jsx_line_break(self.single_line, self.indent);
                                             let _ind = defer_decrement!(self.indent);
                                             if writer.failed {
                                                 self.failed = true;
@@ -5231,20 +5265,25 @@ pub mod formatter {
                                                     .estimated_line_length,
                                             };
                                         }
-                                        writer.write_all(b"\n");
-                                        write_indent_n(self.indent, writer.ctx)
-                                            .expect("unreachable");
+                                        writer.jsx_line_break(self.single_line, self.indent);
                                     }
                                     Tag::Array => {
                                         let length = children.get_length(self.global_this)?;
                                         if length == 0 {
+                                            // The default layout leaves the tag open here: https://github.com/oven-sh/bun/pull/38935
+                                            if self.single_line {
+                                                writer.write_all(b" />");
+                                                if writer.failed {
+                                                    self.failed = true;
+                                                }
+                                                return Ok(());
+                                            }
                                             break 'print_children;
                                         }
-                                        writer.write_all(b">\n");
+                                        writer.write_all(b">");
                                         {
                                             self.indent += 1;
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
+                                            writer.jsx_line_break(self.single_line, self.indent);
                                             let _prev_quote_strings = self.quote_strings;
                                             self.quote_strings = false;
                                             let _qs2 = defer_restore!(
@@ -5278,17 +5317,23 @@ pub mod formatter {
                                                     estimated_line_length: &mut self
                                                         .estimated_line_length,
                                                 };
-                                                if (j as u64) + 1 < length {
-                                                    writer.write_all(b"\n");
-                                                    write_indent_n(self.indent, writer.ctx)
-                                                        .expect("unreachable");
+                                                let printed = j as u64 + 1;
+                                                if printed < length {
+                                                    if self.single_line
+                                                        && printed >= u64::from(MAX_ITEMS_PRINTED)
+                                                    {
+                                                        writer.more_items::<C>(length - printed);
+                                                        break;
+                                                    }
+                                                    writer.jsx_line_break(
+                                                        self.single_line,
+                                                        self.indent,
+                                                    );
                                                 }
                                                 j += 1;
                                             }
                                         }
-                                        writer.write_all(b"\n");
-                                        write_indent_n(self.indent, writer.ctx)
-                                            .expect("unreachable");
+                                        writer.jsx_line_break(self.single_line, self.indent);
                                     }
                                     _ => unreachable!(),
                                 }

@@ -1,0 +1,57 @@
+# -- source: main.js
+# const told = [];
+# function say(ask) {
+#   try {
+#     told.push(String(ask()));
+#   } catch (error) {
+#     told.push(error.constructor.name);
+#   }
+# }
+# let late, lateGetter, lateSetter, lateStatic;
+# function define(turn) {
+#   let seen = "none";
+#   class Ledger {
+#     [eval("(late = entry => entry.#total(), lateGetter = entry => entry.#rate, lateSetter = (entry, rate) => { entry.#rate = rate; }, 'first')")]() {
+#       return turn;
+#     }
+#     static [eval("(lateStatic = holder => holder.#count(), 'second')")]() {
+#       return turn;
+#     }
+#     [((seen = "key" + turn), "third")]() {
+#       return this.#total();
+#     }
+#     held = 2;
+#     #total() {
+#       return seen + turn;
+#     }
+#     get #rate() {
+#       return this.held;
+#     }
+#     set #rate(rate) {
+#       this.held = rate + turn;
+#     }
+#     static #count() {
+#       return "count" + turn;
+#     }
+#   }
+#   const entry = new Ledger();
+#   say(() => late(entry));
+#   say(() => late({}));
+#   say(() => lateGetter(entry));
+#   say(() => (lateSetter(entry, 5), lateGetter(entry)));
+#   say(() => lateStatic(Ledger));
+#   say(() => lateStatic(entry));
+#   say(() => entry.third());
+#   seen = "after";
+#   say(() => late(entry));
+# }
+# for (let turn = 0; turn < 3; turn++) define(turn);
+# print(told.join(" "));
+# -- end of source
+# A direct eval in a computed key is handed the functions of the private methods, getters and setters of its class as values, read where the eval stands. The members were made in the order of the text: one that stands behind the key was not made yet, and a closure that the eval made met undefined later: a TypeError where the language answers. Making a closure is seen by nobody: they are all made in front of the first key. What a key stores (`seen`) is still seen by a method that was made in front of it.
+# RUN: run-in-shell
+# CHECK: key00 TypeError 2 5 count0 TypeError key00 after0 key11 TypeError 2 6 count1 TypeError key11 after1 key22 TypeError 2 7 count2 TypeError key22 after2
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: key00 TypeError 2 5 count0 TypeError key00 after0 key11 TypeError 2 6 count1 TypeError key11 after1 key22 TypeError 2 7 count2 TypeError key22 after2
+# CHECKED-NEXT: exited with 0

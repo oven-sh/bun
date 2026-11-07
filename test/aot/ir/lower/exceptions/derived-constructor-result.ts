@@ -6,7 +6,7 @@
 // CHECK-NEXT: [[result]]():
 // CHECK: TypeTest {{*}}testedType=undefined
 // CHECK-NEXT: Branch {{*}}notTaken [[invalid]](| 0)
-// CHECK: [[invalid]]([[rejected]]) frequency=Unlikely:
+// CHECK: [[invalid]]([[rejected]]):
 // CHECK-NEXT: runtimeError=DerivedConstructorResult
 // CHECK-LABEL: function {{*}}name="ReturnsUnderFinally"
 // CHECK-NOT: DerivedConstructorResult

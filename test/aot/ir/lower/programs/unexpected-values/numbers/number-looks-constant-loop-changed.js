@@ -158,102 +158,81 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 
 // GENERATED: memberBehindAGetter attempt factor
 // CHECK-LABEL: function {{*}}name="memberBehindAGetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = NewObject layout=[[L_2]]
+// CHECK-NEXT: v3 = NewObject -, v1, v2 layout=[[L_2]] fields=[0, 1]
 // CHECK-NEXT: v4 = Integer
 // CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v3, v5 layout=[[L_2]]
+// CHECK-NEXT: PutEnvironmentField v3, v5 layout=[[L_2]] field=2
 // CHECK-NEXT: v7 = NewObject layout=[[L_3]]
-// CHECK-NEXT: v8 = NewClosure v3, v1, v2 function=[[f_4]]
+// CHECK-NEXT: v8 = NewClosure v3 function=[[f_4]]
 // CHECK-NEXT: DefineGetter v7, v8 key="factor"
 // CHECK-NEXT: v10 = FinishObject v7
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v12 = Data data=[[d_5]]
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v15 = Integer
-// CHECK-NEXT: v16 = Convert v15 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v16)
-// CHECK-NEXT: b2(v17):
+// CHECK-NEXT: v11 = Data data=[[d_5]]
+// CHECK-NEXT: v12 = Integer
+// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v13)
+// CHECK-NEXT: b1(v14):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v19 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v20 = Less v17, v19
-// CHECK-NEXT: Branch v20 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
-// CHECK-NEXT: b3(v21, v22):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v23 = PropGet v14 key="push"
-// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v25 = PropGet v11 key="factor"
-// CHECK-NEXT: v26 = Convert v25 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v27 = Integer integer=3
-// CHECK-NEXT: v28 = Mul v26, v27
-// CHECK-NEXT: v29 = PropGet v11 key="factor"
-// CHECK-NEXT: v30 = Convert v29 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v31 = Integer
-// CHECK-NEXT: v32 = BitOr v30, v31
-// CHECK-NEXT: v33 = PropGet v11 key="factor"
-// CHECK-NEXT: v34 = Convert v33 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v35 = Integer integer=1
-// CHECK-NEXT: v36 = Add v34, v35
-// CHECK-NEXT: v37 = Call v24, v14, v28, v32, v36 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v38 = Increment v21
-// CHECK-NEXT: v39 = Convert v38 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v39)
-// CHECK-NEXT: b6(v40, v41):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: v16 = Less v14, v0
+// CHECK-NEXT: Branch v16 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v17 = PropGet v11 key="push"
+// CHECK-NEXT: v18 = PropGet v10 key="factor"
+// CHECK-NEXT: v19 = Integer integer=3
+// CHECK-NEXT: v20 = Mul v18, v19
+// CHECK-NEXT: v21 = PropGet v10 key="factor"
+// CHECK-NEXT: v22 = Integer
+// CHECK-NEXT: v23 = BitOr v21, v22
+// CHECK-NEXT: v24 = PropGet v10 key="factor"
+// CHECK-NEXT: v25 = Integer integer=1
+// CHECK-NEXT: v26 = Add v24, v25
+// CHECK-NEXT: v27 = Call v17, v11, v20, v23, v26 calleeKey="push" calleeName="seen.push"
+// CHECK-NEXT: v28 = Increment v14
+// CHECK-NEXT: v29 = Convert v28 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v29)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
 // CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
 // CHECK-NEXT: v5 = PropGet v4 key="log"
 // CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
 // CHECK-NEXT: v7 = String string="->"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v9 = Call v8, -, v1 calleeName="outcome"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v6, v4, v0, v7, v10 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: v10 = Call v6, v4, v0, v7, v9 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v11 = Undefined
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="factor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=anything variableName="at"}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected] variableName="replacement"}] thisType={type=anything} results=[{type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: anything, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_2]]):
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]] field=2
+// CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
+// CHECK-NEXT: v3 = ToNumeric v2
+// CHECK-NEXT: v4 = Increment v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_2]] field=2
+// CHECK-NEXT: v7 = CheckInitialized v6 name="reads"
+// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_2]] field=2
+// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_2]]
+// CHECK-NEXT: v10 = Integer integer=3
+// CHECK-NEXT: v11 = Mul v9, v10
+// CHECK-NEXT: v12 = Integer integer=2
+// CHECK-NEXT: v13 = Add v11, v12
+// CHECK-NEXT: v14 = Greater v3, v13
+// CHECK-NEXT: Branch v14 -> taken b1(), notTaken b2()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="reads"
-// CHECK-NEXT: v5 = ToNumeric v4
-// CHECK-NEXT: v6 = Increment v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="reads"
-// CHECK-NEXT: PutEnvironmentField v0, v7 layout=[[L_2]]
-// CHECK-NEXT: v11 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v12 = Integer integer=3
-// CHECK-NEXT: v13 = Mul v11, v12
-// CHECK-NEXT: v14 = Integer integer=2
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: v16 = Greater v5, v15
-// CHECK-NEXT: Branch v16 -> taken b2(), notTaken b3()
+// CHECK-NEXT: v15 = GetEnvironmentField v0 layout=[[L_2]] field=1
+// CHECK-NEXT: Jump -> next b3(v15)
 // CHECK-NEXT: b2():
-// CHECK-NEXT: Jump -> next b4(v2)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v17 = Integer integer=2
-// CHECK-NEXT: Jump -> next b4(v17)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}
-// CHECK-NEXT: Return v19
+// CHECK-NEXT: v16 = Integer integer=2
+// CHECK-NEXT: Jump -> next b3(v16)
+// CHECK-NEXT: b3(v17):
+// CHECK-NEXT: Return v17
 // CHECK-NEXT: }

@@ -6,7 +6,7 @@
 // ENTRY: app/entry.ts
 // CWD: app
 // LINK: linked -> real
-// DIAGNOSTIC: TS2322 real/twice.ts:2
+// DIAGNOSTIC: TS1109 real/twice.ts:2
 
 // FILE: app/entry.ts
 import { twice } from "../linked/twice";
@@ -14,4 +14,4 @@ export const four = twice(2);
 
 // FILE: real/twice.ts
 export const twice = (n: number) => n * 2;
-export const wrong: number = "three";
+export function wrong(n: number) { return n +; }

@@ -1,0 +1,27 @@
+An earlier test file loaded the module by import(); the next lays vi.doMock() below it and imports it again; the third has no mock.
+#### dep.js
+export const value = "real";
+export const get = () => "real";
+#### f1.test.js
+import { test } from "bun:test";
+test("one", async () => {
+  const subject = await import("./subject.js");
+  console.log("| CASE one", subject.f(), subject.value);
+});
+#### f2.test.js
+import { test, vi } from "bun:test";
+test("two", async () => {
+  vi.doMock("./dep.js", () => ({ value: "mocked", get: () => "mocked" }));
+  const subject = await import("./subject.js");
+  console.log("| CASE two", subject.f(), subject.value);
+});
+#### f3.test.js
+import { test } from "bun:test";
+test("three", async () => {
+  const subject = await import("./subject.js");
+  console.log("| CASE three", subject.f(), subject.value);
+});
+#### subject.js
+import { value, get } from "./dep.js";
+export { value } from "./dep.js";
+export const f = () => [value, get()].join();

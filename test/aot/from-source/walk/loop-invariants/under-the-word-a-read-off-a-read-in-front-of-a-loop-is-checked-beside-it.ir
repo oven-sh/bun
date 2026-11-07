@@ -1,0 +1,53 @@
+# -- source: main.js
+# // A loop whose turns are quiet reads `this.ring.tail`: the read of `ring`, the test of what it gave and the read of `tail` stand in a row in front of the loop.
+# // With the proofs checked at run time each of those reads is asked again whether its slot is filled: the question stands beside the read, in the same row.
+# const absent = Symbol.for("absent");
+# class Ring {
+#     constructor() { this.tail = { value: absent, next: null }; this.size = 0; }
+#     push(value) { const link = { value, next: null }; this.tail.next = link; this.tail = link; this.size += 1; }
+# }
+# class Reader {
+#     constructor(ring) { this.ring = ring; this.head = ring.tail; this.index = 0; this.isClosed = false; }
+#     isDrained() {
+#         if (this.isClosed)
+#             return true;
+#         let drained = true, goesOn = true;
+#         while (goesOn) {
+#             if (this.head === this.ring.tail)
+#                 goesOn = false;
+#             else if (this.head.next.value !== absent) {
+#                 drained = false;
+#                 goesOn = false;
+#             } else {
+#                 this.head = this.head.next;
+#                 this.index += 1;
+#             }
+#         }
+#         return drained;
+#     }
+# }
+# print(new Function("Ring", "Reader", "absent", `
+#     const said = [];
+#     const ring = new Ring(), reader = new Reader(ring);
+#     said.push(reader.isDrained(), reader.index);
+#     ring.push(absent); ring.push(absent);
+#     said.push(reader.isDrained(), reader.index);
+#     ring.push(absent); ring.push(7);
+#     said.push(reader.isDrained(), reader.index);
+#     reader.isClosed = true;
+#     said.push(reader.isDrained(), reader.index);
+#     const odd = new Reader(ring); odd.ring = { tail: odd.head };
+#     said.push(odd.isDrained(), odd.index);
+#     delete ring.tail;
+#     const late = new Reader({ tail: null }); late.ring = ring; late.head = undefined;
+#     said.push(late.isDrained(), late.index);
+#     return said.join(" ");
+# `)(Ring, Reader, absent));
+# -- end of source
+# A RIGHT PROGRAM (after two servers). In front of a loop with quiet turns there are two rows of blocks, and each operation that is built in front is sent to its row. Where proofs are
+# checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) a read of a slot has a test of its own whether the slot is filled. Built "where it stands", that test was not sent: it landed in the
+# first row, and its operand, the Unbox of what the read in front of it gave, stands in the second: the build stopped: UseNotDominated. The sending carries nothing out of a turn: it only picks the row.
+# RUN(BUILDS): run-in-shell testing=CheckProofsAtRunTime
+# BUILDS: true 0 true 2 false 3 true 3 true 0 true 0
+# BUILDS-NEXT: exited with 0
+# BUILDS-NEXT: the source prints the same

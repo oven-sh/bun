@@ -1716,7 +1716,8 @@ impl BlobExt for Blob {
         }
 
         let mut blob_content_type = BlobContentType::default();
-        if content_type.is_string() {
+        // A DOMString: ToString converts every value but `undefined`.
+        if !content_type.is_undefined() {
             let content_type_view = content_type.to_js_string_view(global_this)?;
             let slicer = content_type_view.to_utf8();
             let slice = slicer.slice();
@@ -2055,19 +2056,7 @@ impl BlobExt for Blob {
             blob = Blob::get::<false, true>(global_this, parts)?;
 
             if options.is_object() {
-                if let Some(content_type) = options.get(global_this, "type")? {
-                    'inner: {
-                        if content_type.is_string() {
-                            let content_type_str = content_type.to_utf8(global_this)?;
-                            let slice = content_type_str.slice();
-                            if !is_valid_blob_type(slice) {
-                                break 'inner;
-                            }
-                            blob.content_type_was_set.set(true);
-                            blob.content_type.set(BlobContentType::from_script(slice));
-                        }
-                    }
-                }
+                set_type_from_options(global_this, &blob, options)?;
             }
 
             if blob.content_type_slice().is_empty() {
@@ -5043,6 +5032,24 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
 }
 
+/// Gives `blob` the `type` of the options of `new Blob()` or `new File()`. The File API declares
+/// it a DOMString: ToString converts every value that is present.
+fn set_type_from_options(
+    global_this: &JSGlobalObject,
+    blob: &Blob,
+    options: JSValue,
+) -> JsResult<()> {
+    if let Some(content_type) = options.fast_get(global_this, jsc::BuiltinName::Type)? {
+        let content_type_str = content_type.to_utf8(global_this)?;
+        let slice = content_type_str.slice();
+        if is_valid_blob_type(slice) {
+            blob.content_type_was_set.set(true);
+            blob.content_type.set(BlobContentType::from_script(slice));
+        }
+    }
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // JSDOMFile constructor
 // ──────────────────────────────────────────────────────────────────────────
@@ -5088,21 +5095,7 @@ pub(crate) fn jsdom_file_construct(
     let mut set_last_modified = false;
 
     if options.is_object() {
-        // type, the ASCII-encoded string in lower case
-        // representing the media type of the Blob.
-        if let Some(content_type) = options.get(global_this, "type")? {
-            'inner: {
-                if content_type.is_string() {
-                    let content_type_str = content_type.to_utf8(global_this)?;
-                    let slice = content_type_str.slice();
-                    if !is_valid_blob_type(slice) {
-                        break 'inner;
-                    }
-                    blob.content_type_was_set.set(true);
-                    blob.content_type.set(BlobContentType::from_script(slice));
-                }
-            }
-        }
+        set_type_from_options(global_this, &blob, options)?;
 
         // WebIDL dictionary member: only `undefined` / not-present falls
         // through to the Date.now() default. Any present value (including

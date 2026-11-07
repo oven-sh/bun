@@ -350,7 +350,7 @@ const joinedParts = [
   b.readsContents(),
   b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
 ];
-const blobOptions = membersInspected("type");
+const blobOptions = [b.runsTransitively("ToPrimitive", b.named("type"))];
 
 const blobConstruction = [
   {
@@ -451,12 +451,11 @@ const membersOfBlob = {
     },
   },
   size: measuredNumber,
-  // An operand of another kind than a number or a string counts as absent.
   slice: {
-    ...nativeOnly,
+    ...operandCodeOnly,
     args: { start: anythingOrAbsent, end: anythingOrAbsent, contentType: anythingOrAbsent },
     returns: newBlobOverSameBytes,
-    uses: { this: stateRead, start: b.inspected, end: b.inspected, contentType: b.inspected },
+    uses: { this: stateRead, start: converted, end: converted, contentType: converted },
     reads: externalState,
   },
   // The promise is resolved with a Stats object, which looks for `then` on a prototype that is not locked.

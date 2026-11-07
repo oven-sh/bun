@@ -4353,20 +4353,25 @@ pub mod bv2_impl {
                 else {
                     continue;
                 };
-                let artifact: &str = if root.has_entry(generation, b"prebuilds") {
-                    "prebuilds"
+                // (the directory the executable reads, with the platform's separator; the `--asset` path)
+                let (read_dir, asset): (&str, &str) = if root.has_entry(generation, b"prebuilds") {
+                    ("prebuilds", "prebuilds")
                 } else if root.has_entry(generation, b"binding.gyp") {
-                    "build/Release"
+                    (
+                        const_format::concatcp!("build", bun_paths::SEP_STR, "Release"),
+                        "build/Release",
+                    )
                 } else {
                     continue;
                 };
+                let sep = bun_paths::SEP_STR;
                 let name = bstr::BStr::new(&package_json.name);
                 let dir = bstr::BStr::new(package_json.source.path.name().dir);
                 self.transpiler.log_mut().add_warning_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "{name} loads a native addon through a path built at run time, and no .node file from {dir} is embedded in the executable. The executable reads {dir}/{artifact} at run time and fails where that directory does not exist. Build with --aot and --asset node_modules/{name}/{artifact}, or load the .node file with a string literal require so that it is embedded."
+                        "{name} loads a native addon through a path built at run time, and no .node file from {dir} is embedded in the executable. The executable reads {dir}{sep}{read_dir} at run time and fails where that directory does not exist. Build with --aot and --asset node_modules/{name}/{asset}, or load the .node file with a string literal require so that it is embedded."
                     ),
                 );
             }

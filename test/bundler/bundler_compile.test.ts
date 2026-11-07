@@ -2019,7 +2019,7 @@ describe("compile warns for a native addon that the executable loads from disk",
     const output = await build(String(dir));
     const root = join(String(dir), "node_modules", "fakeaddon");
     expect(output).toContain(
-      `warn: fakeaddon loads a native addon through a path built at run time, and no .node file from ${root} is embedded in the executable.`,
+      `warn: fakeaddon loads a native addon through a path built at run time, and no .node file from ${root} is embedded in the executable. The executable reads ${join(root, "prebuilds")} at run time`,
     );
     expect(output).toContain(`--asset node_modules/fakeaddon/prebuilds`);
     expect(output.match(/warn: /g)).toHaveLength(1);
@@ -2033,7 +2033,7 @@ describe("compile warns for a native addon that the executable loads from disk",
     const output = await build(String(dir));
     const root = join(String(dir), "node_modules", "gyponly");
     expect(output).toContain(`warn: gyponly loads a native addon through a path built at run time`);
-    expect(output).toContain(`The executable reads ${join(root, "build/Release")} at run time`);
+    expect(output).toContain(`The executable reads ${join(root, "build", "Release")} at run time`);
     expect(output.match(/warn: /g)).toHaveLength(1);
   }, 30_000);
 

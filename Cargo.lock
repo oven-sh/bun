@@ -382,6 +382,7 @@ dependencies = [
  "bun_watcher",
  "bun_wyhash",
  "bun_zstd",
+ "const_format",
  "enum-map",
  "lol_html",
  "scopeguard",

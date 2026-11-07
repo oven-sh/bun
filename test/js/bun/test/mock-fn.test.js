@@ -4159,6 +4159,369 @@ if (isBun) {
       });
     });
 
+    describe("`length`", () => {
+      const three = () => function three(a, b, c) {};
+      const own = mocked => Object.getOwnPropertyDescriptor(mocked, "length");
+      // Vitest defines it as writable. Jest's is the `length` of a function.
+      const attributes = isVitest => ({ writable: isVitest, enumerable: false, configurable: true });
+      const writable = value => ({ value, ...attributes(true) });
+      const each = (lengths, expected) => Object.fromEntries(Object.keys(lengths).map(key => [key, expected]));
+      const modes = [
+        ["automock", undefined],
+        ["spy", { spy: true }],
+      ];
+
+      // [kind, function, its `length` in node and in Bun, whether `jest.spyOn()` and `spyOn()` take it]
+      const originals = [
+        ["a function", three, 3, true],
+        ["a bound function", () => three().bind(null, 1), 2, true],
+        ["a class", () => class { constructor(a, b) {} }, 2, true], // prettier-ignore
+        ["a native function", () => Math.max, 2, true],
+        ["a native constructor", () => Date, 7, false],
+        ["a Proxy of a function", () => new Proxy(three(), {}), 3, false],
+        ["a Proxy of a native constructor", () => new Proxy(Date, {}), 7, false],
+      ];
+      const countsReads = log => ({
+        get(target, key, receiver) {
+          if (key === "length") log.push("get length");
+          return Reflect.get(target, key, receiver);
+        },
+        ownKeys(target) {
+          log.push("ownKeys");
+          return Reflect.ownKeys(target);
+        },
+      });
+      const error = new Error("from length");
+      const throws = {
+        get(target, key, receiver) {
+          if (key === "length") throw error;
+          return Reflect.get(target, key, receiver);
+        },
+      };
+
+      // Vitest 5.0.3 and Jest 30.5.2 both read it off the function that they are given.
+      test.each(flavors)("%s: fn() has the `length` of any function", (_, isVitest, fn) => {
+        const lengths = Object.fromEntries(originals.map(([kind, original]) => [kind, own(fn(original()))]));
+        const expected = originals.map(([kind, , length]) => [kind, { value: length, ...attributes(isVitest) }]);
+        expect(lengths).toEqual(Object.fromEntries(expected));
+        // A mock is a function too. `vi.fn()` returns a mock as it is.
+        expect(fn(jest.fn(three())).length).toBe(3);
+      });
+
+      test.each(flavors)("%s: fn() reads it once, and an error from it is thrown", (_, isVitest, fn) => {
+        const log = [];
+        const mocked = fn(new Proxy(three(), countsReads(log)));
+        mocked.length;
+        mocked();
+        mocked.mockReset();
+        expect(log.filter(entry => entry === "get length")).toHaveLength(1);
+        // Vitest reads it after the static properties.
+        expect(log.indexOf("ownKeys")).toBeLessThan(log.indexOf("get length"));
+        expect(() => fn(new Proxy(three(), throws))).toThrow(error);
+      });
+
+      // https://github.com/vitest-dev/vitest/blob/v5.0.3/test/unit/test/mocking/vi-fn.test.ts#L98-L103
+      test("vi.fn() has overridable length", () => {
+        const fn0 = vi.fn(() => {});
+        // @ts-expect-error TS doesn't allow override
+        fn0.length = 5;
+        expect(fn0.length).toBe(5);
+      });
+
+      // The runner gives `done` to a callback that has a `length`, as Jest does. A `vi` mock keeps its function when a test above resets all mocks.
+      test(
+        "a mock of a Proxy of a function that takes `done` is a test that takes `done`",
+        vi.fn(new Proxy(done => done(), {})),
+      );
+
+      const accessor = half => Object.defineProperty({}, "key", { ...half, configurable: true });
+      // Every way that spyOn() comes by the function that it replaces.
+      const routes = [
+        ["a value", (spyOn, fn) => spyOn({ key: fn }, "key")],
+        ["what a getter returns", (spyOn, fn) => spyOn(accessor({ get: () => fn }), "key")],
+        ["a getter", (spyOn, fn) => spyOn(accessor({ get: fn }), "key", "get")],
+        ["a setter", (spyOn, fn) => spyOn(accessor({ set: fn }), "key", "set")],
+      ];
+      // Jest's spies have `length` 0. Outside `vi`, Bun's have the `length` of a JS function, and of no other function.
+      describe.each(routes)("spyOn() of %s", (_, spy) => {
+        test.each(flavors)("%s: of a function of any kind", (_, isVitest, fn, spyOn) => {
+          const lengths = Object.fromEntries(originals.map(([kind, original]) => [kind, own(spy(spyOn, original()))]));
+          const expected = originals.map(([kind, , length, isTaken]) => [
+            kind,
+            { value: isVitest || isTaken ? length : 0, ...attributes(isVitest) },
+          ]);
+          expect(lengths).toEqual(Object.fromEntries(expected));
+        });
+
+        test.each(flavors)("%s: of a Proxy, whose `length` only `vi` reads", (_, isVitest, fn, spyOn) => {
+          const log = [];
+          spy(spyOn, new Proxy(three(), countsReads(log)));
+          expect(log.filter(entry => entry === "get length")).toHaveLength(isVitest ? 1 : 0);
+
+          const throwing = new Proxy(three(), throws);
+          if (isVitest) expect(() => spy(spyOn, throwing)).toThrow(error);
+          else expect(own(spy(spyOn, throwing))).toEqual({ value: 0, ...attributes(false) });
+        });
+      });
+
+      test("vi: an error from `length` leaves the function where it is", () => {
+        const target = { key: new Proxy(three(), throws) };
+        const { key } = target;
+        expect(() => vi.spyOn(target, "key")).toThrow(error);
+        expect(target.key).toBe(key);
+      });
+
+      test("vi: a spy on a global constructor", () => {
+        const spy = vi.spyOn(globalThis, "Date");
+        try {
+          expect(own(spy)).toEqual(writable(7));
+        } finally {
+          spy.mockRestore();
+        }
+        expect(vi.isMockFunction(Date)).toBe(false);
+      });
+
+      test.each(originals)("vi: an automock has the `length` of %s", (_, original, length) => {
+        const fn = original();
+        expect([own(vi.mockObject({ key: fn }).key), own(vi.mockObject(fn))]).toEqual([
+          writable(length),
+          writable(length),
+        ]);
+      });
+
+      test("vi: an automock made with `spy` has the `length` of the function", () => {
+        const spied = vi.mockObject(
+          { function: three(), bound: three().bind(null, 1), proxy: new Proxy(three(), {}) },
+          { spy: true },
+        );
+        expect({ function: own(spied.function), bound: own(spied.bound), proxy: own(spied.proxy) }).toEqual({
+          function: writable(3),
+          bound: writable(2),
+          proxy: writable(3),
+        });
+      });
+
+      test.each(modes)("vi: %s: reads it once, and an error from it is thrown", (_, options) => {
+        const log = [];
+        // Vitest reads it two and three times.
+        vi.mockObject({ key: new Proxy(three(), countsReads(log)) }, options);
+        expect(log.filter(entry => entry === "get length")).toHaveLength(1);
+        expect(() => vi.mockObject({ key: new Proxy(three(), throws) }, options)).toThrow(error);
+      });
+
+      test.each(modes)("vi: %s: a `length` that the function inherits", (_, options) => {
+        const automocked = fn => own(vi.mockObject({ key: fn }, options).key);
+        class Base {
+          constructor(a, b, c) {}
+        }
+        class Derived extends Base {}
+        delete Derived.length;
+        const ofAnObject = Object.setPrototypeOf(function (a) {}, { length: 42 });
+        delete ofAnObject.length;
+        const ofNothing = function (a) {};
+        delete ofNothing.length;
+        const hidden = new Proxy(three(), {
+          ownKeys: target => Reflect.ownKeys(target).filter(key => key !== "length"),
+        });
+        expect({
+          "from its base class": automocked(Derived),
+          "from a prototype that is no function": automocked(ofAnObject),
+          "from Function.prototype": automocked(ofNothing),
+          "that a Proxy leaves out of its own keys": automocked(hidden),
+        }).toEqual({
+          "from its base class": writable(3),
+          "from a prototype that is no function": writable(42),
+          "from Function.prototype": writable(0),
+          // Without `spy`, Vitest copies the `length` that is among the own keys.
+          "that a Proxy leaves out of its own keys": writable(options ? 3 : 0),
+        });
+      });
+
+      test.each(modes)("vi: %s: a function or an object that the original has as `length`", (_, options) => {
+        class K {
+          static length() {}
+          method() {}
+        }
+        const object = {};
+        Object.defineProperty(K.prototype.method, "length", { value: object });
+        const Mocked = vi.mockObject({ K }, options).K;
+        // Without `spy`, Vitest's automocker skips a function and gives the mock a mocked copy of an object. Bun gives it 0.
+        expect({
+          "the class": own(Mocked),
+          "a method": own(Mocked.prototype.method),
+          "the method of an instance": own(new Mocked().method),
+        }).toEqual({
+          "the class": writable(options ? K.length : 0),
+          "a method": writable(options ? object : 0),
+          "the method of an instance": writable(options ? object : 0),
+        });
+      });
+
+      test.each(modes)("vi: %s: the mocks that an automocked class gives its instances", (_, options) => {
+        class K {
+          method(a, b, c, d) {}
+        }
+        const Mocked = vi.mockObject({ K }, options).K;
+        const ofInstance = () => own(new Mocked().method);
+        expect(own(Mocked.prototype.method)).toEqual(writable(4));
+        // Vitest gives the mock the method of the class to call, and its `length`, only with `spy`.
+        expect(ofInstance()).toEqual(writable(options ? 4 : 0));
+
+        Mocked.prototype.method = vi.fn(three());
+        expect(ofInstance()).toEqual(writable(0));
+        Mocked.prototype.method = three();
+        vi.spyOn(Mocked.prototype, "method");
+        expect(ofInstance()).toEqual(writable(options ? 3 : 0));
+      });
+
+      test("vi: the automocks of a module", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        const source = `
+          export function three(a, b, c) {}
+          export const native = Date;
+          export class K { method(a, b, c, d) {} }
+        `;
+        using dir = tempDir("mock-length-module", {
+          "automocked.js": source,
+          "spied.js": source,
+          "imported.js": source,
+          "length.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import * as automocked from "./automocked.js";
+            import * as spied from "./spied.js";
+            vi.mock("./automocked.js");
+            vi.mock("./spied.js", { spy: true });
+
+            const own = mocked => Object.getOwnPropertyDescriptor(mocked, "length");
+            const writable = value => ({ value, writable: true, enumerable: false, configurable: true });
+            const lengths = exports => [exports.three, exports.native, exports.K.prototype.method, new exports.K().method].map(own);
+
+            test("vi.mock(path)", () => {
+              expect(lengths(automocked)).toEqual([3, 7, 4, 0].map(writable));
+            });
+            test("vi.mock(path, { spy: true })", () => {
+              expect(lengths(spied)).toEqual([3, 7, 4, 4].map(writable));
+            });
+            test("vi.importMock(path)", async () => {
+              expect(lengths(await vi.importMock("./imported.js"))).toEqual([3, 7, 4, 0].map(writable));
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "length.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 3 pass\n 0 fail\n");
+        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      // Vitest 5.0.3 and Jest 30.5.2 wrote the snapshots in ./mock-fn-lengths, so each row there is what that runner gives.
+      test("the rows that Vitest and Jest wrote", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        const { cpSync, readdirSync, readFileSync } = require("node:fs");
+        const { join } = require("node:path");
+        using dir = tempDir("mock-fn-lengths", { "package.json": "{}" });
+        cpSync(join(import.meta.dir, "mock-fn-lengths"), String(dir), { recursive: true });
+        const snapshots = () =>
+          readdirSync(join(String(dir), "__snapshots__"))
+            .sort()
+            .map(name => [name, readFileSync(join(String(dir), "__snapshots__", name), "utf8")]);
+        const written = snapshots();
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./vitest.fixture.ts", "./jest.fixture.js"],
+          env: { ...bunEnv, CI: "true" },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 19 pass\n 0 fail\n");
+        expect(snapshots()).toEqual(written);
+        expect(exitCode).toBe(0);
+      });
+
+      test.each(flavors)("%s: a mock that replaces no function has an own `length` of 0", (_, isVitest, fn, spyOn) => {
+        const getterAlone = {
+          get key() {
+            return 1;
+          },
+        };
+        const lengths = {
+          "fn()": own(fn()),
+          "fn(5)": own(fn(5)),
+          // Vitest and Jest refuse to spy on a value. Bun puts an accessor in its place.
+          "spyOn() of a value": own(spyOn({ key: 1 }, "key")),
+          "spyOn(get) of a value": own(spyOn({ key: 1 }, "key", "get")),
+          "spyOn(set) of a value": own(spyOn({ key: 1 }, "key", "set")),
+          "spyOn(set) of a getter alone": own(spyOn(getterAlone, "key", "set")),
+        };
+        expect(lengths).toEqual(each(lengths, { value: 0, ...attributes(isVitest) }));
+      });
+
+      test.each(flavors)("%s: stays what it is, unless the test changes it", (_, isVitest, fn, spyOn) => {
+        for (const mocked of [fn(), fn(Date), spyOn({ key: three() }, "key")]) {
+          const length = mocked.length;
+          mocked.mockImplementation((a, b) => {});
+          mocked.mockReset();
+          mocked.mockRestore();
+          expect(mocked.length).toBe(length);
+
+          if (isVitest) {
+            mocked.length = 11;
+            expect(mocked.length).toBe(11);
+          } else {
+            expect(() => {
+              mocked.length = 11;
+            }).toThrow(TypeError);
+          }
+          expect(delete mocked.length).toBe(true);
+          expect(mocked.length).toBe(0);
+        }
+      });
+
+      test.each(flavors)("%s: a `length` that is not a count", (_, isVitest, fn, spyOn) => {
+        const withLength = value => Object.defineProperty(function (a, b) {}, "length", { value });
+        const lengths = values =>
+          values.map(value => [fn(withLength(value)).length, spyOn({ key: withLength(value) }, "key").length]);
+        // Vitest keeps `original.length ?? 0`, and Jest a count.
+        const notCounts = ["abc", true, 10n, Symbol("length"), {}];
+        expect(lengths(notCounts)).toEqual(notCounts.map(value => (isVitest ? [value, value] : [0, 0])));
+        expect(lengths([null, undefined])).toEqual([
+          [0, 0],
+          [0, 0],
+        ]);
+        if (isVitest) {
+          expect(lengths([1.5, -1, Infinity, NaN]).flat()).toEqual([1.5, 1.5, -1, -1, Infinity, Infinity, NaN, NaN]);
+        }
+
+        const inherits = Object.setPrototypeOf(function (a, b) {}, withLength(9));
+        delete inherits.length;
+        const getter = Object.defineProperty(function (a, b) {}, "length", { get: () => 5 });
+        expect([fn(inherits).length, fn(getter).length]).toEqual([9, 5]);
+      });
+
+      // Bun copies the static properties of the function. That can make the structure of the mock a dictionary.
+      test.each(flavors)("%s: of a function that has hundreds of static properties", (_, isVitest, fn) => {
+        const original = three();
+        for (let i = 0; i < 300; i++) original["static" + i] = i;
+        const mocked = fn(original);
+        expect(own(mocked)).toEqual({ value: 3, ...attributes(isVitest) });
+        expect(mocked.static299).toBe(299);
+      });
+
+      test.each(flavors)("%s: util.callbackify() of a mock that was given no function", async (_, isVitest, fn) => {
+        const callbackified = util.callbackify(fn().mockResolvedValue(41));
+        expect(callbackified.length).toBe(1);
+        const { promise, resolve } = Promise.withResolvers();
+        callbackified((error, value) => resolve([error, value]));
+        expect(await promise).toEqual([null, 41]);
+      });
+    });
+
     test("vi.mockObject(value, { spy: true }) calls the originals after resetAllMocks()", () => {
       class K {
         method() {

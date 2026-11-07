@@ -368,15 +368,19 @@ public:
 
     static constexpr unsigned prototypeAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete;
     static constexpr JSC::PropertyOffset prototypeOffset = JSC::firstOutOfLineOffset;
+    // A function's attributes, as in Jest. Vitest's is writable: https://github.com/vitest-dev/vitest/blob/v5.0.3/packages/spy/src/index.ts#L58-L63
+    static constexpr unsigned lengthAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly;
+    static constexpr unsigned vitestLengthAttributes = static_cast<unsigned>(JSC::PropertyAttribute::DontEnum);
+    static constexpr JSC::PropertyOffset lengthOffset = prototypeOffset + 1;
 
-    static JSMockFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject)
+    static JSMockFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSC::Structure* structure = globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject);
         JSC::JSCell* lazyPrototype = globalObject->mockModule.lazyPrototype.getInitializedOnMainThread(globalObject);
         JSC::Butterfly* butterfly = JSC::Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, JSC::IndexingHeader(), 0);
         JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure);
         function->setButterfly(vm, butterfly);
         function->putDirectOffset(vm, prototypeOffset, lazyPrototype);
+        function->putDirectOffset(vm, lengthOffset, jsNumber(0));
         function->finishCreation(vm);
 
         // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
@@ -391,6 +395,8 @@ public:
         structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->prototype, prototypeAttributes | JSC::PropertyAttribute::CustomValue, offset);
         RELEASE_ASSERT(offset == prototypeOffset);
         structure->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(false);
+        structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->length, lengthAttributes, offset);
+        RELEASE_ASSERT(offset == lengthOffset);
         return structure;
     }
 
@@ -482,19 +488,33 @@ public:
         return uncheckedDowncast<Zig::GlobalObject>(globalObject())->mockModule;
     }
 
-    void copyLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
+    enum class ObjectAsLength : bool {
+        Kept,
+        Dropped,
+    };
+
+    // Reads the `length` of the function that the mock replaces, which can run script and throw. Only call it on a new mock.
+    void copyLength(JSC::VM& vm, JSGlobalObject* global, JSObject* function, ObjectAsLength objectAsLength = ObjectAsLength::Kept)
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSObject* fn = value.getObject();
-        if (!fn || !isJSFunctionOrCompiledCallee(fn))
-            return;
-        JSValue length = fn->get(global, vm.propertyNames->length);
+        JSValue length = function->get(global, vm.propertyNames->length);
         RETURN_IF_EXCEPTION(scope, );
-        if (length.isNumber())
-            this->putDirect(vm, vm.propertyNames->length, length, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+        // Vitest keeps `original.length ?? 0`. The other mocks keep a number, where Jest keeps a count from 1 to 9.
+        bool isKept = isVitest ? !length.isUndefinedOrNull() && (objectAsLength == ObjectAsLength::Kept || !length.isObject()) : length.isNumber();
+        if (!isKept)
+            return;
+        ASSERT(structure()->get(vm, vm.propertyNames->length) == lengthOffset);
+        putDirectOffset(vm, lengthOffset, length);
     }
 
-    void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
+    // The function that a `vi` spy, or an automock made with `spy`, replaces and calls.
+    JSObject* spiedFunction() const
+    {
+        JSValue initial = m_initialImplementation.get();
+        return (isSpy || isAutomock) && initial ? initial.getObject() : nullptr;
+    }
+
+    void copyName(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
         WTF::String nameToUse;
@@ -511,11 +531,6 @@ public:
                 useNameProperty(callee);
                 RETURN_IF_EXCEPTION(scope, );
             }
-            JSValue lengthJSValue = callee->get(global, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, );
-            if (lengthJSValue.isNumber()) {
-                this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-            }
         } else
 #endif
             if (auto* fn = dynamicDowncast<JSFunction>(value)) {
@@ -527,11 +542,6 @@ public:
             if (nameToUse.isEmpty()) {
                 useNameProperty(fn);
                 RETURN_IF_EXCEPTION(scope, );
-            }
-            JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, );
-            if (lengthJSValue.isNumber()) {
-                this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
         } else if (auto* fn = dynamicDowncast<JSMockFunction>(value)) {
             JSValue nameValue = fn->get(global, vm.propertyNames->name);
@@ -1485,7 +1495,11 @@ static ALWAYS_INLINE void completeMockResult(JSC::VM& vm, Zig::GlobalObject* glo
 
 static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, bool isVitest)
 {
-    auto* mock = JSMockFunction::create(vm, globalObject);
+    JSC::Structure* structure = globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject);
+    // The transition table of the shared structure caches the one whose `length` is writable.
+    if (isVitest)
+        structure = JSC::Structure::attributeChangeTransition(vm, structure, vm.propertyNames->length, JSMockFunction::vitestLengthAttributes);
+    auto* mock = JSMockFunction::create(vm, globalObject, structure);
     mock->isVitest = isVitest;
     if (globalObject->mockModule.preloadMayBeRunning) [[unlikely]]
         mock->isMadeByPreload = JSMock__isInPreload(globalObject);
@@ -1682,6 +1696,7 @@ static void mockInstanceMethods(Zig::GlobalObject* globalObject, JSMockFunction*
     prototype->methodTable()->getOwnPropertyNames(prototype, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, );
 
+    bool isSpiedClass = !!fn->spiedFunction();
     for (const auto& key : keys) {
         if (key == vm.propertyNames->constructor)
             continue;
@@ -1704,8 +1719,13 @@ static void mockInstanceMethods(Zig::GlobalObject* globalObject, JSMockFunction*
 
         auto* mock = createMockFunction(vm, globalObject, prototypeMock->isVitest);
         mock->isJest = prototypeMock->isJest;
-        mock->copyNameAndLength(vm, globalObject, prototypeMock);
+        mock->copyName(vm, globalObject, prototypeMock);
         RETURN_IF_EXCEPTION(scope, );
+        // Vitest gives the mock the original method to call, and so its `length`, only for a class that was automocked with `spy`.
+        if (JSObject* original = isSpiedClass ? prototypeMock->spiedFunction() : nullptr) {
+            mock->copyLength(vm, globalObject, original);
+            RETURN_IF_EXCEPTION(scope, );
+        }
         mock->prototypeMock.set(vm, mock, prototypeMock);
 
         JSC::PutPropertySlot putSlot(instance);
@@ -2641,9 +2661,12 @@ __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, Autom
     case AutomockKind::Function: {
         auto* mock = createMockFunction(vm, globalObject, true);
         mock->isAutomock = true;
-        mock->copyNameAndLength(vm, globalObject, value);
+        mock->copyName(vm, globalObject, value);
         RETURN_IF_EXCEPTION(scope, {});
         if (spy) {
+            // Without `spy`, Vitest copies a `length` that is among the own keys, which mockMembers() does.
+            mock->copyLength(vm, globalObject, original);
+            RETURN_IF_EXCEPTION(scope, {});
             mock->setInitialImplementation(globalObject, value);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -2721,8 +2744,14 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
 
         for (size_t i = firstKey; i < keys.size(); ++i) {
             Identifier key = keys[i];
-            if (isFunction && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->arguments || key == vm.propertyNames->caller))
+            if (isFunction && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->arguments || key == vm.propertyNames->caller)) {
+                // With `spy`, replacementFor() read it. Without, the mock takes no object: Vitest's automocker skips a function and mocks an object.
+                if (key == vm.propertyNames->length && !spy) {
+                    uncheckedDowncast<JSMockFunction>(replacement)->copyLength(vm, globalObject, original, JSMockFunction::ObjectAsLength::Dropped);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
                 continue;
+            }
             if (kind == AutomockKind::Module && key == vm.propertyNames->toStringTagSymbol)
                 continue;
 
@@ -2929,21 +2958,31 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
-__attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function, JSString* name = nullptr)
+// What a mock wraps: the function that fn() was given, or the function that a spy replaces.
+enum class Wrapped : bool {
+    Implementation,
+    Original,
+};
+
+__attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function, Wrapped wrapped, JSString* name = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (name) {
-        mock->copyLength(vm, globalObject, function);
-        RETURN_IF_EXCEPTION(scope, );
         mock->setName(name);
     } else {
-        mock->copyNameAndLength(vm, globalObject, function);
+        mock->copyName(vm, globalObject, function);
         RETURN_IF_EXCEPTION(scope, );
     }
     mock->copyStaticProperties(globalObject, asObject(function));
     RETURN_IF_EXCEPTION(scope, );
+    // Jest gives a spy a `length` of 0. Outside `vi`, Bun gives it the `length` of a JS function, and of no other callable.
+    if (wrapped == Wrapped::Implementation || mock->isVitest || isJSFunctionOrCompiledCallee(asObject(function))) {
+        // After the static properties, which is the order of Vitest's reads of a Proxy.
+        mock->copyLength(vm, globalObject, asObject(function));
+        RETURN_IF_EXCEPTION(scope, );
+    }
     scope.release();
     if (!mock->isVitest) {
         mock->pushImpl(globalObject, JSMockImplementation::Kind::Call, function);
@@ -3177,7 +3216,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             spyAttributes |= JSMockFunction::SpyAttributeOpaque;
 
         if (hasValue && ((slotAttributes & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
-            wrapFunction(globalObject, mock, value);
+            wrapFunction(globalObject, mock, value, Wrapped::Original);
             RETURN_IF_EXCEPTION(scope, {});
 
             ThroughLockOfBuiltins throughLock(vm, isOpaque);
@@ -3255,7 +3294,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     auto* mock = createMockFunction(vm, globalObject, isVitest);
     if (original.isCallable()) {
-        wrapFunction(globalObject, mock, original);
+        wrapFunction(globalObject, mock, original, Wrapped::Original);
     } else if (access == SpyAccess::Get && descriptor.isDataDescriptor()) {
         mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, descriptor.value());
     }
@@ -3313,7 +3352,7 @@ static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     if (callframe->argumentCount() > 0) {
         JSValue value = callframe->argument(0);
         if (value.isCallable()) {
-            wrapFunction(globalObject, thisObject, value, isVitest ? name.getInitializedOnMainThread(globalObject) : nullptr);
+            wrapFunction(globalObject, thisObject, value, Wrapped::Implementation, isVitest ? name.getInitializedOnMainThread(globalObject) : nullptr);
         } else {
             // jest doesn't support doing `jest.fn(10)`, but we support it.
             thisObject->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, value);

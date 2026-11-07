@@ -19,7 +19,24 @@ use bun_jsc::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
-    safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
+    // A fake shares the record of its property (`PropertyLayers` in JSMockFunction.cpp) with a spy or `vi.stubGlobal()` there.
+    safe fn JSMock__layersOfFake(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        name: &bun_core::String,
+        fake: JSValue,
+        original: JSValue,
+        was_layered: bool,
+        base: &mut JSValue,
+    ) -> JSValue;
+    safe fn JSMock__removeFakeFromLayers(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        name: &bun_core::String,
+        layers: JSValue,
+        fake: JSValue,
+        is_use_real_timers: bool,
+    );
 }
 
 unsafe extern "C" {
@@ -359,12 +376,14 @@ struct Replaced {
     api: Api,
     original: Strong,
     fake: Strong,
+    /// Set while a spy or `vi.stubGlobal()` replaces the same property. The record then says what goes back, and `original` is what was there before any of them.
+    layers: StrongOptional,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Restore {
     Always,
-    /// Skips globals `vi.unstubAllGlobals()` already restored, where `original` is the stale `vi.stubGlobal()` value.
+    /// Skips globals that no longer hold the fake, unless a spy or stub shared the property.
     WhereStillInstalled,
 }
 
@@ -556,6 +575,37 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     this.publish_clock(global);
     if !this.faked.contains(Api::Date) {
         JSMock__setOverridenDateNow(global, f64::NAN);
+    }
+}
+
+/// The installed fake on `owner[name]`, or empty. `original` and `layers` are those of its `Replaced`.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__fakeOf(
+    global: &JSGlobalObject,
+    owner: JSValue,
+    name: &bun_core::String,
+    original: &mut JSValue,
+    layers: &mut JSValue,
+) -> JSValue {
+    // SAFETY: per-thread `timer::All`; field reads only.
+    let this = unsafe { &(*timer_all()).fake_timers };
+    let found = this.replaced.iter().find(|replaced| {
+        name.eq_ascii(replaced.api.property().as_bytes()) && replaced.api.owner(global) == owner
+    });
+    let Some(replaced) = found else {
+        return JSValue::ZERO;
+    };
+    *original = replaced.original.get();
+    *layers = replaced.layers.get().unwrap_or(JSValue::ZERO);
+    replaced.fake.get()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__setLayers(global: &JSGlobalObject, fake: JSValue, layers: JSValue) {
+    // SAFETY: per-thread `timer::All`; nothing below re-enters it.
+    let this = unsafe { &mut (*timer_all()).fake_timers };
+    if let Some(replaced) = this.replaced.iter_mut().find(|replaced| replaced.fake.get() == fake) {
+        replaced.layers.set(global, layers);
     }
 }
 
@@ -868,6 +918,9 @@ impl FakeTimers {
                 if !owner.is_object() {
                     return false;
                 }
+                if replaced.layers.has() {
+                    return true;
+                }
                 match owner.get(global, replaced.api.property()) {
                     Ok(installed) => installed == Some(replaced.fake.get()),
                     Err(err) => {
@@ -877,13 +930,19 @@ impl FakeTimers {
                 }
             });
         }
-        for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
-            {
-                continue;
+        for Replaced { api, original, fake, layers } in deactivated.replaced {
+            let owner = api.owner(global);
+            match layers.get() {
+                Some(layers) if owner.is_object() => JSMock__removeFakeFromLayers(
+                    global,
+                    owner,
+                    &bun_core::String::static_(api.property()),
+                    layers,
+                    fake.get(),
+                    restore == Restore::Always,
+                ),
+                _ => api.put(global, original.get()),
             }
-            api.put(global, original.get());
         }
         deactivated.drives
     }
@@ -895,7 +954,7 @@ impl FakeTimers {
         date_now: f64,
     ) -> JsResult<Vec<AsyncDrive>> {
         bun_jsc::cpp::Bun__FakeTimers__loadNodeTimers(global)?;
-        let replaced = Self::fakes(global, options.faked, date_now.floor())?;
+        let mut replaced = Self::fakes(global, options.faked, date_now.floor())?;
         let drives = Self::uninstall(global, Restore::Always);
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe {
@@ -903,12 +962,34 @@ impl FakeTimers {
                 .fake_timers
                 .activate(global, options, date_now)
         };
+        // SAFETY: as above.
+        let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
         for Replaced {
             api,
             fake,
             original,
-        } in &replaced
+            layers,
+        } in &mut replaced
         {
+            // `fakes` left these two alone if the builtin `now` was there.
+            if fake.get() != original.get() {
+                let mut base = JSValue::ZERO;
+                let shared = JSMock__layersOfFake(
+                    global,
+                    api.owner(global),
+                    &bun_core::String::static_(api.property()),
+                    fake.get(),
+                    original.get(),
+                    layers.has(),
+                    &mut base,
+                );
+                layers.deinit();
+                if !shared.is_empty() {
+                    layers.set(global, shared);
+                    *original = Strong::create(base, global);
+                    Bun__FakeTimers__setOriginal(global, originals, fake.get(), base);
+                }
+            }
             api.put(global, fake.get());
             if *api == Api::SetTimeout {
                 Bun__FakeTimers__markBuiltinForCompiledCode(global, original.get(), true);
@@ -943,10 +1024,13 @@ impl FakeTimers {
             // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
             let replaced_now = unsafe { &(*timer_all()).fake_timers.replaced }
                 .iter()
-                .find(|replaced| replaced.api == api)
-                .map(|replaced| replaced.original.get());
+                .find(|replaced| replaced.api == api);
+            // `install` replaces this marker by the record the new fake shares.
+            let layers = replaced_now.map_or_else(StrongOptional::empty, |replaced| {
+                StrongOptional::create(replaced.layers.get().unwrap_or(JSValue::ZERO), global)
+            });
             let original = match replaced_now {
-                Some(original) => original,
+                Some(replaced) => replaced.original.get(),
                 None => {
                     let installed = api.owner(global).get(global, api.property())?;
                     let installed = installed.unwrap_or(JSValue::UNDEFINED);
@@ -967,6 +1051,7 @@ impl FakeTimers {
                     api,
                     original: Strong::create(original, global),
                     fake: Strong::create(original, global),
+                    layers: StrongOptional::empty(),
                 });
                 continue;
             }
@@ -982,6 +1067,7 @@ impl FakeTimers {
                 api,
                 original: Strong::create(original, global),
                 fake: Strong::create(fake, global),
+                layers,
             });
         }
         Ok(fakes)

@@ -280,6 +280,26 @@ describe("vi.stubGlobal", () => {
     expect("viUtilsNew" in globalThis).toBe(false);
   });
 
+  test("a spy under the stub that is restored first stays away", () => {
+    const original = fetch;
+    const spy = jest.spyOn(globalThis, "fetch");
+    vi.stubGlobal("fetch", "stub");
+    spy.mockRestore();
+    expect<unknown>(fetch).toBe("stub");
+    vi.unstubAllGlobals();
+    expect(fetch).toBe(original);
+  });
+
+  test("a spy over the stub stays on, and then restores what the stub replaced", () => {
+    const original = fetch;
+    vi.stubGlobal("fetch", () => "stub");
+    const spy = jest.spyOn(globalThis, "fetch");
+    vi.unstubAllGlobals();
+    expect(fetch).toBe(spy);
+    spy.mockRestore();
+    expect(fetch).toBe(original);
+  });
+
   test("the originals survive garbage collection", () => {
     try {
       Object.defineProperty(globalThis, "viUtilsDescriptor", { value: { marker: "original" }, configurable: true });
@@ -360,6 +380,24 @@ describe.concurrent("stubs do not outlive their test file", () => {
       });
     },
   );
+
+  test.each([
+    ["a spy under a stub", `jest.spyOn(globalThis, "fetch"); vi.stubGlobal("fetch", "stub");`],
+    ["a stub under a spy", `vi.stubGlobal("fetch", () => {}); jest.spyOn(globalThis, "fetch");`],
+  ])("%s on the same global, both left on", async (_, leave) => {
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+      "a.test.ts": `
+        import { jest, test, vi } from "bun:test";
+        globalThis.realFetch = fetch;
+        test("a", () => { ${leave} });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        test("b", () => expect(fetch).toBe(realFetch));
+      `,
+    });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
 
   test("a file that fails to load", async () => {
     const { stderr, exitCode } = await run(

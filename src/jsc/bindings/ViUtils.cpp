@@ -86,6 +86,10 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 
     auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
+    bool isDone = removeStubbedGlobalFromLayers(defaultGlobalObject(globalObject), name, original);
+    RETURN_IF_EXCEPTION(scope, );
+    if (isDone)
+        return;
     if (original.isUndefined()) {
         scope.release();
         JSCell::deleteProperty(target, globalObject, name);
@@ -118,10 +122,16 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
     bool isRemembered = hasOriginal(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
+    JSValue remembered;
+    if (isRemembered) {
+        remembered = originals->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    JSValue original = layersOfStubbedGlobal(globalObject, name, remembered);
+    RETURN_IF_EXCEPTION(scope, );
     if (!isRemembered) {
-        JSValue original = jsUndefined();
         PropertyDescriptor descriptor;
-        bool exists = target->getOwnPropertyDescriptor(globalObject, name, descriptor);
+        bool exists = !original && target->getOwnPropertyDescriptor(globalObject, name, descriptor);
         RETURN_IF_EXCEPTION(scope, );
         if (exists) {
             JSObject* object = constructObjectFromPropertyDescriptor(globalObject, descriptor);
@@ -129,7 +139,7 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
             object->setPrototypeDirect(vm, jsNull());
             original = object;
         }
-        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
+        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original ? original : jsUndefined()));
         RETURN_IF_EXCEPTION(scope, );
     }
 

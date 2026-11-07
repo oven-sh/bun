@@ -87,7 +87,7 @@ export const Expect = b.class({
     fail: { args: { message: b.any }, returns: matcher.returns, ...js },
     lastCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_last_called_with" },
     lastReturnedWith: { ...matcherWithExpected, rustName: "to_have_last_returned_with" },
-    not: { getter: b.self, passThis: true },
+    not: { getter: b.self, capability: "heap", passThis: true },
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
     pass: { args: { message: b.any }, returns: matcher.returns, ...js },

@@ -849,6 +849,24 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a matcher on the kept expect() gets the promise while its .resolves matchers are pending", async () => {
+    const { results, exitCode } = await runTests(`
+      test("kept", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        const kept = expect(promise);
+        const first = kept.resolves.toBe(1);
+        kept.toBe(promise);
+        const second = kept.resolves.not.toBe(2);
+        kept.toBeInstanceOf(Promise);
+        resolve(1);
+        await Promise.all([first, second]);
+        kept.toBe(promise);
+      });
+    `);
+    expect(results).toEqual(["(pass) kept"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("snapshot matchers find their test and their call", async () => {
     const source = `
       test("inline", async () => {
@@ -1830,6 +1848,36 @@ describe.concurrent("expect.soft()", () => {
     expect(stdout).toEqual(["expect(received).toBe(expected)"]);
     expect(exitCode).toBe(0);
   });
+
+  test(".not on one that is kept in a variable does not negate the next matcher", async () => {
+    const source = `
+      test("kept", () => {
+        const seen = [];
+        expect.extend({
+          toRecordIsNot() {
+            seen.push(this.isNot);
+            return { pass: !this.isNot, message: () => "" };
+          },
+        });
+        const kept = expect.soft(1);
+        kept.not.toRecordIsNot();
+        kept.toRecordIsNot();
+        kept.not.toBe(2);
+        kept.toBe(2);
+        kept.not.toBe(1);
+        console.log(JSON.stringify(seen));
+      });
+    `;
+    const { stdout, stderr, report, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["[true,false]"]);
+    expect(report).toEqual([
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).not.toBe(expected)",
+      "(fail) kept",
+    ]);
+    expect(failingLines(stderr, source)).toEqual(["kept.toBe(2);", "kept.not.toBe(1);"]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe.concurrent("expect.poll()", () => {
@@ -2104,5 +2152,23 @@ describe.concurrent("expect.poll()", () => {
     `);
     expect(stdout).toEqual(['0 {"a":1,"b":2,"c":3,"d":4,"e":5,"f":6}']);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test(".not on one that is kept in a variable does not negate the next matcher", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      test("kept", async () => {
+        let calls = 0;
+        const kept = expect.poll(() => ++calls, { interval: 1 });
+        await kept.not.toBe(1);
+        console.log(calls);
+        await kept.toBe(4);
+        console.log(calls);
+        await kept.not.toBe(5);
+        console.log(calls);
+      });
+    `);
+    expect(stdout).toEqual(["2", "4", "6"]);
+    expect(results).toEqual(["(pass) kept"]);
+    expect(exitCode).toBe(0);
   });
 });

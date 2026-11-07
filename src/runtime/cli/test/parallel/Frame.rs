@@ -17,18 +17,14 @@ pub(crate) enum Kind {
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, shuffled, unhandled; u64 elapsed_ns; 4 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
-    /// the worker's peak RSS so far, and what it holds of its own now that the file has ended
-    /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
+    /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
+    /// and the worker's peak RSS so far
     /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left,
-    /// str: what the last FileDone of the worker's slot said of first loads,
-    /// u32: 1 where the worker stands for the one process of plain `bun test` and prints what that prints,
-    /// u32: there, how many more failures `--bail` allows; 0 without it
+    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads
     Run,
     /// (empty)
     Shutdown,
@@ -38,9 +34,6 @@ pub(crate) enum Kind {
     CoverageFile,
     /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
     RefusedChange,
-    /// 5 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), and 1 where it could not
-    /// write an inline one; sent at exit by a worker that runs compiled code
-    Snapshots,
 }
 
 impl TryFrom<u8> for Kind {
@@ -57,7 +50,6 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
             8 => Kind::RefusedChange,
-            9 => Kind::Snapshots,
             _ => return Err(()),
         })
     }

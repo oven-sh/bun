@@ -4,6 +4,7 @@ import {
   bunExe,
   gc,
   getMaxFD,
+  isASAN,
   isBroken,
   isDebug,
   isFreeBSD,
@@ -5163,6 +5164,8 @@ describe("fs/promises", () => {
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
     const iterCount = isDebug ? 4 : 200;
+    // Sorting the 200 lists of some 7,000 names takes 12 of 14 seconds where ASAN sees the allocations of strings.
+    const timeout = isASAN ? 30_000 : 10_000;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -5196,9 +5199,9 @@ describe("fs/promises", () => {
     };
 
     if (withFileTypes) {
-      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, timeout);
     } else {
-      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, timeout);
     }
   }
 

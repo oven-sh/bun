@@ -10,29 +10,44 @@
 //   a program that fails in plain Bun is not run again for every mode
 //   a multi-file program gets its own folder, alone and in a shared build, and TypeScript checks all its files
 //   a finding in a multi-file program is first tried as a single file; if it needs the files, files are removed first, then lines
-//   a shared build is one program with many modules, except in the mode separate-entry-points, where the compiler treats each program as it would alone
+//   a shared build is one program with many modules; in the mode separate-entry-points each program is a further entry point and runs in a Worker; either way each is judged by its own output and exit code
 //   for two long lines that differ, the shown part starts a little before the first difference
+//   where a source says so, an executable built without the compiler is a second reference
 import { expect, test as one } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { withAnotherCall } from "./fuzz/another-call-of-what-the-program-holds";
+import { withFourCallers } from "./fuzz/four-callers";
 import { fuzz } from "./fuzz/fuzzer";
+import { withOwnCopies } from "./fuzz/own-copies";
+import { Random } from "./fuzz/random";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
 import {
   ProductRunner,
   canIsolate,
   compare,
   projects,
+  refusalInOneWording,
   spawned,
   wholeText,
   type Judged,
   type Program,
   type Runner,
 } from "./fuzz/runners";
-import { allSources, multiFileSuffix, rewrittenSuffix } from "./fuzz/sources";
+import {
+  allSources,
+  anotherCallSuffix,
+  fourCallersSuffix,
+  multiFileSuffix,
+  neverTakenSuffix,
+  ownCopiesSuffix,
+  rewrittenSuffix,
+  storedPrograms,
+} from "./fuzz/sources";
 import { bunTypesFolder, typeChecker } from "./fuzz/type-check";
 
-const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
+const options = { baseFlags: [], threads: 1, buildSeconds: 60, runSeconds: 60 };
 const timeout = 300_000;
 // A run that asks for a number of programs should end by that number. A slow build with other tests beside it draws few in a
 // minute.
@@ -89,35 +104,31 @@ unless(isWindows || !typeChecker())(
 );
 
 unless(isWindows)(
-  "an executable with correct output runs again with run-time checks on, and their report is a finding",
+  "where a source says so, an executable is right if it prints what one built without the compiler prints",
   async () => {
-    using folder = tempDir("aot-fuzzer-second-run", {});
-    // Its executables print what the program prints, and print more only if the variable is set.
+    using folder = tempDir("aot-fuzzer-second-reference", {});
+    // Plain Bun prints 1. An executable built with --aot prints 2, and one built without prints what the file `without` says.
     const path = join(String(folder), "stand-in");
-    const executable = `#!/bin/sh\necho 1\necho run >> runs.txt\n[ -n "$BUN_JSC_validateAOTRuntime" ] && { echo "AOT: it happened, which the compiler assumed never happens" >&2; echo "AOT validation: ImpossibleMutation" >&2; exit 134; }\nexit 0\n`;
     writeFileSync(
       path,
-      `#!/bin/sh\ncase "$1" in\nbuild) for last; do :; done; printf '%b' '${executable.replaceAll("\n", "\\n")}' > "$last"; chmod +x "$last";;\n*) exec "${bunExe()}" "$@";;\nesac\n`,
+      `#!/bin/sh\ncase "$1" in\nbuild) said=$(cat without); for each; do [ "$each" = --aot ] && said=2; done; printf '#!/bin/sh\\necho %s\\n' "$said" > "$each"; chmod +x "$each";;\n*) exec "${bunExe()}" "$@";;\nesac\n`,
     );
     chmodSync(path, 0o755);
-    const program = { text: `console.log(1);\n`, extension: "js" as const };
-    const judged = async (name: string, more: object, flags: string[] = []) => {
+    const judge = async (name: string, without: string, more: Partial<Program>) => {
       const where = within(folder, name);
-      const [{ verdict }] = await new ProductRunner(path, { ...options, ...more }).judge(where, [program], flags);
-      return [verdict, readFileSync(join(where, "runs.txt"), "utf8").trim().split("\n").length];
+      writeFileSync(join(where, "without"), without);
+      const program = { text: "console.log(1);\n", extension: "js", ...more };
+      return (await new ProductRunner(path, options).judge(where, [program], []))[0].verdict;
     };
-    expect(await judged("twice", {})).toEqual([
-      {
-        kind: "validation failure",
-        detail:
-          "AOT validation: ImpossibleMutation | BUN_JSC_validateAOTRuntime=1 AOT: it happened, which the compiler assumed never happens",
-        signature: expect.any(String),
-      },
-      2,
+    const follows = { followsExecutableWithoutCompiler: "as without the compiler" };
+    const [same, other, notAsked] = await Promise.all([
+      judge("same", "2", follows),
+      judge("other", "3", follows),
+      judge("not-asked", "2", {}),
     ]);
-    expect(await judged("once", { runsOnce: true })).toEqual([{ kind: "same" }, 1]);
-    // A validating build already has the checks on in its first run.
-    expect((await judged("validating", {}, ["--aot-validate"]))[1]).toBe(1);
+    expect(same).toEqual({ kind: "skipped", why: "as without the compiler" });
+    expect(other.kind).toBe("different output");
+    expect(notAsked.kind).toBe("different output");
   },
   timeout,
 );
@@ -280,7 +291,7 @@ test(
     const runner: Runner = {
       ...standIn(() => {}),
       batch: 1,
-      modes: () => ["default", "validate", "erased"].map(name => ({ name, flags: [] })),
+      modes: () => ["default", "erased"].map(name => ({ name, flags: [] })),
       judge: async (_folder, programs) =>
         programs.map(() => {
           judged++;
@@ -304,9 +315,9 @@ test(
   timeout,
 );
 
-// It grows to 512 MB, twice its limit, and stays there. The watcher polls every tenth of a second on this test's
+// It grows to 1 GB, twice its limit, and stays there. The watcher polls every tenth of a second on this test's
 // thread, and a program that grew forever would use all of the machine's memory while that thread is busy.
-const holdsTwiceWhatItMay = `const kept = []; while (kept.length < 4096) kept.push(new Array(1 << 14).fill(kept.length)); for (;;);`;
+const holdsTwiceWhatItMay = `const kept = []; while (kept.length < 8192) kept.push(new Array(1 << 14).fill(kept.length)); for (;;);`;
 
 // Runs programs like Bun; each of its builds grows to twice its memory limit.
 function everyBuildHoldsTooMuch(folder: string): string {
@@ -324,7 +335,8 @@ one.skipIf(isWindows)(
   "a run over its memory limit is skipped, a build over it is a finding",
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {});
-    const runner = new ProductRunner(everyBuildHoldsTooMuch(String(folder)), { ...options, memory: 256 * 2 ** 20 });
+    // A Bun with AddressSanitizer takes 256 MB to print one line: under a limit of 256 MB that run, too, was now and then over it.
+    const runner = new ProductRunner(everyBuildHoldsTooMuch(String(folder)), { ...options, memory: 512 * 2 ** 20 });
     const judge = async (text: string) => (await runner.judge(String(folder), [{ text, extension: "js" }], []))[0];
     expect((await judge(holdsTwiceWhatItMay)).verdict).toEqual({
       kind: "skipped",
@@ -647,7 +659,7 @@ test(
 );
 
 test(
-  "in separate-entry-points mode each program of a shared build is compiled as its own program",
+  "each program of a shared build is judged by its own output and exit code, as a module and as an entry point",
   async () => {
     using folder = tempDir("aot-fuzzer-each-a-program", {});
     const runner = new ProductRunner(bunExe(), options);
@@ -656,21 +668,48 @@ test(
       { text: `const n: number = 2;\nconsole.log("second", n);\n`, extension: "ts" },
       { text: `import { third } from "./other";\nconsole.log(third);\nprocess.exitCode = 3;\n`, extension: "ts", files: { "other.ts": `export const third = "third";\n` } }, // prettier-ignore
     ];
-    const runsOfTheCompiler = async (name: string) => {
+    const judgedIn = async (name: string) => {
       const { flags } = runner.modes(programs[0]).find(mode => mode.name === name)!;
-      const judged = await runner.judge(within(folder, name), programs, [...flags, "--aot-report=report.json"]);
+      const judged = await runner.judge(within(folder, name), programs, flags);
       expect(judged.map(({ verdict }) => verdict.kind)).toEqual(["same", "same", "same"]);
       expect(judged.map(({ compiled }) => [compiled!.run!.stdout.trim(), compiled!.run!.exitCode])).toEqual([["first 2", 0], ["second 2", 0], ["third", 3]]); // prettier-ignore
-      return JSON.parse(readFileSync(join(String(folder), name, "report.json"), "utf8")).statistics.EngineRuns;
     };
-    // One more for the file that starts them.
-    expect(await Promise.all([runsOfTheCompiler("default"), runsOfTheCompiler("separate-entry-points")])).toEqual([
-      1,
-      programs.length + 1,
-    ]);
+    await Promise.all([judgedIn("default"), judgedIn("separate-entry-points")]);
   },
   timeout,
 );
+
+test("a refused write reads the same from a test run and from an executable", () => {
+  const start = "s4 refused TypeError: Cannot assign to Blob.prototype.kept4 because built-in objects are read-only";
+  const executable = `${start} in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in Blob.prototype.kept4 = value (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`;
+  const testRun = `${start} in compiled code, and the build didn't see a test add this one. Spell out the object and the name where the test does it, as in Blob.prototype.kept4 = value (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)`;
+  expect(refusalInOneWording(`${executable} | next\nlast`)).toBe(`${start} | next\nlast`);
+  expect(refusalInOneWording(`${testRun} | next\nlast`)).toBe(`${start} | next\nlast`);
+  expect(refusalInOneWording(testRun.replaceAll("kept4", "kept5"))).not.toBe(refusalInOneWording(executable));
+  expect(refusalInOneWording(`${testRun} | one`)).not.toBe(refusalInOneWording(`${executable} | other`));
+  expect(refusalInOneWording(`${start} in compiled code\n(https://bun.com/docs/compiler/x)`)).toContain(
+    "in compiled code",
+  );
+});
+
+test("only plain's stack overflow is put down to the depth of the stack", () => {
+  const ran = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false });
+  const detail = (plain: string, compiled: string) => {
+    const verdict = compare(
+      standIn(() => {}),
+      { text: "", extension: "js" },
+      ran(plain),
+      { build: ran(""), run: ran(compiled) },
+    );
+    return verdict.kind === "different output" ? verdict.detail : verdict.kind;
+  };
+  const overflow = "RangeError: Maximum call stack size exceeded.";
+  expect(detail(`a TypeError: cyclic\n`, `a ${overflow}\n`)).toBe(
+    `plain "a TypeError: cyclic" compiled "a ${overflow}"`,
+  );
+  expect(detail(`a 10432 ${overflow}\n`, `a 9120 ${overflow}\n`)).toEndWith(" | the line tells of a stack overflow");
+  expect(detail(`a ${overflow}\n`, `a done\n`)).toEndWith(" | the line tells of a stack overflow");
+});
 
 test("for two long lines that differ, the shown part starts a little before the first difference", () => {
   const ran = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false });
@@ -725,15 +764,127 @@ test(
   timeout,
 );
 
-// Alone, after the others: it loads every generator, and their data makes each collection slower.
-one.skipIf(isWindows)("every source makes a program", async () => {
-  const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
-  const runner = { ...standIn(() => {}), supportsMultiFile: true };
-  const startPython = ["by-python", "scripted-cases"];
-  const asked = Object.keys(sources).filter(
-    name => !startPython.includes(name) && !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix),
+test("a refused stored program costs no seed, and a refused family does not give its seeds to one program", () => {
+  using folder = tempDir("aot-fuzzer-refused-stored-programs", {
+    ...Object.fromEntries(
+      Array.from({ length: 30 }, (_, index) => [`a/${index + 10}.ts`, "console.log(process.argv.length);\n"]),
+    ),
+    ...Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`b/${index}.ts`, `console.log(${index});\n`])),
+  });
+  const source = storedPrograms(String(folder), "stored-programs", (seed, count) => seed % count)!;
+  const drawn = Array.from(
+    { length: 37 },
+    (_, seed) =>
+      source(
+        seed,
+        standIn(() => {}),
+      )?.notes ?? "nothing",
   );
-  expect(asked.length).toBeGreaterThan(300);
-  const seeds = Array.from({ length: 24 }, (_, seed) => seed);
-  expect(asked.filter(name => !seeds.some(seed => sources[name](seed, runner)))).toEqual([]);
+  expect(drawn.slice(30)).toEqual(Array.from({ length: 7 }, (_, index) => join("b", `${index}.ts`)));
+  expect(drawn.slice(0, 30).filter(notes => !notes.startsWith("b"))).toEqual([]);
+  expect(new Set(drawn.slice(0, 30)).size).toBeGreaterThan(1);
+});
+
+// Alone, after the others: it loads every generator, and their data makes each collection slower.
+one.skipIf(isWindows)(
+  "every source makes a program",
+  async () => {
+    const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
+    const runner = { ...standIn(() => {}), supportsMultiFile: true };
+    const startPython = ["by-python", "scripted-cases"];
+    const asked = Object.keys(sources).filter(
+      name =>
+        !startPython.includes(name) &&
+        !name.endsWith(multiFileSuffix) &&
+        !name.endsWith(rewrittenSuffix) &&
+        !name.endsWith(neverTakenSuffix) &&
+        !name.endsWith(anotherCallSuffix) &&
+        !name.endsWith(ownCopiesSuffix) &&
+        !name.endsWith(fourCallersSuffix),
+    );
+    expect(asked.length).toBeGreaterThan(300);
+    const seeds = Array.from({ length: 24 }, (_, seed) => seed);
+    expect(asked.filter(name => !seeds.some(seed => sources[name](seed, runner)))).toEqual([]);
+  },
+  timeout,
+);
+
+test("what a program does at its top is done by four callers", () => {
+  const text = `const seen = [];
+function f(z) {
+  seen.push(z);
+  return z;
+}
+const g = z => f(z) + 1;
+const list = [1, 2];
+f(list[0]);
+console.log(g(list[1]), seen.join());
+`;
+  const body = `const list = [1, 2];\nf(list[0]);\nconsole.log(g(list[1]), seen.join());\n}`;
+  expect(withFourCallers("program.js", text)).toBe(`const seen = [];
+function f(z) {
+  seen.push(z);
+  return z;
+}
+const g = z => f(z) + 1;
+function driveA() {
+${body}
+function driveB() {
+${body}
+function driveC() {
+${body}
+function driveD() {
+${body}
+for (let round = 0; round < 2; round++) {
+  driveA();
+  driveB();
+  driveC();
+  driveD();
+}
+`);
+  const waits = withFourCallers("program.js", `function f() {}\nawait f();\nconst driveA = 1;\nf(driveA);\n`)!;
+  expect(waits).toStartWith("function f() {}\nawait f();\nfunction driveA_() {\nconst driveA = 1;\nf(driveA);\n}");
+  expect(withFourCallers("program.js", "function f() {}\nawait f();\n")).toBeUndefined();
+  expect(withFourCallers("program.js", "function f() {}\nawait (f());\nconst x = await [f()][0];\n")).toBeUndefined();
+});
+
+test("each user of a shared function or class gets a copy of its own", () => {
+  const text = `function same(x) {
+  return x;
+}
+class Box {
+  v = 1;
+}
+function one() {
+  return same(new Box().v);
+}
+function two(same) {
+  return same;
+}
+function three() {
+  const held = { same };
+  return held.same(2) + new Box().v;
+}
+console.log(one(), two(3), three());
+`;
+  const written = Array.from({ length: 40 }, (_, seed) => withOwnCopies("program.js", text, new Random(seed)) ?? "");
+  const whole = written.find(text => text.includes("function same_2(x)") && text.includes("class Box_2 {"))!;
+  expect(whole).toContain("const held = { same: same_2 };\n  return held.same(2) + new Box_2().v;");
+  expect(whole).toContain("function one() {\n  return same(new Box().v);\n}");
+  expect(written.filter(text => text && !text.includes("function two(same) {\n  return same;\n}"))).toEqual([]);
+  const alone = "function f() {\n  return 1;\n}\nconsole.log(f());\n";
+  expect(Array.from({ length: 40 }, (_, seed) => withOwnCopies("program.js", alone, new Random(seed)))).toEqual(
+    Array(40).fill(undefined),
+  );
+});
+
+test("another call brings no import statement into a text that names what only a CommonJS file has", () => {
+  const written = (test: string) =>
+    Array.from({ length: 40 }, (_, seed) => {
+      const text = `function f(a) {\n  return ${test} ? a : 0;\n}\nconsole.log(f(1));\n`;
+      return withAnotherCall("program.js", text, new Random(seed)) ?? "";
+    });
+  expect(written("a > 0").some(text => text.startsWith("import "))).toBe(true);
+  expect(written(`typeof module === "object"`).filter(text => text.startsWith("import "))).toEqual([]);
+  expect(written(`typeof module === "object"`).every(text => text.includes("try {\n  f("))).toBe(true);
 });

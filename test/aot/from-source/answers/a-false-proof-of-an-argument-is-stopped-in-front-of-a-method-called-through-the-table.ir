@@ -1,0 +1,22 @@
+# -- source: a-false-proof-of-an-argument-is-stopped-in-front-of-a-method-called-through-the-table.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# interface Scale { by(factor: number): number }
+# class Inch implements Scale { n: number; constructor(n: number) { this.n = n; } by(factor: number) { return this.n * factor; } }
+# class Foot implements Scale { n: number; constructor(n: number) { this.n = n; } by(factor: number) { return this.n * 12 * factor; } }
+# const scales: Scale[] = [new Inch(1), new Foot(2)];
+# function all() { let said = ""; for (let turn = 0; turn < 4; turn++) said += scales[turn & 1].by(id("3")) + ";"; return said; }
+# print(all());
+# print("went on");
+# -- end of source
+# THE DOOR OF AN ARGUMENT THAT GOES THROUGH THE METHOD TABLE, AS A USER BUILDS: no word that checks proofs. THE LIE, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves `factor` undefined in both methods, and a text comes.
+# A row of the table holds the direct entry of its method only where the method believes nothing of its arguments. These two believe something, so their rows hold entries of the table, and an entry asks what it hands on.
+# BELIEVED, `1 * "3"` gave NaN for 3 and the program went on.
+# f1 = all
+# OPTIONS: testing=UnseenCodeAnswersUndefined
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM: = CallTable
+# RUN(STOPS): run-in-shell mechanisms=all-Inlining
+# STOPS: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# STOPS-NOT: went on
+# STOPS: crashed with

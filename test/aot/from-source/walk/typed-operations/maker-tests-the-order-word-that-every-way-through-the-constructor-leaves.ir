@@ -1,0 +1,22 @@
+# -- source: maker-tests-the-order-word-that-every-way-through-the-constructor-leaves.ts
+# declare function report(value: unknown): void;
+# interface Type { flags: number; checker?: object; id: number; symbol?: object; }
+# interface ObjectType extends Type { objectFlags: number; members?: object; properties?: object; callSignatures?: object; }
+# interface UnionType extends Type { types: Type[]; objectFlags: number; }
+# const tracing: boolean = (globalThis as any).tracing;
+# function Type(this: Type, flags: number, checker?: object) { this.flags = flags; if (tracing) this.checker = checker; }
+# let count = 0;
+# function createType(flags: number): Type { const result = new (Type as any)(flags) as Type; count++; result.id = count; return result; }
+# function createTypeWithSymbol(flags: number, symbol: object): Type { const result = createType(flags); result.symbol = symbol; return result; }
+# function createObjectType(objectFlags: number, symbol: object): ObjectType { const type = createTypeWithSymbol(1, symbol) as ObjectType; type.objectFlags = objectFlags; type.members = undefined; type.properties = undefined; type.callSignatures = undefined; return type; }
+# function createUnionType(types: Type[]): UnionType { const type = createType(2) as UnionType; type.types = types; type.objectFlags = 8; return type; }
+# const made = createUnionType([createObjectType(2, {})]);
+# report(made);
+# report(Object.keys(made).join());
+# -- end of source
+# `const result = new Type(flags); result.id = count;` behind `function Type(flags, checker) { this.flags = flags; if (tracing) this.checker = checker; }`: two orders go on with `id`: behind `flags checker` and behind `flags`.
+# The walk tests the one with the fewest keys in front: what every way through the constructor leaves. What a call or a construction of the body itself has answered is likely in an order, whatever has run since: the test says.
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0]
+# CHECK: PutSlotOrAdd {{*}}key="id" receivers=[L0] {{*}}orderWordAfter=

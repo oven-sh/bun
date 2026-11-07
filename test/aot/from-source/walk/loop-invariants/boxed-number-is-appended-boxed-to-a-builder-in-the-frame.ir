@@ -1,0 +1,12 @@
+# a number that is at hand boxed is appended as it is: the code of the part asks the tag, and a small integer goes straight to its digits: no way to a double and back
+# f1 = joins
+# -- source: boxed-number-is-appended-boxed-to-a-builder-in-the-frame.ts
+# declare function sink(...values: unknown[]): void;
+# function joins(list: number[]): string { let line = ""; for (const c of list) { line += c; } return line; }
+# sink(joins, joins([1, 2]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: @Double = Unbox
+# CHECK: = StackStringBuilderAppendNumber

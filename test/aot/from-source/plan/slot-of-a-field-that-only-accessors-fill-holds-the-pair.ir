@@ -1,0 +1,37 @@
+# -- source: slot-of-an-accessor.ts
+# interface View { a: number; b: number; c: number }
+# interface Either { m: number; z: number }
+# function make(x: number): View { return { get a() { return x; }, get b() { return x + 1; }, c: 1 }; }
+# function use(o: View) { return o.a + o.b + o.c; }
+# function either(flag: boolean, x: number): Either { return flag ? { get m() { return x; }, z: 1 } : { m: x, z: 2 }; }
+# console.log(use(make(1)) + use(make(2)), either(true, 1).m + either(false, 2).m);
+# -- end of source
+# `{ get a() { .. } }`: a literal lays an accessor in the place of a field. As a plain field it would leave its slot with each object that is made: 2,220 instructions a getter, an object for the extra properties, a Structure.
+# Where code in sight lays nothing but accessors whose functions it names, and nothing in sight gives the field a value, the slot holds the pair of functions: the record of the layout says so, and laying them fills the slot.
+# It chooses how the objects are laid out and claims nothing: a property that is created in another form lies beside its slot. No typed form reads or writes such a slot: what lies there is no value.
+# `m` is a getter in one literal and a value in the other: a plain field, as ever.
+# RUN(LINK): link fields mechanisms=all
+# REQUIRES(LINK): entries-of-bun
+# LINK: field L0.0 "a" {{*}}filled-by-accessors-alone
+# LINK-NEXT: field L0.1 "b" {{*}}filled-by-accessors-alone
+# LINK-NOT: filled-by-accessors-alone
+# RUN: plan layouts mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "a" JSValue Inline {{*}} accessor
+# CHECK-NEXT: slot 1 "b" JSValue Inline {{*}} accessor
+# CHECK-NOT: accessor
+# RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots
+# REQUIRES(WITHHELD): entries-of-bun
+# WITHHELD-NOT: accessor
+# RUN(WALK): walk f2 mechanisms=all-Inlining
+# REQUIRES(WALK): entries-of-bun
+# WALK-LABEL: code f2:Body
+# WALK-NOT: Slot {{*}}key="a"
+# WALK-NOT: Slot {{*}}key="b"
+# WALK: PropGet {{*}}key="a"
+# WALK-NOT: Slot {{*}}key="a"
+# WALK-NOT: Slot {{*}}key="b"
+# WALK: PropGet {{*}}key="b"
+# WALK-NOT: Slot {{*}}key="a"
+# WALK-NOT: Slot {{*}}key="b"

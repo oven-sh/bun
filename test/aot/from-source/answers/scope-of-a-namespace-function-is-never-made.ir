@@ -1,0 +1,35 @@
+# -- source: main.ts
+# var Counter: any;
+# (Counter2 => {
+#     let token = 0;
+#     let limit = 3;
+#     function scan() { return token < limit ? token * 2 : -1; }
+#     function next() { token = token + 1; return scan(); }
+#     Counter2.run = (size: number) => { limit = size; token = 0; let sum = scan(); while (next() >= 0) sum += scan(); return sum; };
+#     Counter2.position = () => token;
+#     Counter2.scanner = () => scan;
+# })(Counter || (Counter = {}));
+# print(Counter.run(2), Counter.position(), Counter.run(1), Counter.position(), Counter.scanner() === Counter.scanner());
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# The function is called once, from the body of the module. Its scope is never made: token and limit are numbers and lie among the variables of the module.
+# scan and next hold nothing but that scope, and the function asks at its entry whether it has been entered before.
+# The closure of scan that scanner hands out could be let go with the arrows over it: whoever holds it as a value goes on capturing it.
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(WITHHELD): compile EnvironmentsPromotedToVariables mechanisms=all-PromotedEnvironments
+# WITHHELD-NOT: statistic EnvironmentsPromotedToVariables 1
+# RUN(UNITS): plan units mechanisms=all
+# UNITS: :Body (Void
+# RUN(CAPTURED): plan units mechanisms=all-PromotedEnvironments
+# CAPTURED-NOT: Void
+# RUN(MAKER): walk f1 mechanisms=all
+# MAKER-LABEL: code f1:Body
+# MAKER: EnterBodyThatRunsOnce
+# MAKER: PutEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2 2 0 1 true
+# RUN(MADE): run-in-shell mechanisms=all-PromotedEnvironments
+# MADE: 2 2 0 1 true
+# RUN(ALONE): run-in-shell mechanisms=PromotedEnvironments
+# ALONE: 2 2 0 1 true

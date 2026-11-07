@@ -2736,7 +2736,7 @@ pub mod bv2_impl {
                         if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
+                                    // Only re-query if the folder was ever looked up. Another thread can have busted it first.
                                     // SAFETY: see `transpiler` note above.
                                     if unsafe { &mut *transpiler }
                                         .resolver
@@ -6773,7 +6773,7 @@ pub mod bv2_impl {
                                             bstr::BStr::new(&source.path.text),
                                             bstr::BStr::new(&import_record.path.text)
                                         );
-                                        // Only re-query if we previously had something cached.
+                                        // Only re-query if the folder was ever looked up. Another thread can have busted it first.
                                         if transpiler.resolver.bust_dir_cache_from_specifier(
                                             source.path.text,
                                             import_record.path.text,

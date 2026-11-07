@@ -460,7 +460,9 @@ pub(crate) fn skip(
         result.put(global, b"note", note);
     }
     TestContext::sync_result(this_value, global, sequence)?;
-    Err(global.throw(format_args!("test is skipped; abort execution")))
+    let error = global.create_error_instance(format_args!("test is skipped; abort execution"));
+    sequence.skip_error = Some(Strong::create(error, global));
+    Err(global.throw_value(error))
 }
 
 pub(crate) fn defer_hook<'a>(

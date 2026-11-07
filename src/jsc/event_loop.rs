@@ -1441,12 +1441,29 @@ impl EventLoop {
         // SAFETY: as above.
         unsafe { (*this).exit_without_checkpoint() };
         after_call();
-        let result = result?;
+        let result = result.map_err(|err| self.drain_microtasks_and_rethrow(global_object, err))?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)
             .map_err(|stopped| stopped.throw(global_object))?;
         Ok(result)
+    }
+
+    /// The forced drain for a callback that threw. Nothing drains while an exception is pending, so it is taken for the drain and thrown again.
+    #[inline(never)] // Not `#[cold]`: the release link inlines nothing at a cold call site, so the caller would copy its context guard for an out-of-line drop on every call.
+    fn drain_microtasks_and_rethrow(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: crate::JsError,
+    ) -> crate::JsError {
+        if err != crate::JsError::Thrown {
+            return err;
+        }
+        let exception = global_object.take_exception(err);
+        let jsc_vm = global_object.bun_vm().jsc_vm();
+        // A drain that stops the VM leaves nothing pending, and the callback still threw.
+        let _ = self.drain_microtasks_with_global(global_object, jsc_vm);
+        global_object.throw_value(exception)
     }
 
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks

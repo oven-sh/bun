@@ -1,7 +1,7 @@
 // `test`, `describe` and the hooks behave like Vitest's when imported from "vitest", and like Jest's otherwise.
 // Expected outputs were taken from Vitest 5.0.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isWindows, tempDir } from "harness";
 import { readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -2548,6 +2548,357 @@ test.concurrent("a function that a thenable from beforeEach or beforeAll resolve
   expect({ log, exitCode }).toEqual({
     log: ["test", "afterEach", "beforeEach teardown", "afterAll", "beforeAll teardown"],
     exitCode: 0,
+  });
+});
+
+// Such a callback ends as one that returns a rejected promise does: what it queued runs before the runner goes on.
+describe.concurrent("a callback that throws synchronously", () => {
+  // Jest and Vitest run the promise jobs before the next callback too. Bun's own: nextTick callbacks run first, as after a return,
+  // and the file goes on after a describe() that throws.
+  test.each(["vitest", "bun:test"])(
+    "its nextTick callbacks and promise jobs run before the next callback: %s",
+    async module => {
+      const { log, exitCode } = await runTests({
+        "a.test.js": `
+          import { test, describe, beforeAll, beforeEach, afterEach, afterAll } from "${module}";
+          const throws = name => {
+            console.log(name);
+            process.nextTick(() => console.log(name + ": nextTick"));
+            queueMicrotask(() => console.log(name + ": microtask"));
+            throw new Error(name);
+          };
+          describe("describe", () => throws("describe"));
+          describe("beforeAll", () => {
+            console.log("the next describe");
+            beforeAll(() => throws("beforeAll"));
+            afterAll(() => console.log("afterAll"));
+            test("not run", () => {});
+          });
+          describe("beforeEach", () => {
+            beforeEach(() => throws("beforeEach"));
+            afterEach(() => console.log("afterEach"));
+            test("not run", () => {});
+          });
+          describe("test", () => {
+            afterEach(() => console.log("afterEach"));
+            test("throws", () => throws("test"));
+            test("waits", async () => { await new Promise(resolve => setImmediate(resolve)); });
+            test("throws after a test that waited", () => throws("later test"));
+          });
+          describe("afterEach", () => {
+            afterEach(() => throws("afterEach"));
+            afterAll(() => console.log("afterAll"));
+            test("passes", () => {});
+          });
+          describe("afterAll", () => {
+            afterAll(() => throws("afterAll"));
+            test("passes", () => {});
+          });
+          test("the next test", () => console.log("the next test"));
+        `,
+      });
+      const thenTheNext = (thrower: string, next: string) => [
+        thrower,
+        `${thrower}: nextTick`,
+        `${thrower}: microtask`,
+        next,
+      ];
+      expect({ log, exitCode }).toEqual({
+        log: [
+          ...thenTheNext("describe", "the next describe"),
+          ...thenTheNext("beforeAll", "afterAll"),
+          ...thenTheNext("beforeEach", "afterEach"),
+          ...thenTheNext("test", "afterEach"),
+          "afterEach",
+          ...thenTheNext("later test", "afterEach"),
+          ...thenTheNext("afterEach", "afterAll"),
+          ...thenTheNext("afterAll", "the next test"),
+        ],
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("a store that it entered with enterWith() is not the next callback's", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, beforeEach, afterEach, afterAll, expect } from "bun:test";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        const storage = new AsyncLocalStorage();
+        let entered;
+        const enters = name => storage.enterWith(entered = name);
+        const throws = name => {
+          enters(name);
+          throw new Error(name);
+        };
+        const next = where => console.log(where + " after " + entered + ":", storage.getStore());
+        describe("describe", () => throws("describe"));
+        describe("beforeAll", () => {
+          next("the next describe");
+          beforeAll(() => throws("beforeAll"));
+          afterAll(() => next("afterAll"));
+          test("not run", () => {});
+        });
+        describe("beforeEach", () => {
+          beforeEach(() => throws("beforeEach"));
+          afterEach(() => next("afterEach"));
+          test("not run", () => {});
+        });
+        describe("test", () => {
+          afterEach(() => next("afterEach"));
+          test("throws", () => throws("a throw"));
+          test("fails an expect()", () => {
+            enters("a failed expect()");
+            expect(1).toBe(2);
+          });
+          test("takes done", done => throws("a throw with done"));
+          test.failing("is expected to fail", () => throws("test.failing"));
+          test("returns", () => enters("a return"));
+          test("waits", async () => {
+            enters("a wait");
+            await new Promise(resolve => setImmediate(resolve));
+          });
+          test("throws after a test that waited", () => throws("a later throw"));
+        });
+        describe("registered in a store", () => {
+          storage.run("registered", () => {
+            afterEach(() => next("afterEach"));
+            test("throws", () => throws("a throw in a store"));
+          });
+        });
+        describe("afterEach", () => {
+          afterEach(() => throws("afterEach"));
+          afterAll(() => next("afterAll"));
+          test("passes", () => {});
+        });
+        describe("afterAll", () => {
+          afterAll(() => throws("afterAll"));
+          test("passes", () => {});
+        });
+        test("the next test", () => next("the next test"));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "the next describe after describe: undefined",
+        "afterAll after beforeAll: undefined",
+        "afterEach after beforeEach: undefined",
+        "afterEach after a throw: undefined",
+        "afterEach after a failed expect(): undefined",
+        "afterEach after a throw with done: undefined",
+        "afterEach after test.failing: undefined",
+        "afterEach after a return: undefined",
+        "afterEach after a wait: undefined",
+        "afterEach after a later throw: undefined",
+        "afterEach after a throw in a store: registered",
+        "afterAll after afterEach: undefined",
+        "the next test after afterAll: undefined",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("what its promise jobs throw, leave rejected or assert counts for it, not for what runs next", async () => {
+    const { results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, expect } from "bun:test";
+        const leavesARejection = async () => {
+          await null;
+          throw new Error("rejected in a job");
+        };
+        describe("a describe() callback", () => {
+          test("not run", () => {});
+          leavesARejection();
+          throw new Error("thrown by describe()");
+        });
+        describe("the next describe()", () => {
+          test("passes", () => {});
+        });
+        describe("a test", () => {
+          test("throws", () => {
+            queueMicrotask(() => { throw new Error("thrown by a job"); });
+            leavesARejection();
+            expect(1).toBe(2);
+          });
+          test("the next test", () => {});
+        });
+        describe("expect() in a job", () => {
+          test.failing("counts for the test that threw", () => {
+            queueMicrotask(() => expect(1).toBe(1));
+            throw new Error("thrown by test.failing");
+          });
+          test("and not for the next test", () => expect.hasAssertions());
+        });
+      `,
+    });
+    expect({ results, errors, exitCode }).toEqual({
+      results: [
+        "(pass) the next describe() > passes",
+        "(fail) a test > throws",
+        "(pass) a test > the next test",
+        "(pass) expect() in a job > counts for the test that threw",
+        "(fail) expect() in a job > and not for the next test",
+      ],
+      errors: [
+        "error: thrown by describe()",
+        "error: rejected in a job",
+        "error: thrown by a job",
+        "error: expect(received).toBe(expected)",
+        "error: rejected in a job",
+        "AssertionError: received 0 assertions, but expected at least one assertion to be called",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test.each(["vitest", "bun:test"])(
+    "the errors of its promise jobs are reported before afterEach, and none between tests: %s",
+    async module => {
+      const { stderr, exitCode } = await runTests({
+        "a.test.js": `
+          import { test, afterEach } from "${module}";
+          const rejectsInAJob = async message => {
+            await null;
+            throw new Error(message);
+          };
+          afterEach(() => console.error("afterEach"));
+          test("throws", () => {
+            queueMicrotask(() => { throw new Error("thrown by a job"); });
+            rejectsInAJob("rejected in a job");
+            throw new Error("thrown");
+          });
+          test("throws after a rejection that a job handles", () => {
+            const rejected = Promise.reject(new Error("handled by a job"));
+            queueMicrotask(() => rejected.catch(() => {}));
+            throw new Error("thrown alone");
+          });
+          test("throws last", () => {
+            rejectsInAJob("rejected in the last job");
+            throw new Error("thrown last");
+          });
+        `,
+      });
+      const reported = stderr
+        .split("\n")
+        .filter(line => /^(error: |afterEach$|# Unhandled error|\((pass|fail)\) )/.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+      expect({ reported, exitCode }).toEqual({
+        reported: [
+          "error: thrown by a job",
+          "error: thrown",
+          "error: rejected in a job",
+          "afterEach",
+          "(fail) throws",
+          "error: thrown alone",
+          "afterEach",
+          "(fail) throws after a rejection that a job handles",
+          "error: thrown last",
+          "error: rejected in the last job",
+          "afterEach",
+          "(fail) throws last",
+        ],
+        exitCode: 1,
+      });
+    },
+  );
+
+  test.each(["vitest", "bun:test"])(
+    "a retry starts after the promise jobs of the attempt that threw: %s",
+    async module => {
+      const { log, results, exitCode } = await runTests({
+        "a.test.js": `
+          import { test, expect } from "${module}";
+          let attempts = 0;
+          let settled = false;
+          test("retried", { retry: 5 }, () => {
+            if (++attempts === 1) Promise.resolve().then(() => { settled = true; });
+            expect(settled).toBe(true);
+          });
+          test("counts", () => console.log("attempts:", attempts));
+        `,
+      });
+      expect({ log, results, exitCode }).toEqual({
+        log: ["attempts: 2"],
+        results: ["(pass) retried (attempt 2)", "(pass) counts"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Such a test hides what it throws itself, and the promise jobs of its callback run while it is still the current test.
+  test("a test that called skip() or that is expected to fail does not hide an error of a promise job", async () => {
+    const { results, errors, stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "vitest";
+        test("skips", ({ skip }) => {
+          queueMicrotask(() => { throw new Error("thrown by a job"); });
+          skip();
+        });
+        test("skips in an async callback", async ({ skip }) => {
+          queueMicrotask(() => { throw new Error("thrown by a job of an async callback"); });
+          skip();
+        });
+        test("is skipped by a job", ({ skip }) => {
+          queueMicrotask(() => skip());
+          throw new Error("hidden");
+        });
+        test.fails("is expected to fail", () => {
+          queueMicrotask(() => { throw new Error("thrown by a job of test.fails"); });
+          throw new Error("expected");
+        });
+        test("the next test", () => {});
+      `,
+    });
+    expect({
+      results,
+      errors,
+      betweenTests: stderr.split("# Unhandled error between tests").length - 1,
+      exitCode,
+    }).toEqual({
+      results: [
+        "(skip) skips",
+        "(skip) skips in an async callback",
+        "(skip) is skipped by a job",
+        "(pass) is expected to fail",
+        "(pass) the next test",
+      ],
+      errors: [
+        "error: thrown by a job",
+        "error: thrown by a job of an async callback",
+        "error: thrown by a job of test.fails",
+      ],
+      betweenTests: 3,
+      exitCode: 1,
+    });
+  });
+
+  // The drain of a callback that returns also runs the deferred flush of a FileSink. On Windows the write completes later, on the event loop.
+  test.skipIf(isWindows)("what it wrote to a FileSink is flushed before the next callback", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, afterEach } from "bun:test";
+        import { readFileSync } from "node:fs";
+        import { join } from "node:path";
+        const writers = [];
+        let path;
+        const writes = text => {
+          path = join(import.meta.dir, text + ".txt");
+          const writer = Bun.file(path).writer();
+          writers.push(writer);
+          writer.write(text);
+        };
+        afterEach(() => console.log("afterEach reads:", readFileSync(path, "utf8")));
+        test("returns", () => writes("written before a return"));
+        test("throws", () => {
+          writes("written before a throw");
+          throw new Error("thrown");
+        });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["afterEach reads: written before a return", "afterEach reads: written before a throw"],
+      exitCode: 1,
+    });
   });
 });
 

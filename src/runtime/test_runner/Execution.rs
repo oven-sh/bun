@@ -169,6 +169,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
     pub(crate) context: Option<Strong>,
+    /// What `skip()` of the context threw to end this attempt.
+    pub(crate) skip_error: Option<Strong>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
     pub(crate) pending_matchers: u32,
     /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
@@ -203,6 +205,7 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
             context: None,
+            skip_error: None,
             pending_matchers: 0,
             callback_done: false,
             counted_snapshots: Vec::new(),
@@ -223,6 +226,12 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+
+    pub(crate) fn is_skip_error(&self, value: JSValue) -> bool {
+        self.skip_error
+            .as_ref()
+            .is_some_and(|error| value == error.get() || value.to_error() == Some(error.get()))
     }
 
     pub(crate) fn context(

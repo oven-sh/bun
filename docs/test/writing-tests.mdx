@@ -513,6 +513,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
+| `expect.assertions()` and `expect.hasAssertions()` count  | each matcher call                    | each `expect()` call, with or without a matcher                      |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
 
@@ -612,7 +613,10 @@ test("the queue drains", async () => {
 
 ## Assertion Counting
 
-Bun supports verifying that a specific number of assertions were called during a test:
+Bun supports verifying that a specific number of assertions were called during a test. What one assertion is depends on the module the test comes from:
+
+- In a `"bun:test"` test, each matcher call, such as `.toBe()`, is one assertion.
+- In a [`"vitest"` test](#importing-from-vitest), each `expect()` call is one assertion, as in Vitest. A matcher doesn't have to follow. Tests made with `test.for()` or `test.extend()` count the same way.
 
 ### expect.hasAssertions()
 
@@ -682,7 +686,7 @@ describe("math", () => {
 | -------------------------- | ----------------------------------------------------------------------------------------- |
 | `currentTestName`          | The `describe` names and the test name, joined by a space, or by `>` in a `"vitest"` test |
 | `testPath`                 | The test file's absolute path                                                             |
-| `assertionCalls`           | Number of assertions the test has made                                                    |
+| `assertionCalls`           | Number of [assertions](#assertion-counting) the test has made                             |
 | `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
 | `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
 

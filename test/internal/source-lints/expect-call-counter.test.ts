@@ -1,7 +1,8 @@
 // Every expect matcher must bump the test runner's expect-call counter so
 // `expect.assertions(n)` / `expect.hasAssertions()` work. Matchers either call
 // `increment_expect_call_counter()` directly or route through one of the
-// shared prologues that call it.
+// shared prologues that call it. In a Vitest test the call adds nothing,
+// because `expect()` has counted already.
 import { Glob } from "bun";
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";

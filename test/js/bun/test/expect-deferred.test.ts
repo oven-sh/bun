@@ -387,6 +387,8 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 
   test("a pending matcher rejects when its test ends, so finally blocks and disposers run", async () => {
+    // Each test with a time limit never finishes, and none waits for a timer before it calls its matcher.
+    // A stalled process reaches a limit first. A test that has to pass then fails, and a later test gets the matcher.
     const { stdout, report, exitCode, signalCode } = await runTests(`
       const unwound = [];
       expect.extend({ toNeverAnswer: never });
@@ -423,25 +425,27 @@ describe.concurrent(".resolves and .rejects", () => {
       });
       let isTaken = false, attempts = 0;
       test("the next attempt finds what the first one took released", async () => {
-        if (++attempts > 1) await later();
-        if (isTaken) throw new Error("still taken");
+        if (++attempts > 1) {
+          await 0;
+          unwound.push("the next attempt: " + (isTaken ? "still taken" : "released"));
+        }
         isTaken = true;
         try {
-          await expect(attempts > 1 ? later(1) : never()).resolves.toBe(1);
+          await expect(never()).resolves.toBe(1);
         } finally {
           isTaken = false;
         }
-      }, { retry: 1, timeout: 250 });
+      }, { retry: 1, timeout: 20 });
       describe("concurrent", () => {
         test.concurrent("after an await", async () => {
           try {
-            await later();
+            await 0;
             await expect(never()).resolves.toBe(1);
           } finally {
             unwound.push("concurrent: finally");
           }
         }, 20);
-        test.concurrent("beside it", () => {}, 20);
+        test.concurrent("beside it", () => never(), 20);
       });
       test("afterwards", async () => {
         await later();
@@ -454,6 +458,7 @@ describe.concurrent(".resolves and .rejects", () => {
         name + ": disposed",
       ]),
       "a test that fails: The test that called this matcher has ended",
+      "the next attempt: released",
       "concurrent: finally",
     ]);
     expect(report.filter(line => !line.includes("timed out after"))).toEqual([
@@ -468,9 +473,9 @@ describe.concurrent(".resolves and .rejects", () => {
       "(fail) keeps the promise",
       "error: The test that called this matcher has ended",
       "(fail) another test that awaits it fails",
-      "(pass) the next attempt finds what the first one took released (attempt 2)",
-      "(pass) concurrent > beside it",
+      "(fail) the next attempt finds what the first one took released (attempt 2)",
       "(fail) concurrent > after an await",
+      "(fail) concurrent > beside it",
       "(pass) afterwards",
     ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });

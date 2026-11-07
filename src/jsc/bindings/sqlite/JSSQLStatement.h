@@ -35,22 +35,6 @@
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
 
-#ifndef LAZY_LOAD_SQLITE_DEFAULT_SETTING
-#if defined(__APPLE__)
-#define LAZY_LOAD_SQLITE_DEFAULT_SETTING 1
-#endif
-#endif
-
-#ifndef LAZY_LOAD_SQLITE
-#ifdef LAZY_LOAD_SQLITE_DEFAULT_SETTING
-#define LAZY_LOAD_SQLITE LAZY_LOAD_SQLITE_DEFAULT_SETTING
-#endif
-#endif
-
-#ifndef LAZY_LOAD_SQLITE
-#define LAZY_LOAD_SQLITE 0
-#endif
-
 #if LAZY_LOAD_SQLITE
 #include "sqlite3.h"
 #else

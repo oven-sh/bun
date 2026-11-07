@@ -69,9 +69,9 @@ console.log(M.x);
   ],
   [
     "only an alias of a namespace body names an import",
-    `import { Missing } from "./lib";
+    `import { Types } from "./lib";
 namespace M {
-  import T = Missing.T;
+  import T = Types.T;
   export const x: T = 1;
 }
 console.log(M.x);
@@ -79,20 +79,17 @@ console.log(M.x);
     "lib\n1\n",
   ],
   [
-    "a function that runs first reads an alias of an enum member",
-    `enum E { A = 1 }
-namespace M {
-  export const x = f();
-  import A = E.A;
-  function f() { return A; }
-}
-console.log(M.x);
+    "only an alias at module scope names an import",
+    `import { Types } from "./lib";
+import T = Types.T;
+const x: T = 1;
+console.log(x);
 `,
-    "1\n",
+    "lib\n1\n",
   ],
 ])("an `import a = b.c` that no value reads is not evaluated: %s", async (_name, entry, expected) => {
   using dir = tempDir("ts-import-alias-not-read", {
-    "lib.ts": `console.log("lib");\nexport type T = number;\n`,
+    "lib.ts": `console.log("lib");\nexport namespace Types { export type T = number; }\n`,
     "entry.ts": entry,
   });
 

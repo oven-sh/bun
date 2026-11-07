@@ -1943,7 +1943,7 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
-    // tsc emits `var a = b.c` for an `import a = b.c` that is not exported only where a value reads `a`.
+    // With `verbatimModuleSyntax` off, tsc emits `var a = b.c` for an unexported `import a = b.c` only where a value reads `a`.
     describe("import a = b.c that is not exported", () => {
       const modes = {
         "by default": { loader: "ts" },
@@ -1954,6 +1954,7 @@ class Test extends Bar {
         "with treeShaking": { loader: "ts", treeShaking: true },
         "without deadCodeElimination": { loader: "ts", deadCodeElimination: false },
         "with replMode": { loader: "ts", replMode: true },
+        "with minify.identifiers": { loader: "ts", minify: { identifiers: true } },
       };
       const print = (source, options = modes["by default"]) => new Bun.Transpiler(options).transformSync(source);
       // What the printed program passes to `emit`.
@@ -1963,7 +1964,7 @@ class Test extends Bar {
         return emitted;
       };
 
-      // The output of tsc emits the same values.
+      // The output of tsc (`verbatimModuleSyntax` off) emits the same values.
       const noValueReadsIt = [
         [
           "only a type names it",
@@ -2092,6 +2093,33 @@ class Test extends Bar {
            emit(y);`,
           [2],
         ],
+        // tsc reports TS2303 for a cycle, and emits none of it.
+        [
+          "two that name each other",
+          `namespace M { import a = b.x; import b = a.y; export const x = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "one that names itself, and one named as its namespace",
+          `namespace M { import a = a.b; import M = M.c; export const x = 1; }
+           emit(M.x);`,
+          [1],
+        ],
+        [
+          "at module scope, two that name each other, and a type that names one",
+          `import a = b.x;
+           import b = a.y;
+           const x: a.T = 1;
+           emit(x);`,
+          [1],
+        ],
+        [
+          "at module scope, one that names itself",
+          `import a = a.b;
+           emit(1);`,
+          [1],
+        ],
       ];
       const aValueReadsIt = [
         [
@@ -2158,6 +2186,28 @@ class Test extends Bar {
            emit(f());`,
           [5],
         ],
+        [
+          "the initializer of an enum member",
+          `namespace N { export const v = 5; }
+           namespace M { import V = N.v; export enum E { A = V } }
+           emit(M.E.A);`,
+          [5],
+        ],
+        [
+          "at module scope, the initializer of an enum member",
+          `namespace N { export const v = 5; }
+           import V = N.v;
+           enum E { A = V }
+           emit(E.A);`,
+          [5],
+        ],
+        [
+          "a member of an enum, and a direct eval",
+          `enum E { A = 1 }
+           namespace M { import B = E.A; export const x = B; export const y = eval("B"); }
+           emit(M.x + M.y);`,
+          [2],
+        ],
       ];
 
       describe.each(Object.entries(modes))("%s", (_, options) => {
@@ -2188,36 +2238,112 @@ class Test extends Bar {
         );
       });
 
-      // `bun run` inlines the constant where tsc has a `var` that is still undefined.
-      it.each(["as bun run", "with inline"])("a reader that runs before an alias of an enum member: %s", mode => {
+      // One part for the file, and one part for each top-level statement.
+      it.each(["by default", "with treeShaking"])("prints a cycle that a value reads, once: %s", mode => {
+        const options = modes[mode];
+        expect(print(`import a = b.x;\nimport b = c.y;\nimport c = a.z;\nconsole.log(typeof b);`, options)).toBe(
+          "const a = b.x;\nconst b = c.y;\nconst c = a.z;\nconsole.log(typeof b);\n",
+        );
+        expect(print(`import s = s.t;\nconsole.log(typeof s);`, options)).toBe(
+          "const s = s.t;\nconsole.log(typeof s);\n",
+        );
         expect(
-          run(
-            `enum E { A = 1 }
+          print(
+            `namespace M { import c = d.x; import d = c.y; import e = e.f; import M = M.z; export const q = () => [c, e, M]; }`,
+            options,
+          ),
+        ).toBe(
+          "var M;\n((_M) => {\n  const c = d.x;\n  const d = c.y;\n  const e = e.f;\n  const M = M.z;\n  _M.q = () => [c, e, M];\n})(M ||= {});\n",
+        );
+        // No value reads the first cycle.
+        expect(
+          print(`import a = b.x;\nimport b = a.y;\nimport c = d.x;\nimport d = c.y;\nconsole.log(typeof c);`, options),
+        ).toBe("const c = d.x;\nconst d = c.y;\nconsole.log(typeof c);\n");
+      });
+
+      // Such an alias never names `b`. It is a `const` like any other: `bun run` gives its value to the readers after it,
+      // where tsc has a `var` that is still undefined.
+      it.each(["as bun run", "with inline"])(
+        "a reader that runs before an alias of a constant has the constant: %s",
+        mode => {
+          const options = { ...modes[mode], define: { "CFG.v": "1" } };
+          expect(
+            run(
+              `enum E { A = 1 }
              namespace M { export const x = f(); import B = E.A; import C = B; function f() { return B + C; } }
              emit(M.x);`,
-            modes[mode],
-          ),
-        ).toEqual([2]);
-        expect(
-          run(
-            `namespace N { export enum E { A = "a" } }
+              options,
+            ),
+          ).toEqual([2]);
+          expect(
+            run(
+              `namespace N { export enum E { A = "a" } }
              namespace M { export const x = f(); import B = N.E.A; function f() { return B; } }
              emit(M.x);`,
-            modes[mode],
-          ),
-        ).toEqual(["a"]);
-        expect(
-          run(
-            `enum E { A = 1 }
+              options,
+            ),
+          ).toEqual(["a"]);
+          expect(
+            run(
+              `enum E { A = 1 }
              const x = f();
              import B = E.A;
              function f() { return B; }
              emit(x);`,
-            modes[mode],
+              options,
+            ),
+          ).toEqual([1]);
+          // A define.
+          expect(
+            run(
+              `namespace M { export const x = f(); import V = CFG.v; function f() { return V; } }
+             emit(M.x);`,
+              options,
+            ),
+          ).toEqual([1]);
+          expect(
+            run(
+              `const x = f();
+             import V = CFG.v;
+             function f() { return V; }
+             emit(x);`,
+              options,
+            ),
+          ).toEqual([1]);
+          // After a statement that is no `const`, a `const` gives its value to no reader.
+          expect(() =>
+            run(
+              `enum E { A = 1 }
+             namespace M { g(); export const x = f(); import B = E.A; function f() { return B; } function g() {} }
+             emit(M.x);`,
+              options,
+            ),
+          ).toThrow("Cannot access 'B' before initialization");
+        },
+      );
+
+      it("folds the branches that an alias of a define decides", () => {
+        const options = { ...modes["as bun run"], define: { "process.env.NODE_ENV": '"production"' } };
+        expect(
+          print(
+            `namespace App { import NODE_ENV = process.env.NODE_ENV; export const mode = NODE_ENV !== "production" ? "dev" : "prod"; }`,
+            options,
           ),
-        ).toEqual([1]);
+        ).toBe('var App;\n((App) => App.mode = "prod")(App ||= {});\n');
       });
 
+      it("waits for a reader where its `b.c` is no constant for this build", () => {
+        // The define is a name, and the `const` is not inlined.
+        const define = { "CFG.id": "globalThis.id" };
+        expect(
+          print(`namespace M { import a = CFG.id; export const x = 1; }`, { ...modes["as bun run"], define }),
+        ).toBe("var M;\n((M) => M.x = 1)(M ||= {});\n");
+        expect(print(`const K = 5;\nnamespace M { import a = K; export const x = 1; }`)).toBe(
+          "const K = 5;\nvar M;\n((M) => {\n  M.x = 1;\n})(M ||= {});\n",
+        );
+      });
+
+      // tsc emits the alias here: it also counts a value in code that never runs.
       it("code that never runs does not read it", () => {
         const source = `const N = { get v() { emit("read"); return 1; } };
           namespace M { import V = N.v; if (false) emit(V); export const x = 1; }
@@ -2226,6 +2352,43 @@ class Test extends Bar {
         expect(run(source, modes["as bun run"])).toEqual([1]);
         // The statement stays, so it is a reader.
         expect(run(source, modes["without deadCodeElimination"])).toEqual(["read", 1]);
+      });
+
+      // The reader has the constant, and the `const` stays for the eval. With `minify.identifiers` a top-level name has another name.
+      it.each(["by default", "as bun run", "with inline"])(
+        "at module scope, a value and a direct eval read an alias of a constant: %s",
+        mode => {
+          expect(
+            run(
+              `enum E { A = 1 }
+               import B = E.A;
+               const x = B;
+               emit(x + eval("B"));`,
+              modes[mode],
+            ),
+          ).toEqual([2]);
+        },
+      );
+
+      // tsc does not see the eval either.
+      it.each(["by default", "as bun run"])("a direct eval alone does not read it: %s", mode => {
+        expect(
+          run(
+            `const N = { v: 5 };
+             namespace M { import V = N.v; export const x = eval("typeof V"); }
+             emit(M.x);`,
+            modes[mode],
+          ),
+        ).toEqual(["undefined"]);
+        expect(run(`const N = { v: 5 };\nimport V = N.v;\nemit(eval("typeof V"));`, modes[mode])).toEqual([
+          "undefined",
+        ]);
+      });
+
+      it.each(["export { V };", "export default V;", "export = V;"])("is read by `%s`", reader => {
+        for (const options of Object.values(modes)) {
+          expect(print(`import V = N.v;\n${reader}`, options)).toContain(" = N.v;");
+        }
       });
 
       it("an import that only the alias names stays, as an import of nothing", () => {
@@ -2242,6 +2405,12 @@ class Test extends Bar {
             options,
           ),
         ).toBe('import"./m";\nvar M;\n((M) => M.x = 1)(M ||= {});\n');
+        // The same at module scope.
+        for (const root of ["* as NS", "{ NS }"]) {
+          expect(print(`import ${root} from "./m";\nimport T = NS.T;\nexport const x: T = 1;`, options)).toBe(
+            'import"./m";\nexport const x = 1;\n',
+          );
+        }
       });
 
       it("goes before a `using` of its list is lowered", () => {
@@ -2286,13 +2455,22 @@ class Test extends Bar {
           tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } },
         }).transformSync(`namespace M { import h = Lib.h; export const element = <a />; }`);
         expect(jsx).toBe('var M;\n((M) => {\n  const h = Lib.h;\n  M.element = h("a", null);\n})(M ||= {});\n');
+
+        const fragment = new Bun.Transpiler({
+          loader: "tsx",
+          tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h", jsxFragmentFactory: "Fragment" } },
+        }).transformSync(
+          `import h = Lib.h;\nimport Fragment = Lib.Fragment;\nimport other = Lib.other;\nexport const element = <><a /></>;`,
+        );
+        expect(fragment).toBe(
+          'const h = Lib.h;\nconst Fragment = Lib.Fragment;\nexport const element = h(Fragment, null, h("a", null));\n',
+        );
       });
 
       it("reports a root that is a reserved word of strict mode", () => {
-        ts.expectParseError(
-          "import T = yield.T;\nexport {};",
-          '"yield" is a reserved word and cannot be used in strict mode',
-        );
+        const message = '"yield" is a reserved word and cannot be used in strict mode';
+        ts.expectParseError("import T = yield.T;\nexport {};", message);
+        expect(() => print("import T = yield.T;\nexport {};", modes["with treeShaking"])).toThrow(message);
       });
     });
 
@@ -6119,6 +6297,9 @@ it.concurrent("reports only the stack overflow when the visit pass overflows", a
       ["x = typeof (false ? " + chain + " : " + name + ");"],
       ["class A { a = " + chain + "; m() {} }"],
       ["class A { a = " + chain + "; @dec m(@dec x: number): void {} }", legacyDecorators],
+      // The visit stops before the end of the list, where it decides what becomes of an import-equals alias.
+      ["import al = N.v; al; x = " + chain + ";"],
+      ["namespace M { import al = N.v; al; x = " + chain + "; }"],
     ];
     const messages = cases.map(([source, tsconfig]) => {
       try {
@@ -6139,7 +6320,7 @@ it.concurrent("reports only the stack overflow when the visit pass overflows", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: JSON.stringify(Array(5).fill("Maximum call stack size exceeded")) + "\n",
+    stdout: JSON.stringify(Array(7).fill("Maximum call stack size exceeded")) + "\n",
     stderr: "",
     exitCode: 0,
     signalCode: null,

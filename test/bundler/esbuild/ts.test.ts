@@ -784,7 +784,7 @@ describe("bundler", () => {
     treeShaking: true,
     external: ["pkg"],
   });
-  // tsc emits an unexported `import a = b.c` only where a value reads `a`.
+  // With `verbatimModuleSyntax` off, tsc emits an unexported `import a = b.c` only where a value reads `a`.
   const importEqualsInNamespaceBody = {
     "/entry.ts": /* ts */ `
       import * as types from "./types";
@@ -828,7 +828,7 @@ describe("bundler", () => {
     itBundled(name, {
       files: {
         "/entry.ts": /* ts */ `
-          const ns = Math.random() < 2 ? require("./lib") : null;
+          import ns = require("./lib");
           namespace M {
             import A = ns.a;
             export const x = ${x};

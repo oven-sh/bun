@@ -82,6 +82,46 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["load side", "mocked"]]);
   });
 
+  test.each([
+    [
+      `import { test, jest } from "bun:test";`,
+      `jest.mock("./mod", () => ({ value: "mocked" }));`,
+      ["load ns", "load side", "first", "read v", "v", "read v", "v", "mocked"],
+    ],
+    // The imports of a Vitest test file run in turn without a mock call.
+    [
+      `import { test } from "vitest";`,
+      ``,
+      ["load ns", "load mod", "load side", "first", "read v", "v", "read v", "v", "real"],
+    ],
+  ])(
+    "an `import a = b.c` of a lowered import is evaluated only where a value reads it: %s",
+    async (header, mock, expected) => {
+      expect(
+        await events({
+          "ns.ts": `
+          (globalThis.events ??= []).push("load ns");
+          export const NS = { get v() { events.push("read v"); return "v"; } };
+        `,
+          "hoist.test.ts": `
+          ${header}
+          (globalThis.events ??= []).push("first");
+          import { NS } from "./ns";
+          import unread = NS.v;
+          import v = NS.v;
+          events.push(v);
+          import { captured } from "./side";
+          ${mock}
+          namespace Types { export type T = string; }
+          namespace M { import T = Types.T; import inner = NS.v; export const x: T = inner; }
+          events.push(M.x, captured);
+          ${print}
+        `,
+        }),
+      ).toEqual([expected]);
+    },
+  );
+
   // The boolean is whether babel-jest hoists the chain.
   test.each([
     [`jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`, true],

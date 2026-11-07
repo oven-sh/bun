@@ -246,6 +246,32 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
+devTest("an `import a = b.c` that no value reads leaves no code", {
+  framework: minimalFramework,
+  files: {
+    "types.ts": `
+      export namespace Types { export type T = string; }
+      export const real = "real";
+    `,
+    "routes/index.ts": `
+      import { Types, real } from '../types';
+      import T = Types.T;
+      namespace Local { export type U = string; }
+      namespace M {
+        import U = Local.U;
+        import text = Types.text;
+        export const value: U = "value";
+      }
+      const t: T = real;
+      export default function (req, meta) {
+        return new Response(t + " " + M.value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("real value");
+  },
+});
 devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({

@@ -177,6 +177,26 @@ fn the_object_as_a_value() {
 }
 
 #[test]
+fn the_object_is_what_its_exports_are_called_with() {
+    for source in [
+        "module.exports();",
+        "module.exports?.(1);",
+        "module['exports'](1);",
+        "module.exports`a`;",
+    ] {
+        assert_mentions(source, &[("module", OwnFile, HandedOn)]);
+    }
+    for source in [
+        "new module.exports();",
+        "module.exports.call(null);",
+        "module.exports.a();",
+        "const f = module.exports; f();",
+    ] {
+        assert_mentions(source, &[]);
+    }
+}
+
+#[test]
 fn the_object_where_nothing_follows_it() {
     for source in [
         "f(module);",
@@ -493,6 +513,7 @@ fn a_var_that_may_still_be_undefined_only_may_hold_the_object() {
         "function f() { return m.id; } var m = module;",
         "function f() { var m = module; return m.id; }",
         "var m = module; m.id = 1; m.exports = 2;",
+        "var m = module; new m.exports(); m.exports.a(); m.exports.call(null);",
     ] {
         assert_mentions(source, &[kept]);
     }
@@ -501,6 +522,13 @@ fn a_var_that_may_still_be_undefined_only_may_hold_the_object() {
         assert_unresolved(case, "m.exports");
     });
     assert_mentions("var m = module; f(m);", &[kept, ("m", Related, HandedOn)]);
+    for source in [
+        "var m = module; m.exports();",
+        "var m = module; m.exports?.(1);",
+        "function f() { var m = module; return m.exports(); }",
+    ] {
+        assert_mentions(source, &[kept, ("m", Related, HandedOn)]);
+    }
     assert_mentions(
         "var m = module; const n = m; n.id;",
         &[kept, ("m", Related, HandedOn)],

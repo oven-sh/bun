@@ -789,7 +789,11 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     fn is_bound_to_binding(&self, member: ExprId, object: ExprId) -> bool {
-        matches!(self.hir[object].kind, ExprKind::Ident(_))
+        let Some(Binding::Symbol(symbol)) = self.find_static_binding(object) else {
+            return false;
+        };
+        // `lib.f; var lib = require("./x.mjs");` reads a member of undefined.
+        self.has_initializer_run_at(object, symbol)
             && self.modules.is_some_and(|(modules, file)| {
                 matches!(modules.member(file, member), Some(Member::Binding(_)))
             })

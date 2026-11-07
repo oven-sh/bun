@@ -1,11 +1,45 @@
+use bun_sema::bind::PatParent;
 use bun_sema::check::aot::{ShapeKind, TupleElement, TupleElementKind};
+use bun_sema::hir::{ExprKind, PatId};
 use smallvec::SmallVec;
 
-use crate::ir::ContentsSlot;
+use crate::ir::{ContentsSlot, DeclaredType, PositionFlags, Primitives};
 use crate::lower::types::find_contents_type;
 use crate::lower::{CheckerTypeId, FileLowering};
 
 impl FileLowering<'_, '_, '_, '_> {
+    fn is_read_off_an_object(&self, pattern: PatId) -> bool {
+        match self.bound.pat_parent[pattern.idx()] {
+            PatParent::Prop(..) | PatParent::Elem(..) => true,
+            PatParent::Var(declaration) => {
+                let (written, value) = (self.hir[declaration].ty, self.hir[declaration].init);
+                written.is_none()
+                    && (value.is_none()
+                        || (matches!(
+                            self.hir[self.skip_type_syntax(value)].kind,
+                            ExprKind::Dot { .. } | ExprKind::Index { .. }
+                        ) && !self.is_statically_resolved(self.skip_type_syntax(value))))
+            }
+            PatParent::Param(_) | PatParent::None => false,
+        }
+    }
+
+    pub(super) fn position_of_int32_binding(&mut self, pattern: PatId) -> Option<DeclaredType> {
+        if !self.is_read_off_an_object(pattern) {
+            return None;
+        }
+        let ty = self.queries.binding_type(pattern).ok()?;
+        let mapped = self.map_type_at(ty);
+        let held = self.fragment.types.get(mapped.ty);
+        let (minimum, maximum) = held.integer_range()?;
+        let int32 = i64::from(i32::MIN)..=i64::from(i32::MAX);
+        (mapped.is_checked
+            && !held.primitives.contains(Primitives::NUMBER)
+            && int32.contains(&minimum)
+            && int32.contains(&maximum))
+        .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
+    }
+
     pub(super) fn find_element_type(
         &mut self,
         list: CheckerTypeId,

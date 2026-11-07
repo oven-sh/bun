@@ -8,7 +8,8 @@ use bun_sema::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue, MadeByCall};
 use bun_sema::hir::{
-    BinOp, Branches, CallId, ExprId, ExprKind, File, FnId, FnKind, ImportId, PropKind, StmtKind,
+    BinOp, Branches, CallId, ExprId, ExprKind, File, FnId, FnKind, ImportId, PropId, PropKey,
+    PropKind, Span, StmtKind,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ends_in_call_that_reads_frame_of_caller,
@@ -62,6 +63,7 @@ pub(crate) struct NamedLoads {
     through_imported_loaders: OnceLock<LoadsThroughImportedLoaders>,
     pub passed_for_parameters: Vec<RuntimeModule>,
     pub written_as_values: Vec<RuntimeModule>,
+    pub written_as_keys: Vec<RuntimeModule>,
     pub loads_by_unknown_name: bool,
     pub loads_by_path_alone: bool,
     pub loads_by_unknown_path: bool,
@@ -238,6 +240,7 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
         modules.extend(&source.library_modules_named_in_text_left_to_run_time);
         modules.extend(&source.contents.names.passed_for_parameters);
         written.extend(&source.contents.names.written_as_values);
+        written.extend(&source.contents.names.written_as_keys);
     }
     if loads_by_unknown_name || (loads_by_path_alone && is_answered_otherwise) {
         modules.append(&mut written);
@@ -392,6 +395,34 @@ fn find_module(input: &ScanInput<'_>, atoms: &Interner<'_>, name: Atom) -> Optio
         Some(RuntimeResolution::Module(module)) => RuntimeModule::from_registry_id(module.0),
         Some(RuntimeResolution::HostValue) | None => None,
     }
+}
+
+fn is_one_word(text: &[u8]) -> bool {
+    let mut bytes = text.iter();
+    bytes.all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn find_module_spelled_as_key(
+    input: &ScanInput<'_>,
+    atoms: &Interner<'_>,
+    key: PropKey,
+) -> Option<RuntimeModule> {
+    match key {
+        PropKey::Name(name) if !is_one_word(atoms.bytes(name)) => find_module(input, atoms, name),
+        _ => None,
+    }
+}
+
+pub(super) fn find_modules_spelled_as_keys_in_data(
+    request: &FinishedFile<'_, '_>,
+    input: &ScanInput<'_>,
+) -> Vec<RuntimeModule> {
+    let properties = request.hir.props.iter();
+    let mut modules: Vec<RuntimeModule> = properties
+        .filter_map(|property| find_module_spelled_as_key(input, request.atoms, property.key))
+        .collect();
+    sort_modules(&mut modules);
+    modules
 }
 
 pub(super) fn find_modules_spelled_in_data(
@@ -574,6 +605,16 @@ fn is_fully_known_load_argument(
         && !site.is_host_value
         && load_argument_of(site.kind).is_some()
         && (analysis.alternatives_of(&site.specifier).iter()).all(is_constant)
+}
+
+fn is_written_as_key(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
+    match request.bound.parent_of_expr(expression) {
+        Parent::PropKey(_) | Parent::MemberKey(_) | Parent::MethodKey(_) => true,
+        Parent::Expr(above) => {
+            matches!(request.hir[above].kind, ExprKind::Index { index, .. } if index == expression)
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -> bool {
@@ -952,10 +993,31 @@ impl ContentsScan<'_, '_> {
         let Some(module) = find_module(self.input, request.atoms, text) else {
             return;
         };
+        if is_written_as_key(request, expression) {
+            return self.look_at_key(PropKey::Name(text));
+        }
         let written = &mut self.found.names.written_as_values;
         if !written.contains(&module) && is_written_as_value(request, expression) {
             written.push(module);
         }
+    }
+
+    pub(super) fn look_at_keys_of_classes(&mut self) {
+        let hir = self.request.hir;
+        for member in hir.classes.iter().flat_map(|class| class.members.iter()) {
+            self.look_at_key(hir[member].key);
+        }
+    }
+
+    pub(super) fn look_at_keys(&mut self, properties: Span<PropId>) {
+        for property in properties.iter() {
+            self.look_at_key(self.request.hir[property].key);
+        }
+    }
+
+    pub(super) fn look_at_key(&mut self, key: PropKey) {
+        let module = find_module_spelled_as_key(self.input, self.request.atoms, key);
+        self.found.names.written_as_keys.extend(module);
     }
 
     pub(super) fn look_at_text_in_data(&mut self, text: Atom) {
@@ -976,6 +1038,7 @@ impl ContentsScan<'_, '_> {
         }
         sort_named_modules(&mut names.modules, atoms);
         sort_modules(&mut names.written_as_values);
+        sort_modules(&mut names.written_as_keys);
         sort_modules(&mut names.passed_for_parameters);
         names.imports_given_unknown_names.shared_sort_unstable();
         names.imports_given_unknown_names.dedup();

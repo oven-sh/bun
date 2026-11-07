@@ -1970,6 +1970,43 @@ export const os = { os: 1 }.os;"#;
 }
 
 #[test]
+fn unknown_name_load_keeps_library_modules_written_as_keys_of_more_than_one_word() {
+    let writes = r#"export const wanted = { "node:zlib": 1, ["node:dgram"]: 2, ["node:" + "vm"]: 3, async_hooks: 4, "os": 5 };
+wanted["node:tty"] = 6;
+export class Held { "node:v8" = 7; static "bun:wrap" = 8; }
+export interface Told { "node:http2": 9 }"#;
+    for (loads, are_held) in [("require(process.argv[2]);", true), ("", false)] {
+        let main = format!("import \"./writes.ts\";\n{loads}\n");
+        let project = executable(&[("main.ts", &main), ("writes.ts", writes)]);
+        load(&project, |loaded| {
+            let files = files_of(loaded);
+            let mut written = [
+                NodeZlib,
+                NodeDgram,
+                NodeVm,
+                RuntimeModule::NodeAsync_hooks,
+                NodeTty,
+                NodeV8,
+                BunWrap,
+            ];
+            written.sort_unstable_by_key(|module| module.registry_id());
+            let names = &contents_of(files, "writes.ts").names;
+            assert_eq!(names.written_as_keys, written);
+            assert!(names.written_as_values.is_empty());
+            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            for module in written {
+                assert_eq!(held.contains(&module), are_held, "{module:?}");
+                assert!(
+                    !are_held || holds_library_module(loaded, module),
+                    "{module:?}"
+                );
+            }
+            assert!(!held.contains(&NodeOs) && !held.contains(&RuntimeModule::NodeHttp2));
+        });
+    }
+}
+
+#[test]
 fn text_made_by_folding_is_written_as_a_value() {
     let texts: [(&str, &[RuntimeModule]); 4] = [
         (r#"["node:d", "gram"].join("")"#, &[NodeDgram]),
@@ -1995,11 +2032,11 @@ console.log(held.member(["node:d", "gram"].join("")));"#;
 }
 
 #[test]
-fn text_in_a_data_file_is_written_as_a_value_and_its_keys_are_not() {
+fn text_in_a_data_file_is_written_as_a_value_and_so_is_a_key_of_more_than_one_word() {
     let main = r#"import { createRequire } from "node:module";
 import names from "./names.json";
 console.log(createRequire(import.meta.url)(names.list[JSON.parse("1")]));"#;
-    let names = r#"{ "list": ["node:os", "node:zlib"], "dgram": 1, "deep": { "one": "tty" } }"#;
+    let names = r#"{ "list": ["node:os", "node:zlib"], "dgram": 1, "deep": { "one": "tty", "node:vm": 2 } }"#;
     load(
         &executable(&[("main.mjs", main), ("names.json", names)]),
         |loaded| {
@@ -2007,11 +2044,15 @@ console.log(createRequire(import.meta.url)(names.list[JSON.parse("1")]));"#;
             written.sort_unstable_by_key(|module| module.registry_id());
             let spelled = &contents_of(files_of(loaded), "names.json").names;
             assert_eq!(spelled.written_as_values, written);
+            assert_eq!(spelled.written_as_keys, [NodeVm]);
             assert!(
                 written
                     .iter()
                     .all(|&module| holds_library_module(loaded, module))
             );
+            assert!(holds_library_module(loaded, NodeVm));
+            let held = find_library_modules_that_unknown_names_may_stand_for(files_of(loaded));
+            assert!(held.contains(&NodeVm) && !held.contains(&NodeDgram));
         },
     );
 }

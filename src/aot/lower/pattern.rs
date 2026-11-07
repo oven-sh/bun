@@ -46,6 +46,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_position(position);
                 match node {
                     PatternNode::Binding(pattern) => {
+                        let value = self.state_int32_of_binding(pattern, value);
                         self.initialize_pattern_name(pattern, value, source);
                     }
                     PatternNode::Assignment(target) => {

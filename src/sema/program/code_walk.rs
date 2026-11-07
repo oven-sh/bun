@@ -1878,7 +1878,10 @@ fn share_modules_among_types<'r>(
     scanned: usize,
 ) {
     let is_call_with_written_type = |target: &CodeTarget<'_>| {
-        !target.has_shared_type && target.has_type_of_shared_kind && target.has_loader_attribute
+        !target.has_shared_type
+            && target.has_type_of_shared_kind
+            && target.has_loader_attribute
+            && target.is_linked_by_bundler
     };
     let is_shared = |target: &CodeTarget<'_>| {
         target.has_shared_type || (scanned > 0 && is_call_with_written_type(target))

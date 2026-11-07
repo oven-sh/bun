@@ -222,6 +222,18 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn is_what_its_exports_are_called_with(&self, object: ExprId) -> bool {
+        let Some(member) = self.find_member_of(object) else {
+            return false;
+        };
+        let MentionUse::Called(call) = self.classify_use(member) else {
+            return false;
+        };
+        let id = mentioned_id(self.state(member)).map(table::canonical_id);
+        id == Some(BuiltinId::ModuleObjectExports)
+            && !matches!(self.input.hir[call].kind, ExprKind::New(_))
+    }
+
     fn is_answered_without_object(&self, object: ExprId, owner: ModuleObjectOwner) -> bool {
         let Some(member) = self.find_member_of(object) else {
             return false;
@@ -313,6 +325,9 @@ impl Resolver<'_, '_> {
         }
         match self.classify_use(e) {
             MentionUse::Aliased => None,
+            MentionUse::Holder if self.is_what_its_exports_are_called_with(e) => {
+                Some(ModuleObjectUse::HandedOn)
+            }
             MentionUse::Holder if self.is_answered_without_object(e, owner) => None,
             _ if self.is_given_exports_by_descriptor(e) => Some(ModuleObjectUse::Object),
             _ if self.goes_out_of_sight(e) => Some(ModuleObjectUse::HandedOn),
@@ -419,7 +434,9 @@ impl Resolver<'_, '_> {
         let handed_on = (ModuleObjectOwner::Related, ModuleObjectUse::HandedOn);
         let owner = match table::canonical_id(value.path.id) {
             BuiltinId::ModuleObject if is_held => {
-                return self.goes_out_of_sight(e).then_some(handed_on);
+                let is_handed_on =
+                    self.goes_out_of_sight(e) || self.is_what_its_exports_are_called_with(e);
+                return is_handed_on.then_some(handed_on);
             }
             BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent
                 if self.input.hir.member_key(e).is_none() =>

@@ -1698,7 +1698,7 @@ describe.concurrent("S3 receive backpressure", () => {
     // partSize 5 MiB × queueSize 1: with the first part held, the sink fills and the origin has
     // to stop long before its 1 GiB is out.
     const written = Bun.write(
-      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }) as any,
+      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }),
       await fetch(origin.url, { signal: abort.signal }),
     );
     await bucket.firstPart;
@@ -1720,7 +1720,7 @@ describe.concurrent("S3 receive backpressure", () => {
   test("Bun.write(s3file, res) resolves with the byte count", async () => {
     await using origin = await serve("h1");
     await using bucket = await fakeUploadBucket();
-    expect(await Bun.write(bucket.s3.file("up") as any, await fetch(origin.url))).toBe(TOTAL);
+    expect(await Bun.write(bucket.s3.file("up"), await fetch(origin.url))).toBe(TOTAL);
     expect({ uploaded: bucket.uploaded(), foreign: bucket.foreign(), completed: bucket.completed() }).toEqual({
       uploaded: TOTAL,
       foreign: 0,

@@ -9,7 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
+import { bunEnv, bunExe, expectRssDeltaOfPendingCallsBelow, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
 import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
@@ -885,6 +885,57 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
       "same\n",
     );
   });
+});
+
+// The job reads a buffer or an ASCII string of the caller in place. It has its own copy of a
+// string that is not ASCII and of a view of a resizable ArrayBuffer. The pool thread frees a
+// large copy when it is done with it. If the copy stayed until the JS thread completes the
+// call, a caller that starts many calls before it returns to the event loop would hold every
+// copy.
+// The job leaves no trace that the JS thread can poll for. So the fixture waits until every
+// other thread sleeps, which it can see on Linux only.
+it.concurrent.skipIf(!isLinux).each([
+  [
+    "zstdCompress",
+    "a string that is not ASCII",
+    `const data = Buffer.alloc(2 * 1024 * 1024, "a").toString("latin1") + "\\u4e2d";
+     const expected = Buffer.from(data);`,
+    `Bun.zstdCompress(data, { level: 1 })`,
+    `Bun.zstdDecompressSync(result)`,
+  ],
+  [
+    "zstdCompress",
+    "a view of a resizable ArrayBuffer",
+    `const data = new Uint8Array(new ArrayBuffer(2 * 1024 * 1024, { maxByteLength: 4 * 1024 * 1024 })).fill(0x61);
+     const expected = Buffer.from(data);`,
+    `Bun.zstdCompress(data, { level: 1 })`,
+    `Bun.zstdDecompressSync(result)`,
+  ],
+  [
+    "zstdDecompress",
+    "a view of a resizable ArrayBuffer",
+    // A frame of a few bytes, then a skippable frame that fills the view. So the input is large and the output is small.
+    `const expected = Buffer.from("hello");
+     const frame = Bun.zstdCompressSync(expected);
+     const data = new Uint8Array(new ArrayBuffer(2 * 1024 * 1024, { maxByteLength: 4 * 1024 * 1024 }));
+     data.set(frame);
+     const skippable = new DataView(data.buffer, frame.length, 8);
+     skippable.setUint32(0, 0x184d2a50, true);
+     skippable.setUint32(4, data.length - frame.length - 8, true);`,
+    `Bun.zstdDecompress(data)`,
+    `result`,
+  ],
+])("%s frees its copy of %s when the job is done", async (_api, _input, setup, call, output) => {
+  // 48 copies of 2 MiB are 96 MiB, if every copy stays.
+  await expectRssDeltaOfPendingCallsBelow(
+    {
+      setup,
+      call,
+      verify: `results.every(result => Buffer.from(${output}).equals(expected))`,
+      count: 48,
+    },
+    { release: 48, debug: 64 },
+  );
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

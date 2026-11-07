@@ -2029,6 +2029,7 @@ pub(crate) mod JSZstd {
             } else {
                 decompress_to_box(input)
             };
+            drop(this.buffer.take_owned_for_pool_release());
             Some(done)
         }
 

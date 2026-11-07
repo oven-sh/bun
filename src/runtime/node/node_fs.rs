@@ -4481,6 +4481,24 @@ pub(crate) mod args {
         }
     }
 
+    /// Node's sync forms only type-check `options.signal`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L340-L342
+    #[inline(always)]
+    fn signal_option(
+        ctx: &JSGlobalObject,
+        value: JSValue,
+        will_be_async: bool,
+    ) -> JsResult<Option<AbortSignalRef>> {
+        let Some(signal) = AbortSignal::from_js(value) else {
+            return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
+        };
+        if !will_be_async {
+            return Ok(None);
+        }
+        let signal = AbortSignal::opaque_ref(signal).ref_();
+        signal.pending_activity_ref();
+        Ok(Some(signal))
+    }
+
     /// Asynchronously reads the entire contents of a file.
     /// @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
     /// If a file descriptor is provided, the underlying file will _not_ be closed automatically.
@@ -4545,16 +4563,7 @@ pub(crate) mod args {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
-                                value,
-                            ));
-                        }
+                        *abort_signal = signal_option(ctx, value, arguments.will_be_async)?;
                     }
                 }
             }
@@ -4643,16 +4652,7 @@ pub(crate) mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
-                                value,
-                            ));
-                        }
+                        *abort_signal = signal_option(ctx, value, arguments.will_be_async)?;
                     }
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {

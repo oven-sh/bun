@@ -4344,6 +4344,8 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
     pointers.push(core::ptr::null());
     let exec_path = self_exe_path().expect("unreachable").as_ptr();
+    // The new image snapshots the stdio flags at its start, so put them back first.
+    crate::output::stdio::restore();
     on_before_reload_process_posix(false);
     // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
     // process's own, and `fcntl` takes no pointer.

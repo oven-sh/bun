@@ -56,6 +56,8 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
             && WATCH_SIGINT_LISTENERS.load(Ordering::Acquire) == 0
         {
+            // Puts the stdio flags and termios back; fcntl, fstat and tcsetattr are async-signal-safe.
+            bun_core::output::source::stdio::restore();
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
         }

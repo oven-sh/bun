@@ -900,6 +900,9 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+// Startup F_GETFL (-1 = not captured) and identity of each stdio fd, for the O_NONBLOCK restore at exit.
+static int stdio_flags_to_restore[3] = { -1, -1, -1 };
+static struct stat stdio_stat_at_start[3];
 // Whether Bun itself has modified the termios of each stdio fd during this
 // process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
 // whether the exit-time termios restore should fire when Bun is acting as a
@@ -933,6 +936,33 @@ extern "C" void bun_restore_stdio()
     // the state the user expects back.
     const bool pipeline_producer = bun_stdio_tty[1] == 0;
 
+    // Only the O_NONBLOCK bit. fcntl and fstat are async-signal-safe.
+    for (int32_t fd = 0; fd < 3; fd++) {
+        if (stdio_flags_to_restore[fd] == -1)
+            continue;
+
+        int flags;
+        do
+            flags = fcntl(fd, F_GETFL);
+        while (flags == -1 && errno == EINTR);
+        if (flags == -1)
+            continue;
+
+        const int nonblock = stdio_flags_to_restore[fd] & O_NONBLOCK;
+        if ((flags & O_NONBLOCK) == nonblock)
+            continue;
+
+        // Skip a fd the script reopened onto another file.
+        struct stat now;
+        if (fstat(fd, &now) != 0 || now.st_dev != stdio_stat_at_start[fd].st_dev || now.st_ino != stdio_stat_at_start[fd].st_ino)
+            continue;
+
+        int err;
+        do
+            err = fcntl(fd, F_SETFL, (flags & ~O_NONBLOCK) | nonblock);
+        while (err == -1 && errno == EINTR);
+    }
+
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
         if (!bun_stdio_tty[fd])
@@ -965,6 +995,23 @@ extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
     Bun__raiseDefaultAction(sig);
+}
+
+// With a TTY this replaces an inherited SIG_IGN too, as before, so a `&` job in a package script dies on Ctrl-C.
+extern "C" void bun_install_exit_signal_handler(int sig)
+{
+    const bool anyTTY = bun_stdio_tty[0] || bun_stdio_tty[1] || bun_stdio_tty[2];
+    struct sigaction sa;
+    if (sigaction(sig, nullptr, &sa) != 0)
+        return;
+    if (sa.sa_handler != SIG_DFL && !(anyTTY && sa.sa_handler == SIG_IGN))
+        return;
+
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sa.sa_handler = onExitSignal;
+    sigaction(sig, &sa, nullptr);
 }
 #endif
 
@@ -1064,8 +1111,6 @@ extern "C" void bun_initialize_process()
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
-    bool anyTTYs = false;
-
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
@@ -1079,25 +1124,18 @@ extern "C" void bun_initialize_process()
             do {
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
+        }
 
-            if (err == 0) [[likely]] {
-                anyTTYs = true;
-            }
+        if (fstat(fd, &stdio_stat_at_start[fd]) == 0) {
+            do {
+                stdio_flags_to_restore[fd] = fcntl(fd, F_GETFL);
+            } while (stdio_flags_to_restore[fd] == -1 && errno == EINTR);
         }
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sigemptyset(&sa.sa_mask);
-
-        sa.sa_flags = SA_RESETHAND;
-        sa.sa_handler = onExitSignal;
-
-        sigaction(SIGTERM, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
-    }
+    // Restore stdio when SIGINT or SIGTERM kills the process.
+    bun_install_exit_signal_handler(SIGTERM);
+    bun_install_exit_signal_handler(SIGINT);
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
         auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));

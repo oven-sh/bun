@@ -1341,15 +1341,6 @@ pub(crate) enum Clock {
     Fake,
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum CountdownOverflowBehavior {
-    /// `setTimeout` and friends.
-    OneMs,
-    /// `Bun.sleep`.
-    Clamp,
-}
-
 // LAYERING: `Kind`/`KindBig` moved DOWN to `bun_event_loop` so `TimerFlags`
 // (also moved down) can name them without a `bun_runtime` dep — needed by
 // `bun_jsc::abort_signal::Timeout.flags`. `Kind::big()` lives next to the

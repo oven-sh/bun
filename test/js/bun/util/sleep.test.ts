@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
 test("sleep should saturate timeout values", async () => {
@@ -75,4 +75,89 @@ test("sleep should keep the event loop alive", async () => {
   await proc.exited;
   expect(proc.exitCode).toBe(0);
   expect(await proc.stdout.text()).toContain("event loop was not killed");
+});
+
+// The fake clock of bun:test runs a wait of weeks or years with no real waiting.
+describe("the length of the wait, on the fake clock", () => {
+  const DAY = 86_400_000;
+  /** The longest delay of setTimeout(), in ms. A longer one makes it fire after 1 ms. */
+  const MAX_TIMEOUT = 2 ** 31 - 1;
+  /** The most that one advanceTimersByTime() call takes, in ms. */
+  const MAX_ADVANCE = 2 ** 32 - 1;
+  /** The longest wait of Bun.sleep(), in ms: 2^31-1 seconds, about 68 years. */
+  const MAX_SLEEP = MAX_TIMEOUT * 1000;
+
+  afterEach(() => void jest.useRealTimers());
+
+  function advance(ms: number) {
+    for (; ms > 0; ms -= MAX_ADVANCE) jest.advanceTimersByTime(Math.min(ms, MAX_ADVANCE));
+  }
+
+  /** The sleep has to be pending 1 fake ms before `ms`, and over on it. */
+  async function expectToWakeAfter(ms: number, sleep: Promise<void>) {
+    advance(ms - 1);
+    expect(jest.getTimerCount()).toBe(1);
+    jest.advanceTimersByTime(1);
+    expect(jest.getTimerCount()).toBe(0);
+    await sleep;
+  }
+
+  test.each([NaN, -1, -Infinity])("Bun.sleep(%d) is over without moving the clock", async ms => {
+    jest.useFakeTimers({ now: 0 });
+    const sleep = Bun.sleep(ms);
+    jest.advanceTimersByTime(0);
+    expect({ pending: jest.getTimerCount(), now: Date.now() }).toEqual({ pending: 0, now: 0 });
+    await sleep;
+  });
+
+  test.each([MAX_TIMEOUT, MAX_TIMEOUT + 1, 30 * DAY, MAX_ADVANCE, MAX_ADVANCE + 1, 5e9, 366 * DAY, MAX_SLEEP])(
+    "Bun.sleep(%d) is over after that many ms",
+    async ms => {
+      jest.useFakeTimers({ now: 0 });
+      await expectToWakeAfter(ms, Bun.sleep(ms));
+    },
+  );
+
+  test.each([MAX_SLEEP + 1, 2 ** 53 - 1, Number.MAX_VALUE, Infinity, new Date(8.64e15)])(
+    "Bun.sleep(%p) is over after 2^31-1 seconds",
+    async wait => {
+      jest.useFakeTimers({ now: 0 });
+      await expectToWakeAfter(MAX_SLEEP, Bun.sleep(wait));
+    },
+  );
+
+  // The date is on the real clock, and the wait is on the fake one.
+  test("Bun.sleep(date) is over on a date that is 30 days ahead", async () => {
+    jest.useFakeTimers({ toFake: ["setTimeout"] });
+    const sleep = Bun.sleep(new Date(Date.now() + 30 * DAY));
+    advance(29 * DAY);
+    expect(jest.getTimerCount()).toBe(1);
+    advance(DAY);
+    expect(jest.getTimerCount()).toBe(0);
+    await sleep;
+  });
+
+  test.each([
+    ["advanceTimersToNextTimer", () => jest.advanceTimersToNextTimer()],
+    ["runOnlyPendingTimers", () => jest.runOnlyPendingTimers()],
+    ["runAllTimers", () => jest.runAllTimers()],
+  ])("%s() moves the clock to the end of the sleep", async (_, run) => {
+    // With a limit of 1 timer, runAllTimers() throws if the sleep takes more than one.
+    jest.useFakeTimers({ now: 0, timerLimit: 1 });
+    const sleep = Bun.sleep(5e9);
+    run();
+    expect({ pending: jest.getTimerCount(), now: Date.now() }).toEqual({ pending: 0, now: 5e9 });
+    await sleep;
+  });
+
+  test("timers with the same deadline fire in the order of the calls", async () => {
+    jest.useFakeTimers({ now: 0 });
+    const order: string[] = [];
+    AbortSignal.timeout(5e9).addEventListener("abort", () => order.push("signal before"));
+    Bun.sleep(5e9).then(() => order.push("sleep"));
+    AbortSignal.timeout(5e9).addEventListener("abort", () => order.push("signal after"));
+    // One timer per event loop task, so the sleep's promise reaction runs before the next timer.
+    await jest.runAllTimersAsync();
+    expect(order).toEqual(["signal before", "sleep", "signal after"]);
+  });
 });

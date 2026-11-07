@@ -15,9 +15,8 @@ use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
-    All, Clock, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, FakeTimers, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
-    TimerObjectInternals,
+    All, Clock, DateHeaderTimer, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
+    FakeTimers, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
 use crate::jsc_hooks::timer_all_mut;
 
@@ -104,67 +103,59 @@ impl All {
         &mut self,
         global_this: &JSGlobalObject,
         countdown: JSValue,
-        overflow_behavior: CountdownOverflowBehavior,
         minimum_ms: u32,
         warn: bool,
     ) -> JsResult<u32> {
-        // Both match arms below enforce the [0, i32::MAX] range (Clamp
-        // saturates to i32::MAX; OneMs yields either 1 or a value already
-        // validated to be <= i32::MAX), so callers always receive a value
-        // in that range.
+        // A value outside `1..=i32::MAX` becomes 1 or `minimum_ms`, so callers
+        // always receive a value in the [0, i32::MAX] range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
-        let countdown_int: u32 = match overflow_behavior {
-            CountdownOverflowBehavior::Clamp => {
-                // Saturating cast to [0, i32::MAX]: Rust `as` saturates
-                // float→int and maps NaN→0,
-                // so `setTimeout(fn, NaN)` behaves like `setTimeout(fn, 0)`.
-                (countdown_double as u32).min(i32::MAX as u32)
-            }
-            CountdownOverflowBehavior::OneMs => {
-                if !(countdown_double >= 1.0 && countdown_double <= i32::MAX as f64) {
-                    if warn {
-                        if countdown_double > i32::MAX as f64 {
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutOverflowWarning,
-                            )?;
-                        } else if countdown_double < 0.0 && !self.warned_negative_number {
-                            self.warned_negative_number = true;
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutNegativeWarning,
-                            )?;
-                        } else if !countdown.is_undefined()
-                            && countdown.is_number()
-                            && countdown_double.is_nan()
-                            && !self.warned_not_number
-                        {
-                            self.warned_not_number = true;
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutNaNWarning,
-                            )?;
-                        }
+        let countdown_int: u32 =
+            if !(countdown_double >= 1.0 && countdown_double <= i32::MAX as f64) {
+                if warn {
+                    if countdown_double > i32::MAX as f64 {
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutOverflowWarning,
+                        )?;
+                    } else if countdown_double < 0.0 && !self.warned_negative_number {
+                        self.warned_negative_number = true;
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutNegativeWarning,
+                        )?;
+                    } else if !countdown.is_undefined()
+                        && countdown.is_number()
+                        && countdown_double.is_nan()
+                        && !self.warned_not_number
+                    {
+                        self.warned_not_number = true;
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutNaNWarning,
+                        )?;
                     }
-                    let is_too_long = countdown_double > i32::MAX as f64;
-                    if is_too_long { 1 } else { minimum_ms }
-                } else {
-                    countdown_double as u32
                 }
-            }
-        };
+                let is_too_long = countdown_double > i32::MAX as f64;
+                if is_too_long { 1 } else { minimum_ms }
+            } else {
+                countdown_double as u32
+            };
 
         Ok(countdown_int)
     }
 
-    /// Bun.sleep
-    /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
-    /// slightly differently for historical reasons (see jsValueToCountdown)
+    /// The longest `Bun.sleep()`, about 68 years. The event loop waits in the kernel for the time left to the
+    /// first deadline, and `kevent()` on macOS fails with `EINVAL` above `i32::MAX` seconds:
+    /// https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/kern_time.c#L677-L686
+    const MAX_SLEEP_MS: u64 = i32::MAX as u64 * 1000;
+
+    /// `Bun.sleep()`: a timeout that fulfills a promise. It waits for up to `MAX_SLEEP_MS`, where `setTimeout()`
+    /// replaces a delay above `i32::MAX` ms with 1 ms.
     pub(crate) fn sleep(
         cx: &bun_jsc::JsThread<'_>,
         promise: JSValue,
@@ -175,23 +166,35 @@ impl All {
         let all = timer_all_mut();
         let id = all.next_id();
 
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::Clamp,
-            0,
-            true,
-        )?;
+        let ms = countdown.to_number(cx.global())?;
+        // A `TimeoutObject` takes a `u32` delay. `as` saturates and maps NaN to 0.
+        let first_ms = ms as u32;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
-        Ok(TimeoutObject::init(
+        let timeout = TimeoutObject::init(
             cx,
             id,
             Kind::SetTimeout,
-            countdown_int,
+            first_ms,
             wrapped_promise,
             JSValue::UNDEFINED,
             all.fake_timers.set_timeout_clock(),
-        ))
+        );
+        if ms >= f64::from(u32::MAX) + 1.0 {
+            // The deadline of the heap node is 64-bit, so it takes the rest of the wait.
+            let rest_ms = (ms as u64).min(Self::MAX_SLEEP_MS) - u64::from(first_ms);
+            let object =
+                TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
+            // SAFETY: the wrapper is pinned by the heap that holds the timer.
+            unsafe {
+                let timer = &raw mut (*object).event_loop_timer;
+                let armed = Timespec {
+                    sec: (*timer).next.sec,
+                    nsec: (*timer).next.nsec,
+                };
+                timer_all_mut().update(timer, &armed.add_ms(rest_ms as i64));
+            }
+        }
+        Ok(timeout)
     }
 
     pub(crate) fn set_immediate(
@@ -228,13 +231,7 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::OneMs,
-            0,
-            true,
-        )?;
+        let countdown_int = all.js_value_to_countdown(cx.global(), countdown, 0, true)?;
         let clock = all.fake_timers.clock_while_active(clock);
         // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
         let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle;
@@ -272,13 +269,7 @@ impl All {
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         // Never 0, on either clock: it would be due again at the time it fired, so advancing the fake clock wouldn't end.
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::OneMs,
-            1,
-            true,
-        )?;
+        let countdown_int = all.js_value_to_countdown(cx.global(), countdown, 1, true)?;
         Ok(TimeoutObject::init(
             cx,
             id,

@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{JSXTag, options};
+use crate::parser::JSXTag;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
@@ -41,7 +41,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             start_tag = Some(t);
             can_be_inlined = p.options.features.jsx_optimization_inline;
 
-            let mut spread_loc: bun_ast::Loc = bun_ast::Loc::EMPTY;
             let mut props: Vec<G::Property> = Vec::new();
             let mut first_spread_prop_i: i32 = -1;
             let mut i: i32 = 0;
@@ -114,7 +113,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if first_spread_prop_i == -1 {
                                     first_spread_prop_i = i;
                                 }
-                                spread_loc = p.lexer.loc();
                                 let value = p.parse_expr(Level::Comma)?;
                                 props.push(G::Property {
                                     value: Some(value),
@@ -220,17 +218,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 flags.insert(flags::JSXElement::IsKeyAfterSpread);
             }
             properties = G::PropertyList::move_from_list(props);
-            if is_key_after_spread
-                && p.options.jsx.runtime == options::JSXRuntime::Automatic
-                && !p.has_classic_runtime_warned
-            {
-                p.log().add_warning(
-                    Some(p.source),
-                    spread_loc,
-                    b"\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
-                );
-                p.has_classic_runtime_warned = true;
-            }
         }
 
         // People sometimes try to use the output of "JSON.stringify()" as a JSX

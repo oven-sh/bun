@@ -479,6 +479,76 @@ describe.concurrent("test context", () => {
     });
   });
 
+  const tooFew = "AssertionError: expected 1 assertion, but test ended with 0 assertions";
+  const lateInVitest = `note: 1 assertion ran after the test callback and was not counted. A test from "vitest", test.extend() or test.for() checks the count when its callback ends. Make the assertion in the test callback.`;
+  // The errors, the notes and the results of a report, in the order in which it prints them.
+  const reportOf = (stderr: string) =>
+    stderr
+      .split("\n")
+      .filter(line => /^(\((pass|fail|skip|todo)\) |\w*[eE]rror: |note: )/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+
+  // `test.extend()` and `test.for()` of "bun:test" call their tests like "vitest" does.
+  test.each([
+    [`"vitest"`, `import { test, expect, describe, afterEach } from "vitest";`],
+    [
+      `test.extend() of "bun:test"`,
+      `import { test as base, expect, describe, afterEach } from "bun:test"; const test = base.extend({});`,
+    ],
+    [
+      `"vitest", with the hooks of "bun:test"`,
+      `import { test, describe } from "vitest"; import { expect, afterEach } from "bun:test";`,
+    ],
+  ])(
+    "a count that a test with a context sets is checked when its callback ends, as in Vitest: %s",
+    async (_, imports) => {
+      const { log, stderr, exitCode } = await runTests({
+        "a.test.js": `
+          ${imports}
+          describe("afterEach asserts", () => {
+            afterEach(() => { expect(1).toBe(1); });
+            test("too few", ({ onTestFailed }) => { onTestFailed(() => console.log("failed")); expect.assertions(1); });
+            test("one of three", () => { expect.assertions(3); expect(1).toBe(1); });
+            test("met", () => { expect.assertions(1); expect(1).toBe(1); });
+          });
+          describe("afterEach removes the count", () => {
+            afterEach(() => { expect.setState({ expectedAssertionsNumber: null }); });
+            test("too late", () => { expect.assertions(1); });
+          });
+        `,
+      });
+      expect({ log, report: reportOf(stderr), exitCode }).toEqual({
+        log: ["failed"],
+        report: [
+          tooFew,
+          lateInVitest,
+          "(fail) afterEach asserts > too few",
+          "AssertionError: expected 3 assertions, but test ended with 1 assertion",
+          lateInVitest,
+          "(fail) afterEach asserts > one of three",
+          "(pass) afterEach asserts > met",
+          tooFew,
+          "(fail) afterEach removes the count > too late",
+        ],
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("the teardown of a fixture asserts too late for a count that its test set", async () => {
+    const { stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, expect } from "bun:test";
+        const test = base.extend({ value: async ({}, use) => { await use(1); expect(1).toBe(1); } });
+        test("uses the fixture", ({ value }) => { expect.assertions(value); });
+      `,
+    });
+    expect({ report: reportOf(stderr), exitCode }).toEqual({
+      report: [tooFew, lateInVitest, "(fail) uses the fixture"],
+      exitCode: 1,
+    });
+  });
+
   test("onTestFinished and onTestFailed outside of a test", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

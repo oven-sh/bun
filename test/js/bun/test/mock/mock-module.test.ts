@@ -612,12 +612,17 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
-async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
+async function expectFixturesToPass(
+  files: Record<string, string>,
+  pass: number,
+  args: string[] = [],
+  env: Record<string, string> = {},
+) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -7275,4 +7280,229 @@ test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a v
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 4 pass\n 0 fail");
   expect(exitCode).toBe(0);
+});
+
+// An ES import puts the module object of a CommonJS file in require.cache when its fetch is answered, and the loader runs the file later,
+// when it makes the record. Script runs in between when the fetch is answered at once: with the transpiler on the JS thread, and under
+// --isolate for a file that an earlier test file has loaded. A mock made then used to patch the module object, so its body never ran.
+describe.concurrent("a CommonJS module that an import has fetched and has yet to run", () => {
+  const onJSThread = { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
+  // [what answers the fetch at once, arguments, environment, whether an earlier test file loads the modules]
+  const arms: [string, string[], Record<string, string>, boolean][] = [
+    ["the transpiler on the JS thread", [], onJSThread, false],
+    ["--isolate, after an earlier file has loaded it", ["--isolate"], {}, true],
+  ];
+  const counted = (name: string, body = `exports.v = "real";`) =>
+    `(globalThis.bodies ??= {}).${name} = (globalThis.bodies.${name} ?? 0) + 1; ${body}`;
+  const loadsFirst = (names: string[]) => `
+    import { test } from "bun:test";
+    test("loads the modules", async () => {
+      for (const name of ${JSON.stringify(names)}) await import(name).catch(() => {});
+    });
+  `;
+
+  const pairs: [string, (path: string) => string][] = [
+    ["vi.mock", path => `vi.unmock("${path}")`],
+    ["jest.mock", path => `jest.unmock("${path}")`],
+    ["vi.doMock", path => `vi.doUnmock("${path}")`],
+    ["jest.doMock", path => `jest.dontMock("${path}")`],
+    ["mock.module", path => `vi.unmock("${path}")`],
+    ["vi.doMock", () => `mocked[Symbol.dispose]()`],
+  ];
+  const importedByTest: Record<string, string> = {
+    ...Object.fromEntries(pairs.map((_, i) => [`pair${i}.cjs`, counted(`pair${i}`)])),
+    "stays.cjs": counted("stays"),
+    "original.cjs": counted("original"),
+    "auto.cjs": counted("auto", `exports.fn = () => "real";`),
+    "twice.cjs": counted("twice"),
+    "assigns.cjs": counted("assigns", `module.exports = { v: "real" };`),
+    "throws.cjs": counted("throws", `exports.v = "real"; throw new Error("throws.cjs threw");`),
+    "same.cjs": counted("same"),
+    "again.cjs": counted("again"),
+  };
+
+  test.each(arms)("that the test asked for with import(), with %s", async (_, args, env, loadsThemFirst) => {
+    await expectFixturesToPass(
+      {
+        ...importedByTest,
+        ...(loadsThemFirst
+          ? { "first.test.js": loadsFirst(Object.keys(importedByTest).map(name => "./" + name)) }
+          : {}),
+        "import.test.js": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          const isLoaded = path => require.cache[require.resolve(path)].loaded;
+          ${pairs
+            .map(([mock, remove], i) => [mock, remove(`./pair${i}.cjs`), `./pair${i}.cjs`, `pair${i}`])
+            .map(
+              ([mock, remove, path, name]) => `
+          test(${JSON.stringify(`${mock}(), then ${remove}: the import gets the module, which ran once`)}, async () => {
+            const inFlight = import("${path}");
+            expect(isLoaded("${path}")).toBe(false);
+            const mocked = ${mock}("${path}", () => ({ v: "mocked" }));
+            expect(require("${path}")).toEqual({ v: "mocked" });
+            ${remove};
+            expect([(await inFlight).v, require("${path}"), (await import("${path}")).v, bodies.${name}]).toEqual(["real", { v: "real" }, "real", 1]);
+          });`,
+            )
+            .join("")}
+
+          test("the import gets the mock, and the module runs once", async () => {
+            const inFlight = import("./stays.cjs");
+            expect(isLoaded("./stays.cjs")).toBe(false);
+            mock.module("./stays.cjs", () => ({ v: "mocked" }));
+            expect([(await inFlight).v, require("./stays.cjs"), (await import("./stays.cjs")).v, bodies.stays]).toEqual(["mocked", { v: "mocked" }, "mocked", 1]);
+          });
+
+          test("jest.requireActual() and vi.importActual() return the module", async () => {
+            const inFlight = import("./original.cjs");
+            expect(isLoaded("./original.cjs")).toBe(false);
+            vi.mock("./original.cjs", () => ({ v: "mocked" }));
+            expect(jest.requireActual("./original.cjs")).toEqual({ v: "real" });
+            expect({ ...(await vi.importActual("./original.cjs")) }).toEqual({ default: { v: "real" }, v: "real" });
+            expect([(await inFlight).v, bodies.original]).toEqual(["mocked", 1]);
+          });
+
+          test("a mock without a factory mocks what the module exports", async () => {
+            const inFlight = import("./auto.cjs");
+            expect(isLoaded("./auto.cjs")).toBe(false);
+            vi.mock("./auto.cjs");
+            const { fn } = require("./auto.cjs");
+            expect([vi.isMockFunction(fn), fn(), bodies.auto]).toEqual([true, undefined, 1]);
+            vi.unmock("./auto.cjs");
+            expect([require("./auto.cjs").fn(), (await inFlight).fn(), bodies.auto]).toEqual(["real", "real", 1]);
+          });
+
+          test("the second of two mocks", async () => {
+            const inFlight = import("./twice.cjs");
+            expect(isLoaded("./twice.cjs")).toBe(false);
+            mock.module("./twice.cjs", () => ({ v: "first" }));
+            mock.module("./twice.cjs", () => ({ v: "second" }));
+            expect((await inFlight).v).toBe("second");
+            vi.unmock("./twice.cjs");
+            expect([require("./twice.cjs"), (await import("./twice.cjs")).v, bodies.twice]).toEqual([{ v: "real" }, "real", 1]);
+          });
+
+          test("an async factory, and a module that assigns module.exports", async () => {
+            const inFlight = import("./assigns.cjs");
+            expect(isLoaded("./assigns.cjs")).toBe(false);
+            await mock.module("./assigns.cjs", async () => (await null, { v: "mocked" }));
+            expect(require("./assigns.cjs")).toEqual({ v: "mocked" });
+            await inFlight;
+            vi.unmock("./assigns.cjs");
+            expect([require("./assigns.cjs"), (await import("./assigns.cjs")).v, bodies.assigns]).toEqual([{ v: "real" }, "real", 1]);
+          });
+
+          test("a module that throws: the mock call throws its error", async () => {
+            import("./throws.cjs").catch(() => {});
+            expect(isLoaded("./throws.cjs")).toBe(false);
+            expect(() => mock.module("./throws.cjs", () => ({ v: "mocked" }))).toThrow("throws.cjs threw");
+            expect(bodies.throws).toBe(1);
+          });
+
+          test("require.cache keeps the module object", async () => {
+            const inFlight = import("./same.cjs");
+            const moduleObject = require.cache[require.resolve("./same.cjs")];
+            expect([moduleObject.loaded, moduleObject.exports]).toEqual([false, {}]);
+            mock.module("./same.cjs", () => ({ v: "mocked" }));
+            expect([require.cache[require.resolve("./same.cjs")] === moduleObject, moduleObject.loaded, moduleObject.exports]).toEqual([true, true, { v: "mocked" }]);
+            vi.unmock("./same.cjs");
+            await inFlight;
+            expect([require.cache[require.resolve("./same.cjs")] === moduleObject, moduleObject.exports, bodies.same]).toEqual([true, { v: "real" }, 1]);
+          });
+
+          test("a factory that evicts the module and imports it again", async () => {
+            await import("./again.cjs");
+            mock.module("./again.cjs", () => {
+              delete require.cache[require.resolve("./again.cjs")];
+              import("./again.cjs");
+              return { v: "mocked" };
+            });
+            expect(require("./again.cjs")).toEqual({ v: "mocked" });
+          });
+        `,
+      },
+      pairs.length + 8 + Number(loadsThemFirst),
+      args,
+      env,
+    );
+  });
+
+  // The helper is the first import of the test file, so it runs when the loader has fetched the others and has made no record of them.
+  const mockedByHelper: [string, string, string, string][] = [
+    ["vi.mock", "./viMock.cjs", "viMock", `vi.unmock("./viMock.cjs")`],
+    ["jest.mock", "./jestMock.cjs", "jestMock", `jest.unmock("./jestMock.cjs")`],
+    ["vi.doMock", "./viDoMock.cjs", "viDoMock", `vi.doUnmock("./viDoMock.cjs")`],
+    ["jest.doMock", "./jestDoMock.cjs", "jestDoMock", `jest.dontMock("./jestDoMock.cjs")`],
+    ["mock.module", "./mockModule.cjs", "mockModule", `vi.unmock("./mockModule.cjs")`],
+    ["vi.mock", "cjs-pkg", "pkg", `vi.unmock("cjs-pkg")`],
+  ];
+  const importedWithHelper: Record<string, string> = {
+    ...Object.fromEntries(mockedByHelper.slice(0, -1).map(([, path, name]) => [path.slice(2), counted(name)])),
+    "node_modules/cjs-pkg/package.json": JSON.stringify({ name: "cjs-pkg", main: "./index.js" }),
+    "node_modules/cjs-pkg/index.js": counted("pkg"),
+    "helper.cjs": `
+      const { jest, mock, vi } = require("bun:test");
+      globalThis.wereLoaded = ${JSON.stringify(mockedByHelper.map(([, path]) => path))}.map(path => require.cache[require.resolve(path)]?.loaded);
+      ${mockedByHelper.map(([mock, path]) => `${mock}("${path}", () => ({ v: "mocked" }));`).join("\n")}
+    `,
+  };
+
+  test.each(arms)("that a module of the same graph mocks, with %s", async (_, args, env, loadsThemFirst) => {
+    await expectFixturesToPass(
+      {
+        ...importedWithHelper,
+        ...(loadsThemFirst
+          ? { "first.test.js": loadsFirst([...mockedByHelper.map(([, path]) => path), "./helper.cjs"]) }
+          : {}),
+        "static.test.js": `
+          import "./helper.cjs";
+          ${mockedByHelper.map(([, path, name]) => `import { v as ${name} } from "${path}";`).join("\n")}
+          import { expect, jest, test, vi } from "bun:test";
+
+          test("none of them had run when the helper mocked them", () => {
+            expect(wereLoaded).toEqual(Array(${mockedByHelper.length}).fill(false));
+          });
+          ${mockedByHelper
+            .map(
+              ([mock, path, name, remove]) => `
+          test(${JSON.stringify(`${mock}("${path}"): the import gets the mock, and after ${remove} the module that ran once is back`)}, async () => {
+            expect([${name}, require("${path}"), (await import("${path}")).v, bodies.${name}]).toEqual(["mocked", { v: "mocked" }, "mocked", 1]);
+            ${remove};
+            expect([require("${path}"), (await import("${path}")).v, bodies.${name}]).toEqual([{ v: "real" }, "real", 1]);
+          });`,
+            )
+            .join("")}
+        `,
+      },
+      mockedByHelper.length + 1 + Number(loadsThemFirst),
+      args,
+      env,
+    );
+  });
+
+  test("the mock is removed when the test file ends, and the next file gets the module", async () => {
+    await expectFixturesToPass(
+      {
+        "kept.cjs": counted("kept"),
+        "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("mocks it", async () => {
+            const inFlight = import("./kept.cjs");
+            expect(require.cache[require.resolve("./kept.cjs")].loaded).toBe(false);
+            mock.module("./kept.cjs", () => ({ v: "mocked" }));
+            expect((await inFlight).v).toBe("mocked");
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("gets the module, which ran once", async () => {
+            expect([(await import("./kept.cjs")).v, require("./kept.cjs"), bodies.kept]).toEqual(["real", { v: "real" }, 1]);
+          });
+        `,
+      },
+      2,
+      [],
+      onJSThread,
+    );
+  });
 });

@@ -155,6 +155,8 @@ public:
     }
 
     bool hasEvaluated = false;
+    // An import has fetched the file, and load() or the loader, when it makes the record, has yet to run it. `exports` is still empty.
+    bool hasBodyYetToRun() const { return !hasEvaluated && !sourceCode.isNull(); }
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

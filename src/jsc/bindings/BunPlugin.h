@@ -144,6 +144,8 @@ public:
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
+        // The CommonJS modules in modulesToEvictOnceLoaded that were patched in place. They stay in require.cache, as they do when no load is pending.
+        WTF::UncheckedKeyHashSet<String> patchedCommonJSModulesToEvictOnceLoaded = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.

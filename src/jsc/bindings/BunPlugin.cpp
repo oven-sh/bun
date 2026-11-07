@@ -627,6 +627,9 @@ struct LoadedModule {
     // The file was compiled ahead of time. Its exports are variables of the program, whether or not it has run.
     std::optional<JSC::AOT::ModuleID> compiledModule;
     Bun::JSCommonJSModule* commonJSModule { nullptr };
+    // An import has fetched the file and the loader has yet to run it, so its `exports` is not the module's yet: nothing to save or to patch.
+    // Not a stale entry either. The loader runs the one that require.cache has under this key.
+    Bun::JSCommonJSModule* commonJSModuleYetToRun { nullptr };
     // In the registry / require.cache with nothing to patch: removed so the next import loads the mock.
     bool staleESMEntry { false };
     bool staleCommonJSEntry { false };
@@ -681,6 +684,7 @@ static void findLoadedCommonJSModule(Zig::GlobalObject* globalObject, JSC::JSStr
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     loaded.commonJSModule = nullptr;
+    loaded.commonJSModuleYetToRun = nullptr;
     loaded.staleCommonJSEntry = false;
 
     JSValue entryValue = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(specifierString)));
@@ -688,6 +692,8 @@ static void findLoadedCommonJSModule(Zig::GlobalObject* globalObject, JSC::JSStr
     if (entryValue && !entryValue.isUndefined()) {
         loaded.commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
         loaded.staleCommonJSEntry = !loaded.commonJSModule;
+        if (loaded.commonJSModule && loaded.commonJSModule->hasBodyYetToRun())
+            loaded.commonJSModuleYetToRun = std::exchange(loaded.commonJSModule, nullptr);
     }
 }
 
@@ -706,6 +712,22 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     loaded.compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier));
 #endif
     return loaded;
+}
+
+// Until its body has run, a CommonJS module has no exports to save or to patch. Runs it now, as require() does, and not when the loader makes the record.
+static void runCommonJSModuleYetToRun(Zig::GlobalObject* globalObject, JSC::JSString* specifierString, LoadedModule& loaded)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The function that require() calls for a module in require.cache. A direct call of JSCommonJSModule::load() would take it out of line for require() too.
+    JSValue evaluate = globalObject->getDirect(vm, Bun::builtinNames(vm).evaluateCommonJSModulePrivateName());
+    MarkedArgumentBuffer arguments;
+    arguments.append(loaded.commonJSModuleYetToRun);
+    arguments.append(jsUndefined());
+    JSC::call(globalObject, evaluate, JSC::getCallData(evaluate), jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, );
+    loaded = findLoadedModule(globalObject, specifierString);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 // Mocks are looked up by exact key, so the extra query makes the loader load the real file.
@@ -1371,8 +1393,10 @@ void JSModuleMock::giveUp(Zig::GlobalObject* globalObject)
 
 void JSModuleMock::detach(Zig::GlobalObject* globalObject)
 {
-    for (auto& module : stopRunning(globalObject, this))
+    for (auto& module : stopRunning(globalObject, this)) {
         globalObject->onLoadPlugins.modulesToEvictOnceLoaded.add(module);
+        globalObject->onLoadPlugins.patchedCommonJSModulesToEvictOnceLoaded.remove(module);
+    }
     returnTurn(globalObject, this);
 }
 
@@ -2165,6 +2189,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             moduleExports = commonJSExports->exportsObject();
             RETURN_IF_EXCEPTION(scope, );
         }
+        // findLoadedCommonJSModule() never reports a module whose body has yet to run, which this would cancel.
+        ASSERT(!moduleObject->hasBodyYetToRun());
         moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), moduleExports, 0);
         moduleObject->hasEvaluated = true;
     }
@@ -2330,7 +2356,13 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 {
     auto& plugins = globalObject->onLoadPlugins;
     Vector<String>& keys = evict.modules;
-    keys.removeAllMatching([&](const String& key) { return plugins.modulesToEvictOnceLoaded.contains(key); });
+    keys.removeAllMatching([&](const String& key) {
+        if (!plugins.modulesToEvictOnceLoaded.contains(key))
+            return false;
+        // It leaves require.cache too now.
+        plugins.patchedCommonJSModulesToEvictOnceLoaded.remove(key);
+        return true;
+    });
     if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled)
         return;
 
@@ -2342,7 +2374,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     auto& waitedFor = plugins.modulesToEvictOnceLoaded;
     for (auto& key : waitedFor)
         keys.append(key);
-    UncheckedKeyHashSet<String> staysInRegistry, staysInRequireCache;
+    UncheckedKeyHashSet<String> staysInRegistry, staysInRequireCache = plugins.patchedCommonJSModulesToEvictOnceLoaded;
     for (auto& key : evict.patchedESModules) {
         staysInRegistry.add(key);
         keys.append(key);
@@ -2429,8 +2461,10 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             RETURN_IF_EXCEPTION(scope, );
             // A native addon can only be loaded once per process.
             size_t query = path.find('?');
-            if (!(query == notFound ? StringView(path) : StringView(path).left(query)).endsWith(".node"_s) && !(evict.exceptPackages && isInNodeModules(path)))
+            if (!(query == notFound ? StringView(path) : StringView(path).left(query)).endsWith(".node"_s) && !(evict.exceptPackages && isInNodeModules(path))) {
                 keys.append(path);
+                staysInRequireCache.remove(path);
+            }
             continue;
         }
         auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(value);
@@ -2513,9 +2547,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
     UncheckedKeyHashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
+    UncheckedKeyHashSet<String> patchedCommonJSModulesThatStay;
     for (auto& key : keys) {
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
             stay.add(key);
+            if (staysInRequireCache.contains(key))
+                patchedCommonJSModulesThatStay.add(key);
             awaited.add(pendingLoad);
             continue;
         }
@@ -2573,6 +2610,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         RETURN_IF_EXCEPTION(scope, );
     }
     plugins.modulesToEvictOnceLoaded = WTF::move(stay);
+    plugins.patchedCommonJSModulesToEvictOnceLoaded = WTF::move(patchedCommonJSModulesThatStay);
 
     // This function runs again each time one of these loads settles. A second reaction on the ones still pending would double the runs per load.
     auto alreadyAwaited = std::exchange(plugins.loadsOfModulesToEvict, {});
@@ -3067,6 +3105,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
     if (leavesLoadedModuleAlone && loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         leavesLoadedModuleAlone = false;
+    // Nor does a load ask again for a CommonJS module that it has fetched and has yet to run: it runs the one that require.cache has under this key.
+    if (loaded.commonJSModuleYetToRun)
+        leavesLoadedModuleAlone = false;
     if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
         unmockModule(globalObject, previous, specifier);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3113,6 +3154,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (evaluating->status() == JSC::JSPromise::Status::Pending)
             bodyYetToRun = evaluating;
         loaded = findLoadedModule(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+        previous = registeredModuleMock(globalObject, specifier);
+    }
+    if (!leavesLoadedModuleAlone && loaded.commonJSModuleYetToRun) {
+        runCommonJSModuleYetToRun(globalObject, specifierString, loaded);
         RETURN_IF_EXCEPTION(scope, {});
         previous = registeredModuleMock(globalObject, specifier);
     }
@@ -3185,6 +3231,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         // The factory may have evicted the module, or require()d it: `() => ({ ...require("./m"), extra })`.
         LoadedModule before = std::exchange(loaded, findLoadedModule(globalObject, specifierString));
         RETURN_IF_EXCEPTION(scope, {});
+        // Or evicted it and imported it again.
+        if (!pendingFactory && isCurrent && loaded.commonJSModuleYetToRun) {
+            runCommonJSModuleYetToRun(globalObject, specifierString, loaded);
+            RETURN_IF_EXCEPTION(scope, {});
+            isCurrent = isStillRegisteredModuleMock(globalObject, specifier, previous);
+        }
         if (loaded.esmNamespace != before.esmNamespace) {
             mock->originalExports.clear();
             mock->originalNamespace.clear();
@@ -3320,7 +3372,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     LoadedModule loaded = findLoadedModule(globalObject, specifier.keyString);
     RETURN_IF_EXCEPTION(scope, {});
     // What a preload loads is given back to the next test file under its own key.
-    if (!loaded.esmNamespace && !loaded.commonJSModule && !loaded.staleESMEntry && !loaded.staleCommonJSEntry && !JSMock__isInPreload(globalObject))
+    if (!loaded.esmNamespace && !loaded.commonJSModule && !loaded.commonJSModuleYetToRun && !loaded.staleESMEntry && !loaded.staleCommonJSEntry && !JSMock__isInPreload(globalObject))
         globalObject->onLoadPlugins.loadedByImportActual.add(specifier.key);
     RELEASE_AND_RETURN(scope, JSValue::encode(importModuleFrom(globalObject, callerPath(vm, callframe), specifier.key)));
 }

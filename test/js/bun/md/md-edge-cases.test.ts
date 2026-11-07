@@ -1471,6 +1471,234 @@ describe("ansi renderer line wrapping", () => {
   });
 });
 
+// The quote bars and the list indent of a line are written with the first content of that line, not behind the line
+// break before it. Behind the last line of an HTML block, and behind a line break that ends a paragraph, no line follows.
+describe("ansi renderer quote bars and list indent", () => {
+  describe.each([0, 80])("at a width of %d", columns => {
+    const plain = (markdown: string) => Markdown.ansi(markdown, { colors: false, columns });
+    const rule = (width: number) => Buffer.alloc(width, "-").toString();
+    const table = "| +-----+-----+\n| | a   | b   |\n| +-----+-----+\n| | 1   | 2   |\n| +-----+-----+\n";
+
+    test.each([
+      [
+        "behind the text of a tight list item",
+        "- para\n  <details>\n  <summary>\n  x\n  </summary>\n- next\n",
+        "  * para\n    <details>\n    <summary>\n    x\n    </summary>\n  * next\n",
+      ],
+      [
+        "first in a list item",
+        "- <details>\n  <summary>\n  x\n  </summary>\n- next\n",
+        "  * \n    <details>\n    <summary>\n    x\n    </summary>\n  * next\n",
+      ],
+      [
+        "in each item of an ordered list",
+        "1. <link to issue>\n2. <link to issue>\n\nafter\n",
+        "   1. \n      <link to issue>\n   2. \n      <link to issue>\n\nafter\n",
+      ],
+      [
+        "in a nested list",
+        "- a\n  - <div>\n    x\n    </div>\n  - b\n- c\n",
+        "  * a\n      * \n        <div>\n        x\n        </div>\n      * b\n  * c\n",
+      ],
+      ["alone in a block quote", "> <div>\n", "| <div>\n"],
+      ["behind a paragraph in a block quote", "> para\n> <div>\n> x\n> </div>\n", "| para\n| <div>\n| x\n| </div>\n"],
+      [
+        "between two paragraphs in a block quote",
+        "> para\n>\n> <div>\n>   <p>x</p>\n> </div>\n>\n> para2\n",
+        "| para\n| <div>\n|   <p>x</p>\n| </div>\n|\n| para2\n",
+      ],
+      ["behind a heading with an underline", "> # H\n> <div>\n", "| H\n| ===\n| <div>\n"],
+      ["behind a heading without an underline", "> ### H\n> <div>\n", "| H\n| <div>\n"],
+      ["behind a code block", "> ```\n> x\n> ```\n> <div>\n", "| +-\n| | x\n| +-\n| <div>\n"],
+      ["behind a table", "> | a | b |\n> |---|---|\n> | 1 | 2 |\n> <div>\n", table + "| <div>\n"],
+      ["behind a rule", "> ---\n> <div>\n", `| ${rule(58)}\n| <div>\n`],
+      ["behind a paragraph that draws nothing", "> []()\n>\n> <div>\n", "| \n| <div>\n"],
+      ["in a block quote behind a paragraph that draws nothing", "[]()\n\n> <div>\n", "| <div>\n"],
+    ])("an HTML block %s is drawn in its container", (_, markdown, expected) => {
+      expect(plain(markdown)).toBe(expected);
+    });
+
+    test("an HTML block in a block quote in a list item has the prefix that a paragraph has there", () => {
+      const paragraph = plain("- > a\\\n  > x\\\n  > b\n- next\n");
+      expect(paragraph).toEndWith("\n  * next\n");
+      expect(plain("- > <div>\n  > x\n  > </div>\n- next\n")).toBe(
+        paragraph.replace("a\n", "<div>\n").replace("b\n", "</div>\n"),
+      );
+    });
+
+    test.each([
+      ["text in a tight list item", "- a\n  <!-- c -->\n  b\n- next\n", "  * a\n    <!-- c -->\n    b\n  * next\n"],
+      [
+        "a paragraph in a loose list item",
+        "- <!-- c -->\n\n  para\n- next\n",
+        "  * \n    <!-- c -->\n\n    para\n  * next\n",
+      ],
+      ["a second HTML block", "> <div>\n>\n> <p>\n", "| <div>\n| <p>\n"],
+      ["a code block", "> <div>\n>\n> ```\n> x\n> ```\n", "| <div>\n|\n| +-\n| | x\n| +-\n"],
+      ["a heading", "> <div>\n>\n> # H\n", "| <div>\n|\n| H\n| ===\n"],
+    ])("%s behind an HTML block is where it is without the block", (_, markdown, expected) => {
+      expect(plain(markdown)).toBe(expected);
+    });
+
+    test.each([
+      ["a line feed reference that ends a list item", "- a&#10;\n- next\n", "  * a\n  * next\n"],
+      ["a line feed reference that ends a block quote", "> a&#10;\n\nafter\n", "| a\n\nafter\n"],
+      ["a line feed reference before an HTML block", "> a&#10;\n> <div>\n", "| a\n| <div>\n"],
+      ["a hard break that ends the alt text of an image", "> ![a\\\n> ]()\n", "| [img] a\n"],
+    ])("%s leaves no quote bar or indent behind", (_, markdown, expected) => {
+      expect(plain(markdown)).toBe(expected);
+    });
+
+    test.each([
+      ["a code block", "- a\n  ```\n  x\n  ```\n  b\n- next\n", "  * a\n\n    +-\n    | x\n    +-\n    b\n  * next\n"],
+      ["a heading", "- a\n  # H\n  b\n- next\n", "  * a\n\n    H\n    ===\n    b\n  * next\n"],
+      ["a rule", "- a\n  ***\n  b\n- next\n", `  * a\n\n    ${rule(56)}\n    b\n  * next\n`],
+      [
+        "a nested block quote",
+        "- a\n  > q\n  > ***\n  b\n- next\n",
+        `  * a\n\n|     q\n|\n|     ${rule(54)}\n    b\n  * next\n`,
+      ],
+      [
+        "a nested list",
+        "- a\n  - i\n    ***\n  b\n- next\n",
+        `  * a\n      * i\n\n        ${rule(52)}\n    b\n  * next\n`,
+      ],
+      [
+        "a list in a nested block quote",
+        "- a\n  > - # b\n  c\n",
+        "  * a\n\n|       * \n|\n|         b\n|         ===\n    c\n",
+      ],
+    ])("text behind %s in a tight list item has the indent of the item", (_, markdown, expected) => {
+      expect(plain(markdown)).toBe(expected);
+    });
+
+    // A line that has only its quote bars and indent is ended. The next marker does not go behind them.
+    test.each([
+      [
+        "behind a code block in a tight list item",
+        "- a\n  ```\n  x\n  ```\n  []()\n- next\n",
+        "  * a\n\n    +-\n    | x\n    +-\n    \n  * next\n",
+      ],
+      [
+        "behind a code block in a loose list item",
+        "- a\n\n  ```\n  x\n  ```\n\n  []()\n- next\n",
+        "  * a\n\n    +-\n    | x\n    +-\n\n    \n  * next\n",
+      ],
+      ["behind a hard break in a list item", "- a\\\n  []()\n- next\n", "  * a\n    \n  * next\n"],
+      ["in a block quote in a list item", "- > []()\n\n  <div>\n- a\n", "  * \n\n|     \n    <div>\n  * a\n"],
+      [
+        "in a nested list item, before a paragraph of the outer item",
+        "- outer\n\n  - inner\n    ```\n    x\n    ```\n    []()\n\n  after\n- next\n",
+        "  * outer\n      * inner\n\n        +-\n        | x\n        +-\n        \n\n    after\n  * next\n",
+      ],
+      [
+        "in strong text in a nested list item, before a paragraph of the outer item",
+        "- outer\n\n  - inner\n    ```\n    x\n    ```\n    **[]()**\n\n  after\n- next\n",
+        "  * outer\n      * inner\n\n        +-\n        | x\n        +-\n        \n\n    after\n  * next\n",
+      ],
+      [
+        "in a nested list item in a block quote, before a paragraph of the outer item",
+        "> - outer\n>\n>   - inner\n>     ```\n>     x\n>     ```\n>     []()\n>\n>   after\n> - next\n",
+        "|   * outer\n|       * inner\n|\n|         +-\n|         | x\n|         +-\n|         \n|\n|     after\n|   * next\n",
+      ],
+    ])("a link that draws nothing %s does not move what follows it", (_, markdown, expected) => {
+      expect(plain(markdown)).toBe(expected);
+    });
+
+    test.each([
+      ["a hard break in a block quote", "> a  \n> b\n", "| a\n| b\n"],
+      ["a hard break that ends the text of a link", "> [a\\\n> ](u)\n", "| a\n|  (u)\n"],
+      ["a line feed reference in a paragraph", "> a&#10;&#10;b\n", "| a\n| \n| b\n"],
+      ["inline HTML over two lines in a block quote", '> a <b\n> c="d">e</b> f\n', '| a <b\n| c="d">e</b> f\n'],
+      ["an HTML block outside of a container", "<div>\n  <p>\n</div>\n\nafter\n", "<div>\n  <p>\n</div>\n\nafter\n"],
+      ["an HTML block behind a paragraph", "a\n\n<div>\n", "a\n<div>\n"],
+      [
+        "text that is not drawn, behind a code block in a tight list item",
+        "- a\n  ```\n  x\n  ```\n  \x07\n- next\n",
+        "  * a\n\n    +-\n    | x\n    +-\n  * next\n",
+      ],
+      ["emphasis in a heading in a block quote", "> # *H*\n", "| H\n| ===\n"],
+      ["inline HTML in a heading in a block quote", "> # <b>H</b>\n", "| <b>H</b>\n| ========\n"],
+      ["emphasis in a table cell in a block quote", "> | *a* | b |\n> |---|---|\n> | 1 | `2` |\n", table],
+      ["emphasis in the alt text of an image in a block quote", "> ![*a*]()\n", "| [img] a\n"],
+    ])("%s is drawn as before", (_, markdown, expected) => {
+      expect(plain(markdown)).toBe(expected);
+    });
+  });
+
+  const bar = "\x1b[38;5;242m│ \x1b[39m";
+  const bullet = "\x1b[36m• \x1b[0m";
+  const dim = (text: string) => `\x1b[2m${text}\x1b[22m`;
+  // A PNG of 1 by 1 pixel.
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==";
+
+  test("with colors, the quote bar of a line of an HTML block is not dim", () => {
+    expect(Markdown.ansi("> <div>\n> x\n", { columns: 80 })).toBe(
+      bar + dim("<div>") + dim("\n") + bar + dim("x") + dim("\n"),
+    );
+  });
+
+  test("with colors, an HTML block in a list item has the indent of the item and leaves none behind", () => {
+    expect(Markdown.ansi("- para\n  <div>\n- next\n", { columns: 80 })).toBe(
+      "  " + bullet + "para\n    " + dim("<div>") + dim("\n") + "  " + bullet + "next\n",
+    );
+  });
+
+  test("with colors, a span that starts a line opens behind the quote bar, as before", () => {
+    expect(Markdown.ansi("> a  \n> **b**\n", { columns: 80 })).toBe(`${bar}a\n${bar}\x1b[1mb\x1b[22m\x1b[0m\n`);
+    expect(Markdown.ansi("> a  \n> [b](u)\n", { columns: 80, hyperlinks: true })).toBe(
+      `${bar}a\n${bar}\x1b]8;;u\x1b\\\x1b[34m\x1b[4mb\x1b[24m\x1b[39m\x1b]8;;\x1b\\\x1b[0m\n`,
+    );
+  });
+
+  test("a link that a terminal draws nothing of does not move what follows it", () => {
+    const markdown = "- outer\n\n  - inner\n    ```\n    x\n    ```\n    [](u)\n\n  after\n- next\n";
+    expect(Bun.stripANSI(Markdown.ansi(markdown, { columns: 80, hyperlinks: true }))).toBe(
+      "  • outer\n      • inner\n\n        ┌─\n        │ x\n        └─\n        \n\n    after\n  • next\n",
+    );
+  });
+
+  test("an HTML block behind a paragraph that draws nothing wraps in its block quote", () => {
+    expect(Markdown.ansi("> []()\n>\n> <!-- c -->\n", { colors: false, columns: 10 })).toBe("| \n| <!-- c\n| -->\n");
+  });
+
+  test("text that a wrap moves to the next line is behind the quote bar, as before", () => {
+    const plain = (markdown: string) => Markdown.ansi(markdown, { colors: false, columns: 6 });
+    expect(plain("> aaaa bbbb\n")).toBe("| aaaa\n| bbbb\n");
+    expect(plain("> aaaa\n> bbbb\n")).toBe("| aaaa\n| bbbb\n");
+    expect(plain("> **aaaa** b\n")).toBe("| aaaa\n| b\n");
+  });
+
+  test("a closing delimiter that a wrap moves to the next line is behind the quote bar, as before", () => {
+    expect(Markdown.ansi("> [[t|aaaa ]]\n", { colors: false, columns: 8 })).toBe("| [[aaaa\n| ]]\n");
+    expect(Markdown.ansi("> $aaa $\n", { colors: false, columns: 7 })).toBe("| $aaa\n| $\n");
+  });
+
+  test("a space at the wrap column with nothing behind it leaves no quote bar behind", () => {
+    const visible = (markdown: string) => Bun.stripANSI(Markdown.ansi(markdown, { columns: 6, hyperlinks: true }));
+    expect(visible("> [aaaa ](u)\n")).toBe("│ aaaa\n");
+    expect(visible("> [aaaa\n> ](u)\n")).toBe("│ aaaa\n");
+  });
+
+  test("an image that Kitty draws leaves no quote bar behind, and text behind it gets one", () => {
+    const image = `\x1b_Ga=T,t=d,f=100,q=2;${png}\x1b\\\n`;
+    const kitty = (markdown: string) => Markdown.ansi(markdown, { columns: 80, kittyGraphics: true });
+    expect(kitty(`> ![a](data:image/png;base64,${png}) b\n`)).toBe(bar + image + bar + " b\x1b[0m\n");
+    // Without the escapes, because the reset that ends a paragraph comes behind the line break of the image.
+    const visible = (markdown: string) => Bun.stripANSI(kitty(markdown));
+    expect(visible(`> ![a](data:image/png;base64,${png})\n`)).toBe("│ \n");
+    expect(visible(`> ![a](data:image/png;base64,${png})\n>\n> b\n`)).toBe("│ \n│\n│ b\n");
+  });
+
+  test("an image file that Kitty draws leaves no quote bar behind", () => {
+    using dir = tempDir("md-kitty", { "x.png": Buffer.from(png, "base64") });
+    const path = join(String(dir), "x.png");
+    const drawn = Markdown.ansi(`> ![a](${path.replaceAll("\\", "/")})\n`, { columns: 80, kittyGraphics: true });
+    expect(drawn).toStartWith(`${bar}\x1b_Ga=T,t=f,f=100,q=2;${Buffer.from(path).toString("base64")}\x1b\\\n`);
+    expect(Bun.stripANSI(drawn)).toBe("│ \n");
+  });
+});
+
 // ============================================================================
 // Pathological inputs: emphasis delimiter floods. Each closer used to scan
 // backward over every already-consumed delimiter in the paragraph, so

@@ -439,7 +439,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
     for (size_t i = 1; i < argumentCount; ++i) {
         args.append(callFrame->uncheckedArgument(i));
     }
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.emitForBindings(eventType, args))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.emitForBindings(eventType, args, EventEmitter::ExceptionHandling::Propagate))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

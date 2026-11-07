@@ -129,15 +129,15 @@ void applyTemplateProperties(
 
     for (const auto& prop : properties) {
         JSC::Identifier identifier = prop.name.get().toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
+        V8_RETURN_IF_EXCEPTION(scope, void());
         JSC::JSValue value = materializePropertyValue(globalObject, prop.value.get());
-        RETURN_IF_EXCEPTION(scope, void());
+        V8_RETURN_IF_EXCEPTION(scope, void());
         target->putDirect(vm, identifier, value, toJSCAttributes(prop.attributes));
     }
 
     for (const auto& acc : accessors) {
         JSC::Identifier identifier = acc.name.get().toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
+        V8_RETURN_IF_EXCEPTION(scope, void());
 
         JSC::JSValue nameValue = acc.name.get();
         JSC::JSValue dataValue = acc.data.get();
@@ -173,7 +173,7 @@ void applyTemplateProperties(
         auto* getterSetter = JSC::GetterSetter::create(vm, globalObject, getterFn, setterFn);
         target->putDirectAccessor(globalObject, identifier, getterSetter,
             toJSCAttributes(acc.attributes) | JSC::PropertyAttribute::Accessor);
-        RETURN_IF_EXCEPTION(scope, void());
+        V8_RETURN_IF_EXCEPTION(scope, void());
     }
 }
 

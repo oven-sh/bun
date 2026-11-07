@@ -100,7 +100,9 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
     }
 
     JSC::JSValue result = JSC::call(globalObject, callee, thisValue, args, "node::MakeCallback"_s);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+    // Node gives undefined, not an empty handle, for a callback that threw with no callback below it:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L349-L353
+    RETURN_IF_EXCEPTION(scope, v8::shim::reportUncaughtException() ? isolate->currentHandleScope()->createLocal<Value>(vm, JSC::jsUndefined()) : MaybeLocal<Value>());
 
     return isolate->currentHandleScope()->createLocal<Value>(vm, result);
 }

@@ -927,6 +927,152 @@ void queue_work_and_call(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(Number::New(isolate, rc));
 }
 
+static std::string to_std_string(Isolate *isolate, Local<Value> string) {
+  char buf[128] = {0};
+  string.As<String>()->WriteUtf8V2(isolate, buf, sizeof(buf) - 1);
+  return buf;
+}
+
+static void throw_from_addon(Isolate *isolate) {
+  isolate->ThrowException(Exception::Error(
+      String::NewFromUtf8Literal(isolate, "thrown by the addon")));
+}
+
+// Runs the V8 API entry that `entry` names on operands that the test chose,
+// and logs how it ended.
+static void run_entry(Isolate *isolate, const std::string &entry,
+                      Local<Value> a, Local<Value> b) {
+  Local<Context> context = isolate->GetCurrentContext();
+  bool failed = false;
+  if (entry == "Function::Call") {
+    failed = a.As<Function>()
+                 ->Call(context, Undefined(isolate), 0, nullptr)
+                 .IsEmpty();
+  } else if (entry == "Function::NewInstance") {
+    failed = a.As<Function>()->NewInstance(context, 0, nullptr).IsEmpty();
+  } else if (entry == "node::MakeCallback") {
+    MaybeLocal<Value> result = node::MakeCallback(
+        isolate, context->Global(), a.As<Function>(), 0, nullptr, {0, 0});
+    failed = result.IsEmpty();
+    if (!failed) {
+      std::cout << entry << " returned undefined = "
+                << result.ToLocalChecked()->IsUndefined() << std::endl;
+    }
+  } else if (entry == "Object::Get(key)") {
+    failed = a.As<Object>()->Get(context, b).IsEmpty();
+  } else if (entry == "Object::Get(index)") {
+    failed = a.As<Object>()->Get(context, 0).IsEmpty();
+  } else if (entry == "Object::Set(key)") {
+    failed = a.As<Object>()->Set(context, b, Null(isolate)).IsNothing();
+  } else if (entry == "Object::Set(index)") {
+    failed = a.As<Object>()->Set(context, 0, Null(isolate)).IsNothing();
+  } else if (entry == "Object::DefineOwnProperty") {
+    failed = a.As<Object>()
+                 ->DefineOwnProperty(context, b.As<Name>(), Null(isolate))
+                 .IsNothing();
+  } else if (entry == "Value::ToString") {
+    failed = a->ToString(context).IsEmpty();
+  } else if (entry == "Value::ToInt32") {
+    failed = a->ToInt32(context).IsEmpty();
+  } else if (entry == "Value::ToInteger") {
+    failed = a->ToInteger(context).IsEmpty();
+  } else if (entry == "Array::Iterate") {
+    failed = a.As<Array>()
+                 ->Iterate(
+                     context,
+                     [](uint32_t, Local<Value>, void *) {
+                       return Array::CallbackResult::kContinue;
+                     },
+                     nullptr)
+                 .IsNothing();
+  } else if (entry == "Array::Iterate, the callback throws") {
+    failed = a.As<Array>()
+                 ->Iterate(
+                     context,
+                     [](uint32_t, Local<Value>, void *isolate) {
+                       throw_from_addon(static_cast<Isolate *>(isolate));
+                       return Array::CallbackResult::kException;
+                     },
+                     isolate)
+                 .IsNothing();
+  } else if (entry == "Array::New, the callback throws") {
+    failed = Array::New(context, 2,
+                        [&]() -> MaybeLocal<Value> {
+                          throw_from_addon(isolate);
+                          return MaybeLocal<Value>();
+                        })
+                 .IsEmpty();
+  } else if (entry == "Uint8Array::New") {
+    // a is an ArrayBuffer that is shorter than 16 bytes.
+    failed = Uint8Array::New(a.As<ArrayBuffer>(), 0, 16).IsEmpty();
+  } else if (entry == "Isolate::ThrowException") {
+    throw_from_addon(isolate);
+  } else if (entry == "Isolate::ThrowError") {
+    isolate->ThrowError(
+        String::NewFromUtf8Literal(isolate, "thrown by the addon"));
+  } else {
+    std::cout << "unknown entry" << std::endl;
+  }
+  std::cout << entry << " failed = " << failed << std::endl;
+}
+
+struct EntryWork {
+  uv_work_t req;
+  Isolate *isolate;
+  std::string entry;
+  int times;
+  Global<Value> a;
+  Global<Value> b;
+  Global<Function> after;
+};
+
+// run_entry_from_event_loop(entry, times, a, b, after) runs the entry in
+// after_work_cb, with no JavaScript below it. Then it runs entries that cannot
+// fail by themselves, which shows whether the failure is still pending.
+void run_entry_from_event_loop(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *work = new EntryWork;
+  work->req.data = work;
+  work->isolate = isolate;
+  work->entry = to_std_string(isolate, info[0]);
+  work->times = info[1].As<Int32>()->Value();
+  work->a.Reset(isolate, info[2]);
+  work->b.Reset(isolate, info[3]);
+  work->after.Reset(isolate, info[4].As<Function>());
+  uv_queue_work(
+      node::GetCurrentEventLoop(isolate), &work->req, [](uv_work_t *req) {},
+      [](uv_work_t *req, int status) {
+        auto *work = static_cast<EntryWork *>(req->data);
+        Isolate *isolate = work->isolate;
+        {
+          HandleScope scope(isolate);
+          Local<Context> context = isolate->GetCurrentContext();
+          for (int i = 0; i < work->times; i++) {
+            run_entry(isolate, work->entry, work->a.Get(isolate),
+                      work->b.Get(isolate));
+          }
+          Local<Object> object = Object::New(isolate);
+          Local<String> key = String::NewFromUtf8Literal(isolate, "key");
+          bool set_failed = object->Set(context, key, key).IsNothing();
+          std::cout << "next Object::Set failed = " << set_failed << std::endl;
+          bool get_failed = object->Get(context, key).IsEmpty();
+          std::cout << "next Object::Get failed = " << get_failed << std::endl;
+          bool call_failed = work->after.Get(isolate)
+                                 ->Call(context, Undefined(isolate), 0, nullptr)
+                                 .IsEmpty();
+          std::cout << "next Function::Call failed = " << call_failed
+                    << std::endl;
+        }
+        delete work;
+      });
+}
+
+// run_entry_from_js(entry, a, b) runs the entry while its JS caller is running.
+void run_entry_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  run_entry(isolate, to_std_string(isolate, info[0]), info[1], info[2]);
+}
+
 void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Object::Get(context, key)...\n");
 
@@ -2252,6 +2398,9 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "queue_work_and_call", queue_work_and_call);
+  NODE_SET_METHOD(exports, "run_entry_from_event_loop",
+                  run_entry_from_event_loop);
+  NODE_SET_METHOD(exports, "run_entry_from_js", run_entry_from_js);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
                   test_v8_object_get_by_key);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_index",

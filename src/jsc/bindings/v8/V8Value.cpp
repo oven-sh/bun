@@ -131,7 +131,7 @@ MaybeLocal<String> Value::ToString(Local<Context> context) const
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSString* jsString = localToJSValue().toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
 
     return MaybeLocal<String>(context->currentHandleScope()->createLocal<String>(vm, jsString));
 }
@@ -143,7 +143,7 @@ MaybeLocal<Integer> Value::ToInteger(Local<Context> context) const
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     double d = localToJSValue().toIntegerOrInfinity(globalObject);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Integer>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Integer>());
 
     return MaybeLocal<Integer>(context->currentHandleScope()->createLocal<Integer>(vm, JSC::jsNumber(d)));
 }
@@ -155,7 +155,7 @@ MaybeLocal<Int32> Value::ToInt32(Local<Context> context) const
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     int32_t i = localToJSValue().toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Int32>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Int32>());
 
     return MaybeLocal<Int32>(context->currentHandleScope()->createLocal<Int32>(vm, JSC::jsNumber(i)));
 }
@@ -179,7 +179,7 @@ bool Value::StrictEquals(Local<Value> that) const
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     bool result = JSC::JSValue::strictEqual(globalObject, thisValue, thatValue);
-    RETURN_IF_EXCEPTION(scope, false);
+    V8_RETURN_IF_EXCEPTION(scope, false);
 
     return result;
 }

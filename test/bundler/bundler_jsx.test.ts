@@ -506,6 +506,23 @@ describe("bundler", () => {
       expect(file).toContain('import * as React from "react"');
     },
   });
+  // The parser builds the factory callee and the call itself. It does not
+  // rewrite `module.require(...)` to `require(...)` there, as it does for a
+  // call in the source.
+  itBundled("jsx/FactoryModuleRequireIsNotRewritten", {
+    files: {
+      "/index.jsx": /* jsx */ `
+        console.log(<div />);
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "module.require",
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('module.require("div", null)');
+    },
+  });
   itBundled("jsx/jsxImportSource pragma works", {
     files: {
       "/index.jsx": /* jsx */ `

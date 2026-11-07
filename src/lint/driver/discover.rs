@@ -4,7 +4,7 @@
 //! configuration has `files` for. Directories are listed on all threads, one level of the tree at a time, and a
 //! directory the configuration ignores isn't entered.
 
-use crate::configs::{Flavor, Loaded, Loader, inherit_frameworks, read_frameworks};
+use crate::configs::{Flavor, Handoff, Loaded, Loader, inherit_frameworks, read_frameworks};
 use crate::embedded::Framework;
 use crate::fmt::Exclusions;
 use crate::gitignore::{self, Files};
@@ -62,6 +62,16 @@ impl Target {
         match &self.status {
             Status::Matched(config) => self.loaded.routes(config, &self.path),
             _ => Route::Native,
+        }
+    }
+
+    /// [`Loader::check_config`] for its config.
+    pub(crate) fn check_config(&self, loader: &Loader, handoff: Handoff) -> Result<(), Fatal> {
+        match &self.status {
+            Status::Matched(config) => {
+                loader.check_config(&self.loaded, config, handoff, || self.route())
+            }
+            _ => Ok(()),
         }
     }
 }

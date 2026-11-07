@@ -16,7 +16,7 @@ pub enum AnyType {
     Safe,
 }
 
-/// `discriminateAnyType(type, checker, program, tsNode)`: in which way the type is `any`, if it is.
+/// `discriminateAnyType(type, checker, program, tsNode)`: which kind of `any` the type is, if any.
 pub fn discriminate_any_type<'a>(ty: Type<'a>, ts_node: impl Locate<'a>) -> AnyType {
     discriminate_any_type_worker(ty, ts_node.locate(ty.file()), &mut IdSet::new())
 }
@@ -35,7 +35,7 @@ fn discriminate_any_type_worker<'a>(
     if is_type_any_array_type(ty) {
         return AnyType::AnyArray;
     }
-    // tsgolint's `TypeRecurser` asks the leaves of nested unions and intersections.
+    // tsgolint's `TypeRecurser` tests the leaves of nested unions and intersections.
     let found_promise_any = match ty.file().language().is_oxlint {
         true => type_recurser(ty, &mut |part: Type<'a>| {
             is_promise_any(part, ts_node, visited)
@@ -57,7 +57,7 @@ fn is_promise_any<'a>(part: Type<'a>, ts_node: TsNode<'a>, visited: &mut IdSet<T
         })
 }
 
-/// `TypeRecurser(t, predicate)` of tsgolint's `utils.go`.
+/// `TypeRecurser(t, predicate)` from tsgolint's `utils.go`.
 fn type_recurser<'a>(ty: Type<'a>, predicate: &mut dyn FnMut(Type<'a>) -> bool) -> bool {
     if !is_union_or_intersection_type(ty) {
         return predicate(ty);

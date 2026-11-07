@@ -109,6 +109,62 @@ describe.concurrent("Server", () => {
     expect(received).toEqual(expected);
   });
 
+  // Otherwise the socket, its topics and its lifetime would belong to the server that received the
+  // request, but it would use the other server's handlers and connection counters.
+  test.each([
+    ["an HTTP server", false],
+    ["an HTTPS server", true],
+  ])("upgrade() on %s throws for a Request received by a different server", async (_label, otherIsTLS) => {
+    const events: string[] = [];
+    const websocket = (name: string) => ({
+      open(ws: ServerWebSocket) {
+        events.push(name + ".open");
+        ws.close();
+      },
+      message() {},
+    });
+    using other = Bun.serve({
+      port: 0,
+      tls: otherIsTLS ? tls : undefined,
+      fetch: () => new Response("other"),
+      websocket: websocket("other"),
+    });
+    const { promise: results, resolve, reject } = Promise.withResolvers<Record<string, string>>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: websocket("server"),
+      fetch(req, server) {
+        try {
+          const result: Record<string, string> = {};
+          try {
+            result.otherUpgrade = String(other.upgrade(req));
+          } catch (e) {
+            result.otherUpgrade = (e as Error).message;
+          }
+          // timeout() and requestIP() only touch the request's own connection, so any server object works.
+          other.timeout(req, 10);
+          result.otherRequestIP = typeof other.requestIP(req)?.address;
+          result.ownUpgrade = String(server.upgrade(req));
+          resolve(result);
+        } catch (e) {
+          reject(e);
+          throw e;
+        }
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    ws.onclose = () => onClose();
+    expect(await results).toEqual({
+      otherUpgrade: "upgrade() must be called on the same server that received the request",
+      otherRequestIP: "string",
+      ownUpgrade: "true",
+    });
+    await closed;
+    expect(events).toEqual(["server.open"]);
+  });
+
   test("should not allow Bun.serve without first argument being a object", () => {
     expect(() => {
       //@ts-ignore
@@ -350,6 +406,27 @@ describe.concurrent("Server", () => {
       expect(response.status).toBe(200);
       expect(response.url).toBe(url);
     }
+  });
+
+  test("server.fetch(url, { headers }) copies a Headers object", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.headers.get("x-i") ?? "none");
+      },
+    });
+    const url = `http://${server.hostname}:${server.port}/`;
+    const kept: Headers[] = [];
+    for (let i = 0; i < 200; i++) {
+      const headers = new Headers({ "x-i": String(i) });
+      const response = await server.fetch(url, { headers });
+      expect(await response.text()).toBe(String(i));
+      if (i % 2 === 0) kept.push(headers);
+      if (i % 50 === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
+    // The Requests that server.fetch() created have been collected.
+    expect(kept.map(h => h.get("x-i"))).toEqual(kept.map((_, i) => String(i * 2)));
   });
 
   test("server should return a body for a OPTIONS Request", async () => {
@@ -2913,7 +2990,7 @@ describe.concurrent("websocket and routes test", () => {
         } else {
           const result = await promise;
           expect(errorFired).toBe(true); // Error event should fire for failed upgrade
-          expect(result).toBe(1002);
+          expect(result).toBe(1006);
         }
         if (hasPOST) {
           const result = await fetch(url, {
@@ -2964,17 +3041,17 @@ test.concurrent("should be able to redirect when using empty streams #15320", as
   }).toEqual({ status: 200, redirected: true, url: `http://localhost:${server.port}/`, text: "Hello, World" });
 });
 
-test("HEAD request for a Response with an S3 file body reports the object size and the server keeps serving", async () => {
-  // Answering a HEAD request whose Response body is an S3-backed Blob resolves
-  // the object size with an async S3 stat before writing headers. Run the
-  // server in a subprocess so a crash on that completion path shows up as a
-  // non-zero exit code instead of taking down the test runner.
+test("HEAD request for new Response(s3file) follows the redirect to the object and the server keeps serving", async () => {
+  // `new Response(s3file)` is a 302 to a presigned URL. fetch() follows it, so
+  // the S3 origin answers the HEAD with the object size. Run the server in a
+  // subprocess so a crash shows up as a non-zero exit code instead of taking
+  // down the test runner.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        // Fake S3 origin: answers the stat (HEAD) with a fixed Content-Length.
+        // Fake S3 origin: answers HEAD with a fixed Content-Length.
         const s3Origin = Bun.serve({
           port: 0,
           fetch(req) {
@@ -3040,6 +3117,54 @@ test("HEAD request for a Response with an S3 file body reports the object size a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("s3-head-ok");
+  expect(exitCode).toBe(0);
+});
+
+test("HEAD for a Response with an S3-backed Blob body doesn't wait for S3", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let s3Requests = 0;
+        const { promise: s3Asked, resolve: onS3Asked } = Promise.withResolvers();
+        const { promise: gate, resolve: openGate } = Promise.withResolvers();
+        using s3Origin = Bun.serve({
+          port: 0,
+          async fetch() {
+            s3Requests++;
+            onS3Asked();
+            await gate;
+            return new Response("0123456789");
+          },
+        });
+        const s3 = new Bun.S3Client({
+          accessKeyId: "test",
+          secretAccessKey: "test",
+          bucket: "my-bucket",
+          endpoint: s3Origin.url.href,
+        });
+        using app = Bun.serve({
+          port: 0,
+          fetch: () => fetch(URL.createObjectURL(s3.file("object.txt"))),
+        });
+        const head = fetch(app.url, { method: "HEAD" });
+        // If the server waits for S3 before responding, the Response is unreferenced and the GC can collect it.
+        await Promise.race([s3Asked, head]);
+        Bun.gc(true);
+        openGate();
+        const res = await head;
+        console.log(res.status, res.headers.get("content-length"), s3Requests);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("200 0 0\n");
   expect(exitCode).toBe(0);
 });
 

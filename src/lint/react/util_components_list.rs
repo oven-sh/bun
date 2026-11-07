@@ -1,14 +1,14 @@
-//! `class Components` of `lib/util/Components.js` of eslint-plugin-react: the list of the
-//! components of a file. Nothing here detects one.
+//! `class Components` from eslint-plugin-react's `lib/util/Components.js`: the list of a file's
+//! components. Nothing here detects one.
 //!
-//! Beside it, for the engine that fills the list:
+//! Also here, for the engine that fills the list:
 //!
 //! - what `propTypes.js`, `usedPropTypes.js` and `defaultProps.js` store in a component,
-//! - [`At`], the clock: upstream fills the list while ESLint walks the tree, and reads it then,
-//! - [`Queue`]: what is to be done, in the order of that walk.
+//! - [`At`], the clock: upstream both fills and reads the list while ESLint walks the tree,
+//! - [`Queue`]: the pending work, in the order of that walk.
 //!
-//! `getDefaultReactImports`, `getNamedReactImports` and the two that add to them have one reader,
-//! `hook-use-state`, which asks the imports itself.
+//! `getDefaultReactImports`, `getNamedReactImports` and the two functions that add to them have one
+//! user, `hook-use-state`, which reads the imports itself.
 
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -19,8 +19,7 @@ use std::borrow::Cow;
 
 // ───────────────────────────── the clock ─────────────────────────────
 
-/// A moment of ESLint's walk: it enters or leaves a node that has text. They are ordered as the
-/// walk is.
+/// A point in ESLint's walk: entering or leaving a node that has text. They sort in walk order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct At(u128);
 
@@ -28,16 +27,16 @@ impl At {
     /// `Program:exit`
     pub(crate) const END: At = At(u128::MAX);
 
-    /// Of the nodes that start together the longer is entered first, of those with one range the
-    /// outer.
+    /// Of nodes that start together, the longer one is entered first. Of nodes with the same range,
+    /// the outer one.
     pub(crate) fn enter(node: Node<'_>) -> At {
-        let (span, depth) = At::place(node);
+        let (span, depth) = At::span_and_depth(node);
         At::new(2 * u64::from(span.start) + 1, u32::MAX - span.end, depth)
     }
 
-    /// What ends where another node starts is left before that is entered.
+    /// A node that ends where another starts is left before the other is entered.
     pub(crate) fn exit(node: Node<'_>) -> At {
-        let (span, depth) = At::place(node);
+        let (span, depth) = At::span_and_depth(node);
         At::new(
             2 * u64::from(span.end),
             u32::MAX - span.start,
@@ -45,20 +44,20 @@ impl At {
         )
     }
 
-    /// Whether it is made by [`At::exit`].
+    /// True if [`At::exit`] made it.
     pub(crate) fn is_exit(self) -> bool {
         ((self.0 >> 40) & 1) == 0
     }
 
-    fn new(position: u64, among_equals: u32, depth: u8) -> At {
-        At((u128::from(position) << 40) | (u128::from(among_equals) << 8) | u128::from(depth))
+    fn new(position: u64, tie_break: u32, depth: u8) -> At {
+        At((u128::from(position) << 40) | (u128::from(tie_break) << 8) | u128::from(depth))
     }
 
-    /// From where to where the walk is in `node`, and how far in among the nodes with that range.
-    fn place(node: Node<'_>) -> (Span, u8) {
+    /// The range the walk spends inside `node`, and `node`'s depth among nodes with the same range.
+    fn span_and_depth(node: Node<'_>) -> (Span, u8) {
         let node = normalize(node);
         let span = match node {
-            // ESLint gets to the decorators from the node, to those before its range too.
+            // ESLint visits decorators as the node's children, even the ones before the node's range.
             Node::Class(class) => class.span(),
             Node::Param(param) => param.span(),
             _ => estree_span(node),
@@ -77,7 +76,7 @@ impl At {
 
 // ───────────────────────────── the queue ─────────────────────────────
 
-/// What a [`Queue`] hands out.
+/// An item popped from a [`Queue`].
 #[derive(Copy, Clone)]
 pub(crate) struct Event<'a> {
     pub(crate) at: At,
@@ -85,24 +84,24 @@ pub(crate) struct Event<'a> {
     pub(crate) node: Node<'a>,
 }
 
-/// The nodes that somebody wants to be called with, each at its time.
+/// Nodes waiting for a listener call, each with the point in the walk when it's due.
 #[derive(Default)]
 pub(crate) struct Queue<'a> {
     events: Vec<Event<'a>>,
-    /// How many of `events` are handed out.
+    /// Number of `events` already popped.
     popped: usize,
     is_sorted: bool,
 }
 
 impl<'a> Queue<'a> {
-    /// Of what is due at one moment the lower `rank` comes first, as the earlier of the rules that
-    /// upstream's `mergeRules` is given. Of one rank: what is pushed first.
+    /// Among events due at the same point, the lower `rank` comes first, like the earlier rule
+    /// passed to upstream's `mergeRules`. Within a rank, events keep their push order.
     pub(crate) fn push(&mut self, at: At, rank: u8, node: Node<'a>) {
         self.events.push(Event { at, rank, node });
         self.is_sorted = false;
     }
 
-    /// The next that is due at `at` or before. It sorts when it is called after a `push`.
+    /// Pops the next event due at or before `at`. Sorts first if there was a `push` since the last call.
     pub(crate) fn pop_until(&mut self, at: At) -> Option<Event<'a>> {
         if !self.is_sorted {
             let waiting = self.events.get_mut(self.popped..)?;
@@ -138,8 +137,8 @@ pub(crate) enum Children<'a> {
     Union(Vec<DeclaredPropType<'a>>),
 }
 
-/// What `buildReactDeclarationTypes` and `DeclarePropTypesForTSTypeAnnotation` make. The default is
-/// `{}`, which accepts everything.
+/// The result of `buildReactDeclarationTypes` and `DeclarePropTypesForTSTypeAnnotation`. The
+/// default is `{}`, which accepts everything.
 #[derive(Clone, Default)]
 pub(crate) struct DeclaredPropType<'a> {
     pub(crate) kind: Option<PropTypeKind>,
@@ -150,22 +149,23 @@ pub(crate) struct DeclaredPropType<'a> {
     pub(crate) is_required: Option<bool>,
 }
 
-/// `declaredPropTypes`, and the `children` of a shape: an object of JavaScript. It has its own
-/// properties only: `object[name]` also finds what `Object.prototype` has.
+/// `declaredPropTypes`, or a shape's `children`. Upstream uses a plain JavaScript object. This only
+/// has own properties, while `object[name]` also finds `Object.prototype`'s.
 #[derive(Clone, Default)]
 pub(crate) struct DeclaredPropTypes<'a> {
-    /// As they came.
+    /// In insertion order.
     entries: Vec<(Cow<'a, [u8]>, DeclaredPropType<'a>)>,
-    /// The index into `entries` by the name, once there are more than [`DeclaredPropTypes::FEW`].
+    /// Index into `entries` by name, once there are more than [`DeclaredPropTypes::FEW`].
     index: FxHashMap<Cow<'a, [u8]>, u32>,
-    /// What is assigned to `__proto__`: that makes no property. What is found through it is not.
+    /// The value assigned to `__proto__`, which doesn't create a property. Lookups through the
+    /// prototype aren't modeled.
     prototype: Option<Box<DeclaredPropType<'a>>>,
 }
 
 impl<'a> DeclaredPropTypes<'a> {
     const FEW: usize = 8;
 
-    /// The number that `name` is, if it is an array index of ECMAScript.
+    /// `name` as a number, if it's an ECMAScript array index.
     fn integer(name: &[u8]) -> Option<u32> {
         let is_canonical =
             name.iter().all(u8::is_ascii_digit) && (name.len() == 1 || !name.starts_with(b"0"));
@@ -194,7 +194,7 @@ impl<'a> DeclaredPropTypes<'a> {
         Some(&mut self.entries.get_mut(at)?.1)
     }
 
-    /// `object[name] = value`: a name that is there keeps its place.
+    /// `object[name] = value`. An existing name keeps its position.
     pub(crate) fn insert(&mut self, name: Cow<'a, [u8]>, value: DeclaredPropType<'a>) {
         if *name == *b"__proto__" {
             self.prototype = Some(Box::new(value));
@@ -215,7 +215,7 @@ impl<'a> DeclaredPropTypes<'a> {
         self.entries.push((name, value));
     }
 
-    /// In the order of `Object.keys`: the array indices, ascending, then the others as they came.
+    /// In `Object.keys` order: array indices ascending, then the rest in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &DeclaredPropType<'a>)> {
         let entries = &self.entries;
         let numbers = entries.iter().map(|(it, _)| DeclaredPropTypes::integer(it));
@@ -240,7 +240,7 @@ impl<'a> DeclaredPropTypes<'a> {
 #[derive(Clone)]
 pub(crate) struct UsedPropType<'a> {
     pub(crate) name: &'a [u8],
-    /// `typeof name !== "string"`: the key `1` of a pattern, which is not the `"1"` of `props[1]`.
+    /// `typeof name !== "string"`: a pattern's key `1`, as opposed to the `"1"` of `props[1]`.
     pub(crate) is_number: bool,
     pub(crate) all_names: SmallVec<[&'a [u8]; 2]>,
     /// The range of `node`.
@@ -250,7 +250,7 @@ pub(crate) struct UsedPropType<'a> {
 }
 
 impl<'a> UsedPropType<'a> {
-    /// What upstream's `usedPropTypesAreEquivalent` compares: `name` and `allNames.join("")`.
+    /// The key upstream's `usedPropTypesAreEquivalent` compares: `name` and `allNames.join("")`.
     fn equivalence(&self) -> (&'a [u8], bool, Cow<'a, [u8]>) {
         let all_names = match self.all_names.as_slice() {
             [only] => Cow::Borrowed(*only),
@@ -260,17 +260,17 @@ impl<'a> UsedPropType<'a> {
     }
 }
 
-/// Which used prop types a list has. The list is only added to.
+/// The set of used prop types in a list. The list is append-only.
 #[derive(Default)]
 struct Equivalents<'a> {
     known: FxHashSet<(&'a [u8], bool, Cow<'a, [u8]>)>,
-    /// How many of the list are in `known`.
+    /// Number of the list's items that are in `known`.
     counted: usize,
 }
 
 impl<'a> Equivalents<'a> {
-    /// upstream's `mergeUsedPropTypes`: `props_list` becomes what that returns. Two of the new ones
-    /// that are equivalent are both added.
+    /// Upstream's `mergeUsedPropTypes`. `props_list` becomes its return value. If two of the new
+    /// ones are equivalent, both are added.
     fn merge_used_prop_types(
         &mut self,
         props_list: &mut Vec<UsedPropType<'a>>,
@@ -283,8 +283,7 @@ impl<'a> Equivalents<'a> {
     }
 }
 
-/// `defaultProps` of a component: `"unresolved"`, or the node by the name, in the order of
-/// `Object.keys`.
+/// A component's `defaultProps`: `"unresolved"`, or each name's node in `Object.keys` order.
 #[derive(Clone)]
 pub(crate) enum DefaultProps<'a> {
     Unresolved,
@@ -293,7 +292,7 @@ pub(crate) enum DefaultProps<'a> {
 
 // ───────────────────────────── the list ─────────────────────────────
 
-/// Which component of a [`ComponentList`]: the how manyth that was added.
+/// Identifies a component in a [`ComponentList`] by its insertion index.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct ComponentId(u32);
 
@@ -305,7 +304,7 @@ pub(crate) struct Component<'a> {
     pub(crate) confidence: u8,
     pub(crate) declared_prop_types: Option<DeclaredPropTypes<'a>>,
     pub(crate) ignore_props_validation: bool,
-    /// To be pushed to, and never made shorter: see [`Component::merge_used_prop_types`].
+    /// Append-only. See [`Component::merge_used_prop_types`].
     pub(crate) used_prop_types: Option<Vec<UsedPropType<'a>>>,
     pub(crate) ignore_unused_prop_types_validation: bool,
     pub(crate) default_props: Option<DefaultProps<'a>>,
@@ -327,12 +326,12 @@ impl<'a> Component<'a> {
     }
 }
 
-/// upstream's `getId`: a node is known by its range.
+/// Upstream's `getId`. A node is identified by its range.
 fn get_id(node: Node<'_>) -> Span {
     estree_span(normalize(node))
 }
 
-/// Whether ESTree has a `Decorator` between `child` and its `parent`.
+/// True if ESTree has a `Decorator` between `child` and its `parent`.
 fn is_in_decorator<'a>(child: Node<'a>, parent: Node<'a>) -> bool {
     let modifiers = match parent {
         Node::Class(class) => class.modifiers(),
@@ -340,26 +339,26 @@ fn is_in_decorator<'a>(child: Node<'a>, parent: Node<'a>) -> bool {
         Node::Param(param) => param.modifiers(),
         _ => return false,
     };
-    // All else that is in these comes after the keywords and the decorators.
+    // Everything else in these nodes comes after the keywords and decorators.
     let last = modifiers.last();
     last.is_some_and(|last| estree_span(child).start < last.span().end)
 }
 
-/// upstream's `class Components`.
+/// Upstream's `class Components`.
 #[derive(Default)]
 pub(crate) struct ComponentList<'a> {
     /// `Object.values(Lists.get(this))`
     list: Vec<Component<'a>>,
     by_id: FxHashMap<Span, ComponentId>,
-    /// For `set`: the component around a node, until a node that it can have been asked about
-    /// becomes one or ceases to be one.
-    around: AncestorMemo<'a, ComponentId>,
-    /// Where the last of the nodes starts that `around` has been asked about.
-    asked_until: u32,
+    /// Cache for `set`: the component enclosing a node. It's reset when a node that could be on a
+    /// cached path becomes a component or stops being one.
+    enclosing_cache: AncestorMemo<'a, ComponentId>,
+    /// The highest start of any node looked up in `enclosing_cache`.
+    max_queried_start: u32,
 }
 
 impl<'a> ComponentList<'a> {
-    /// Adds a node to the list, or updates it if it is there. A confidence of 0 stays.
+    /// Adds a node to the list, or updates it if it's already there. A confidence of 0 is permanent.
     pub(crate) fn add(&mut self, node: Node<'a>, confidence: u8) -> ComponentId {
         let known = self.by_id.get(&get_id(node)).copied();
         let (id, before, after) = match known {
@@ -389,15 +388,17 @@ impl<'a> ComponentList<'a> {
                 (id, 0, confidence)
             }
         };
-        // What starts before `node` is not in it.
-        if (before >= 1) != (after >= 1) && At::place(node).0.start <= self.asked_until {
-            self.around = AncestorMemo::default();
-            self.asked_until = 0;
+        // A node that starts before `node` can't be inside it, so the cache stays valid for it.
+        if (before >= 1) != (after >= 1)
+            && At::span_and_depth(node).0.start <= self.max_queried_start
+        {
+            self.enclosing_cache = AncestorMemo::default();
+            self.max_queried_start = 0;
         }
         id
     }
 
-    /// `get` on the parts of a list, for while another part is borrowed.
+    /// `get` on the list's fields, for use while another field is borrowed.
     fn get_in(
         list: &[Component<'a>],
         by_id: &FxHashMap<Span, ComponentId>,
@@ -408,18 +409,19 @@ impl<'a> ComponentList<'a> {
         (item.confidence >= 1).then_some(id)
     }
 
-    /// The component that `node` is. `None` if it is not in the list, or banned.
+    /// The component for `node`. `None` if it isn't in the list or is banned.
     pub(crate) fn get(&self, node: Node<'a>) -> Option<ComponentId> {
         ComponentList::get_in(&self.list, &self.by_id, node)
     }
 
-    /// `set(node, {})`: the first of `node` and its ancestors that is a component now: upstream
-    /// assigns the properties to it. `None`: there is none, and upstream drops them.
+    /// `set(node, {})`. Returns the first of `node` and its ancestors that's currently a component,
+    /// which is where upstream assigns the properties. `None` if there's none, in which case
+    /// upstream drops them.
     pub(crate) fn set(&mut self, node: Node<'a>) -> Option<ComponentId> {
         let (list, by_id) = (&self.list, &self.by_id);
         let id = ComponentList::get_in(list, by_id, node).or_else(|| {
-            self.asked_until = self.asked_until.max(At::place(node).0.start);
-            self.around
+            self.max_queried_start = self.max_queried_start.max(At::span_and_depth(node).0.start);
+            self.enclosing_cache
                 .find_with(normalize(node), estree_parent, |_, parent| {
                     ComponentList::get_in(list, by_id, parent)
                 })
@@ -430,22 +432,23 @@ impl<'a> ComponentList<'a> {
         Some(id)
     }
 
-    /// The components that are certain, as they were added. As upstream, it gives each of them
-    /// what the uncertain ones in it use.
+    /// The components with full confidence, in insertion order. Like upstream, it also gives each
+    /// of them the props used by the uncertain components inside it.
     pub(crate) fn list(&mut self) -> Vec<ComponentId> {
         let mut used_prop_types: FxHashMap<ComponentId, (Vec<UsedPropType<'a>>, Equivalents<'a>)> =
             FxHashMap::default();
-        let mut around: AncestorMemo<'a, Option<ComponentId>> = AncestorMemo::default();
+        let mut enclosing_memo: AncestorMemo<'a, Option<ComponentId>> = AncestorMemo::default();
 
         // Find props used in components for which we are not confident
         for uncertain in self.list.iter().filter(|it| it.confidence < 2) {
-            let component = around.find_with(uncertain.node, estree_parent, |child, parent| {
-                // Stop moving up if we reach a decorator
-                if is_in_decorator(child, parent) {
-                    return Some(None);
-                }
-                self.get(parent).map(Some)
-            });
+            let component =
+                enclosing_memo.find_with(uncertain.node, estree_parent, |child, parent| {
+                    // Stop moving up if we reach a decorator
+                    if is_in_decorator(child, parent) {
+                        return Some(None);
+                    }
+                    self.get(parent).map(Some)
+                });
             let Some(Some(component)) = component else {
                 continue;
             };
@@ -469,7 +472,7 @@ impl<'a> ComponentList<'a> {
         list
     }
 
-    /// How many components are certain.
+    /// Number of components with full confidence.
     pub(crate) fn length(&self) -> usize {
         self.list.iter().filter(|it| it.confidence >= 2).count()
     }

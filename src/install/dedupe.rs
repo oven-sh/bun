@@ -10,7 +10,6 @@ use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
     Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
     PackageManager, ResolutionTag, dependency, invalid_package_id,
@@ -21,11 +20,12 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
-    /// Versions no edge may move onto; see `dedupe_lockfile`.
+    /// Versions that no dependency may move onto. See `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// `collapse_appended`: edges onto loaded packages (ids below) and root/workspace rows stay.
+    /// For `collapse_appended`: dependencies on loaded packages (ids below this) and the
+    /// dependencies of the root and workspaces don't move.
     frozen_below: Option<PackageID>,
-    /// Per group: each edge with the package that owns it.
+    /// For each group, every dependency with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
     edge_count: usize,
@@ -143,12 +143,13 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
-    // `collapse_appended`: a bundled edge neither votes nor holds its target.
+    // For `collapse_appended`: a bundled dependency doesn't vote and doesn't keep its target.
     fn counts(&self, dep: &Dependency) -> bool {
         self.frozen_below.is_none() || !dep.behavior.is_bundled()
     }
 
-    // Like `placement`, but a version that stays whatever else resolved (`required`) is first.
+    // Like `placement`, but prefers a version that stays no matter what else is resolved
+    // (`required`).
     fn anchored_placement(&self, e: usize) -> Option<usize> {
         let n = self.candidates.len();
         let row = e * n;
@@ -280,7 +281,8 @@ impl<'a> Pass<'a> {
                                 can_move |= c != cur_c;
                             }
                         }
-                        // No version in range: an unmet peer goes along (`existing_peer_target`).
+                        // No version is in range. An unmet peer follows the others (see
+                        // `installed_peer_target`).
                         if !self.movable.is_set(e) && dep.behavior.is_peer() {
                             self.movable.set(e);
                             can_move = true;
@@ -723,18 +725,30 @@ pub(crate) fn effective_version(
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = applied_override(lockfile, dep_id, dep)
-        .map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
-    if version.tag == DependencyVersionTag::Catalog {
-        version = lockfile
-            .catalogs
-            .get(lockfile, *version.catalog(), dep.name)?
-            .version;
-    }
-    Some(version)
+    version_under(lockfile, dep, applied_override(lockfile, dep_id, dep))
 }
 
-// `collapse_appended` skips bundled edges: sharing what ships in a tarball costs a download.
+/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::lookup_as_yarn`).
+pub(crate) fn effective_version_as_yarn(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<dependency::Version> {
+    let rule = (lockfile.overrides).lookup_as_yarn(lockfile, dep_id, dep.name_hash);
+    version_under(lockfile, dep, rule)
+}
+
+fn version_under(
+    lockfile: &Lockfile,
+    dep: &Dependency,
+    rule: Option<OverrideRule<'_>>,
+) -> Option<dependency::Version> {
+    // A rule's `catalog:` names the catalog entry of its key, as in the resolver.
+    lockfile.resolve_catalog_dependency(rule.map_or(dep, OverrideRule::dep))
+}
+
+// `collapse_appended` skips bundled dependencies, because sharing a package that ships in a tarball
+// would cost a download.
 fn reachable(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
@@ -752,7 +766,7 @@ fn reachable(
 
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
-    load_result: &LoadResult<'_>,
+    load_result: &LoadResult,
 ) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
 
@@ -795,8 +809,7 @@ pub fn dedupe_before_install(
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) =
         match manager
             .workspace_package_json_cache
@@ -1014,7 +1027,8 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
 }
 
-/// After resolution: the versions appended this session, onto the fewest that satisfy their edges.
+/// Runs after resolution. Collapses the versions that were appended in this session onto the fewest
+/// versions that satisfy their dependents.
 pub fn collapse_appended(manager: &mut PackageManager) {
     let lockfile = &mut *manager.lockfile;
     let frozen_below = lockfile.loaded_package_count;

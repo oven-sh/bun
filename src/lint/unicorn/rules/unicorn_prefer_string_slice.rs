@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prefer `String#slice()` over `String#substr()` and `String#substring()`.
 pub struct PreferStringSlice;
 
-const PREFER_STRING_SLICE: Message = Message::new("", "Prefer String#slice() over String#{{method_name}}()");
+const PREFER_STRING_SLICE: &Message = &Message::new("", "Prefer String#slice() over String#{{method_name}}()");
 
 impl Rule for PreferStringSlice {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-string-slice", Kind::Suggestion).fixable(Fixable::Code);
@@ -41,7 +41,7 @@ impl Rule for PreferStringSlice {
     }
 }
 
-/// No more than two integers that are not negative, in order.
+/// At most two non-negative integers, in ascending order.
 fn is_safe_substring_arguments<'a>(arguments: List<'a, Expr<'a>>) -> bool {
     let mut previous = 0.0;
     arguments.len() <= 2

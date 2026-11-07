@@ -1,8 +1,12 @@
+import { putBoringSSLErrorForTesting, takeBoringSSLErrorQueueForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
+import tls from "node:tls";
 import util from "node:util";
 import vm from "node:vm";
 
@@ -256,36 +260,7 @@ describe("createHash", () => {
     },
   };
 
-  const unsupported = [
-    "id-rsassa-pkcs1-v1_5-with-sha3-224",
-    "id-rsassa-pkcs1-v1_5-with-sha3-256",
-    "id-rsassa-pkcs1-v1_5-with-sha3-384",
-    "id-rsassa-pkcs1-v1_5-with-sha3-512",
-    "md5withrsaencryption",
-    "ripemd",
-    "ripemd160withrsa",
-    "rsa-md5",
-    "rsa-ripemd160",
-    "rsa-sha1-2",
-    "rsa-sha3-224",
-    "rsa-sha3-256",
-    "rsa-sha3-384",
-    "rsa-sha3-512",
-    "rsa-sha512/224",
-    "rsa-sha512/256",
-    "rsa-sm3",
-    "sha1withrsaencryption",
-    "sha224withrsaencryption",
-    "sha256withrsaencryption",
-    "sha384withrsaencryption",
-    "sha512withrsaencryption",
-    "sha512-224withrsaencryption",
-    "sha512-256withrsaencryption",
-    "sm3",
-    "sm3withrsaencryption",
-    "ssl3-md5",
-    "ssl3-sha1",
-  ];
+  const unsupported = ["rsa-sm3", "sm3", "sm3withrsaencryption"];
 
   for (const name_ in nodeValues) {
     const name = name_.toLowerCase();
@@ -548,7 +523,7 @@ describe("createHash", () => {
       }
       console.log(JSON.stringify(out));
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--no-deprecation", "-e", script], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
       stdout: Object.fromEntries(
@@ -701,6 +676,21 @@ describe("Decipheriv", () => {
   });
 });
 
+it.each([
+  ["Cipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
+  ["Decipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
+  ["Hmac", ["sha256", "key"], object => object.update("a").digest()],
+  ["Certificate", [], object => typeof object.verifySpkac],
+])("%s.call(this) initializes an instance of a function that inherits from it", (name, args, use) => {
+  const Base = crypto[name];
+  function Derived() {
+    Base.call(this, ...args);
+  }
+  util.inherits(Derived, Base);
+  expect(use(new Derived())).toEqual(use(new Base(...args)));
+  expect(Base.call({}, ...args)).toBeInstanceOf(Base);
+});
+
 describe("DiffieHellman", () => {
   it("should have correct method names", () => {
     const dh = crypto.createDiffieHellman(512);
@@ -795,11 +785,19 @@ describe("DiffieHellman", () => {
     expect(Object.getPrototypeOf(alice)).toBe(MyDH.prototype);
     expect(alice).toBeInstanceOf(crypto.DiffieHellman);
 
-    expect(alice.verifyError).toBe(bob.verifyError);
+    expect(alice.verifyError).toBe(crypto.createDiffieHellman(bob.getPrime(), bob.getGenerator()).verifyError);
     alice.generateKeys();
     bob.generateKeys();
     expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
     expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("getDiffieHellman does not check the built-in groups", () => {
+    expect(
+      ["modp5", "modp14", "modp15", "modp16", "modp17", "modp18"].map(
+        name => crypto.getDiffieHellman(name).verifyError,
+      ),
+    ).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });
 
@@ -896,6 +894,21 @@ describe("integer arguments whose JSValue is a double", () => {
   });
 });
 
+it("getCipherInfo() takes keyLength and ivLength as unsigned 32-bit integers", () => {
+  for (const option of ["keyLength", "ivLength"]) {
+    for (const length of [-1, 2 ** 32]) {
+      expect(() => crypto.getCipherInfo("aes-128-gcm", { [option]: length })).toThrow(
+        expect.objectContaining({
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "options.${option}" is out of range. It must be >= 0 && <= 4294967295. Received ${length}`,
+        }),
+      );
+    }
+  }
+  expect(crypto.getCipherInfo("aes-128-gcm", { ivLength: 2 ** 32 - 1 }).ivLength).toBe(2 ** 32 - 1);
+  expect(crypto.getCipherInfo("aes-128-gcm", { keyLength: 2 ** 32 - 1 })).toBeUndefined();
+});
+
 describe("ECDH", () => {
   it("should have correct method names", () => {
     const ecdh = crypto.createECDH("prime256v1");
@@ -977,12 +990,14 @@ it("Cipheriv.update throws expected error for invalid data", () => {
   );
 });
 
-it("verifyOneShot should not accept strings for signatures", () => {
+it("verifyOneShot takes a string for the signature, like Node", () => {
   const data = Buffer.alloc(1);
+  const { publicKey } = crypto.generateKeyPairSync("ed25519");
+  expect(crypto.verify(null, data, publicKey, "oops")).toBe(false);
   expect(() => {
-    crypto.verify(null, data, "test", "oops");
+    crypto.verify(null, data, publicKey, 5);
   }).toThrow(
-    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+    'The "signature" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)',
   );
 });
 
@@ -1107,11 +1122,7 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+  expect(dhg.verifyError).toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);
@@ -1162,6 +1173,103 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
     stdout: cases.map(([fn, algorithm]) => `${fn} ${algorithm}: ERR_CRYPTO_INVALID_STATE\n`).join(""),
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// The child never writes to the 2 GiB buffer, so its pages are never committed.
+it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
+  const script = `
+    import crypto from "node:crypto";
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log("SKIP");
+      process.exit(0);
+    }
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const results = {};
+    const record = (label, fn) => {
+      try {
+        fn();
+        results[label] = "returned";
+      } catch (e) {
+        results[label] = e.code + ": " + e.message;
+      }
+    };
+    record("createSecretKey", () => crypto.createSecretKey(big));
+    record("createSecretKey ArrayBuffer", () => crypto.createSecretKey(big.buffer));
+    record("createHmac", () => crypto.createHmac("sha256", big));
+    record("createCipheriv", () => crypto.createCipheriv("aes-128-gcm", big, Buffer.alloc(12)));
+    record("hkdfSync ikm", () => crypto.hkdfSync("sha256", big, "salt", "info", 16));
+    record("hkdfSync ikm ArrayBuffer", () => crypto.hkdfSync("sha256", big.buffer, "salt", "info", 16));
+    record("hkdfSync salt", () => crypto.hkdfSync("sha256", "key", big, "info", 16));
+    record("hkdfSync info", () => crypto.hkdfSync("sha256", "key", "salt", big, 16));
+    record("sign data", () => crypto.sign("sha256", big, privateKey));
+    record("verify signature", () => crypto.verify("sha256", Buffer.from("x"), publicKey, big));
+    record("publicEncrypt oaepLabel", () =>
+      crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepLabel: big }, Buffer.alloc(16)),
+    );
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  if (stdout.trim() !== "SKIP") {
+    expect(JSON.parse(stdout)).toEqual({
+      "createSecretKey": "ERR_OUT_OF_RANGE: key is too big",
+      "createSecretKey ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "createHmac": "ERR_OUT_OF_RANGE: key is too big",
+      "createCipheriv": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
+      "hkdfSync info": "ERR_OUT_OF_RANGE: info is too big",
+      "sign data": "ERR_OUT_OF_RANGE: data is too big",
+      "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
+      "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+    });
+  }
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("generatePrime({ safe: true }) refuses the sizes without a reachable safe prime", async () => {
+  // The search did not end for 4 and 5 bits, so this runs in a process the test can give up on.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { generatePrime, generatePrimeSync } = require("node:crypto");
+      const options = { safe: true, bigint: true };
+      const sizes = [2, 3, 4, 5, 6];
+      const sync = sizes.map(size => {
+        try {
+          return Number(generatePrimeSync(size, options));
+        } catch (e) {
+          return e.code;
+        }
+      });
+      Promise.all(
+        sizes.map(
+          size =>
+            new Promise(resolve => generatePrime(size, options, (err, prime) => resolve(err ? err.code : Number(prime)))),
+        ),
+      ).then(async => console.log(JSON.stringify({ sync, async })));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const refused = "ERR_OSSL_BN_BITS_TOO_SMALL";
+  const expected = [refused, 7, refused, refused, 59];
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ sync: expected, async: expected }),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
   });
 });
 
@@ -1259,8 +1367,13 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
       expect(pub2.export({ format: "raw-public" })).toEqual(rawPub);
       expect(priv2.export({ format: "raw-private" })).toEqual(rawPriv);
 
-      // A private key's raw-public export should match the public key's.
-      expect(privateKey.export({ format: "raw-public" })).toEqual(rawPub);
+      // Like Node, a private key has no raw-public format.
+      expect(() => privateKey.export({ format: "raw-public" })).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The property 'options.format' is invalid. Received 'raw-public'",
+        }),
+      );
     });
 
     if (keyType === "ec") {
@@ -1295,11 +1408,14 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
 
   it("raw key formats reject unsupported combinations", () => {
     const { publicKey: rsaPub, privateKey: rsaPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-    for (const fmt of ["raw-public", "raw-private", "raw-seed"]) {
+    for (const fmt of ["raw-private", "raw-seed"]) {
       expect(() => rsaPriv.export({ format: fmt })).toThrow(
         expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
       );
     }
+    expect(() => rsaPriv.export({ format: "raw-public" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
     expect(() => rsaPub.export({ format: "raw-public" })).toThrow(
       expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
     );
@@ -1316,9 +1432,6 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     expect(() =>
       crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "rsa" }),
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
-    expect(() =>
-      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "banana" }),
-    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
     expect(() =>
       crypto.createPublicKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ec" }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
@@ -1361,6 +1474,43 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
         privateKeyEncoding: { format: "raw-private", passphrase: "secret" },
       }),
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
+  });
+
+  it.each(["Ed25519", "ED25519", "X25519", "EC", "ML-DSA-44", "Ml-Dsa-65", "ML-KEM-768", "banana"])(
+    "asymmetricKeyType %j is not how a key type is spelled",
+    asymmetricKeyType => {
+      const invalid = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `Invalid asymmetricKeyType: ${asymmetricKeyType}`,
+      });
+      const key = Buffer.alloc(32);
+      expect(() => crypto.createPublicKey({ key, format: "raw-public", asymmetricKeyType })).toThrow(invalid);
+      expect(() => crypto.createPrivateKey({ key, format: "raw-private", asymmetricKeyType })).toThrow(invalid);
+      expect(() => crypto.createPrivateKey({ key, format: "raw-seed", asymmetricKeyType })).toThrow(invalid);
+    },
+  );
+
+  it.each([
+    ["an array", name => [name]],
+    ["an object with toString()", name => ({ toString: () => name })],
+    ["a String object", name => new String(name)],
+    ["a symbol", name => Symbol(name)],
+  ])("%s is not a format to import, nor a type of raw-public to export", (_, wrap) => {
+    const typeError = (code, message) =>
+      expect.objectContaining({ name: "TypeError", code, message: expect.stringContaining(message) });
+    const ed = crypto.generateKeyPairSync("ed25519").publicKey;
+    expect(() => crypto.createPublicKey({ key: ed.export({ format: "jwk" }), format: wrap("jwk") })).toThrow(
+      typeError("ERR_INVALID_ARG_TYPE", 'The "key.key" property must be of type string or an instance of'),
+    );
+    const raw = { key: ed.export({ format: "raw-public" }), asymmetricKeyType: "ed25519" };
+    expect(() => crypto.createPublicKey({ ...raw, format: wrap("raw-public") })).toThrow(
+      typeError("ERR_INVALID_ARG_VALUE", "format' is invalid. Received "),
+    );
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).publicKey;
+    expect(() => ec.export({ format: "raw-public", type: wrap("compressed") })).toThrow(
+      typeError("ERR_INVALID_ARG_VALUE", "'options.type' must be one of: 'compressed', 'uncompressed'. Received "),
+    );
   });
 
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {
@@ -1426,5 +1576,674 @@ describe("Certificate spkac argument validation", () => {
   it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
     expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
     expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
+  });
+
+  it("an empty spkac gives an empty string, from verifySpkac too", () => {
+    expect([
+      crypto.Certificate.verifySpkac(Buffer.alloc(0)),
+      crypto.Certificate.verifySpkac(""),
+      crypto.Certificate.exportPublicKey(""),
+      crypto.Certificate.exportChallenge(""),
+    ]).toEqual(["", "", "", ""]);
+  });
+
+  it("Certificate.exportPublicKey and exportChallenge return Buffers", () => {
+    const spkac = readFileSync(join(import.meta.dir, "..", "test", "fixtures", "keys", "rsa_spkac.spkac"));
+    const publicKey = crypto.Certificate.exportPublicKey(spkac);
+    expect(publicKey).toBeInstanceOf(Buffer);
+    expect(crypto.createPublicKey(publicKey).asymmetricKeyType).toBe("rsa");
+    expect(crypto.Certificate.exportChallenge(spkac)).toEqual(Buffer.from("this-is-a-challenge"));
+  });
+
+  it.concurrent("Certificate.exportChallenge frees the challenge", async () => {
+    // 12.5 MiB of challenges go through the measured part.
+    await expectRssDeltaBelow(
+      [
+        "-e",
+        `
+        const crypto = require("node:crypto");
+        const der = (tag, ...parts) => {
+          const body = Buffer.concat(parts);
+          const length =
+            body.length < 128 ? [body.length] : [0x83, body.length >> 16, (body.length >> 8) & 255, body.length & 255];
+          return Buffer.concat([Buffer.from([tag, ...length]), body]);
+        };
+        const spki = crypto
+          .generateKeyPairSync("ec", { namedCurve: "P-256" })
+          .publicKey.export({ type: "spki", format: "der" });
+        const ecdsaWithSha256 = Buffer.from("06082a8648ce3d040302", "hex");
+        const spkac = der(
+          0x30,
+          der(0x30, spki, der(0x16, Buffer.alloc(256 * 1024, "a"))),
+          der(0x30, ecdsaWithSha256),
+          der(0x03, Buffer.alloc(9)),
+        ).toString("base64");
+        const run = count => {
+          for (let i = 0; i < count; i++) {
+            if (crypto.Certificate.exportChallenge(spkac).length !== 256 * 1024) throw new Error("not parsed");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+        };
+        run(10);
+        const before = process.memoryUsage.rss();
+        run(50);
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      `,
+      ],
+      { release: 6, debug: 8 },
+    );
+  });
+});
+
+describe("the BoringSSL error queue", () => {
+  const [key, iv] = [Buffer.alloc(16, 1), Buffer.alloc(16, 2)];
+  const rsaPublicKey = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
+  const rsa = { name: "RSA-OAEP", hash: "SHA-256" };
+  // BoringSSL refuses a BIGNUM of more than BN_MAX_WORDS (INT_MAX / 256) words, 8 bytes short of 64 MiB.
+  const tooLongForBignum = Buffer.alloc(64 * 1024 * 1024 + 64, 0xff);
+  const modp5 = () => crypto.createDiffieHellman(crypto.getDiffieHellman("modp5").getPrime());
+
+  it.each([
+    [
+      "scryptSync with invalid parameters",
+      () => crypto.scryptSync("password", "salt", 1, { N: 3 }),
+      { code: "ERR_CRYPTO_INVALID_SCRYPT_PARAMS" },
+    ],
+    [
+      "scrypt with invalid parameters",
+      () => util.promisify(crypto.scrypt)("password", "salt", 1, { N: 3 }),
+      { code: "ERR_CRYPTO_INVALID_SCRYPT_PARAMS" },
+    ],
+    [
+      "tls.createSecureContext with a bad cert",
+      () => tls.createSecureContext({ cert: "garbage" }),
+      { code: "ERR_OSSL_PEM_NO_START_LINE" },
+    ],
+    [
+      "tls.createSecureContext with a bad crl",
+      () => tls.createSecureContext({ crl: "garbage" }),
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "createECDH with a curve BoringSSL lacks",
+      () => crypto.createECDH("secp256k1"),
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "ecdh.getPublicKey in a format BoringSSL lacks",
+      () => {
+        const ecdh = crypto.createECDH("prime256v1");
+        ecdh.generateKeys();
+        ecdh.getPublicKey(null, "hybrid");
+      },
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "ecdh.setPrivateKey with an oversized key",
+      () => crypto.createECDH("prime256v1").setPrivateKey(tooLongForBignum),
+      { code: "ERR_CRYPTO_OPERATION_FAILED" },
+    ],
+    [
+      "dh.computeSecret with an oversized key",
+      () => modp5().computeSecret(tooLongForBignum),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    ],
+    [
+      "dh.setPublicKey with an oversized key",
+      () => modp5().setPublicKey(tooLongForBignum),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    ],
+    [
+      "dh.setPrivateKey with an oversized key",
+      () => modp5().setPrivateKey(tooLongForBignum),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    ],
+    [
+      "generateKeyPair with an oversized prime",
+      () => util.promisify(crypto.generateKeyPair)("dh", { prime: tooLongForBignum }),
+      { code: "ERR_OUT_OF_RANGE" },
+    ],
+    [
+      "getCipherInfo with an impossible key length",
+      () => crypto.getCipherInfo("aes-128-gcm", { keyLength: 5 }),
+      { returns: undefined },
+    ],
+    [
+      "subtle.importKey of a malformed spki",
+      () => crypto.subtle.importKey("spki", Buffer.alloc(16), rsa, true, ["encrypt"]),
+      { name: "DataError" },
+    ],
+    [
+      "subtle.unwrapKey of a malformed spki",
+      async () => {
+        const aes = await crypto.subtle.importKey("raw", key, "AES-CBC", false, ["encrypt", "unwrapKey"]);
+        const wrapped = await crypto.subtle.encrypt({ name: "AES-CBC", iv }, aes, Buffer.alloc(16));
+        return crypto.subtle.unwrapKey("spki", wrapped, aes, { name: "AES-CBC", iv }, rsa, true, ["encrypt"]);
+      },
+      { name: "DataError" },
+    ],
+    [
+      "subtle.generateKey of a tiny RSA key",
+      () =>
+        crypto.subtle.generateKey({ ...rsa, modulusLength: 8, publicExponent: new Uint8Array([1, 0, 1]) }, true, [
+          "encrypt",
+        ]),
+      { name: "OperationError" },
+    ],
+  ])("is empty after %s", async (_, fail, expected) => {
+    takeBoringSSLErrorQueueForTesting();
+    if ("returns" in expected) expect(fail()).toBe(expected.returns);
+    else await expect((async () => fail())()).rejects.toMatchObject(expected);
+    expect(takeBoringSSLErrorQueueForTesting()).toEqual([]);
+  });
+
+  const outcome = async fail => {
+    try {
+      return await fail();
+    } catch (e) {
+      return { code: e.code, message: e.message, opensslErrorStack: e.opensslErrorStack };
+    }
+  };
+  const tinyRsaKeyPair = () => util.promisify(crypto.generateKeyPair)("rsa", { modulusLength: 64 });
+
+  it.each([
+    [
+      "decipher.final",
+      () => {
+        const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
+        decipher.update(Buffer.alloc(32, 3));
+        decipher.final();
+      },
+    ],
+    ["createHash", () => crypto.createHash("no-such-digest")],
+    ["createDiffieHellman", () => crypto.createDiffieHellman(1)],
+    ["generateKeyPairSync", () => crypto.generateKeyPairSync("rsa", { modulusLength: 64 })],
+    ["generateKeyPair", tinyRsaKeyPair],
+    ["publicEncrypt", () => crypto.publicEncrypt(rsaPublicKey, Buffer.alloc(4096))],
+    ["an HMAC Bun.CryptoHasher", () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex")],
+    ["an HMAC Bun.CryptoHasher of an unsupported algorithm", () => new Bun.CryptoHasher("shake128", "key")],
+  ])("does not lend %s an earlier failure", async (_, fail) => {
+    takeBoringSSLErrorQueueForTesting();
+    const expected = await outcome(fail);
+    putBoringSSLErrorForTesting();
+    expect(await outcome(fail)).toEqual(expected);
+  });
+
+  it("does not lend a job's callback a failure from while the job ran", async () => {
+    takeBoringSSLErrorQueueForTesting();
+    const expected = await outcome(tinyRsaKeyPair);
+    expect(
+      await outcome(() => {
+        const pending = tinyRsaKeyPair();
+        putBoringSSLErrorForTesting();
+        return pending;
+      }),
+    ).toEqual(expected);
+  });
+
+  it("does not lend a job an earlier failure on its work pool thread", async () => {
+    const codes = async () =>
+      new Set(
+        await Promise.all(
+          Array.from({ length: 32 }, () =>
+            tinyRsaKeyPair().then(
+              () => "generated",
+              e => e.code,
+            ),
+          ),
+        ),
+      );
+    const expected = await codes();
+    expect(expected.size).toBe(1);
+    const aes = await crypto.subtle.importKey("raw", key, "AES-CBC", false, ["decrypt"]);
+    const decrypted = await Promise.allSettled(
+      Array.from({ length: 128 }, () => crypto.subtle.decrypt({ name: "AES-CBC", iv }, aes, Buffer.alloc(32, 3))),
+    );
+    expect(new Set(decrypted.map(result => result.status))).toEqual(new Set(["rejected"]));
+    expect(await codes()).toEqual(expected);
+  });
+
+  it("is reported as opensslErrorStack, newest first", () => {
+    const pem = readFileSync(join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"), "ascii");
+    expect(() => crypto.createPrivateKey({ key: pem, passphrase: "wrong" })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OSSL_BAD_DECRYPT",
+        opensslErrorStack: [
+          "error:09000065:PEM routines:OPENSSL_internal:BAD_DECRYPT",
+          "error:1e000065:Cipher functions:OPENSSL_internal:BAD_DECRYPT",
+        ],
+      }),
+    );
+  });
+
+  it("gives its oldest entry's code to an error that has none of its own", async () => {
+    const garbage = { key: Buffer.alloc(10, 0xab), format: "der", type: "spki" };
+    expect(await outcome(() => crypto.createPublicKey(garbage))).toEqual({
+      code: "ERR_OSSL_EVP_DECODE_ERROR",
+      message: "Failed to read asymmetric key",
+      opensslErrorStack: ["error:06000066:public key routines:OPENSSL_internal:DECODE_ERROR"],
+    });
+  });
+
+  it("is not reported by tls.setDefaultCACertificates", async () => {
+    const malformed = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
+    expect(await outcome(() => tls.setDefaultCACertificates([malformed]))).toEqual({
+      code: "ERR_OSSL_PEM_ASN.1_ENCODING_ROUTINES",
+      message: "error:0900000c:PEM routines:OPENSSL_internal:ASN.1 encoding routines",
+      opensslErrorStack: undefined,
+    });
+  });
+});
+
+describe.each([
+  ["an ArrayBuffer", bytes => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)],
+  [
+    "a SharedArrayBuffer",
+    bytes => {
+      const shared = new SharedArrayBuffer(bytes.length);
+      new Uint8Array(shared).set(bytes);
+      return shared;
+    },
+  ],
+])("%s is taken", (_, wrap) => {
+  it("by DiffieHellman", () => {
+    const peer = crypto.createDiffieHellman(64);
+    peer.generateKeys();
+    const dh = crypto.createDiffieHellman(wrap(peer.getPrime()), wrap(peer.getGenerator()));
+    expect([dh.getPrime(), dh.getGenerator()]).toEqual([peer.getPrime(), peer.getGenerator()]);
+    dh.generateKeys();
+    expect(dh.computeSecret(wrap(peer.getPublicKey()))).toEqual(peer.computeSecret(dh.getPublicKey()));
+    dh.setPublicKey(wrap(peer.getPublicKey()));
+    dh.setPrivateKey(wrap(peer.getPrivateKey()));
+    expect([dh.getPublicKey(), dh.getPrivateKey()]).toEqual([peer.getPublicKey(), peer.getPrivateKey()]);
+  });
+
+  it("by ECDH", () => {
+    const peer = crypto.createECDH("prime256v1");
+    peer.generateKeys();
+    const ecdh = crypto.createECDH("prime256v1");
+    ecdh.generateKeys();
+    expect(ecdh.computeSecret(wrap(peer.getPublicKey()))).toEqual(peer.computeSecret(ecdh.getPublicKey()));
+    ecdh.setPrivateKey(wrap(peer.getPrivateKey()));
+    expect(ecdh.getPublicKey()).toEqual(peer.getPublicKey());
+    expect(crypto.ECDH.convertKey(wrap(peer.getPublicKey()), "prime256v1", undefined, undefined, "compressed")).toEqual(
+      peer.getPublicKey(null, "compressed"),
+    );
+  });
+
+  it("by generatePrime and checkPrime", () => {
+    const prime = crypto.generatePrimeSync(32, {
+      add: wrap(Buffer.from([8])),
+      rem: wrap(Buffer.from([3])),
+      bigint: true,
+    });
+    expect(prime % 8n).toBe(3n);
+    expect(crypto.checkPrimeSync(wrap(Buffer.from([7])))).toBe(true);
+  });
+
+  it("by a cipher, except for update()", () => {
+    const [key, iv, aad, data] = [Buffer.alloc(16, 1), Buffer.alloc(12, 2), Buffer.alloc(4, 3), Buffer.alloc(8, 4)];
+    const expected = crypto.createCipheriv("aes-128-gcm", key, iv).setAAD(aad);
+    const cipher = crypto.createCipheriv("aes-128-gcm", wrap(key), wrap(iv)).setAAD(wrap(aad));
+    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
+    expect(encrypted).toEqual(Buffer.concat([expected.update(data), expected.final()]));
+    expect(cipher.getAuthTag()).toEqual(expected.getAuthTag());
+    const decipher = crypto.createDecipheriv("aes-128-gcm", key, iv).setAAD(aad).setAuthTag(wrap(cipher.getAuthTag()));
+    expect(Buffer.concat([decipher.update(encrypted), decipher.final()])).toEqual(data);
+
+    expect(() => crypto.createCipheriv("aes-128-gcm", key, iv).update(wrap(data))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining(
+          'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.',
+        ),
+      }),
+    );
+  });
+
+  it("as a signature and as a passphrase", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    const data = Buffer.from("data");
+    expect(crypto.verify(null, data, publicKey, wrap(crypto.sign(null, data, privateKey)))).toBe(true);
+
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const signature = crypto.sign("sha256", data, ec.privateKey);
+    expect(crypto.createVerify("sha256").update(data).verify(ec.publicKey, wrap(signature))).toBe(true);
+
+    const passphrase = wrap(Buffer.from("secret"));
+    const pem = privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase });
+    expect(crypto.createPrivateKey({ key: pem, passphrase }).equals(privateKey)).toBe(true);
+    expect(crypto.createPrivateKey({ key: pem, passphrase: "secret" }).equals(privateKey)).toBe(true);
+  });
+});
+
+describe("encodings of DiffieHellman and ECDH", () => {
+  const dh = crypto.createDiffieHellman(64);
+  dh.generateKeys();
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+
+  it.each([
+    ["dh.generateKeys", () => dh.generateKeys("nope")],
+    ["dh.getPrime", () => dh.getPrime("nope")],
+    ["dh.getGenerator", () => dh.getGenerator("nope")],
+    ["dh.getPublicKey", () => dh.getPublicKey("nope")],
+    ["dh.getPrivateKey", () => dh.getPrivateKey("nope")],
+    ["dh.computeSecret", () => dh.computeSecret(dh.getPublicKey(), null, "nope")],
+    ["ecdh.generateKeys", () => ecdh.generateKeys("nope")],
+    ["ecdh.getPublicKey", () => ecdh.getPublicKey("nope")],
+    ["ecdh.getPrivateKey", () => ecdh.getPrivateKey("nope")],
+    ["ecdh.computeSecret", () => ecdh.computeSecret(ecdh.getPublicKey(), null, "nope")],
+    ["ECDH.convertKey", () => crypto.ECDH.convertKey(ecdh.getPublicKey(), "prime256v1", undefined, "nope")],
+  ])("%s refuses an output encoding it does not know", (_, call) => {
+    expect(call).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", message: "Unknown encoding: nope" }));
+  });
+
+  it("anything falsy, and 'buffer', ask for a Buffer", () => {
+    for (const encoding of [undefined, null, "", 0, false, "buffer"]) {
+      expect(dh.getGenerator(encoding)).toEqual(Buffer.from([2]));
+    }
+    expect(dh.getGenerator("HEX")).toBe("02");
+    expect(() => dh.getGenerator(5)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+  });
+
+  it("a hex string of odd length loses its last digit, like Buffer.from()", () => {
+    const other = crypto.createDiffieHellman(dh.getPrime());
+    other.setPublicKey("abc", "hex");
+    other.setPrivateKey("123", "hex");
+    expect([other.getPublicKey("hex"), other.getPrivateKey("hex")]).toEqual(["ab", "12"]);
+    expect(dh.computeSecret("abc", "hex")).toEqual(dh.computeSecret("ab", "hex"));
+
+    // update() checks it first.
+    expect(() => crypto.createCipheriv("aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)).update("abc", "hex")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+});
+
+it("dh.computeSecret() says whether the other key is too small or too large", () => {
+  const dh = crypto.createDiffieHellman(64);
+  dh.generateKeys();
+  const p = BigInt("0x" + dh.getPrime("hex"));
+  const outcome = n => {
+    try {
+      return dh.computeSecret(n.toString(16).padStart(16, "0"), "hex").length;
+    } catch (e) {
+      return `${e.name} ${e.code}: ${e.message}`;
+    }
+  };
+  const tooSmall = "RangeError ERR_CRYPTO_INVALID_KEYLEN: Supplied key is too small";
+  const tooLarge = "RangeError ERR_CRYPTO_INVALID_KEYLEN: Supplied key is too large";
+  expect([0n, 1n, 2n, p - 2n, p - 1n, p].map(outcome)).toEqual([tooSmall, tooSmall, 8, 8, tooLarge, tooLarge]);
+});
+
+it.each(["7", ""])("checkPrime(%j) does not take a string", candidate => {
+  const error = expect.objectContaining({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: expect.stringContaining(
+      'The "candidate" argument must be of type bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView.',
+    ),
+  });
+  expect(() => crypto.checkPrimeSync(candidate)).toThrow(error);
+  expect(() => crypto.checkPrime(candidate, () => {})).toThrow(error);
+});
+
+describe("Sign and Verify", () => {
+  const data = Buffer.from("data");
+  const rsa = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const ed = crypto.generateKeyPairSync("ed25519");
+  const rsaSignature = crypto.sign("sha256", data, rsa.privateKey);
+  const verifier = () => crypto.createVerify("sha256").update(data);
+
+  it("can be used once", () => {
+    const notInitialised = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE", message: "Not initialised" });
+    const sign = crypto.createSign("sha256").update(data);
+    sign.sign(rsa.privateKey);
+    expect(() => sign.sign(rsa.privateKey)).toThrow(notInitialised);
+    expect(() => sign.update(data)).toThrow(notInitialised);
+    const verify = verifier();
+    expect(verify.verify(rsa.publicKey, rsaSignature)).toBe(true);
+    expect(() => verify.verify(rsa.publicKey, rsaSignature)).toThrow(notInitialised);
+    expect(() => verify.update(data)).toThrow(notInitialised);
+  });
+
+  it("do not take a key that signs the message itself", () => {
+    const unsupported = expect.objectContaining({
+      code: "ERR_CRYPTO_UNSUPPORTED_OPERATION",
+      message: "Unsupported crypto operation",
+    });
+    expect(() => crypto.createSign("sha256").update(data).sign(ed.privateKey)).toThrow(unsupported);
+    expect(() => verifier().verify(ed.publicKey, Buffer.alloc(64))).toThrow(unsupported);
+  });
+
+  it("report what is wrong in Node's order", () => {
+    const invalidValue = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+    const unsupported = expect.objectContaining({ code: "ERR_CRYPTO_UNSUPPORTED_OPERATION" });
+    // The options come before the kind of key.
+    for (const options of [{ padding: "x" }, { saltLength: "x" }, { dsaEncoding: "x" }]) {
+      expect(() => verifier().verify({ key: ed.publicKey, ...options }, Buffer.alloc(64))).toThrow(invalidValue);
+      expect(() =>
+        crypto
+          .createSign("sha256")
+          .update(data)
+          .sign({ key: ed.privateKey, ...options }),
+      ).toThrow(invalidValue);
+    }
+    // The kind of key comes before whether the object was used.
+    const sign = crypto.createSign("sha256").update(data);
+    sign.sign(rsa.privateKey);
+    expect(() => sign.sign(ed.privateKey)).toThrow(unsupported);
+    const verify = verifier();
+    verify.verify(rsa.publicKey, rsaSignature);
+    expect(() => verify.verify(ed.publicKey, Buffer.alloc(64))).toThrow(unsupported);
+  });
+
+  it("sign() refuses an output encoding it does not know", () => {
+    expect(() => crypto.createSign("sha256").update(data).sign(rsa.privateKey, "nope")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", message: "Unknown encoding: nope" }),
+    );
+    expect(crypto.createSign("sha256").update(data).sign(rsa.privateKey, "hex")).toBe(rsaSignature.toString("hex"));
+  });
+
+  it("sign() reports why BoringSSL did not sign", () => {
+    const options = { key: rsa.privateKey, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 9999 };
+    expect(() => crypto.createSign("sha256").update(data).sign(options)).toThrow(
+      expect.objectContaining({ name: "Error", code: "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE" }),
+    );
+  });
+
+  it.each([
+    ["an unknown padding", { padding: 99 }],
+    ["no padding", { padding: crypto.constants.RSA_NO_PADDING }],
+    ["a negative salt length", { padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: -5 }],
+  ])("verify() is false with %s", (_, options) => {
+    expect(verifier().verify({ key: rsa.publicKey, ...options }, rsaSignature)).toBe(false);
+  });
+
+  it.each(["md5", "ripemd160", "sha512-256", "sha3-256", "blake2b512"])(
+    "throw for an EC key with %s, which BoringSSL has no ECDSA for",
+    digest => {
+      const invalidDigest = expect.objectContaining({ name: "Error", code: "ERR_OSSL_EVP_INVALID_DIGEST_TYPE" });
+      expect(() => crypto.createSign(digest).update(data).sign(ec.privateKey)).toThrow(invalidDigest);
+      expect(() => crypto.createVerify(digest).update(data).verify(ec.publicKey, Buffer.alloc(64))).toThrow(
+        invalidDigest,
+      );
+    },
+  );
+
+  it("sign() returns a Buffer on an ArrayBuffer of its own length", () => {
+    // The DER of a P-521 signature is always shorter than the most that BoringSSL allows for.
+    const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-521" });
+    const signature = crypto.createSign("sha256").update(data).sign(privateKey);
+    expect(signature.buffer.byteLength).toBe(signature.length);
+  });
+
+  it("verify() throws for an ieee-p1363 signature of the wrong length", () => {
+    const key = { key: ec.publicKey, dsaEncoding: "ieee-p1363" };
+    const signature = crypto.sign("sha256", data, { key: ec.privateKey, dsaEncoding: "ieee-p1363" });
+    expect(verifier().verify(key, signature)).toBe(true);
+    for (const malformed of [signature.subarray(1), Buffer.alloc(0), Buffer.concat([signature, Buffer.alloc(1)])]) {
+      expect(() => verifier().verify(key, malformed)).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Malformed signature" }),
+      );
+    }
+  });
+
+  it("read dsaEncoding from any object", () => {
+    class Options {
+      dsaEncoding = "ieee-p1363";
+      constructor(key) {
+        this.key = key;
+      }
+    }
+    for (const wrap of [key => new Proxy({ key, dsaEncoding: "ieee-p1363" }, {}), key => new Options(key)]) {
+      const signature = crypto.sign("sha256", data, wrap(ec.privateKey));
+      expect(signature).toHaveLength(64);
+      expect(crypto.createSign("sha256").update(data).sign(wrap(ec.privateKey))).toHaveLength(64);
+      expect(crypto.verify("sha256", data, wrap(ec.publicKey), signature)).toBe(true);
+      expect(verifier().verify(wrap(ec.publicKey), signature)).toBe(true);
+    }
+  });
+});
+
+describe("an input encoding", () => {
+  const cipher = () => crypto.createCipheriv("aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16));
+
+  it.each(["nope", 5, "buffer", "", undefined])("of %j is UTF-8 in cipher.update()", encoding => {
+    expect(cipher().update("h\u00e9", encoding)).toEqual(cipher().update(Buffer.from("h\u00e9")));
+  });
+
+  it.each([5, {}, true])("of %j, which is not a string, is UTF-8 where Buffer.from() reads the string", encoding => {
+    const dh = crypto.getDiffieHellman("modp14");
+    dh.generateKeys();
+    expect(dh.computeSecret("abcd", encoding)).toEqual(dh.computeSecret(Buffer.from("abcd")));
+    const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    expect(crypto.createVerify("sha256").update("x").verify(publicKey, "signature", encoding)).toBe(false);
+  });
+
+  it.each(["BUFFER", "Buffer", "nope"])("of %j is not known where Buffer.from() reads the string", encoding => {
+    const unknown = expect.objectContaining({ name: "TypeError", code: "ERR_UNKNOWN_ENCODING" });
+    const dh = crypto.getDiffieHellman("modp14");
+    dh.generateKeys();
+    expect(() => dh.computeSecret("abcd", encoding)).toThrow(unknown);
+    expect(() => crypto.createECDH("prime256v1").setPrivateKey("abcd", encoding)).toThrow(unknown);
+    const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    expect(() => crypto.createVerify("sha256").update("x").verify(publicKey, "signature", encoding)).toThrow(unknown);
+    const iv = Buffer.alloc(12);
+    expect(() => crypto.createCipheriv("aes-128-gcm", Buffer.alloc(16), iv).setAAD("abcd", { encoding })).toThrow(
+      unknown,
+    );
+    expect(() => crypto.createDecipheriv("aes-128-gcm", Buffer.alloc(16), iv).setAuthTag("abcd", encoding)).toThrow(
+      unknown,
+    );
+    expect(dh.computeSecret("abcd", "buffer")).toEqual(dh.computeSecret(Buffer.from("abcd")));
+  });
+});
+
+describe("crypto.diffieHellman()", () => {
+  const alice = crypto.generateKeyPairSync("x25519");
+  const bob = crypto.generateKeyPairSync("x25519");
+  const secret = crypto.diffieHellman({ privateKey: alice.privateKey, publicKey: bob.publicKey });
+
+  it.each([
+    ["PEM", { type: "pkcs8", format: "pem" }, { type: "spki", format: "pem" }],
+    ["DER", { type: "pkcs8", format: "der" }, { type: "spki", format: "der" }],
+    ["JWK", { format: "jwk" }, { format: "jwk" }],
+  ])("takes keys as %s", async (_, privateEncoding, publicEncoding) => {
+    const options = {
+      privateKey: { key: alice.privateKey.export(privateEncoding), ...privateEncoding },
+      publicKey: { key: bob.publicKey.export(publicEncoding), ...publicEncoding },
+    };
+    expect(crypto.diffieHellman(options)).toEqual(secret);
+    expect(crypto.diffieHellman({ ...options, publicKey: bob.publicKey })).toEqual(secret);
+    expect(crypto.diffieHellman({ ...options, privateKey: alice.privateKey })).toEqual(secret);
+    expect(await util.promisify(crypto.diffieHellman)(options)).toEqual(secret);
+  });
+
+  it("takes a PEM string, and a passphrase", () => {
+    const pem = alice.privateKey.export({ type: "pkcs8", format: "pem" });
+    expect(crypto.diffieHellman({ privateKey: pem, publicKey: bob.publicKey })).toEqual(secret);
+    const encrypted = alice.privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "x" });
+    const privateKey = { key: encrypted, passphrase: "x" };
+    expect(crypto.diffieHellman({ privateKey, publicKey: bob.publicKey })).toEqual(secret);
+  });
+
+  it("names the option and the kinds of key in its errors", () => {
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const ed = crypto.generateKeyPairSync("ed25519");
+    expect(() => crypto.diffieHellman({ privateKey: alice.privateKey, publicKey: ec.publicKey })).toThrow(
+      expect.objectContaining({
+        code: "ERR_CRYPTO_INCOMPATIBLE_KEY",
+        message: "Incompatible key types for Diffie-Hellman: x25519 and ec",
+      }),
+    );
+    expect(() => crypto.diffieHellman(ed)).toThrow(
+      expect.objectContaining({
+        code: "ERR_CRYPTO_INCOMPATIBLE_KEY",
+        message: "Incompatible key types for Diffie-Hellman: ed25519 and ed25519",
+      }),
+    );
+    expect(() => crypto.diffieHellman({ privateKey: alice.privateKey, publicKey: 5 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('The "options.publicKey" property must be of type string or an instance of'),
+      }),
+    );
+    expect(() => crypto.diffieHellman({ privateKey: { key: 5 }, publicKey: bob.publicKey })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining(
+          'The "options.privateKey.key" property must be of type string or an instance of',
+        ),
+      }),
+    );
+    expect(() => crypto.diffieHellman({ privateKey: null, publicKey: bob.publicKey })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it("names the option in an error about a JWK or a raw key", () => {
+    const raw = bob.publicKey.export({ format: "raw-public" });
+    const withPublicKey = publicKey => () => crypto.diffieHellman({ privateKey: alice.privateKey, publicKey });
+    const withPrivateKey = privateKey => () => crypto.diffieHellman({ privateKey, publicKey: bob.publicKey });
+    const error = (code, message) => expect.objectContaining({ name: "TypeError", code, message });
+
+    for (const [key, received] of [
+      [5, "Received type number (5)"],
+      [[], "Received an instance of Array"],
+      [null, "Received null"],
+    ]) {
+      expect(withPublicKey({ key, format: "jwk" })).toThrow(
+        error("ERR_INVALID_ARG_TYPE", `The "options.publicKey.key" property must be of type object. ${received}`),
+      );
+    }
+    expect(withPrivateKey({ key: "x", format: "jwk" })).toThrow(
+      error(
+        "ERR_INVALID_ARG_TYPE",
+        `The "options.privateKey.key" property must be of type object. Received type string ('x')`,
+      ),
+    );
+    expect(withPrivateKey({ key: raw, format: "raw-public", asymmetricKeyType: "x25519" })).toThrow(
+      error("ERR_INVALID_ARG_VALUE", "The property 'options.privateKey.format' is invalid. Received 'raw-public'"),
+    );
+    expect(withPublicKey({ key: raw, format: "raw-public" })).toThrow(
+      error(
+        "ERR_INVALID_ARG_TYPE",
+        'The "options.publicKey.asymmetricKeyType" property must be of type string. Received undefined',
+      ),
+    );
+    expect(withPublicKey({ key: raw, format: "raw-public", asymmetricKeyType: "ec" })).toThrow(
+      error(
+        "ERR_INVALID_ARG_TYPE",
+        'The "options.publicKey.namedCurve" property must be of type string. Received undefined',
+      ),
+    );
+    expect(withPublicKey({ key: raw, format: "raw-public", asymmetricKeyType: "x25519" })()).toEqual(secret);
+
+    // Elsewhere the key is the argument `key`.
+    expect(() => crypto.createPublicKey({ key: 5, format: "jwk" })).toThrow(
+      error("ERR_INVALID_ARG_TYPE", 'The "key.key" property must be of type object. Received type number (5)'),
+    );
   });
 });

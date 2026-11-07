@@ -79,3 +79,34 @@ test.skipIf(isWindows)(
   },
   120_000,
 );
+
+// Once the wrapper and the peer are collected, .ref()'s self-reference is the last reference to
+// the native port, and close() drops it partway through.
+// Malloc=1 routes bmalloc to the system allocator so ASAN can catch a read of the freed port.
+test.skipIf(!isASAN)("closing a ref()'d port during context destruction doesn't free it mid-close", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { heapStats } = require("bun:jsc");
+       const globals = () => heapStats().objectTypeCounts.GlobalObject;
+       const baseline = globals();
+       let realm = new ShadowRealm();
+       realm.evaluate("(() => { const { port1 } = new MessageChannel(); port1.ref(); })()");
+       // Collect the wrapper and the peer while the realm is still alive.
+       for (let i = 0; i < 5; i++) Bun.gc(true);
+       realm = null;
+       Bun.gc(true);
+       console.log(globals() === baseline ? "PASS" : "the realm's global was never collected");`,
+    ],
+    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+});

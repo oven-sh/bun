@@ -1,17 +1,17 @@
-// What eslint-plugin-react-hooks reports with its rules of the React Compiler for every input of a directory.
+// Records what eslint-plugin-react-hooks's React Compiler rules report for every input in a directory.
 //
 //   bun eslint.ts <directory> <out.jsonl> --modules=<node_modules> [--again]
 //
-// <node_modules> has eslint, eslint-plugin-react-hooks and @typescript-eslint/parser. All rules of the plugin are errors, but for
-// `rules-of-hooks` and `exhaustive-deps`, which are not the compiler's. `.ts` and `.tsx` are parsed by typescript-eslint, the rest
-// by espree with JSX.
+// <node_modules> needs eslint, eslint-plugin-react-hooks and @typescript-eslint/parser. All of the plugin's rules are
+// errors, except `rules-of-hooks` and `exhaustive-deps`, which aren't compiler rules. `.ts` and `.tsx` are parsed by
+// typescript-eslint, and the rest by espree with JSX.
 //
-// One line for each file, in the order of the paths: {"path", "parse", "messages": [..], "suppressed": [..]}. A message has
-// ESLint's own fields: ruleId, severity, message, line, column, endLine, endColumn, suggestions (desc, fix). `parse` is "error" if
-// ESLint's parser refuses the file: no rule runs then, and `messages` has what the parser says. Where a message names the file, which
-// it does above the code frames of a `.ts` or `.tsx` file, the name is relative to <directory>.
+// Writes one line per file, sorted by path: {"path", "parse", "messages": [..], "suppressed": [..]}. A message has
+// ESLint's own fields: ruleId, severity, message, line, column, endLine, endColumn, suggestions (desc, fix). `parse` is
+// "error" if ESLint's parser rejects the file. Then no rule runs, and `messages` has the parser's error. A message
+// includes the filename above the code frames of a `.ts` or `.tsx` file. It's made relative to <directory>.
 //
-//   --again      a second run: is every line the same?
+//   --again      runs a second time and checks that every line is the same
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -37,7 +37,7 @@ type Linter = {
   getSuppressedMessages(): RawMessage[];
 };
 
-/** The rules of the plugin that report what the compiler finds, with the prefix. */
+/** Returns the plugin's compiler rules, with the `react-hooks/` prefix. */
 export function compilerRules(plugin: { rules: Record<string, unknown> }): string[] {
   const own = new Set(["rules-of-hooks", "exhaustive-deps"]);
   return Object.keys(plugin.rules)
@@ -45,7 +45,7 @@ export function compilerRules(plugin: { rules: Record<string, unknown> }): strin
     .map(rule => `react-hooks/${rule}`);
 }
 
-/** The configuration, from the packages in `modules`. */
+/** Builds the config from the packages in `modules`. */
 export function configOf(modules: string, isOn = true): { config: object[]; rules: string[] } {
   const require = createRequire(join(resolve(modules), "x.js"));
   const plugin = require("eslint-plugin-react-hooks");
@@ -67,7 +67,7 @@ export function configOf(modules: string, isOn = true): { config: object[]; rule
   return { config, rules };
 }
 
-/** The fields of a message that are compared. The name of the file in it is made relative to `directory`. */
+/** Keeps only the message fields that are compared, and makes the filename in the text relative to `directory`. */
 export const plain = (raw: RawMessage, directory: string): Message => ({
   ruleId: raw.ruleId,
   severity: raw.severity,

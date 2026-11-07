@@ -98,8 +98,7 @@ impl Default for MimallocArena {
 impl MimallocArena {
     #[inline]
     pub fn new() -> Self {
-        // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        let heap = mimalloc::mi_heap_new();
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
@@ -121,9 +120,7 @@ impl MimallocArena {
     /// hot, short-lived path (e.g. `Bunfig::parse` on `bun -e ''` startup).
     #[inline]
     pub fn borrowing_default() -> Self {
-        // SAFETY: FFI call with no preconditions; `mi_heap_main()` returns the
-        // always-live process main heap (never null after mimalloc init).
-        let heap = unsafe { mimalloc::mi_heap_main() };
+        let heap = mimalloc::mi_heap_main();
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
@@ -199,8 +196,7 @@ impl MimallocArena {
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
-        // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        let heap = mimalloc::mi_heap_new();
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may

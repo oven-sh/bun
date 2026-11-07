@@ -25,6 +25,27 @@ The files in `../conformance` run them all and compare byte for byte. CI limits 
 
 typescript-go also has `.js.map` and `.sourcemap.txt` baselines. They aren't in the bundle.
 
+`bun check` reports TS2875 where TypeScript 7.1 does: at the first tag in the text of the file, and not where a checker
+first asks. Four tests show the difference: `commentsOnJSXExpressionsArePreserved`,
+`jsxJsxsCjsTransformKeyPropCustomImport`, `jsxJsxsCjsTransformKeyPropCustomImportPragma` and
+`tsxSpreadChildrenInvalidType`. Their eleven `.errors.txt` with that error are those of typescript-go
+89d5d5b2849a0db0957065889ca58536fa6d2e4a. A sync with an older version brings the old ones back.
+
+In a union, `bun check` has bigint literals in the order of their values, as TypeScript 7.1 has them. In 7.0 the one
+that a checker creates first comes first. Two tests show the difference: `parseBigInt.types`, `parseBigInt.errors.txt`
+and `temporal.types` are those of microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an older
+version brings the old ones back.
+
+`bun check` measures the variances of a cycle of generic types from the cycle's first-declared type, as TypeScript 7.1
+does. In 7.0 the result depends on which type is compared first. One test shows the difference:
+`classVarianceResolveCircularity2.errors.txt` and `classVarianceResolveCircularity2.types` are those of
+microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an older version brings the old ones back.
+
+At 100 nested comparisons `bun check` assumes that the two types are related, as TypeScript 7.1 does. 7.0 gives up
+there and reports TS2321, and what it caches then depends on which comparison came first. One test shows the
+difference: `excessivelyDeepConditionalTypes` has no `.errors.txt`, as in typescript-go
+89d5d5b2849a0db0957065889ca58536fa6d2e4a. A sync with an older version brings it back.
+
 ```sh
 bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text

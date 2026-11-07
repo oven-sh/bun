@@ -2,10 +2,11 @@
 // hard links and fail linkat with EACCES or EPERM instead of EXDEV. The
 // hardlink install backend must fall back to copying files, like it already
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
-import { cpSync, readdirSync, statSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, runBunInstall, tempDir, unprivilegedSpawnOptions } from "harness";
+import { chmodSync, cpSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { installEnv, TestRegistry } from "registry";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
@@ -218,7 +219,66 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   );
 });
 
-// What the kernel does for a filesystem without symlinks: the path is looked up first.
+// A `mkdir` that fails says nothing about hard links. Only the package that needs the directory fails.
+describe.skipIf(isWindows)("hardlink backend, a directory that cannot be created", () => {
+  const registry = new TestRegistry();
+  beforeAll(() => registry.start());
+  afterAll(() => registry.stop());
+
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial("does not switch the remaining packages to copyfile", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await Bun.write(
+      packageJson,
+      JSON.stringify({
+        name: "hardlink-mkdir-test",
+        dependencies: { axios: "1.7.2", "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      }),
+    );
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    const store = join(packageDir, "node_modules", ".bun");
+    const entry = join(store, "axios@1.7.2", "node_modules");
+    // Without its package.json, axios is linked again. `dist` holds only directories, so the `mkdir` of `dist/node`
+    // is the first call that fails in it.
+    rmSync(join(entry, "axios", "package.json"));
+    rmSync(join(entry, "axios", "dist", "node"), { recursive: true });
+    // The other two packages are not in the cache, so they are linked after a download, when axios has failed.
+    const cache = join(packageDir, ".bun-cache");
+    for (const name of ["no-deps@1.0.0", "a-dep@1.0.1"]) rmSync(join(store, name), { recursive: true });
+    for (const name of readdirSync(cache)) {
+      if (/^(no-deps|a-dep)(@|$)/.test(name)) rmSync(join(cache, name), { recursive: true });
+    }
+
+    // The old copy of axios cannot be moved out of `entry`, so the package is linked into it.
+    const readOnly = [entry, join(entry, "axios", "dist")];
+    for (const dir of readOnly) chmodSync(dir, 0o555);
+    try {
+      using unprivileged = unprivilegedSpawnOptions(packageDir);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile", "--backend=hardlink"],
+        cwd: packageDir,
+        env: installEnv(packageDir),
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("failed to link package: axios@1.7.2");
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    } finally {
+      for (const dir of readOnly) chmodSync(dir, 0o755);
+    }
+
+    const isHardlinked = ["no-deps@1.0.0/node_modules/no-deps", "a-dep@1.0.1/node_modules/a-dep"].map(
+      name => statSync(join(store, name, "package.json")).nlink > 1,
+    );
+    expect(isHardlinked).toEqual([true, true]);
+  });
+});
+
+// This is what the kernel does for a file system without symlinks: the path is looked up first.
 const symlinkShimC = (errno: string) => /* c */ `
 #define _GNU_SOURCE
 #include <errno.h>

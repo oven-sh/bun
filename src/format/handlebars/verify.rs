@@ -1,11 +1,12 @@
-//! `--debug-check`: the formatted template says what the template says.
+//! `--debug-check`: checks that the formatted template means the same as the original.
 //!
-//! Both are parsed, and each tree is written down without what the printer is free to change: how the words of a text are
-//! spread over lines, quotes, how a number is written, `{{else}}{{#if a}}` for `{{else if a}}`, all but the letters of a
-//! style sheet, the front matter. What is written down has to be the same.
+//! Both are parsed, and each tree is serialized without the things the printer is free to change: how a text's words
+//! are spread over lines, quotes, how a number is written, `{{else}}{{#if a}}` versus `{{else if a}}`, everything but
+//! the letters of a style sheet, and the front matter. The two serializations must be equal.
 //!
-//! With `sortTailwindcss`, the classes in a text or a string of an attribute that is sorted are written down in one order,
-//! each once. One that touches what is before or behind the text has to stay where it is, and so has the white space there.
+//! With `sortTailwindcss`, the classes in a text or a string of a sorted attribute are serialized in a canonical order,
+//! each once. A class that touches what comes before or after the text has to stay in place, and so does the whitespace
+//! there.
 
 use super::ast::{self, Call, Kind, NOTHING, Node, NodeId, Range, Text, Tree};
 use crate::stack::Stack;
@@ -19,13 +20,13 @@ pub(super) struct Writer<'a> {
     pub(super) source: &'a [u8],
     pub(super) is_white_space_sensitive: bool,
     pub(super) out: Vec<u8>,
-    /// The texts that follow each other, as one.
+    /// Buffer for a run of adjacent texts, joined.
     pub(super) run: Vec<u8>,
-    /// How many elements are around in which all white space counts.
+    /// The number of enclosing elements in which all whitespace is significant.
     pub(super) pre_depth: usize,
     pub(super) tailwind: Option<&'a Tailwind>,
-    /// In the value of an attribute whose classes are sorted: whether what a string becomes is right behind, and right
-    /// before, something that is no white space, or may be none.
+    /// Set in the value of an attribute whose classes are sorted. `[start, end]`: true if a string's rendered value
+    /// comes directly after, or directly before, something that isn't, or might not be, whitespace.
     pub(super) touches: Option<[bool; 2]>,
     pub(super) stack: Stack,
 }
@@ -41,7 +42,7 @@ impl<'a> Writer<'a> {
         self.tree.list(range)
     }
 
-    /// `mark` says what comes, a NUL ends it.
+    /// `mark` identifies the field, and a NUL terminates it.
     #[optimize(size)]
     fn field(&mut self, mark: u8, bytes: &[u8]) {
         self.out.push(mark);
@@ -50,7 +51,7 @@ impl<'a> Writer<'a> {
     }
 
     #[optimize(size)]
-    fn as_written(&mut self, node: Node) {
+    fn write_verbatim(&mut self, node: Node) {
         let text = self.source.get(node.start as usize..node.end as usize);
         self.field(b'W', text.unwrap_or_default());
     }
@@ -72,7 +73,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// The classes in `text`. See the top of the file.
+    /// Writes the classes in `text`. See the module docs.
     #[optimize(size)]
     fn classes(&mut self, text: &[u8], [touches_start, touches_end]: [bool; 2]) {
         let mut words: Vec<&[u8]> = Vec::new();
@@ -83,9 +84,9 @@ impl<'a> Writer<'a> {
             rest = rest[len..].trim_ascii_start();
         }
         let mut words = &mut words[..];
-        let has_blank = |end: Option<&u8>| end.is_some_and(u8::is_ascii_whitespace);
+        let is_whitespace = |end: Option<&u8>| end.is_some_and(u8::is_ascii_whitespace);
         if touches_start {
-            match (has_blank(text.first()), std::mem::take(&mut words)) {
+            match (is_whitespace(text.first()), std::mem::take(&mut words)) {
                 (false, [first, rest @ ..]) => {
                     self.field(b'F', first);
                     words = rest;
@@ -97,7 +98,7 @@ impl<'a> Writer<'a> {
             }
         }
         let mut last = None;
-        if touches_end && !has_blank(text.last()) {
+        if touches_end && !is_whitespace(text.last()) {
             if let [rest @ .., word] = std::mem::take(&mut words) {
                 (last, words) = (Some(*word), rest);
             }
@@ -116,10 +117,11 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `touches` of the one at `index` of `nodes`, which follow each other in something whose own is `outer`.
+    /// Returns `touches` for `nodes[index]`. `nodes` are the consecutive parts of a container whose own `touches` is
+    /// `outer`.
     #[optimize(size)]
     fn touches_of(&self, nodes: &[NodeId], index: usize, outer: [bool; 2]) -> [bool; 2] {
-        let has_blank_at = |id: NodeId, is_start: bool| {
+        let has_whitespace_at = |id: NodeId, is_start: bool| {
             let (Kind::Text { chars: text } | Kind::String { value: text }) = self.tree.kind(id)
             else {
                 return false;
@@ -130,8 +132,8 @@ impl<'a> Writer<'a> {
         };
         let before = index.checked_sub(1).and_then(|it| nodes.get(it));
         [
-            before.map_or(outer[0], |it| !has_blank_at(*it, false)),
-            (nodes.get(index + 1)).map_or(outer[1], |it| !has_blank_at(*it, true)),
+            before.map_or(outer[0], |it| !has_whitespace_at(*it, false)),
+            (nodes.get(index + 1)).map_or(outer[1], |it| !has_whitespace_at(*it, true)),
         ]
     }
 
@@ -147,7 +149,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `is_in_style`: the white space between a text and what is no text counts.
+    /// With `is_in_style`, whitespace between a text and a non-text node is significant.
     #[optimize(size)]
     fn children(&mut self, nodes: &'a [NodeId], is_in_style: bool) {
         if !self.stack.has_room() {
@@ -186,13 +188,13 @@ impl<'a> Writer<'a> {
     #[optimize(size)]
     fn child(&mut self, node: Node) {
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::Element { .. } => self.element(node),
             Kind::BlockStatement { .. } => self.block(node, false),
             Kind::Mustache { .. } => self.mustache(node),
             Kind::MustacheComment { value } => self.mustache_comment(node, value),
             Kind::Comment { value } => self.field(b'c', self.text(value)),
-            Kind::Doctype => self.as_written(node),
+            Kind::Doctype => self.write_verbatim(node),
             _ => {}
         }
     }
@@ -232,7 +234,7 @@ impl<'a> Writer<'a> {
             && (is(b"script") || is(b"textarea") || (is(b"pre") && self.is_white_space_sensitive));
         self.pre_depth += usize::from(keeps_white_space);
         match (tag == b"style", children) {
-            // It may have been formatted.
+            // The style sheet may have been formatted.
             (true, [only]) if matches!(self.tree.kind(*only), Kind::Text { .. }) => {
                 if let Kind::Text { chars } = self.tree.kind(*only) {
                     let letters = self.text(chars).iter();
@@ -250,7 +252,7 @@ impl<'a> Writer<'a> {
     fn attribute(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::Attr { name, value } => {
                 let name = self.text(name);
                 self.field(b'@', name);
@@ -298,7 +300,7 @@ impl<'a> Writer<'a> {
         if is_class {
             return self.words(rest);
         }
-        // The quote that the value is in is written as an entity.
+        // The printer writes the enclosing quote character as an entity.
         self.out.push(b't');
         while let Some(at) = strings::index_of_char_usize(rest, b'&') {
             self.out.extend_from_slice(&rest[..at]);
@@ -323,9 +325,9 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `is_all_of_inverse`: nothing else but white space follows the `{{else}}` of the block that it is in. Then it makes no difference
-    /// whether it is written `{{else if a}}` or `{{else}}{{#if a}}..{{/if}}`, and of two tags with nothing between them,
-    /// what the first strips on its right and the second on its left is nothing.
+    /// `is_all_of_inverse` means that, apart from whitespace, this block is the whole `{{else}}` part of the enclosing
+    /// block. Then `{{else if a}}` and `{{else}}{{#if a}}..{{/if}}` are equivalent. And when two tags have nothing
+    /// between them, the first one's right `~` and the second one's left `~` strip nothing, so they're ignored.
     #[optimize(size)]
     fn block(&mut self, node: Node, is_all_of_inverse: bool) {
         let Kind::BlockStatement {
@@ -342,12 +344,12 @@ impl<'a> Writer<'a> {
         }
         let (body, block_params) = self.body_of(program);
         let (inverse_body, _) = self.body_of(inverse);
-        let mut counted = inverse_body
+        let mut significant = inverse_body
             .iter()
             .filter(|id| self.pre_depth > 0 || !self.is_white_space(std::slice::from_ref(*id)));
-        let only = match (counted.next(), counted.next()) {
+        let only = match (significant.next(), significant.next()) {
             (Some(only), None) => Some(self.tree.node(*only))
-                .filter(|it| matches!(it.kind, Kind::BlockStatement { .. }) && !it.is_as_written),
+                .filter(|it| matches!(it.kind, Kind::BlockStatement { .. }) && !it.is_verbatim),
             _ => None,
         };
         let mut strip = strip & !ast::CHAINED;
@@ -375,7 +377,7 @@ impl<'a> Writer<'a> {
     #[optimize(size)]
     fn mustache(&mut self, node: Node) {
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::Mustache {
                 call,
                 is_trusting,
@@ -415,7 +417,7 @@ impl<'a> Writer<'a> {
     fn expression(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::SubExpression { .. } if !self.stack.has_room() => {}
             Kind::SubExpression { call } => {
                 self.out.push(b'(');

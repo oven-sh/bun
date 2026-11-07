@@ -31,6 +31,7 @@
 #include "CryptoAlgorithmAesCbcCfbParams.h"
 #include "CryptoKeyAES.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include "OpenSSLUtilities.h"
 #include <openssl/evp.h>
 
 namespace WebCore {
@@ -49,7 +50,7 @@ static const EVP_CIPHER* aesAlgorithm(size_t keySize)
     return nullptr;
 }
 
-static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, const Vector<uint8_t>& iv, Vector<uint8_t>&& plainText)
+static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, const Vector<uint8_t>& iv, const Vector<uint8_t>& plainText)
 {
     const EVP_CIPHER* algorithm = aesAlgorithm(key.size());
     if (!algorithm)
@@ -64,7 +65,9 @@ static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, c
 
     size_t plainSize = plainText.size();
     const size_t cipherTextLen = roundUpToMultipleOf(EVP_CIPHER_block_size(algorithm), plainSize + 1);
-    Vector<uint8_t> cipherText(cipherTextLen);
+    Vector<uint8_t> cipherText;
+    if (!tryAllocateOutputBuffer(cipherText, cipherTextLen)) [[unlikely]]
+        return std::nullopt;
 
     // Initialize the encryption operation
     if (1 != EVP_EncryptInit_ex(ctx.get(), algorithm, nullptr, key.begin(), iv.begin()))
@@ -90,7 +93,9 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
     EvpCipherCtxPtr ctx;
 
     size_t cipherSize = cipherText.size();
-    Vector<uint8_t> plainText(cipherSize);
+    Vector<uint8_t> plainText;
+    if (!tryAllocateOutputBuffer(plainText, cipherSize)) [[unlikely]]
+        return std::nullopt;
     int len;
     int plainTextLen;
 
@@ -119,7 +124,7 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CBC::platformEncrypt(const CryptoAlgorithmAesCbcCfbParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& plainText, Padding)
 {
-    auto output = cryptEncrypt(key.key(), parameters.ivVector(), Vector<uint8_t>(plainText));
+    auto output = cryptEncrypt(key.key(), parameters.ivVector(), plainText);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);

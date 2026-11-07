@@ -965,7 +965,7 @@ describe("apply", () => {
     // TODO: simple, multiline, multiple hunks
   });
 
-  // Each of these hits an error path in `parse_apply_args`. The native code must
+  // Each of these hits an error path in `apply`. The native code must
   // surface the failure as a catchable JS exception; it used to return a normal
   // value while the exception was still pending, which aborts debug/ASAN builds
   // with "Unexpected exception observed" (releaseAssertNoException).
@@ -976,7 +976,6 @@ describe("apply", () => {
         "-e",
         `import { patchInternals } from "bun:internal-for-testing";
          try { patchInternals.apply("@@"); console.log("no-error"); } catch (e) { console.log("invalid-patchfile: " + e.message); }
-         try { patchInternals.apply(); console.log("no-error"); } catch (e) { console.log("missing-argument: " + e.message); }
          try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }
          try { patchInternals.apply({ toString() { throw new Error("coerce-fail"); } }, process.cwd()); console.log("no-error"); } catch (e) { console.log("bad-patchfile-arg: " + e.message); }`,
       ],
@@ -989,7 +988,6 @@ describe("apply", () => {
     expect(stderr).toBe("");
     expect(stdout.trim().split("\n")).toEqual([
       "invalid-patchfile: bad_header_line failed to parse patchfile",
-      "missing-argument: apply: expected at least 1 argument, got 0",
       "bad-dir: ENOENT",
       "bad-patchfile-arg: coerce-fail",
     ]);

@@ -16,7 +16,7 @@ impl Rule for NoEmptyFunction {
 
     fn new(options: &Options) -> Self {
         NoEmptyFunction {
-            allow: Allow::of_typescript_eslint(options),
+            allow: Allow::for_typescript_eslint(options),
         }
     }
 

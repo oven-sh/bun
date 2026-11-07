@@ -1,0 +1,18 @@
+# typeof process.send; typeof process.disconnect
+# The first read of either member makes a function of native code and calls nothing: what hangs on a call of the functions stays out.
+# RUN: valueflow-solve used
+# CHECK: used ProcessDisconnect
+# CHECK: used ProcessSend
+# CHECK-NOT: run NativeFunctionsBunProcessCpp
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="send"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="disconnect"
+    v4 = TypeOf v3
+    Return
+}

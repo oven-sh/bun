@@ -1,12 +1,10 @@
 //! Text to tree.
 //!
-//! The tree is a vector of nodes in the order of the source: a container is followed by what is in
-//! it. In an object, names and values take turns. There is no recursion, so that nesting is only
-//! limited by memory.
+//! The tree is a vector of nodes in source order: a container is followed by its contents. In an object, names and
+//! values alternate. There's no recursion, so nesting is limited only by memory.
 //!
-//! What the writer needs to know about a node is found out here, where the text is looked at
-//! anyway: how wide it is on one line, and whether it can be on one line at all. That is only valid
-//! for a document without comments.
+//! Everything the writer needs to know about a node is computed here, where the text is scanned anyway: how wide it is
+//! on one line, and if it can be on one line at all. That's only valid for a document without comments.
 
 use super::{Config, Parser};
 use crate::FormatError;
@@ -33,26 +31,26 @@ pub(super) enum Kind {
     Template,
     /// `+` or `-`. The next node is the operand.
     Unary,
-    /// Nothing, between two commas of an array.
+    /// The empty slot between two commas in an array.
     Hole,
 }
 
-/// The width of what cannot be on one line.
+/// The width of a node that can't be on one line.
 pub(super) const MUST_BREAK: u32 = u32::MAX;
 
-/// An empty line follows the property or the element, and another one follows that.
+/// An empty line follows the property or element, and another property or element follows that.
 pub(super) const BLANK_AFTER: u8 = 1 << 0;
-/// What is written is not what is in the source.
+/// The output differs from the source text.
 pub(super) const REWRITTEN: u8 = 1 << 1;
-/// An array of numbers: as many as fit are on each line.
+/// An array of numbers: each line gets as many as fit.
 pub(super) const CONCISE: u8 = 1 << 2;
-/// With `quoteProps: "consistent"`: a name of the object needs its quotes, so all get them.
+/// With `quoteProps: "consistent"`: one of the object's names needs its quotes, so all get them.
 pub(super) const QUOTED_NAMES: u8 = 1 << 3;
-/// A name that is a string and is written without its quotes.
+/// A name that's a string and is printed without its quotes.
 pub(super) const UNQUOTED: u8 = 1 << 4;
-/// A name that is not a string and is written in quotes.
+/// A name that isn't a string and is printed in quotes.
 pub(super) const QUOTED: u8 = 1 << 5;
-/// There is a line break between the `{` and the first name.
+/// There's a line break between the `{` and the first name.
 pub(super) const BREAK_AFTER_OPEN: u8 = 1 << 6;
 /// An array of more than one object or of more than one array, each with more than one entry.
 pub(super) const MATRIX: u8 = 1 << 7;
@@ -61,11 +59,11 @@ pub(super) const MATRIX: u8 = 1 << 7;
 pub(super) struct Node {
     pub(super) start: u32,
     pub(super) end: u32,
-    /// The index of the node after this one and all that is in it.
+    /// The index of the node after this one and everything in it.
     pub(super) next: u32,
     /// The number of properties or elements.
     pub(super) count: u32,
-    /// The number of columns that it takes on one line, or [`MUST_BREAK`].
+    /// Its width in columns on one line, or [`MUST_BREAK`].
     pub(super) width: u32,
     pub(super) kind: Kind,
     pub(super) flags: u8,
@@ -83,8 +81,8 @@ impl Node {
     }
 }
 
-/// What a comment can belong to: a node, or a property, which is not a node here. ESTree's
-/// `ObjectProperty` is told by its name.
+/// A comment's possible owner: a node, or a property, which isn't a node here. ESTree's `ObjectProperty` is identified
+/// by its name.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) struct Owner(u32);
 
@@ -97,7 +95,7 @@ impl Owner {
         Owner(index << 1)
     }
 
-    /// `name`: the index of the name.
+    /// `name` is the name's index.
     #[inline]
     pub(super) fn property(name: u32) -> Owner {
         Owner(name << 1 | 1)
@@ -108,7 +106,7 @@ impl Owner {
         self != Owner::NONE && self.0 & 1 == 1
     }
 
-    /// The index of the node, or of the name of the property.
+    /// The index of the node, or of the property's name.
     #[inline]
     pub(super) fn index(self) -> usize {
         (self.0 >> 1) as usize
@@ -120,17 +118,17 @@ pub(super) struct Comment {
     pub(super) start: u32,
     pub(super) end: u32,
     pub(super) is_block: bool,
-    /// The innermost node that it is in.
+    /// The innermost node that contains it.
     pub(super) enclosing: Owner,
-    /// The children of that node before and after it.
+    /// That node's children before and after it.
     pub(super) preceding: Owner,
     pub(super) following: Owner,
 }
 
-/// What the elements of an array are, as far as they have been read.
+/// The kinds of an array's elements read so far.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ElementKinds {
-    /// There is no element.
+    /// No elements yet.
     Unknown,
     /// Numbers, with or without a sign.
     Numbers,
@@ -139,23 +137,23 @@ enum ElementKinds {
     Mixed,
 }
 
-/// A container whose end has not been seen.
+/// A container whose end hasn't been seen yet.
 struct Open {
     node: u32,
     count: u32,
-    /// The sum of the widths of what is in it.
+    /// The sum of its contents' widths.
     width: u32,
-    /// The last value, if it is not a hole.
+    /// The last value, if it isn't a hole.
     last_value: Option<u32>,
-    /// The last property or element that is not a hole.
+    /// The last property or element that isn't a hole.
     last_child: Owner,
-    /// The name of the property that is being read.
+    /// The name of the property being read.
     name: u32,
     is_last_hole: bool,
-    /// Of an array.
+    /// Only for an array.
     elements: ElementKinds,
     has_blank: bool,
-    /// An object: a name is a string that cannot do without its quotes.
+    /// Only for an object: one of the names is a string that needs its quotes.
     requires_quotes: bool,
 }
 
@@ -164,7 +162,7 @@ pub(super) struct Tree {
     pub(super) nodes: Vec<Node>,
     pub(super) comments: Vec<Comment>,
     open: Vec<Open>,
-    /// For a text that has to be made to know how wide it is.
+    /// For text that has to be built to measure its width.
     scratch: Vec<u8>,
 }
 
@@ -178,16 +176,18 @@ struct Reader<'t, 'c> {
     at: usize,
     config: &'c Config,
     tree: &'c mut Tree,
-    /// The number of line breaks in what [`Reader::skip_trivia`] has skipped since it was reset.
+    /// The number of line breaks that [`Reader::skip_trivia`] has skipped since the last reset.
     line_breaks: u32,
-    /// The same for U+2028 and U+2029, which end a line for who asks whether the next one is empty.
+    /// The same for U+2028 and U+2029, which end a line for the check that the next line is empty.
     line_separators: u32,
-    /// The comments from this index on do not know what follows them yet.
+    /// The comments from this index on don't know what follows them yet.
     unresolved: usize,
+    /// Set when the reader stops at a token that may be valid on its own, because a different token must come first.
+    expected: Option<Message>,
 }
 
-/// oxfmt's `blank_line_after_comma`: the line breaks between a value and its comma are no empty line.
-fn empty_line_is_behind_the_comma(config: &Config) -> bool {
+/// oxfmt's `blank_line_after_comma`: line breaks between a value and its comma don't make an empty line.
+fn empty_line_is_after_the_comma(config: &Config) -> bool {
     config.flavor.is_oxfmt()
 }
 
@@ -196,7 +196,7 @@ fn empty_line_breaks_every_array(config: &Config) -> bool {
     config.flavor.is_oxfmt()
 }
 
-/// In oxfmt the numbers of an array with a comment in it are on a line each.
+/// In oxfmt the numbers of an array with a comment in it each get their own line.
 fn comment_ends_filling(config: &Config) -> bool {
     config.flavor.is_oxfmt()
 }
@@ -213,7 +213,7 @@ enum State {
     ElementOrEnd,
 }
 
-/// Fills `tree`. It has no nodes if there is nothing but white space and comments.
+/// Fills `tree`. It has no nodes if there's only whitespace and comments.
 pub(super) fn parse(
     text: &[u8],
     config: &Config,
@@ -225,7 +225,7 @@ pub(super) fn parse(
     if u32::try_from(text.len()).is_err() {
         return Err(FormatError::SyntaxErrorAt(Reason(Message::TooLarge, 0)));
     }
-    // A node for every six bytes is what minified JSON has.
+    // Minified JSON has about one node per six bytes.
     tree.nodes.reserve(text.len() / 6);
     let mut reader = Reader {
         text,
@@ -235,6 +235,7 @@ pub(super) fn parse(
         line_breaks: 0,
         line_separators: 0,
         unresolved: 0,
+        expected: None,
     };
     reader
         .run()
@@ -242,16 +243,19 @@ pub(super) fn parse(
 }
 
 impl Reader<'_, '_> {
-    /// What is wrong where the reader has stopped: before what it refuses.
+    /// The error at the position where the reader stopped, right before the token it rejects.
     #[cold]
     fn reason(&self) -> Reason {
         let rest = self.text.get(self.at..).unwrap_or_default();
-        // The width of a sign with its operand is written when the operand has been read.
-        let is_behind_sign = (self.tree.nodes.iter().rev().take(2))
+        if let (Some(expected), false) = (self.expected, rest.is_empty()) {
+            return Reason(expected, self.at as u32);
+        }
+        // A sign's width, which includes its operand, is only set once the operand has been read.
+        let is_after_sign = (self.tree.nodes.iter().rev().take(2))
             .any(|it| it.kind == Kind::Unary && it.width == 0);
         let message = match *rest {
             [] => Message::UnexpectedEnd,
-            _ if is_behind_sign => Message::UnexpectedToken,
+            _ if is_after_sign => Message::UnexpectedToken,
             [quote @ (b'"' | b'\''), ref string @ ..] => {
                 let mut at = 0;
                 while string
@@ -272,6 +276,12 @@ impl Reader<'_, '_> {
             _ => Message::UnexpectedToken,
         };
         Reason(message, self.at as u32)
+    }
+
+    #[cold]
+    fn expects(&mut self, message: Message) -> SyntaxError {
+        self.expected = Some(message);
+        SyntaxError
     }
 
     #[inline]
@@ -296,7 +306,7 @@ impl Reader<'_, '_> {
                         return if self.at == self.text.len() {
                             Ok(())
                         } else {
-                            Err(SyntaxError)
+                            Err(self.expects(Message::ExpectedEndOfFile))
                         };
                     }
                     self.after_value(value)?
@@ -305,7 +315,7 @@ impl Reader<'_, '_> {
         }
     }
 
-    /// White space and comments. `enclosing`, `preceding`: see [`Comment`].
+    /// Whitespace and comments. For `enclosing` and `preceding`, see [`Comment`].
     #[inline(always)]
     fn skip_trivia(&mut self, enclosing: Owner, preceding: Owner) -> Result<()> {
         let mut at = self.at;
@@ -331,8 +341,7 @@ impl Reader<'_, '_> {
         }
     }
 
-    /// A comment, or white space other than a blank, a tab and a line break. Returns whether there
-    /// is one.
+    /// A comment, or whitespace other than a space, a tab or a line break. Returns true if there is one.
     #[cold]
     fn rare_trivia(&mut self, enclosing: Owner, preceding: Owner) -> Result<bool> {
         match self.peek() {
@@ -358,7 +367,7 @@ impl Reader<'_, '_> {
             Some(b'/') => {
                 let mut len =
                     bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
-                // U+2028 and U+2029 end a line too.
+                // U+2028 and U+2029 also end a line.
                 if let Some(at) = bun_core::strings::index_of(&rest[..len], &[0xE2, 0x80])
                     && let Some(separator) = (at..len)
                         .find(|&i| matches!(rest.get(i..i + 3), Some([0xE2, 0x80, 0xA8 | 0xA9])))
@@ -466,7 +475,7 @@ impl Reader<'_, '_> {
                     }
                 };
                 let operand = self.tree.nodes[operand as usize];
-                // `JSON.stringify` has no `+`.
+                // `JSON.stringify` never prints a `+`.
                 let sign = u32::from(!(self.config.is_stringify() && self.text[start] == b'+'));
                 let node = &mut self.tree.nodes[unary as usize];
                 node.end = operand.end;
@@ -516,7 +525,7 @@ impl Reader<'_, '_> {
         self.name(name);
         self.skip_trivia(Owner::property(name), Owner::node(name))?;
         if self.peek() != Some(b':') {
-            return Err(SyntaxError);
+            return Err(self.expects(Message::ExpectedColon));
         }
         self.at += 1;
         self.skip_trivia(Owner::property(name), Owner::node(name))?;
@@ -540,9 +549,9 @@ impl Reader<'_, '_> {
         }
     }
 
-    /// Prettier's `printKey`, except for what depends on the other names: see [`Reader::close`]. A
-    /// string is only looked at in `json5`: elsewhere it stays as it is. Returns how wide the name is,
-    /// and whether it is a string that cannot do without its quotes.
+    /// Prettier's `printKey`, except for the part that depends on the other names: see [`Reader::close`]. A string is
+    /// only examined in `json5`. Elsewhere it's left as is. Returns the name's width, and true if it's a string that
+    /// needs its quotes.
     fn print_name(&mut self, index: u32) -> (u32, bool) {
         let config = self.config;
         let node = self.tree.nodes[index as usize];
@@ -592,7 +601,7 @@ impl Reader<'_, '_> {
             Some(b']') => Ok(self.close()),
             Some(b',') => {
                 let at = self.at;
-                // `JSON.stringify` writes `null`.
+                // `JSON.stringify` prints `null`.
                 self.push(Kind::Hole, at, 0, 0);
                 self.at += 1;
                 let open = self.tree.open.last_mut().ok_or(SyntaxError)?;
@@ -608,7 +617,7 @@ impl Reader<'_, '_> {
         }
     }
 
-    /// `value` is complete. It is in a container.
+    /// `value` is complete. It's in a container.
     fn after_value(&mut self, value: u32) -> Result<State> {
         let node = self.tree.nodes[value as usize];
         let open = self.tree.open.last_mut().ok_or(SyntaxError)?;
@@ -656,7 +665,7 @@ impl Reader<'_, '_> {
         match self.peek() {
             Some(b',') => {
                 self.at += 1;
-                if empty_line_is_behind_the_comma(self.config) {
+                if empty_line_is_after_the_comma(self.config) {
                     self.line_breaks = 0;
                     self.line_separators = 0;
                 }
@@ -664,17 +673,17 @@ impl Reader<'_, '_> {
                 if self.peek() == Some(end) {
                     return Ok(self.close());
                 }
-                // Where there is a comment in between, oxfmt's answer is Prettier's in all that is known.
+                // With a comment in between, oxfmt agrees with Prettier in every known case.
                 let has_comment = self.unresolved != self.tree.comments.len();
-                let is_behind_the_comma = empty_line_is_behind_the_comma(self.config);
-                // What is asked skips any number of commas: those of holes too.
+                let is_after_the_comma = empty_line_is_after_the_comma(self.config);
+                // The check below skips any number of commas, including those of holes.
                 if (self.line_breaks + self.line_separators > 1
                     || self.peek() == Some(b',')
-                    || (is_behind_the_comma && has_comment))
+                    || (is_after_the_comma && has_comment))
                     && !self.config.is_stringify()
                 {
                     let is_blank = match container {
-                        _ if is_behind_the_comma && !has_comment => {
+                        _ if is_after_the_comma && !has_comment => {
                             self.line_breaks + self.line_separators > 1
                         }
                         Kind::Object => is_next_line_empty(self.text, node.end as usize),
@@ -694,7 +703,11 @@ impl Reader<'_, '_> {
                 })
             }
             Some(byte) if byte == end => Ok(self.close()),
-            _ => Err(SyntaxError),
+            Some(b':' | b'}' | b']') if container == Kind::Object => {
+                Err(self.expects(Message::ExpectedClosingBrace))
+            }
+            Some(b':' | b'}' | b']') => Err(self.expects(Message::ExpectedClosingBracket)),
+            _ => Err(self.expects(Message::ExpectedComma)),
         }
     }
 
@@ -757,8 +770,8 @@ impl Reader<'_, '_> {
         State::AfterValue(open.node)
     }
 
-    /// `quoteProps: "consistent"`: either all names are quoted or none is. Returns the sum of the
-    /// widths of what is in the object, which was `sum`.
+    /// `quoteProps: "consistent"`: either all names are quoted or none are. `sum` is the sum of the widths of the
+    /// object's contents. Returns the updated sum.
     #[cold]
     fn make_names_consistent(&mut self, object: u32, requires_quotes: bool, mut sum: u32) -> u32 {
         let end = self.tree.nodes[object as usize].next;
@@ -806,7 +819,7 @@ impl Reader<'_, '_> {
         let rest = self.text.get(start + 1..).unwrap_or_default();
         let len =
             index_of_interesting_character_in_string_literal(rest, quote).ok_or(SyntaxError)?;
-        // Nothing but printable ASCII, in the quotes that it is written in: as many columns as bytes.
+        // Only printable ASCII, already in the quotes it's printed with: as many columns as bytes.
         if rest.get(len) == Some(&quote)
             && self.config.string_quote.map(QuoteStyle::as_byte) == Some(quote)
         {
@@ -816,11 +829,11 @@ impl Reader<'_, '_> {
         self.string_from(start + 1 + len, quote)
     }
 
-    /// The string that starts at the cursor, and is nothing but printable ASCII up to `at`.
+    /// The string that starts at the cursor and is only printable ASCII up to `at`.
     #[inline(never)]
     fn string_from(&mut self, mut at: usize, quote: u8) -> Result<u32> {
         let start = self.at;
-        // Nothing but printable ASCII: as many columns as bytes.
+        // Only printable ASCII: as many columns as bytes.
         let mut is_plain = true;
         let mut has_line_break = false;
         loop {
@@ -890,7 +903,7 @@ impl Reader<'_, '_> {
         ))
     }
 
-    /// The length of the escape sequence at `at`, where there is a backslash.
+    /// The length of the escape sequence at `at`, where there's a backslash.
     fn escape_len(&self, at: usize) -> Result<usize> {
         let hex = |range: std::ops::Range<usize>| {
             self.text
@@ -929,7 +942,7 @@ impl Reader<'_, '_> {
     fn number(&mut self) -> Result<u32> {
         let start = self.at;
         let text = self.text;
-        // How many digits there are at `at`, with the `_` between them. A `_` is between two digits.
+        // How many digits are at `at`, including the `_`s between them. A `_` has to be between two digits.
         let digits = |at: usize, is_digit: fn(&u8) -> bool| {
             let (mut len, mut previous) = (0, b'_');
             for byte in &text[at..] {
@@ -961,8 +974,7 @@ impl Reader<'_, '_> {
             at += 2 + len;
         } else {
             let integer = digits(at, decimal)?;
-            // After a zero there is no `_`. If there is no 8 and no 9 either, the number is octal, and
-            // that is all of it.
+            // There's no `_` after a leading zero. If there's also no 8 or 9, the number is octal and ends there.
             let after_zero: &[u8] = match text[at] {
                 b'0' => &text[at + 1..at + integer],
                 _ => &[],
@@ -993,7 +1005,7 @@ impl Reader<'_, '_> {
                 at += 1 + sign + exponent;
             }
         }
-        // No name, which includes the `n` of a `bigint`, right after a number.
+        // A name, which includes a `bigint`'s `n`, can't come right after a number.
         match text.get(at) {
             Some(b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' | b'\\') => return Err(SyntaxError),
             Some(0x80..)

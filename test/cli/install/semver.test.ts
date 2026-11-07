@@ -82,7 +82,56 @@ function versionsWith(big: string) {
   ];
 }
 
+test("Bun.semver is a plain object of two functions", () => {
+  expect(Object.getPrototypeOf(Bun.semver)).toBe(Object.prototype);
+  expect(Bun.semver).toBe(Bun.semver);
+  expect(
+    Object.entries(Object.getOwnPropertyDescriptors(Bun.semver)).map(([key, { value, ...attributes }]) => ({
+      key,
+      name: value.name,
+      length: value.length,
+      ...attributes,
+    })),
+  ).toEqual([
+    { key: "satisfies", name: "satisfies", length: 2, writable: true, enumerable: true, configurable: true },
+    { key: "order", name: "order", length: 2, writable: true, enumerable: true, configurable: true },
+  ]);
+});
+
+test.each(["order", "satisfies"] as const)("Bun.semver.%s converts its arguments to strings, left to right", name => {
+  const log: string[] = [];
+  const stringLike = (label: string, value: string) => ({
+    toString() {
+      log.push(label);
+      return value;
+    },
+  });
+  const equal = name === "order" ? 0 : true;
+  expect(Bun.semver[name](stringLike("left", "1.2.3"), stringLike("right", "1.2.3"))).toBe(equal);
+  expect(log).toEqual(["left", "right"]);
+  expect(Bun.semver[name](new String("1.2.3"), ["1.2.3"] as any)).toBe(equal);
+  expect(() =>
+    Bun.semver[name](
+      {
+        toString() {
+          throw new RangeError("left");
+        },
+      },
+      stringLike("right", "1.2.3"),
+    ),
+  ).toThrow(expect.objectContaining({ name: "RangeError", message: "left" }));
+  expect(log).toEqual(["left", "right"]);
+});
+
 describe("Bun.semver.order()", () => {
+  test("an argument that is left out is undefined", () => {
+    for (const args of [[], ["1.2.3"]] as any[]) {
+      expect(() => order(...(args as [string, string]))).toThrow(
+        expect.objectContaining({ name: "Error", message: "Invalid SemVer: undefined\n" }),
+      );
+    }
+  });
+
   test("whitespace bug fix", () => {
     expect(
       order(
@@ -265,14 +314,14 @@ describe("Bun.semver.order()", () => {
 describe("Bun.semver.satisfies()", () => {
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
-    expect(() => {
-      // @ts-expect-error
-      satisfies();
-    }).toThrow("Expected two arguments");
-    expect(() => {
-      // @ts-expect-error
-      satisfies("1.2.3");
-    }).toThrow("Expected two arguments");
+    // An argument that is left out is `undefined`, so the string "undefined": not a version, and a range with no
+    // parseable part, which behaves like "*".
+    // @ts-expect-error
+    expect(satisfies()).toBe(false);
+    // @ts-expect-error
+    expect(satisfies("1.2.3")).toBe(true);
+    for (const range of [undefined, null, "undefined", "latest"] as any[]) expect(satisfies("1.2.3", range)).toBe(true);
+    expect(satisfies(undefined as any, "1.2.3")).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
     expect(() => {
@@ -1345,7 +1394,7 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("build metadata behind a major alone is not a second range", () => {
+  test("build metadata after a bare major isn't a second range", () => {
     // Every expectation is node-semver 7.8's answer for the same input. "2+1" used to be "2 || 1" and "2+x" any version.
     testSatisfiesTable([
       ["2.5.0", "2+1", true],
@@ -1381,7 +1430,7 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("a comparator that means >=0.0.0 does not shut out a prerelease of 0.0.0", () => {
+  test("a comparator that means >=0.0.0 doesn't exclude a prerelease of 0.0.0", () => {
     // Every expectation is node-semver 7.8's answer for the same input: it reads such a comparator as any version.
     testSatisfiesTable([
       ...[
@@ -1444,7 +1493,7 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("a wildcard glued to a number is not a version", () => {
+  test("a wildcard attached to a number is not a version", () => {
     testSatisfiesTable([
       ["1.2.3x", "1.2.3", false],
       ["1.2.3*", "*", false],
@@ -1681,7 +1730,7 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
   const disagreements: object[] = [];
   for (let i = iterations(500); i > 0; i--) {
     const r = range();
-    // What nodeSemver.satisfies() does, with the range parsed once for all versions.
+    // Does what nodeSemver.satisfies() does, with the range parsed once for all versions.
     let parsed: InstanceType<typeof nodeSemver.Range> | undefined;
     try {
       parsed = new nodeSemver.Range(r);
@@ -1718,7 +1767,7 @@ function manifestRegistry(versions: string[], requested: string[] = []) {
   });
 }
 
-test.concurrent("bun install does not read build metadata behind a major alone as a second range", async () => {
+test.concurrent("bun install doesn't read build metadata after a bare major as a second range", async () => {
   // "latest" is 1.5.0, which used to be installed for both.
   const packages = {
     "digit-after-plus": { declared: "2+1", resolved: "2.5.0" },

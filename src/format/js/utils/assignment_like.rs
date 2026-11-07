@@ -1,5 +1,5 @@
-//! Everything that has a left side, an operator and a right side: `a = b`, `const a = b`, `a: b`.
-//! Prettier's `printAssignment`.
+//! Everything with a left side, an operator and a right side: `a = b`, `const a = b`, `a: b`. Prettier's
+//! `printAssignment`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::member_chain::is_member_call_chain;
@@ -13,6 +13,7 @@ use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
+use crate::js::print::class::write_comments_between_modifiers;
 use crate::js::print::decorators::FormatDecorators;
 use crate::js::print::patterns::FormatBindingPropertyValue;
 use crate::js::print::type_parameters::type_arguments;
@@ -30,61 +31,60 @@ pub(crate) enum AssignmentLike<'a> {
     AccessorProperty(Member<'a>),
 }
 
-/// Where an assignment breaks if it does not fit on the line.
+/// Where an assignment breaks if it doesn't fit on the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AssignmentLikeLayout {
-    /// First in the right side, then after the operator.
+    /// Breaks in the right side first, then after the operator.
     Fluid,
-    /// First after the operator.
+    /// Breaks after the operator first.
     BreakAfterOperator,
-    /// Never after the operator.
+    /// Never breaks after the operator.
     NeverBreakAfterOperator,
     /// The middle of `a = b = c = d`: each assignment is on its own line.
     Chain,
     /// The last assignment of such a chain.
     ChainTail,
-    /// First in the left side, which is a complex destructuring pattern or type.
+    /// Breaks in the left side first, which is a complex destructuring pattern or type.
     BreakLeftHandSide,
     /// The last assignment of a chain, whose right side is a chain of arrow functions.
     ChainTailArrowFunction,
 }
 
-/// For oxfmt a comment stays on the side of the `=` or the `:` that it is on, and a line comment on
-/// the line of the operator stays there, with what follows on the next line. Prettier attaches it to
-/// one of the two sides, and writes it where the line ends that this side ends on.
+/// oxfmt keeps a comment on its side of the `=` or `:`, and a line comment on the operator's line stays there, with
+/// what follows on the next line. Prettier attaches it to one of the two sides, and prints it at the end of the line
+/// that side ends on.
 ///
 /// ```js
 /// const a = // comment      const a = 1; // comment
 ///   1;
 /// ```
 ///
-/// The comments that stay right behind the operator are attached to the assignment as dangling comments.
+/// The comments that stay right after the operator are attached to the assignment as dangling comments.
 fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// A name is short if it is less than this much wider than the indentation: breaking after the
-/// operator would gain next to nothing.
+/// A name is short if it's less than this much wider than the indentation. Breaking after the operator would then gain
+/// next to nothing.
 const MIN_OVERLAP_FOR_BREAK: u32 = 3;
 
-/// The width of what is written for the computed `key`, with its brackets, if that is one piece of
-/// text: there is no group in it and nothing that can break. Only such a key can be short. Prettier
-/// asks whether `cleanDoc(keyDoc)` is a string.
+/// The printed width of the computed `key`, with its brackets, if it's a single piece of text, with no group in it and
+/// nothing that can break. Only such a key can be short. Prettier checks that `cleanDoc(keyDoc)` is a string.
 ///
-/// oxfmt takes what is written in the brackets, whatever it is, without the comments around it.
+/// oxfmt measures the source text in the brackets, whatever it is, without the comments around it.
 fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
     if f.options().flavor.is_oxfmt() {
         return Some(f.source_text().span_width(key.inner_span(f.file())) + 2);
     }
     let span = key.span(f.file());
     if let KeyKind::Computed(e) = key.kind() {
-        // A comment in the brackets is a piece of its own.
+        // A comment in the brackets is a separate piece.
         return match !f.is_quiet() && has_comments(e, f) {
             true => None,
             false => plain_expression_width(e, f).map(|width| width + 2),
         };
     }
-    // A template is written with a `lineSuffixBoundary`.
+    // A template is printed with a `lineSuffixBoundary`.
     let is_template = f
         .source_text()
         .text_for(&span)
@@ -93,8 +93,8 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
     (!is_template).then(|| f.source_text().span_width(span))
 }
 
-/// `{ a /* comment */: b }`: for Prettier a name with a comment is more than one piece of text, so it is not short. oxfmt only
-/// looks at the name.
+/// `{ a /* comment */: b }`: in Prettier a name with a comment is more than one piece of text, so it isn't short. oxfmt
+/// only looks at the name.
 fn comments_make_name_long<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() || f.options().flavor.is_oxfmt() {
         return false;
@@ -164,8 +164,8 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
     }
 }
 
-/// See [`computed_key_width`]: `any`, `"a"`, `A.B`, `A<B>`, `A[]`, `A[B]`, `keyof A`, `typeof a`. Not
-/// `A | B`, `[A]`, `{}`, `` `a` ``. The width is that of the type as it is written.
+/// See [`computed_key_width`]: `any`, `"a"`, `A.B`, `A<B>`, `A[]`, `A[B]`, `keyof A`, `typeof a`. Not `A | B`, `[A]`,
+/// `{}`, `` `a` ``. The width is that of the type's source text.
 fn plain_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
     let mut rest: SmallVec<[TypeNode<'a>; 4]> = SmallVec::new();
     rest.push(ty);
@@ -192,7 +192,7 @@ fn plain_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
     Some(f.source_text().span_width(ty.span()))
 }
 
-/// `<A>`: one type argument that is a name, a keyword or a literal is written without a group.
+/// `<A>`: a single type argument that's a name, a keyword or a literal is printed without a group.
 fn plain_type_arguments_width<'a>(
     arguments: List<'a, TypeNode<'a>>,
     f: &Formatter<'a>,
@@ -216,12 +216,13 @@ fn name_or_literal_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option
     is_name_or_literal.then(|| f.source_text().span_width(ty.span()))
 }
 
-/// The decorators, the modifiers, the name, `?`, `!` and the type of a property of a class.
+/// A class property's decorators, modifiers, name, `?`, `!` and type.
 fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     let modifiers = member.modifiers();
     if !modifiers.is_empty() {
-        write!(f, FormatDecorators::of_member(member));
-        let written = modifiers
+        write!(f, FormatDecorators::from_member(member));
+        write_comments_between_modifiers(member, f);
+        let present_flags = modifiers
             .iter()
             .fold(Flags::empty(), |all, it| all | it.flag());
         for (flag, keyword) in [
@@ -235,11 +236,11 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
             (Flags::READONLY, "readonly "),
             (Flags::ACCESSOR, "accessor "),
         ] {
-            if written.contains(flag) {
+            if present_flags.contains(flag) {
                 write!(f, keyword);
             }
         }
-        if written.intersects(Flags::IN | Flags::OUT) {
+        if present_flags.intersects(Flags::IN | Flags::OUT) {
             crate::js::print::flow::write_variance_sign(modifiers, f);
         }
     }
@@ -263,8 +264,8 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
     );
 }
 
-/// `let a /* comment */⏎: T`: for oxfmt the comment trails `a`, and stays before the type annotation. For Prettier it leads the
-/// type annotation.
+/// `let a /* comment */⏎: T`: in oxfmt the comment trails `a` and stays before the type annotation. In Prettier it
+/// leads the type annotation.
 fn comments_between_name_and_type<'a>(
     declarator: VarDecl<'a>,
     f: &Formatter<'a>,
@@ -281,12 +282,12 @@ fn comments_between_name_and_type<'a>(
     comments.slice(0, count)
 }
 
-/// A left side that is a name without comments. See [`AssignmentLike::name_on_the_left`].
+/// A left side that's a name without comments. See [`AssignmentLike::name_on_the_left`].
 #[derive(Copy, Clone)]
 enum NameOnTheLeft<'a> {
-    /// It is written as it is in the source.
+    /// Copied from the source.
     At(Span),
-    /// What is assigned to, which can need parentheses.
+    /// An assignment target, which can need parentheses.
     Target(Expr<'a>),
 }
 
@@ -301,8 +302,8 @@ impl<'a> Format<'a> for NameOnTheLeft<'a> {
 }
 
 impl<'a> AssignmentLike<'a> {
-    /// What [`AssignmentLike::write_left`] writes and returns, if that is only a name and can be told
-    /// without writing it.
+    /// Returns what [`AssignmentLike::write_left`] would print and return, if that's only a name and can be determined
+    /// without printing it.
     fn name_on_the_left(&self, f: &Formatter<'a>) -> Option<(NameOnTheLeft<'a>, bool)> {
         if !f.is_quiet() {
             return None;
@@ -337,13 +338,13 @@ impl<'a> AssignmentLike<'a> {
             .indent_width
             .value()
             .saturating_add(MIN_OVERLAP_FOR_BREAK);
-        // No text is wider than it is long.
+        // Text is never wider than its byte length.
         let is_short = span.len() < text_width_for_break
             || f.string_width(f.source_text().text_for(&span)) < text_width_for_break;
         Some((NameOnTheLeft::At(span), is_short))
     }
 
-    /// Returns whether the left side is a short name.
+    /// Returns true if the left side is a short name.
     fn write_left(&self, f: &mut Formatter<'a>) -> bool {
         let text_width_for_break =
             f.options().indent_width.value() as usize + MIN_OVERLAP_FOR_BREAK as usize;
@@ -351,8 +352,8 @@ impl<'a> AssignmentLike<'a> {
             AssignmentLike::VariableDeclarator(declarator) => {
                 let (id, ty) = (declarator.pat(), declarator.ty());
                 let definite = declarator.is_definite().then_some("!");
-                // For Prettier the type annotation is part of the name. So it is copied along with an ignored name, and the
-                // trailing comments of the name come after it.
+                // In Prettier the type annotation is part of the name. So it's copied along with an ignored name, and
+                // the name's trailing comments come after it.
                 match ty {
                     Some(ty) if !f.is_quiet() && f.comments().is_ignored(id.as_ast_nodes()) => {
                         let span = Span::new(id.span().start, ty.span().end);
@@ -440,8 +441,8 @@ impl<'a> AssignmentLike<'a> {
         }
     }
 
-    /// `right`: [`AssignmentLike::get_right_expression`].
-    /// `fluid_group_id`: in the fluid layout, of the group with the line break after the operator.
+    /// `right` is [`AssignmentLike::get_right_expression`].
+    /// `fluid_group_id` is, in the fluid layout, the id of the group with the line break after the operator.
     fn write_right(
         &self,
         right: Option<Expr<'a>>,
@@ -462,15 +463,15 @@ impl<'a> AssignmentLike<'a> {
                             && !is_cast_target(right, f)
                             && (f.is_quiet() || !f.comments().is_ignored(right.as_ast_nodes())) =>
                     {
-                        // The conditional writes the indentation itself, so its comments are outside of it.
+                        // The conditional prints its own indentation, so its comments go outside it.
                         if !f.is_quiet() {
                             write!(f, leading_comments(right.as_ast_nodes()));
                         }
                         match super::experimental_ternary::should_break(right, f) {
                             true => write!(f, indent(&right)),
                             false => {
-                                // Behind the line break after the operator, Prettier's `softline` is
-                                // a second one.
+                                // After the line break that follows the operator, Prettier's `softline` is a second
+                                // one.
                                 let line_break = format_with(|f| match fluid_group_id {
                                     Some(_) => write!(
                                         f,
@@ -503,7 +504,7 @@ impl<'a> AssignmentLike<'a> {
 
     /// Prettier's `chooseLayout`.
     ///
-    /// `right_expression`: [`AssignmentLike::get_right_expression`].
+    /// `right_expression` is [`AssignmentLike::get_right_expression`].
     fn layout(
         &self,
         right_expression: Option<Expr<'a>>,
@@ -511,7 +512,7 @@ impl<'a> AssignmentLike<'a> {
         left_may_break: bool,
         f: &mut Formatter<'a>,
     ) -> AssignmentLikeLayout {
-        // For Prettier the right side is a `ParenthesizedExpression` then, whatever is in it.
+        // Prettier then sees a `ParenthesizedExpression` on the right side, whatever is inside.
         let is_type_cast = right_expression.is_some_and(|e| is_cast_target(e, f));
         if let Some(e) = right_expression {
             if let Some(layout) = self.chain_formatting_layout(e, is_type_cast, f) {
@@ -528,7 +529,7 @@ impl<'a> AssignmentLike<'a> {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
             if has_leading_comment_that_breaks_after_operator(e, f)
-                || !self.comments_behind_operator(f).is_empty()
+                || !self.comments_after_operator(f).is_empty()
             {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
@@ -542,7 +543,7 @@ impl<'a> AssignmentLike<'a> {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
         }
-        // The right side of a property of a pattern is not an expression.
+        // A pattern property's right side isn't an expression.
         if let Self::BindingProperty(property) = *self
             && !f.is_quiet()
         {
@@ -597,7 +598,7 @@ impl<'a> AssignmentLike<'a> {
         }
     }
 
-    /// There is no operator and no right side: `let a`, `{ a }`.
+    /// No operator and no right side: `let a`, `{ a }`.
     fn has_only_left_hand_side(&self) -> bool {
         match *self {
             Self::AssignmentExpression(_) => false,
@@ -613,7 +614,7 @@ impl<'a> AssignmentLike<'a> {
 
     /// Prettier's `isAssignment` chains: `a = b = c`.
     ///
-    /// `is_type_cast`: whether `right_expression` is in the parentheses of a type cast.
+    /// `is_type_cast` means `right_expression` is in a type cast's parentheses.
     fn chain_formatting_layout(
         &self,
         right_expression: Expr<'a>,
@@ -712,7 +713,7 @@ impl<'a> AssignmentLike<'a> {
     }
 }
 
-/// Something to format, with a span that it does not know itself.
+/// Something to format, paired with a span it doesn't know itself.
 struct WithSpan<T>(T, Span);
 
 impl<'a, T: Format<'a>> Format<'a> for WithSpan<T> {
@@ -732,8 +733,8 @@ fn block_comment_in_parentheses_of_cast_breaks(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether a leading comment of `right`, the right side of an assignment, ends its line, or is a block comment whose lines
-/// all start with `*`. The right side starts on a line of its own then.
+/// True if a leading comment of `right`, an assignment's right side, ends its line, or is a block comment whose lines
+/// all start with `*`. The right side then starts on its own line.
 fn has_leading_comment_that_breaks_after_operator<'a>(right: Expr<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
         return false;
@@ -757,7 +758,7 @@ fn should_break_after_operator<'a>(
     is_left_short: bool,
     f: &mut Formatter<'a>,
 ) -> bool {
-    // `None`: it is neither a binary nor a logical expression.
+    // `None` if it's neither a binary nor a logical expression.
     let breaks_as_binary_expression = |e: Expr<'a>| match e.binary_op()? {
         BinOp::Comma => None,
         BinOp::And | BinOp::Or | BinOp::Nullish => Some(
@@ -788,7 +789,7 @@ fn should_break_after_operator<'a>(
     }
 }
 
-/// The `a()` of `void !!(await a())`.
+/// The `a()` in `void !!(await a())`.
 #[inline]
 fn get_innermost_expression<'a>(mut current: Expr<'a>, f: &Formatter<'a>) -> Expr<'a> {
     loop {
@@ -828,8 +829,8 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
             };
         }
 
-        // Whether there is a group around it all, and one around the left side, depends on the
-        // layout, which depends on what is written for the left side.
+        // Whether there's a group around everything, and one around the left side, depends on the layout, which depends
+        // on the left side's output.
         let outer_group = f.reserve_tag();
         let left_group = f.reserve_tag();
         let is_left_short = self.write_left(f);
@@ -838,8 +839,8 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         let left_may_break = !is_left_text
             && f.elements_from(left_group + 1)
                 .may_directly_break(f.options().flavor);
-        let comments_behind_operator = self.comments_behind_operator(f);
-        let has_line_comment_on_operator_line = !comments_behind_operator.is_empty()
+        let comments_after_operator = self.comments_after_operator(f);
+        let has_line_comment_on_operator_line = !comments_after_operator.is_empty()
             || (!f.is_quiet()
                 && comments_stay_around_operator(f)
                 && f.comments()
@@ -853,7 +854,7 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
             }
             layout => layout,
         };
-        // A group of text at the start of a group makes no difference: `Formatter::is_at_start_of_group`.
+        // A group of text at the start of a group makes no difference: see `Formatter::is_at_start_of_group`.
         if layout != AssignmentLikeLayout::BreakLeftHandSide
             && !(is_left_text && layout.has_group_around_it(false))
         {
@@ -861,12 +862,8 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         }
 
         self.write_operator(f);
-        write!(
-            f,
-            FormatTrailingComments::Comments(comments_behind_operator)
-        );
-        // Without a group of its own the line break follows the group around it all, which the line
-        // comment breaks.
+        write!(f, FormatTrailingComments::Comments(comments_after_operator));
+        // Without its own group, the line break follows the outer group, which the line comment breaks.
         let follows_line_comment =
             has_line_comment_on_operator_line && layout == AssignmentLikeLayout::BreakAfterOperator;
         match follows_line_comment {
@@ -904,14 +901,14 @@ impl<'a> AssignmentLike<'a> {
     }
 
     /// See [`comments_stay_around_operator`].
-    fn comments_behind_operator(&self, f: &Formatter<'a>) -> CommentList<'a> {
+    fn comments_after_operator(&self, f: &Formatter<'a>) -> CommentList<'a> {
         match !f.is_quiet() && comments_stay_around_operator(f) {
             true => f.comments().of_node(self.node()).dangling,
             false => CommentList::empty(),
         }
     }
 
-    /// Where the left side ends.
+    /// The end of the left side.
     fn left_end(&self, f: &Formatter<'a>) -> u32 {
         let key_end = |key: Option<Key<'a>>| key.map_or(0, |key| key.span(f.file()).end);
         match *self {
@@ -930,7 +927,7 @@ impl<'a> AssignmentLike<'a> {
     }
 }
 
-/// Whether `element` is text without a line break, or a space.
+/// True if `element` is text without a line break, or a space.
 fn is_text_on_one_line(element: &FormatElement) -> bool {
     match element {
         FormatElement::Token(_) | FormatElement::Space => true,
@@ -942,15 +939,14 @@ fn is_text_on_one_line(element: &FormatElement) -> bool {
 }
 
 impl AssignmentLikeLayout {
-    /// Whether there is a group around the assignment. `is_left_text`: the left side is nothing but
-    /// text on one line.
+    /// True if there's a group around the assignment. `is_left_text` means the left side is only text on one line.
     fn has_group_around_it(self, is_left_text: bool) -> bool {
         match self {
             AssignmentLikeLayout::Chain
             | AssignmentLikeLayout::ChainTail
             | AssignmentLikeLayout::ChainTailArrowFunction => false,
-            // All that can break is in the group after the operator, which fits if and only if a group
-            // around text and it fits.
+            // Everything that can break is in the group after the operator, which fits if and only if a group around
+            // the text and it fits.
             AssignmentLikeLayout::BreakAfterOperator => !is_left_text,
             _ => true,
         }
@@ -958,7 +954,7 @@ impl AssignmentLikeLayout {
 }
 
 impl<'a> AssignmentLike<'a> {
-    /// `right_expression`: [`AssignmentLike::get_right_expression`].
+    /// `right_expression` is [`AssignmentLike::get_right_expression`].
     fn write_after_operator(
         &self,
         right_expression: Option<Expr<'a>>,
@@ -993,7 +989,7 @@ impl<'a> AssignmentLike<'a> {
     }
 }
 
-/// `expression`, which is told about the layout if it is an arrow function.
+/// `expression`, which gets the layout passed down if it's an arrow function.
 pub(crate) fn with_assignment_layout(
     expression: Expr<'_>,
     layout: Option<AssignmentLikeLayout>,
@@ -1026,14 +1022,14 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     let mut current = expression;
 
     loop {
-        // For Prettier it is a `ParenthesizedExpression`.
+        // Prettier sees a `ParenthesizedExpression`.
         if is_cast_target(current, f) {
             return false;
         }
         let next = match current.tag() {
             ExprTag::NonNull => current.operand(),
             ExprTag::Call => {
-                // One call that can break is all it takes, and most can.
+                // One call that can break is enough, and most can.
                 let arguments = current.as_call().map(Call::args);
                 match arguments.map(|it| (it.len(), it.first())) {
                     Some((0, _) | (_, None)) => {}
@@ -1077,13 +1073,13 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
             return false;
         }
     }
-    // Prettier's `printCallExpression`: only the call of a member can be a member chain. It is asked
-    // of every call: in `a.b().c()()` of the second from the right.
-    let asked = match only_last_call_can_be_member_chain(f) {
+    // Prettier's `printCallExpression`: only a call of a member can be a member chain. Every call is checked: in
+    // `a.b().c()()` that catches the second from the right.
+    let checked_calls = match only_last_call_can_be_member_chain(f) {
         true => call_expressions.get(..1).unwrap_or_default(),
         false => &call_expressions[..],
     };
-    !asked.iter().any(|&call_expression| {
+    !checked_calls.iter().any(|&call_expression| {
         call_expression
             .callee()
             .is_some_and(|callee| match callee.as_ast_nodes() {
@@ -1097,14 +1093,14 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     })
 }
 
-/// `a = await b.c("d")!.e("f")!.g("h")!.i!()`: oxfmt asks whether the last call is a member chain, which the call of
-/// `x!` is not, and breaks the line after the `=`. The call of a call is one: `a = b.c().d()(e)`.
+/// `a = await b.c("d")!.e("f")!.g("h")!.i!()`: oxfmt only checks if the last call is a member chain, which a call of
+/// `x!` isn't, so it breaks the line after the `=`. A call of a call is one: `a = b.c().d()(e)`.
 fn only_last_call_can_be_member_chain(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// For oxfmt a chain with a comment anywhere in it is not poorly breakable. Prettier only looks at
-/// the comments around a lone argument.
+/// In oxfmt a chain with a comment anywhere in it isn't poorly breakable. Prettier only looks at the comments around a
+/// lone argument.
 fn comment_in_call_chain_makes_it_breakable(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -1129,7 +1125,7 @@ pub(crate) fn is_short_argument<'a>(
             _ => return false,
         }
     }
-    // Prettier asks for the `length` of a string of JavaScript, oxfmt for that of one of Rust.
+    // Prettier uses a JavaScript string's `length`, oxfmt a Rust string's.
     let is_oxfmt = f.options().flavor.is_oxfmt();
     let len = |text: &[u8]| match is_oxfmt {
         true => text.len(),

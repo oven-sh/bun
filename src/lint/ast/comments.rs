@@ -1,4 +1,4 @@
-//! Comments, with the tokens and the nodes around them as the parser recorded them.
+//! Comments, plus the neighboring tokens and nodes the parser recorded for each one.
 
 use super::*;
 use bun_sema::hir::NodeData;
@@ -13,7 +13,7 @@ pub struct Comment<'a> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum NodeOrName<'a> {
     Node(Node<'a>),
-    /// An identifier or a literal key, given by its start offset.
+    /// An identifier or a literal key, identified by its start offset.
     Name(u32),
 }
 
@@ -40,7 +40,7 @@ fn node_from_data<'a>(file: &'a File<'a>, data: NodeData) -> Option<Node<'a>> {
 }
 
 impl<'a> Comment<'a> {
-    /// Its index among the comments of the file.
+    /// Index into the file's comments.
     #[inline]
     pub fn id(self) -> u32 {
         self.id
@@ -68,12 +68,12 @@ impl<'a> Comment<'a> {
         Span::new(raw.pos, raw.end)
     }
 
-    /// The source text, with the `//` or the `/*` and `*/`.
+    /// The source text, including the `//` or the `/*` and `*/`.
     pub fn text(self) -> &'a [u8] {
         self.file.slice(self.span())
     }
 
-    /// The text between the `/*` and the `*/`, or after the `//`, the `<!--` or the `-->`.
+    /// The text between `/*` and `*/`, or after `//`, `<!--` or `-->`.
     pub fn content(self) -> &'a [u8] {
         match self.text() {
             [b'/', b'*', content @ .., b'*', b'/']
@@ -99,12 +99,12 @@ impl<'a> Comment<'a> {
         self.raw().is_multiline
     }
 
-    /// Whether there is a line break between the comment and the token or comment before it.
+    /// True if there's a line break between the comment and the token or comment before it.
     pub fn has_newline_before(self) -> bool {
         self.raw().has_newline_before
     }
 
-    /// Whether there is a line break between the comment and the token or comment after it.
+    /// True if there's a line break between the comment and the token or comment after it.
     pub fn has_newline_after(self) -> bool {
         self.raw().has_newline_after
     }
@@ -147,8 +147,8 @@ impl<'a> Comment<'a> {
 }
 
 impl<'a> File<'a> {
-    /// `span` without the `;` at its end, and without the whitespace and comments before that `;`. `span` is the span of a
-    /// statement or a class member.
+    /// Trims the trailing `;` off the `span` of a statement or class member, along with any whitespace and comments
+    /// before it.
     pub fn without_semicolon(&self, span: Span) -> Span {
         if span.is_empty() || self.text().get(span.end as usize - 1) != Some(&b';') {
             return span;
@@ -161,7 +161,6 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The comment with that id.
     #[inline]
     pub fn comment(&'a self, id: u32) -> Comment<'a> {
         Comment { file: self, id }
@@ -172,7 +171,8 @@ impl<'a> File<'a> {
         self.hir.comments.len()
     }
 
-    /// All comments in source order. The nodes around them are only known if the file was parsed with `attach_comments`.
+    /// All comments in source order. Their neighboring nodes are only recorded if the file was parsed with
+    /// `attach_comments`.
     pub fn comments_by_id(&'a self) -> impl ExactSizeIterator<Item = Comment<'a>> {
         (0..self.hir.comments.len() as u32).map(move |id| Comment { file: self, id })
     }

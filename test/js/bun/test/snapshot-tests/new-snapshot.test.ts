@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
   const tempDir = tmpdirSync();
@@ -27,4 +27,29 @@ test("it will create a snapshot file and directory if they don't exist", () => {
 
   expect(exitCode2).toBe(0);
   expect(fs.existsSync(tempDir + "/__snapshots__/new-snapshot.test.ts.snap")).toBe(true);
+});
+
+test("--update-snapshots keeps the old file until the new contents are written", async () => {
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+  const before = header + '\nexports[`one 1`] = `"old"`;\n\nexports[`removed 1`] = `"old"`;\n';
+  using dir = tempDir("snapshot-update-bail", {
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      test("one", () => { expect("new").toMatchSnapshot(); });
+      test("fails", () => { expect(process.env.FAIL).toBeUndefined(); });
+    `,
+    "__snapshots__/a.test.ts.snap": before,
+  });
+  async function update(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--update-snapshots", "--bail"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false", ...env },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return { exitCode: await proc.exited, snap: fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8") };
+  }
+  expect(await update({ FAIL: "1" })).toEqual({ exitCode: 1, snap: before });
+  expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });

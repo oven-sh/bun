@@ -9,6 +9,7 @@ namespace Bake {
 class SourceProvider;
 
 extern "C" void Bun__addBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
+extern "C" void Bun__removeBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 
 class SourceProvider final : public JSC::StringSourceProvider {
 public:
@@ -48,6 +49,13 @@ private:
               sourceType)
         , m_bunVM(bunVM)
     {
+    }
+
+    // Runs during JSC's sweep, when the global object may already be swept, so use the saved `m_bunVM`.
+    ~SourceProvider()
+    {
+        auto specifier = Bun::toString(sourceURL());
+        Bun__removeBakeSourceProviderSourceMap(m_bunVM, this, &specifier);
     }
 
     void* m_bunVM;

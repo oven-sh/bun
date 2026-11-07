@@ -6,27 +6,35 @@
 namespace Bun::Bindgen {
 using namespace JSC;
 
+std::span<char8_t> JSStringUTF8View::tryAllocate(size_t size)
+{
+    if (size <= m_inlineBuffer.size())
+        return m_inlineBuffer;
+    m_heapBuffer = MallocSpan<char8_t>::tryMalloc(size);
+    return m_heapBuffer->mutableSpan();
+}
+
 bool JSStringUTF8View::convert()
 {
     StringView view = m_view;
     m_isConverted = true;
     if (view.is8Bit()) {
         auto span = view.span8();
-        if (!m_converted.tryGrow(span.size() * 2))
+        auto buffer = tryAllocate(span.size() * 2);
+        if (!buffer.data())
             return false;
-        m_converted.shrink(simdutf::convert_latin1_to_utf8(byteCast<char8_t>(span), m_converted.mutableSpan()));
+        m_converted = buffer.first(simdutf::convert_latin1_to_utf8(byteCast<char8_t>(span), buffer));
         return true;
     }
     auto span = view.span16();
-    if (!m_converted.tryGrow(span.size() * 3))
+    auto buffer = tryAllocate(span.size() * 3);
+    if (!buffer.data())
         return false;
-    size_t length = StringImpl::tryConvertUTF16ToUTF8(span, m_converted.mutableSpan());
-    if (length != notFound) [[likely]] {
-        m_converted.shrink(length);
-        return true;
-    }
+    size_t length = StringImpl::tryConvertUTF16ToUTF8(span, buffer);
     // simdutf refuses unpaired surrogates; each becomes U+FFFD.
-    m_converted.shrink(WTF::Unicode::convertReplacingInvalidSequences(span, m_converted.mutableSpan()).buffer.size());
+    if (length == notFound) [[unlikely]]
+        length = WTF::Unicode::convertReplacingInvalidSequences(span, buffer).buffer.size();
+    m_converted = buffer.first(length);
     return true;
 }
 

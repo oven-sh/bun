@@ -1,12 +1,12 @@
 import type { Case } from "./cases";
 
-/** The name and the text of the configuration file of a case. */
+/** Returns the name and text of a case's config file. */
 export function configOf(it: Case): [string, string] {
   const unused = it.reportsUnusedDirectives ? { reportUnusedDisableDirectives: "error" } : {};
   if (it.eslint) {
     const config = {
       files: ["**/*.{js,ts}"],
-      // By their names: the rules and the parser of typescript-eslint are built in.
+      // Only the names are needed, because typescript-eslint's rules and parser are built in.
       plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
       languageOptions: it.file.endsWith(".ts") ? { parser: { meta: { name: "typescript-eslint/parser" } } } : {},
       rules: it.rules,
@@ -21,12 +21,12 @@ export function configOf(it: Case): [string, string] {
   ];
 }
 
-/** The plugins that oxlint calls otherwise than the names of their rules begin for ESLint. */
+/** oxlint's plugin name -> ESLint's rule prefix, where the two differ. */
 const prefixes: Record<string, string> = { eslint: "", typescript: "@typescript-eslint/", node: "n/" };
 
 /**
- * How many lines of the `unix` format end in each rule, as ESLint calls it: `a.js:1:1: Message. [Error/eqeqeq]`, and with a
- * configuration of oxlint `[Error/eslint(eqeqeq)]`.
+ * Counts the `unix` format lines per rule, under ESLint's name for the rule. A line is
+ * `a.js:1:1: Message. [Error/eqeqeq]`, or with an oxlint config `[Error/eslint(eqeqeq)]`.
  */
 export function countByRule(stdout: string): Record<string, number> {
   const counts: Record<string, number> = {};

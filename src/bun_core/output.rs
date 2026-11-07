@@ -221,10 +221,15 @@ thread_local! {
     static SOURCE_SET: Cell<bool> = const { Cell::new(false) };
 }
 
+#[cfg(not(windows))]
+type AtomicFd = AtomicI32;
+#[cfg(windows)]
+type AtomicFd = core::sync::atomic::AtomicU64;
+
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
 // Guarded by STDOUT_STREAM_SET (write-once at startup before threads).
-static STDERR_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
-static STDOUT_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
+static STDERR_STREAM: AtomicFd = AtomicFd::new(Fd::INVALID.0);
+static STDOUT_STREAM: AtomicFd = AtomicFd::new(Fd::INVALID.0);
 static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 
 // Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr).
@@ -349,9 +354,12 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe {
-            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+        SOURCE.with_borrow_mut(|s| {
+            Source::init(
+                s,
+                File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
+                File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
+            )
         });
         crate::StackCheck::configure_thread();
     }
@@ -377,9 +385,12 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe {
-            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+        SOURCE.with_borrow_mut(|s| {
+            Source::init(
+                s,
+                File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
+                File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
+            )
         });
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
     }
@@ -450,11 +461,8 @@ impl Source {
                     .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
             }
 
-            // SAFETY: write-once init guarded by STDOUT_STREAM_SET above.
-            unsafe {
-                STDOUT_STREAM.write(stdout);
-                STDERR_STREAM.write(stderr);
-            }
+            STDOUT_STREAM.store(stdout.0.0, Ordering::Relaxed);
+            STDERR_STREAM.store(stderr.0.0, Ordering::Relaxed);
         }
     }
 }
@@ -623,6 +631,8 @@ pub mod stdio {
         pub(crate) safe static bun_is_stdio_null: [AtomicI32; 3];
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub(crate) safe fn bun_remember_inherited_file_descriptors();
         /// No preconditions; restores TTY state on the standard streams.
         #[cfg(not(windows))]
         pub(crate) safe fn bun_restore_stdio();
@@ -646,7 +656,21 @@ pub mod stdio {
         stdio_null_flag(0)
     }
 
+    /// With one of these flags `bun run` and `bun test` compile the program and then replace this process with one that runs it (`exec_self`).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn compiles_in_place(arg: &[u8]) -> bool {
+        matches!(
+            arg,
+            b"--aot" | b"--debug-aot" | b"--aot-log-type-mismatches"
+        )
+    }
+
     pub fn init() {
+        // `bun_initialize_process` marks every inherited descriptor close-on-exec, as Bun's own are.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if super::argv().any(compiles_in_place) {
+            bun_remember_inherited_file_descriptors();
+        }
         bun_initialize_process();
 
         #[cfg(windows)]
@@ -2550,7 +2574,7 @@ pub fn disable_scoped_debug_writer() {
 
 unsafe extern "C" {
     /// No preconditions; returns the calling process's PID.
-    safe fn getpid() -> c_int;
+    pub(crate) safe fn getpid() -> c_int;
 }
 
 fn init_scoped_debug_writer_at_startup() {

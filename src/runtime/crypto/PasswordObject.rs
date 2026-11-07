@@ -4,10 +4,11 @@ use std::io::Write as _;
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
-use crate::node::StringOrBuffer;
+use crate::generated_bindgen::password_object::{PasswordHashAlgorithm, PasswordHashOptions};
 
 // The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
 // the implementation is wired there, not here.
@@ -43,163 +44,128 @@ impl AlgorithmValue {
 
     pub(crate) const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
 
-    fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<AlgorithmValue> {
-        if value.is_object() {
-            if let Some(algorithm_value) = value.get_truthy(global_object, "algorithm")? {
-                if !algorithm_value.is_string() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "hash",
-                        "algorithm",
-                        "string",
-                    ));
-                }
-
-                let algorithm_string = algorithm_value.to_js_string_view(global_object)?;
-
-                let Some(algo) = algorithm_from_string(&algorithm_string) else {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "hash",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                };
-
-                match algo {
-                    Algorithm::Bcrypt => {
-                        let mut algorithm = AlgorithmValue::Bcrypt(AlgorithmValue::BCRYPT_DEFAULT);
-
-                        if let Some(rounds_value) = value.get_truthy(global_object, "cost")? {
-                            if !rounds_value.is_number() {
-                                return Err(global_object
-                                    .throw_invalid_argument_type("hash", "cost", "number"));
-                            }
-
-                            // Range-check as f64: ToInt32 would wrap e.g. 2^32 + 4 to 4.
-                            let rounds = rounds_value.as_number();
-
-                            if rounds.fract() != 0.0 || !(4.0..=31.0).contains(&rounds) {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Rounds must be an integer between 4 and 31"
-                                )));
-                            }
-
-                            algorithm = AlgorithmValue::Bcrypt(rounds as u8);
-                        }
-
-                        return Ok(algorithm);
-                    }
-                    Algorithm::Argon2id | Algorithm::Argon2d | Algorithm::Argon2i => {
-                        let mut argon = Argon2Params::default();
-
-                        if let Some(time_value) = value.get_truthy(global_object, "timeCost")? {
-                            if !time_value.is_number() {
-                                return Err(global_object
-                                    .throw_invalid_argument_type("hash", "timeCost", "number"));
-                            }
-
-                            let time_cost = time_value.as_number();
-
-                            if time_cost < 1.0 || time_cost.is_nan() {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Time cost must be greater than 0"
-                                )));
-                            }
-
-                            if time_cost.fract() != 0.0 || time_cost > f64::from(u32::MAX) {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Time cost must be an integer between 1 and 4294967295"
-                                )));
-                            }
-
-                            argon.time_cost = time_cost as u32;
-                        }
-
-                        if let Some(memory_value) = value.get_truthy(global_object, "memoryCost")? {
-                            if !memory_value.is_number() {
-                                return Err(global_object.throw_invalid_argument_type(
-                                    "hash",
-                                    "memoryCost",
-                                    "number",
-                                ));
-                            }
-
-                            let memory_cost = memory_value.as_number();
-
-                            // argon2 requires `memoryCost >= 8 * parallelism`;
-                            // Bun hard-codes `parallelism = 1` (see
-                            // `Argon2Params::to_params`), so the floor is 8.
-                            if memory_cost < 8.0 || memory_cost.is_nan() {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be at least 8"
-                                )));
-                            }
-
-                            if memory_cost.fract() != 0.0 || memory_cost > f64::from(u32::MAX) {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be an integer between 8 and 4294967295"
-                                )));
-                            }
-
-                            argon.memory_cost = memory_cost as u32;
-                        }
-
-                        return Ok(match algo {
-                            Algorithm::Argon2id => AlgorithmValue::Argon2id(argon),
-                            Algorithm::Argon2d => AlgorithmValue::Argon2d(argon),
-                            Algorithm::Argon2i => AlgorithmValue::Argon2i(argon),
-                            Algorithm::Bcrypt => unreachable!(),
-                        });
-                    }
-                }
-            } else {
-                return Err(global_object.throw_invalid_argument_type(
-                    "hash",
-                    "options.algorithm",
-                    "string",
-                ));
-            }
-        } else if value.is_string() {
-            let algorithm_string = value.to_js_string_view(global_object)?;
-
-            let Some(algo) = algorithm_from_string(&algorithm_string) else {
-                return Err(global_object.throw_invalid_argument_type(
-                    "hash",
-                    "algorithm",
-                    UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                ));
-            };
-
-            match algo {
-                Algorithm::Bcrypt => {
-                    return Ok(AlgorithmValue::Bcrypt(AlgorithmValue::BCRYPT_DEFAULT));
-                }
-                Algorithm::Argon2id => {
-                    return Ok(AlgorithmValue::Argon2id(Argon2Params::default()));
-                }
-                Algorithm::Argon2d => {
-                    return Ok(AlgorithmValue::Argon2d(Argon2Params::default()));
-                }
-                Algorithm::Argon2i => {
-                    return Ok(AlgorithmValue::Argon2i(Argon2Params::default()));
-                }
-            }
-        } else {
-            return Err(global_object.throw_invalid_argument_type("hash", "algorithm", "string"));
+    fn with_defaults(algorithm: Algorithm) -> AlgorithmValue {
+        match algorithm {
+            Algorithm::Bcrypt => AlgorithmValue::Bcrypt(AlgorithmValue::BCRYPT_DEFAULT),
+            Algorithm::Argon2id => AlgorithmValue::Argon2id(Argon2Params::DEFAULT),
+            Algorithm::Argon2d => AlgorithmValue::Argon2d(Argon2Params::DEFAULT),
+            Algorithm::Argon2i => AlgorithmValue::Argon2i(Argon2Params::DEFAULT),
         }
+    }
+
+    fn from_argument<'a>(
+        heap: &JsHeap<'a>,
+        algorithm: PasswordHashAlgorithm<'a>,
+    ) -> bindgen::Result<'a, AlgorithmValue> {
+        match algorithm {
+            PasswordHashAlgorithm::Unspecified => Ok(AlgorithmValue::DEFAULT),
+            PasswordHashAlgorithm::Label(label) => {
+                Algorithm::from_label(heap, "hash", &label.to_utf8()).map(Self::with_defaults)
+            }
+            PasswordHashAlgorithm::Options(options) => Self::from_options(heap, &options),
+        }
+    }
+
+    fn from_options<'a>(
+        heap: &JsHeap<'a>,
+        options: &PasswordHashOptions<'a>,
+    ) -> bindgen::Result<'a, AlgorithmValue> {
+        let Some(label) = options.algorithm.filter(|label| !label.is_empty()) else {
+            return Err(invalid_argument_type(
+                heap,
+                "hash",
+                "options.algorithm",
+                "string",
+            ));
+        };
+        let invalid = |message: &str| heap.invalid_arguments(format_args!("{message}"));
+
+        let algorithm = Algorithm::from_label(heap, "hash", label)?;
+        if let Algorithm::Bcrypt = algorithm {
+            let Some(rounds) = cost(heap, options.cost, "cost")? else {
+                return Ok(Self::with_defaults(algorithm));
+            };
+            if rounds.fract() != 0.0 || !(4.0..=31.0).contains(&rounds) {
+                return Err(invalid("Rounds must be an integer between 4 and 31"));
+            }
+            return Ok(AlgorithmValue::Bcrypt(rounds as u8));
+        }
+
+        let mut argon = Argon2Params::DEFAULT;
+        if let Some(time_cost) = cost(heap, options.time_cost, "timeCost")? {
+            if time_cost < 1.0 || time_cost.is_nan() {
+                return Err(invalid("Time cost must be greater than 0"));
+            }
+            if time_cost.fract() != 0.0 || time_cost > f64::from(u32::MAX) {
+                return Err(invalid(
+                    "Time cost must be an integer between 1 and 4294967295",
+                ));
+            }
+            argon.time_cost = time_cost as u32;
+        }
+        if let Some(memory_cost) = cost(heap, options.memory_cost, "memoryCost")? {
+            // argon2 requires `memoryCost >= 8 * parallelism`; Bun hard-codes `parallelism = 1` (see
+            // `Argon2Params::to_params`), so the floor is 8.
+            if memory_cost < 8.0 || memory_cost.is_nan() {
+                return Err(invalid("Memory cost must be at least 8"));
+            }
+            if memory_cost.fract() != 0.0 || memory_cost > f64::from(u32::MAX) {
+                return Err(invalid(
+                    "Memory cost must be an integer between 8 and 4294967295",
+                ));
+            }
+            argon.memory_cost = memory_cost as u32;
+        }
+        Ok(match algorithm {
+            Algorithm::Argon2id => AlgorithmValue::Argon2id(argon),
+            Algorithm::Argon2d => AlgorithmValue::Argon2d(argon),
+            Algorithm::Argon2i => AlgorithmValue::Argon2i(argon),
+            Algorithm::Bcrypt => unreachable!(),
+        })
     }
 }
 
-fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
-    if s.eq_ascii(b"argon2i") {
-        Some(Algorithm::Argon2i)
-    } else if s.eq_ascii(b"argon2d") {
-        Some(Algorithm::Argon2d)
-    } else if s.eq_ascii(b"argon2id") {
-        Some(Algorithm::Argon2id)
-    } else if s.eq_ascii(b"bcrypt") {
-        Some(Algorithm::Bcrypt)
-    } else {
-        None
+fn invalid_argument_type<'a>(
+    heap: &JsHeap<'a>,
+    function: &str,
+    field: &str,
+    typename: &str,
+) -> bindgen::Error<'a> {
+    heap.invalid_arguments(format_args!(
+        "Expected {field} to be a {typename} for '{function}'."
+    ))
+}
+
+/// `None` for `undefined`, `null` and `""`.
+fn cost<'a>(heap: &JsHeap<'a>, value: JsLocal<'a>, name: &str) -> bindgen::Result<'a, Option<f64>> {
+    let value = value.to_js();
+    if value.is_undefined_or_null() || (value.is_string() && !value.to_boolean()) {
+        return Ok(None);
+    }
+    if !value.is_number() {
+        return Err(invalid_argument_type(heap, "hash", name, "number"));
+    }
+    Ok(Some(value.as_number()))
+}
+
+impl Algorithm {
+    fn from_label<'a>(
+        heap: &JsHeap<'a>,
+        function: &str,
+        label: &[u8],
+    ) -> bindgen::Result<'a, Algorithm> {
+        match label {
+            b"argon2i" => Ok(Algorithm::Argon2i),
+            b"argon2d" => Ok(Algorithm::Argon2d),
+            b"argon2id" => Ok(Algorithm::Argon2id),
+            b"bcrypt" => Ok(Algorithm::Bcrypt),
+            _ => Err(invalid_argument_type(
+                heap,
+                function,
+                "algorithm",
+                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+            )),
+        }
     }
 }
 
@@ -222,12 +188,6 @@ impl Argon2Params {
             m: self.memory_cost,
             p: 1,
         }
-    }
-}
-
-impl Default for Argon2Params {
-    fn default() -> Self {
-        Self::DEFAULT
     }
 }
 
@@ -384,10 +344,8 @@ impl PasswordObject {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// JSPasswordObject
+// Bun.password
 // ───────────────────────────────────────────────────────────────────────────
-
-pub(crate) struct JSPasswordObject;
 
 struct PascalToUpperUnderscoreCaseFormatter<'a> {
     input: &'a [u8],
@@ -409,58 +367,6 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
     }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
-    let object = JSValue::create_empty_object(global_object, 4);
-    // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named
-    // `__jsc_host_<fn>`; pass that (not the safe Rust fn) to JSFunction.
-    object.put(
-        global_object,
-        b"hash",
-        JSFunction::create(
-            global_object,
-            "hash",
-            __jsc_host_js_password_object_hash,
-            2,
-            Default::default(),
-        ),
-    );
-    object.put(
-        global_object,
-        b"hashSync",
-        JSFunction::create(
-            global_object,
-            "hashSync",
-            __jsc_host_js_password_object_hash_sync,
-            2,
-            Default::default(),
-        ),
-    );
-    object.put(
-        global_object,
-        b"verify",
-        JSFunction::create(
-            global_object,
-            "verify",
-            __jsc_host_js_password_object_verify,
-            2,
-            Default::default(),
-        ),
-    );
-    object.put(
-        global_object,
-        b"verifySync",
-        JSFunction::create(
-            global_object,
-            "verifySync",
-            __jsc_host_js_password_object_verify_sync,
-            2,
-            Default::default(),
-        ),
-    );
-    object
-}
-
 // ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
 //
 // Hash and verify jobs differ only in (a) extra input fields, (b) success
@@ -468,13 +374,35 @@ extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValu
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
 // `PasswordOp` carrying exactly those three axes.
 
+/// A copy of a password or a hash, zeroed before it is freed.
+struct Sensitive(Box<[u8]>);
+
+impl From<Vec<u8>> for Sensitive {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes.into_boxed_slice())
+    }
+}
+
+impl core::ops::Deref for Sensitive {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for Sensitive {
+    fn drop(&mut self) {
+        bun_alloc::free_sensitive(core::mem::take(&mut self.0));
+    }
+}
+
 pub(crate) trait PasswordOp: Send + 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
     type Value: Send;
     /// "hashing" | "verification" — slotted into the JS Error message.
     const ERR_VERB: &'static str;
     /// Off-thread compute. `self` borrows the op so its inputs stay owned by
-    /// the job and are `free_sensitive`d in the job's / op's `Drop`.
+    /// the job.
     fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
     /// Convert the success payload to a `JSValue` on the JS thread.
     fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
@@ -497,15 +425,8 @@ impl PasswordOp for HashOp {
 }
 
 pub(crate) struct VerifyOp {
-    prev_hash: Box<[u8]>,
+    prev_hash: Sensitive,
     algorithm: Option<Algorithm>,
-}
-impl Drop for VerifyOp {
-    fn drop(&mut self) {
-        // bun.freeSensitive — volatile-zero then free; the job's Drop handles
-        // `password`, this handles the op-specific `prev_hash`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
-    }
 }
 impl PasswordOp for VerifyOp {
     type Value = bool;
@@ -538,21 +459,21 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
     instance
 }
 
-/// `Bun.password.hash/verify` off the JS thread: the op and the password are
-/// owned copies (zeroed on drop); the promise is the JS side.
-struct PasswordJob<Op: PasswordOp> {
-    op: Op,
-    password: Box<[u8]>,
-    value: Option<Result<Op::Value, HashError>>,
+fn password_error<'a>(heap: &JsHeap<'a>, err: &HashError, verb: &str) -> bindgen::Error<'a> {
+    // SAFETY: it makes an `Error` and a string, and defines `code`.
+    let global = unsafe { heap.global() };
+    bindgen::Error::from_value(JsLocal::new(
+        heap,
+        password_error_instance(err, verb, global),
+    ))
 }
 
-impl<Op: PasswordOp> Drop for PasswordJob<Op> {
-    fn drop(&mut self) {
-        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
-        // the field's own Drop sees an empty slice afterwards. Any op-owned
-        // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
-    }
+/// `Bun.password.hash/verify` off the JS thread: the op and the password are
+/// owned copies; the promise is the JS side.
+struct PasswordJob<Op: PasswordOp> {
+    op: Op,
+    password: Sensitive,
+    value: Option<Result<Op::Value, HashError>>,
 }
 
 impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
@@ -584,293 +505,100 @@ impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
 
 // ─── hash / verify entry points ───────────────────────────────────────────
 
-impl JSPasswordObject {
-    /// Shared body of `hash`/`verify`: sync path computes inline and either
-    /// throws or returns the converted value; async path boxes a
-    /// `PasswordJob<Op>`, refs the loop, and schedules it.
-    fn run<Op: PasswordOp, const SYNC: bool>(
-        cx: &bun_jsc::JsThread<'_>,
-        password: Box<[u8]>,
-        op: Op,
-    ) -> JsResult<JSValue> {
-        debug_assert!(!password.is_empty()); // caller must check
+/// Boxes a `PasswordJob<Op>`, refs the loop, and schedules it.
+fn schedule<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Sensitive, op: Op) -> JSValue {
+    debug_assert!(!password.is_empty()); // caller must check
 
-        if SYNC {
-            return match op.compute(&password) {
-                Err(err) => {
-                    let error_instance = password_error_instance(&err, Op::ERR_VERB, cx.global());
-                    Err(cx.global().throw_value(error_instance))
-                }
-                Ok(v) => Ok(Op::to_js(v, cx.global())),
-            };
-        }
-
-        let promise = JSPromiseStrong::init(cx.global());
-        let promise_value = promise.value();
-        bun_jsc::Job::<PasswordJob<Op>>::schedule(
-            cx,
-            PasswordJob {
-                op,
-                password,
-                value: None,
-            },
-            promise,
-        );
-        Ok(promise_value)
-    }
-
-    pub(crate) fn hash<const SYNC: bool>(
-        cx: &bun_jsc::JsThread<'_>,
-        password: Box<[u8]>,
-        algorithm: AlgorithmValue,
-    ) -> JsResult<JSValue> {
-        Self::run::<HashOp, SYNC>(cx, password, HashOp { algorithm })
-    }
-
-    pub(crate) fn verify<const SYNC: bool>(
-        cx: &bun_jsc::JsThread<'_>,
-        password: Box<[u8]>,
-        prev_hash: Box<[u8]>,
-        algorithm: Option<Algorithm>,
-    ) -> JsResult<JSValue> {
-        Self::run::<VerifyOp, SYNC>(
-            cx,
+    let promise = JSPromiseStrong::init(cx.global());
+    let promise_value = promise.value();
+    bun_jsc::Job::<PasswordJob<Op>>::schedule(
+        cx,
+        PasswordJob {
+            op,
             password,
-            VerifyOp {
-                prev_hash,
-                algorithm,
-            },
-        )
-    }
+            value: None,
+        },
+        promise,
+    );
+    promise_value
 }
 
-// ─── host functions ───────────────────────────────────────────────────────
+const EMPTY_PASSWORD: &str = "password must not be empty";
 
-// Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-fn js_password_object_hash(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    if arguments.len() < 1 {
-        return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
+pub(crate) fn hash<'a>(
+    cx: &mut JsScope<'a>,
+    password: Vec<u8>,
+    algorithm: PasswordHashAlgorithm<'a>,
+) -> bindgen::Result<'a, JSValue> {
+    let password = Sensitive::from(password);
+    let algorithm = AlgorithmValue::from_argument(&cx.heap, algorithm)?;
+    if password.is_empty() {
+        return Err(cx.heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
 
-    let mut algorithm = AlgorithmValue::DEFAULT;
-
-    if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-        algorithm = AlgorithmValue::from_js(global_object, arguments[1])?;
-    }
-
-    // TODO: this most likely should error like `hashSync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
-    let password_to_hash = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
-    // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
-
-    if password_to_hash.is_empty() {
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("password must not be empty"))
-        );
-    }
-
-    JSPasswordObject::hash::<false>(
-        &global_object.js_thread_of_caller(callframe),
-        password_to_hash.into_boxed_slice(),
-        algorithm,
-    )
+    Ok(schedule(&cx.js_thread(), password, HashOp { algorithm }))
 }
 
-// Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-fn js_password_object_hash_sync(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    if arguments.len() < 1 {
-        return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
+pub(crate) fn hash_sync<'a>(
+    heap: &JsHeap<'a>,
+    password: &[u8],
+    algorithm: PasswordHashAlgorithm<'a>,
+) -> bindgen::Result<'a, Box<[u8]>> {
+    let algorithm = AlgorithmValue::from_argument(heap, algorithm)?;
+    if password.is_empty() {
+        return Err(heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
-
-    let mut algorithm = AlgorithmValue::DEFAULT;
-
-    if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-        algorithm = AlgorithmValue::from_js(global_object, arguments[1])?;
-    }
-
-    let Some(string_or_buffer) = StringOrBuffer::from_js(global_object, arguments[0])? else {
-        return Err(global_object.throw_invalid_argument_type(
-            "hash",
-            "password",
-            "string or TypedArray",
-        ));
-    };
-
-    if string_or_buffer.slice().is_empty() {
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("password must not be empty"))
-        );
-    }
-
-    // The sync path only needs `&[u8]`; copy into a Box to share the async
-    // signature.
-    JSPasswordObject::hash::<true>(
-        &global_object.js_thread_of_caller(callframe),
-        Box::<[u8]>::from(string_or_buffer.slice()),
-        algorithm,
-    )
+    PasswordObject::hash(password, algorithm)
+        .map_err(|err| password_error(heap, &err, HashOp::ERR_VERB))
 }
 
-// ─── verify host functions ────────────────────────────────────────────────
+fn verify_algorithm<'a>(
+    heap: &JsHeap<'a>,
+    label: Option<&[u8]>,
+) -> bindgen::Result<'a, Option<Algorithm>> {
+    label
+        .map(|label| Algorithm::from_label(heap, "verify", label))
+        .transpose()
+}
 
-// Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-fn js_password_object_verify(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    if arguments.len() < 2 {
-        return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
-    }
-
-    let mut algorithm: Option<Algorithm> = None;
-
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
-        }
-
-        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
-
-        let Some(a) = algorithm_from_string(&algorithm_string) else {
-            return Err(global_object.throw_invalid_argument_type(
-                "verify",
-                "algorithm",
-                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-            ));
-        };
-        algorithm = Some(a);
-    }
-
-    // TODO: this most likely should error like `verifySync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
-    let owned_password = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
-
-    // TODO: this most likely should error like `verifySync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
-    let owned_hash = match StringOrBuffer::from_js_to_owned_slice(global_object, arguments[1]) {
-        Ok(h) => h,
-        Err(err) => {
-            drop(owned_password);
-            return Err(err);
-        }
-    };
-
-    if owned_hash.is_empty() {
-        drop(owned_password);
+pub(crate) fn verify<'a>(
+    cx: &mut JsScope<'a>,
+    password: Vec<u8>,
+    prev_hash: Vec<u8>,
+    algorithm: Option<&'a [u8]>,
+) -> bindgen::Result<'a, JSValue> {
+    let password = Sensitive::from(password);
+    let prev_hash = Sensitive::from(prev_hash);
+    let algorithm = verify_algorithm(&cx.heap, algorithm)?;
+    if prev_hash.is_empty() || password.is_empty() {
         return Ok(JSPromise::resolved_promise_value(
-            global_object,
+            cx.global(),
             JSValue::FALSE,
         ));
     }
 
-    if owned_password.is_empty() {
-        drop(owned_hash);
-        return Ok(JSPromise::resolved_promise_value(
-            global_object,
-            JSValue::FALSE,
-        ));
-    }
-
-    JSPasswordObject::verify::<false>(
-        &global_object.js_thread_of_caller(callframe),
-        owned_password.into_boxed_slice(),
-        owned_hash.into_boxed_slice(),
-        algorithm,
-    )
+    Ok(schedule(
+        &cx.js_thread(),
+        password,
+        VerifyOp {
+            prev_hash,
+            algorithm,
+        },
+    ))
 }
 
-// Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-fn js_password_object_verify_sync(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    if arguments.len() < 2 {
-        return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
+pub(crate) fn verify_sync<'a>(
+    heap: &JsHeap<'a>,
+    password: &[u8],
+    hash: &[u8],
+    algorithm: Option<&'a [u8]>,
+) -> bindgen::Result<'a, bool> {
+    let algorithm = verify_algorithm(heap, algorithm)?;
+    if hash.is_empty() || password.is_empty() {
+        return Ok(false);
     }
-
-    let mut algorithm: Option<Algorithm> = None;
-
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
-        }
-
-        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
-
-        let Some(a) = algorithm_from_string(&algorithm_string) else {
-            return Err(global_object.throw_invalid_argument_type(
-                "verify",
-                "algorithm",
-                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-            ));
-        };
-        algorithm = Some(a);
-    }
-
-    let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
-        return Err(global_object.throw_invalid_argument_type(
-            "verify",
-            "password",
-            "string or TypedArray",
-        ));
-    };
-
-    let Some(hash_) = StringOrBuffer::from_js(global_object, arguments[1])? else {
-        drop(password);
-        return Err(global_object.throw_invalid_argument_type(
-            "verify",
-            "hash",
-            "string or TypedArray",
-        ));
-    };
-
-    if let StringOrBuffer::Buffer(buffer) = &mut password {
-        buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
-    }
-
-    if hash_.slice().is_empty() {
-        return Ok(JSValue::FALSE);
-    }
-
-    if password.slice().is_empty() {
-        return Ok(JSValue::FALSE);
-    }
-
-    // The sync path only needs `&[u8]`; copy into Boxes to share the async
-    // signature.
-    JSPasswordObject::verify::<true>(
-        &global_object.js_thread_of_caller(callframe),
-        Box::<[u8]>::from(password.slice()),
-        Box::<[u8]>::from(hash_.slice()),
-        algorithm,
-    )
+    PasswordObject::verify(password, hash, algorithm)
+        .map_err(|err| password_error(heap, &err, VerifyOp::ERR_VERB))
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";

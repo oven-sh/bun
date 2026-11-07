@@ -25,7 +25,7 @@ impl LinkCommand {
     }
 }
 
-/// What `bun link` and `bun unlink` do before they differ.
+/// The setup that `bun link` and `bun unlink` have in common.
 pub(crate) fn init_for_link(
     ctx: &mut command::ContextData,
     subcommand: Subcommand,
@@ -49,7 +49,7 @@ pub(crate) fn init_for_link(
         Output::flush();
     }
 
-    // What loading the config files had to say: nothing below prints it.
+    // Print the messages from loading the config files, because nothing below does.
     if manager.log_mut().has_any() {
         let _ = manager
             .log_mut()
@@ -68,10 +68,10 @@ pub(crate) fn load_package_for_link(
     let mut lockfile = Lockfile::default();
     let mut package = Package::default();
 
-    let package_json_source = match bun_ast::to_source(
-        manager.original_package_json_path.as_zstr(),
-        Default::default(),
-    ) {
+    // A copy: the source borrows its path while `parse` below borrows `manager` mutably.
+    let package_json_path =
+        bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+    let package_json_source = match bun_ast::to_source(&package_json_path, Default::default()) {
         Ok(s) => s,
         Err(e) => {
             Output::err_generic(
@@ -181,7 +181,8 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
+    // Built twice, because `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) can't
+    // be the same value.
     let node_modules_path = || match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
@@ -253,7 +254,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             use bun_core::ZStr;
             use bun_paths::{platform, resolve_path};
             let top_level = bun_paths::string_paths::without_trailing_slash_windows_path(
-                FileSystem::instance().top_level_dir(),
+                FileSystem::get().top_level_dir(),
             );
             let mut link_path_buf = bun_paths::path_buffer_pool::get();
             link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
@@ -277,7 +278,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         #[cfg(not(windows))]
         {
             if let Err(e) = node_modules.sym_link(
-                FileSystem::instance().top_level_dir_without_trailing_slash(),
+                FileSystem::get().top_level_dir_without_trailing_slash(),
                 name,
                 // is_directory
                 true,

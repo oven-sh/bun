@@ -1,8 +1,8 @@
-//! Runs the tests of Prettier and of oxfmt on `bun fmt`. The tests are in
+//! Runs Prettier's and oxfmt's test suites against `bun fmt`. The tests live in
 //! `test/cli/format/{prettier,oxfmt}/bundle.zst`.
 //!
-//! It is compiled into debug and canary builds of Bun (`bun fmt --run-prettier-tests`,
-//! `--run-oxfmt-tests`, for `test/cli/format/conformance.test.ts`).
+//! Only compiled into debug and canary builds of Bun, where `test/cli/format/conformance.test.ts` runs it with
+//! `bun fmt --run-prettier-tests` and `--run-oxfmt-tests`.
 
 #![forbid(unsafe_code)]
 
@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 pub use oxfmt::run as run_oxfmt_tests;
 pub use prettier::run as run_prettier_tests;
 
-/// `println!`, which nothing in Bun uses.
+/// Stand-in for `println!`, which Bun doesn't use.
 #[macro_export]
 macro_rules! output_line {
     ($($arguments:tt)*) => {
@@ -33,7 +33,7 @@ pub fn read_file(path: &[u8]) -> Option<Vec<u8>> {
     bun_sys::File::read_from(bun_core::Fd::cwd(), path).ok()
 }
 
-/// Its directory is created if there is none. It is only written to be looked at.
+/// Creates the parent directory if it's missing. Errors are ignored because the files are only for debugging.
 pub fn write_file(path: &[u8], contents: &[u8]) {
     if let Some(end) = strings::last_index_of_char(path, b'/').filter(|&end| end > 0) {
         let _ = bun_sys::mkdir_recursive(&path[..end]);
@@ -45,15 +45,15 @@ pub fn write_file(path: &[u8], contents: &[u8]) {
     );
 }
 
-/// Many small files in one, as `test/cli/format/bundle.ts` writes it, decompressed. One file after
-/// the other: `=== /<path> <length in bytes>\n`, the bytes, `\n`.
+/// A decompressed archive of many small files, written by `test/cli/format/bundle.ts`. Each file is stored as
+/// `=== /<path> <length in bytes>\n`, the bytes, `\n`.
 #[derive(Default)]
 pub struct Bundle<'a> {
     files: BTreeMap<&'a [u8], &'a [u8]>,
 }
 
 impl<'a> Bundle<'a> {
-    /// `None` if `bytes` is malformed.
+    /// Returns `None` if `bytes` is malformed.
     pub fn parse(bytes: &'a [u8]) -> Option<Bundle<'a>> {
         let mut bundle = Bundle::default();
         let mut rest = bytes;
@@ -75,7 +75,7 @@ impl<'a> Bundle<'a> {
         self.files.get(path).copied()
     }
 
-    /// In the order of the bytes of the paths.
+    /// Paths sorted bytewise.
     pub fn paths(&self) -> impl Iterator<Item = &'a [u8]> + '_ {
         self.files.keys().copied()
     }
@@ -84,27 +84,26 @@ impl<'a> Bundle<'a> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Failure {
     SyntaxError,
-    /// A bug.
+    /// A bug in the formatter.
     Other,
 }
 
-/// Formats the text as the file at the path. With the text comes where the cursor ends up, in
-/// UTF-16 code units.
+/// Formats `(path, text, options)`. Returns the output and the new cursor offset in UTF-16 code units.
 pub type Format<'f> =
     &'f dyn Fn(&[u8], &[u8], &FormatOptions) -> Result<(Vec<u8>, Option<u32>), Failure>;
 
-/// What is on the command line after the path of the bundle.
+/// The command-line arguments after the bundle's path.
 #[derive(Default)]
 pub struct Flags<'a> {
-    /// `--filter=text`: only the cases whose path contains the text.
+    /// `--filter=text`: only run cases whose path contains the text.
     pub filter: Option<&'a [u8]>,
-    /// `--languages=js,jsx`: only these directories of Prettier's tests.
+    /// `--languages=js,jsx`: only run these directories of Prettier's tests.
     pub languages: Option<&'a [u8]>,
-    /// `--report=directory`: the expected and the actual output of each failure are written there.
+    /// `--report=directory`: write each failure's expected and actual output there.
     pub report: Option<&'a [u8]>,
-    /// `--table`: the numbers of each directory.
+    /// `--table`: also print the counts per directory.
     pub table: bool,
-    /// `--every=n --first=i`: every n-th case, from the i-th.
+    /// `--every=n --first=i`: run every n-th case, starting at the i-th.
     pub every: usize,
     pub first: usize,
 }
@@ -130,11 +129,11 @@ impl<'a> Flags<'a> {
         }
     }
 
-    fn wants(&self, id: &[u8]) -> bool {
+    fn matches_filter(&self, id: &[u8]) -> bool {
         self.filter.is_none_or(|it| strings::contains(id, it))
     }
 
-    /// `name`: of the case, with its options.
+    /// `name` is the case's name followed by its options.
     fn write_report(&self, name: &[u8], expected: &[u8], actual: &[u8], input: &[u8]) {
         let Some(directory) = self.report else {
             return;
@@ -159,8 +158,8 @@ impl<'a> Flags<'a> {
     }
 }
 
-/// `--run-prettier-tests <bundle> ..` or `--run-oxfmt-tests <bundle> ..`: `args` is what follows.
-/// Returns whether the tests could be run. The caller of the command compares what is printed.
+/// `args` is everything after `--run-prettier-tests` or `--run-oxfmt-tests`, starting with the bundle's path. Returns
+/// false if the bundle couldn't be loaded. Failing tests don't change the result. The caller checks the printed output.
 pub fn run_from_command_line(
     args: &[&[u8]],
     run: fn(&Bundle<'_>, &Flags<'_>, Format<'_>),
@@ -202,7 +201,7 @@ impl std::fmt::Display for Count {
     }
 }
 
-/// Puts `<|>` where the cursor is, the way Prettier's snapshots show it.
+/// Inserts `<|>` at the cursor, like Prettier's snapshots.
 fn show_cursor(text: &mut Vec<u8>, cursor: Option<u32>) {
     let Some(cursor) = cursor else {
         return;
@@ -210,9 +209,9 @@ fn show_cursor(text: &mut Vec<u8>, cursor: Option<u32>) {
     let mut units = 0;
     let at = (0..text.len()).find(|&at| {
         let is_start = text[at] & 0xC0 != 0x80;
-        let is_there = is_start && units >= cursor as usize;
+        let is_at_cursor = is_start && units >= cursor as usize;
         units += usize::from(is_start) + usize::from(text[at] >= 0xF0);
-        is_there
+        is_at_cursor
     });
     let at = at.unwrap_or(text.len());
     text.splice(at..at, *b"<|>");

@@ -1,12 +1,14 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import type { AddressInfo } from "node:net";
+import { WebSocketServer } from "ws";
 
 const skip = !fault.available() || isWindows;
 
-// The 'ws' module in Bun is a thirdparty shim over the native WebSocket
-// client/server. These tests verify the shim's event surface (on('message'),
-// on('error'), on('close')) under transport faults.
+// Bun's 'ws' module runs on the native WebSocket client and server sockets.
+// These tests check its events ('message', 'error', 'close') under transport
+// faults. One subprocess per test, because fault rules are process-global.
 
 async function runWsFixture(body: string) {
   await using proc = Bun.spawn({
@@ -19,7 +21,7 @@ async function runWsFixture(body: string) {
   return { ...JSON.parse(stdout.trim() || "{}"), stderr, exitCode, signal: proc.signalCode };
 }
 
-describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
+describe.concurrent.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
   test("recv → short reads (1 byte) deliver complete echoed message", async () => {
     const r = await runWsFixture(/* js */ `
       const { WebSocketServer, WebSocket } = require("ws");
@@ -38,7 +40,7 @@ describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
         c.on("error", () => console.log(JSON.stringify({ ok: false })));
       });
     `);
-    expect(r).toMatchObject({ ok: true, data: "hello-ws", signal: null, exitCode: 0 });
+    expect(r).toMatchObject({ ok: true, data: "hello-ws", stderr: "", signal: null, exitCode: 0 });
   });
 
   test("send → short writes (1 byte) deliver complete message and ping/pong round-trips", async () => {
@@ -58,7 +60,7 @@ describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
         let pong = false, echoed = null;
         const report = () => {
           if (!pong || !echoed) return;
-          console.log(JSON.stringify({ ok: true, len: echoed.length, pong }));
+          console.log(JSON.stringify({ ok: true, len: echoed.length, intact: echoed.every(b => b === 0x77), pong }));
           c.close();
         };
         c.on("open", () => { c.ping(); c.send(Buffer.alloc(1024, 0x77)); });
@@ -68,20 +70,19 @@ describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
         c.on("error", () => console.log(JSON.stringify({ ok: false })));
       });
     `);
-    expect(r).toMatchObject({ ok: true, len: 1024, pong: true, signal: null, exitCode: 0 });
+    expect(r).toMatchObject({ ok: true, len: 1024, intact: true, pong: true, stderr: "", signal: null, exitCode: 0 });
   });
 
-  test("recv → ECONNRESET fires 'close' with abnormal code (split-process)", async () => {
+  test("recv → ECONNRESET fires 'error' then 'close' with abnormal code (split-process)", async () => {
     // Server runs in this process (no fault); client runs in a subprocess so
     // the process-global recv rule only affects the client side.
-    const { WebSocketServer } = require("ws");
     const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
-    wss.on("connection", (ws: import("ws").WebSocket) => {
+    wss.on("connection", ws => {
       ws.on("error", () => {});
       ws.send("x");
     });
     await new Promise<void>(r => wss.on("listening", () => r()));
-    const port = (wss.address() as import("node:net").AddressInfo).port;
+    const port = (wss.address() as AddressInfo).port;
     try {
       const r = await runWsFixture(/* js */ `
         const { WebSocket } = require("ws");
@@ -91,19 +92,17 @@ describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
         // server to send a frame after 'open' (which races the arm).
         fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", repeat: -1 });
         const c = new WebSocket("ws://127.0.0.1:${port}");
-        let errored = false;
-        c.on("open", () => {});
-        c.on("error", () => { errored = true; });
+        const events = [];
+        c.on("open", () => events.push("open"));
+        c.on("error", () => events.push("error"));
         c.on("close", code => {
-          console.log(JSON.stringify({ ok: true, errored, code }));
+          events.push("close");
+          console.log(JSON.stringify({ events, code }));
           fault.clear();
           process.exit(0);
         });
       `);
-      expect(r.signal).toBeNull();
-      expect(r.ok).toBe(true);
-      expect(r.code).toBe(1006);
-      expect(r.errored).toBe(true);
+      expect(r).toMatchObject({ events: ["error", "close"], code: 1006, stderr: "", signal: null, exitCode: 0 });
     } finally {
       await new Promise<void>(r => wss.close(() => r()));
     }

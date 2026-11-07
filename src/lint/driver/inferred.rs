@@ -1,11 +1,11 @@
-//! The globals of the program that a file belongs to, by its types.
+//! Infers a file's globals from the types of the program it belongs to.
 //!
-//! Nothing is type checked for it. The first question makes one request for all files of the run: for each
-//! `tsconfig.json` that one of them belongs to, the libraries, the `types` and the files of the project that can
-//! declare a global are loaded and bound, and the names are copied out.
+//! Nothing is type checked for this. The first lookup makes one request for all the run's files. For each
+//! `tsconfig.json` that one of them belongs to, it loads and binds the libraries, the `types` and the project files
+//! that can declare a global, then copies out the names.
 //!
-//! Under `InferGlobals::ByOptions` that is done for one program, and only when a file of it is about to report a name.
-//! Until then the options of the project stand for its types: `environments`.
+//! With `InferGlobals::ByOptions`, that's done for one program at a time, and only when one of its files is about to
+//! report a name. Until then the project's options approximate its types. See `environments`.
 
 use crate::run::Environment;
 use bun_lint::language::{Global, LanguageOptions};
@@ -22,12 +22,12 @@ use std::sync::{Arc, OnceLock};
 pub(crate) struct Inferred<'e> {
     environment: &'e Environment<'e>,
     threads: usize,
-    /// The files of the run that can ask, each as [`bun_lint::ast::File::path`] has it.
+    /// The run's files that can look up globals, each spelled like [`bun_lint::ast::File::path`].
     paths: OnceLock<Vec<Vec<u8>>>,
     tables: OnceLock<Tables>,
     /// `Inferred::searched`
     searched: OnceLock<[Vec<Vec<u8>>; 2]>,
-    /// Made when the first file asks.
+    /// Built on the first lookup.
     by_options: Option<OnceLock<ByOptions>>,
 }
 
@@ -35,7 +35,7 @@ pub(crate) struct Inferred<'e> {
 struct ByOptions {
     outlines: Outlines,
     programs: AppendVec<Program>,
-    /// By configuration file: where it is in `programs`.
+    /// Maps a config file to its index in `programs`.
     known: Guarded<FxHashMap<Vec<u8>, u32>>,
 }
 
@@ -43,14 +43,14 @@ struct Program {
     outline: Arc<Outline>,
     /// Sorted by name.
     chosen: Vec<InferredGlobal>,
-    /// What its types declare. `None`: it cannot be loaded.
+    /// The globals its types declare. `None` if it can't be loaded.
     declared: OnceLock<Option<Vec<InferredGlobal>>>,
 }
 
-/// The environment that stands for a package of types.
+/// Returns the environment that approximates a types package.
 fn environment_of(package: &[u8]) -> Option<&[u8]> {
     match package {
-        // `bun` takes `node` in.
+        // `bun` includes `node`.
         b"node" | b"bun" | b"bun-types" => Some(b"node"),
         b"jest" | b"mocha" | b"jasmine" | b"jquery" => Some(package),
         b"vitest/globals" => Some(b"vitest"),
@@ -58,18 +58,19 @@ fn environment_of(package: &[u8]) -> Option<&[u8]> {
     }
 }
 
-/// The environments whose tables stand for libraries and for the packages of types of a project. They have what is only
-/// a value, which the table of the libraries has not: `window`, `parseInt`. What has none is left to the types.
+/// Returns the environments whose tables approximate a project's libraries and types packages. They include names that
+/// are only values, like `window` and `parseInt`, which the library table lacks. Anything without an environment is
+/// left to the types.
 fn environments(libs: &[Vec<u8>], outline: &Outline) -> Vec<Vec<u8>> {
     let mut all: Vec<Vec<u8>> = Vec::new();
     let mut add = |name: &[u8]| {
-        // The table of an edition has the earlier ones.
+        // An edition's table includes the earlier editions.
         if !all.iter().any(|it| it == name) {
             all.push(name.to_vec());
         }
     };
     for lib in libs {
-        // What `target` stands for without `lib`: the edition, and a browser.
+        // The default library that `target` implies without `lib`: the edition plus a browser.
         let (edition, is_full): (&[u8], bool) = match &lib[..] {
             b"" => (b"es5", true),
             b"es6" => (b"es2015", true),
@@ -99,11 +100,11 @@ fn environments(libs: &[Vec<u8>], outline: &Outline) -> Vec<Vec<u8>> {
 
 impl Program {
     fn new(outline: Arc<Outline>, outlines: &Outlines) -> Program {
-        // `node` refers to an edition of its own.
+        // `node`'s types reference an edition themselves.
         let known = (outline.types.iter()).filter(|it| environment_of(&it.0).is_some());
         let referenced = known.flat_map(|it| outlines.libs_referenced_by(&it.1));
         let libs: Vec<Vec<u8>> = outline.libs.iter().cloned().chain(referenced).collect();
-        // typescript-eslint's table: each library, parts of editions too, with those that it refers to.
+        // typescript-eslint's table has each library, including parts of editions, with the libraries it references.
         let mut language = LanguageOptions::default();
         let name_in_table = |lib: &Vec<u8>| -> Box<[u8]> {
             match lib.is_empty() {
@@ -146,9 +147,9 @@ impl Program {
 
 struct Tables {
     is_case_sensitive: bool,
-    /// By `tspath.Path`: where the names are in `lists`.
-    of_file: FxHashMap<Vec<u8>, usize>,
-    /// With `ProgramGlobals::checks_javascript`.
+    /// Maps a `tspath.Path` to its program's index in `lists`.
+    list_by_file: FxHashMap<Vec<u8>, usize>,
+    /// Each list comes with its `ProgramGlobals::checks_javascript`.
     lists: Vec<(Vec<InferredGlobal>, bool)>,
 }
 
@@ -168,19 +169,19 @@ impl<'e> Inferred<'e> {
         }
     }
 
-    /// Called once, before the first file is linted, and not by a thread of the pool. Where the types are asked for
-    /// every name, every file asks: the request is made here, where it has the pool to itself.
+    /// Called once, before the first file is linted, and not from a pool thread. Without `ByOptions`, every file looks
+    /// up its globals in the types, so the request is made here, where it has the pool to itself.
     pub(crate) fn files(&self, paths: Vec<Vec<u8>>) {
-        let is_asked = self.by_options.is_none() && !paths.is_empty();
+        let loads_now = self.by_options.is_none() && !paths.is_empty();
         let _ = self.paths.set(paths);
-        if is_asked {
+        if loads_now {
             self.tables.get_or_init(|| self.load_all());
         }
     }
 
-    /// Called once, before the first file is linted. `from`: the directories in which the search for files began. All
-    /// that are between one of them and a file that was found have been listed. `configs`: the `tsconfig.json` and
-    /// `jsconfig.json` in those. All as `File::path`.
+    /// Called once, before the first file is linted. `from` holds the directories where the file search began. Every
+    /// directory between one of them and a found file has been listed. `configs` holds the `tsconfig.json` and
+    /// `jsconfig.json` files in those directories. All paths are spelled like `File::path`.
     pub(crate) fn searched(&self, from: Vec<Vec<u8>>, configs: Vec<Vec<u8>>) {
         let _ = self.searched.set([from, configs].map(|paths| {
             let paths = paths.into_iter().map(crate::paths::to_native);
@@ -188,15 +189,16 @@ impl<'e> Inferred<'e> {
         }));
     }
 
-    /// For one thread, while the others lint their first files: or else all of them come to ask at the same time, and
-    /// wait for the one that reads the options. It is paid whether or not a file asks. Nothing, if no file can.
+    /// Run by one thread while the others lint their first files. Otherwise they'd all do their first lookup at the
+    /// same time and wait for the one that reads the options. The cost is paid even if no file does a lookup. Does
+    /// nothing if no file can.
     pub(crate) fn begin(&self) {
         if let Some(first) = self.paths.get().and_then(|it| it.first()) {
             let _ = self.program(first);
         }
     }
 
-    /// `path`: as `File::path`.
+    /// `path` is spelled like `File::path`.
     fn program(&self, path: &[u8]) -> Option<&Program> {
         let by_options = self.by_options.as_ref()?.get_or_init(|| ByOptions {
             outlines: match self.searched.get() {
@@ -229,7 +231,7 @@ impl<'e> Inferred<'e> {
         self.load(None, &paths)
     }
 
-    /// `project`, `paths`: native paths.
+    /// `project` and `paths` are native paths.
     fn load(&self, project: Option<&[u8]>, paths: &[Vec<u8>]) -> Tables {
         let cwd = &self.environment.cwd;
         let command_line = bun_sema_driver::parse_command_line(&[b"--skipLibCheck"], cwd);
@@ -248,46 +250,39 @@ impl<'e> Inferred<'e> {
             threads: self.threads,
             libs: self.environment.libs,
             progress: None,
-            only: None,
             order: 1,
-            digests: false,
-            task_clock: None,
             plan_options: bun_sema_driver::PlanOptions {
-                only_the_globals: true,
-                // A script beside a project that does not include it is not written for the libraries of that project.
-                only_in_a_project_that_includes: true,
+                only_globals: true,
+                // A script next to a project that doesn't include it wasn't written for that project's libraries.
+                requires_including_project: true,
                 reads_sources_of_references: true,
-                current_directory_is_of_the_project: true,
-                reports_nothing_about_files: true,
+                uses_project_directory_as_cwd: true,
+                skips_file_diagnostics: true,
                 shares_every_file: true,
-                prefers_the_library_of_the_project: true,
+                prefers_project_typescript_libs: true,
                 ..Default::default()
             },
-            retains_everything: false,
             stops_like_tsc: false,
             uses_typescript_wording: false,
-            loaded: None,
-            checked: None,
             after_file: None,
-            declaration_file_emitted: None,
         };
         bun_sema_driver::check_provided_then(&request, Provided::default(), |report| {
             let mut tables = Tables {
                 is_case_sensitive: report.is_case_sensitive,
-                of_file: FxHashMap::default(),
+                list_by_file: FxHashMap::default(),
                 lists: Vec::with_capacity(report.globals.len()),
             };
-            for of_program in report.globals {
+            for program_report in report.globals {
                 let at = tables.lists.len();
-                let files = of_program.files.into_iter();
-                tables.of_file.extend(files.map(|file| (file, at)));
-                let names = of_program.names.into_iter().map(|it| InferredGlobal {
+                let files = program_report.files.into_iter();
+                tables.list_by_file.extend(files.map(|file| (file, at)));
+                let names = program_report.names.into_iter().map(|it| InferredGlobal {
                     name: it.name,
                     is_value: it.is_value,
                     is_type: it.is_type,
                     is_writable: it.is_writable,
                 });
-                (tables.lists).push((names.collect(), of_program.checks_javascript));
+                (tables.lists).push((names.collect(), program_report.checks_javascript));
             }
             tables
         })
@@ -322,7 +317,7 @@ impl InferredGlobals for Inferred<'_> {
         }
         let tables = self.tables.get_or_init(|| self.load_all());
         let path = from_native(&crate::paths::to_native(path.to_vec()));
-        let at = *(tables.of_file).get(&*to_path(&path, tables.is_case_sensitive))?;
+        let at = *(tables.list_by_file).get(&*to_path(&path, tables.is_case_sensitive))?;
         let (names, checks_javascript) = &tables.lists[at];
         Some(ProgramGlobals {
             names,

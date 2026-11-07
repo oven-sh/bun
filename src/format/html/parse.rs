@@ -73,7 +73,7 @@ fn parse_options(parser: Parser) -> ParseOptions {
             lexer: lexer::Options::default(),
             ..other
         },
-        // It is not parsed as HTML.
+        // It isn't parsed as HTML.
         Parser::AngularExpression(_) => other,
     }
 }
@@ -103,10 +103,10 @@ fn should_parse_as_raw_text_in_vue(
 }
 
 struct Context<'a, 't> {
-    /// The text that is parsed: with blanks in the place of the front matter.
+    /// The text that's parsed, with the front matter replaced with spaces.
     text: &'a [u8],
     tree: &'t mut Tree<'a>,
-    /// Whether `parseVue` is the function that parses. The options can be those of HTML all the same.
+    /// True if `parseVue` is the parsing function. The options can still be HTML's.
     is_vue: bool,
 }
 
@@ -140,7 +140,7 @@ impl<'a> Context<'a, '_> {
         }
     }
 
-    /// `parseHtml`. Returns what has the `rootNodes` as its children.
+    /// `parseHtml`. Returns a node whose children are the `rootNodes`.
     fn parse_html(&mut self, range: Span, options: ParseOptions) -> Result<'a, (ParseOptions, Id)> {
         let result = self.angular_html_parser_parse(range, &options, true)?;
         match result.errors.first() {
@@ -153,8 +153,8 @@ impl<'a> Context<'a, '_> {
     fn parse_vue(&mut self, range: Span, options: ParseOptions) -> Result<'a, (ParseOptions, Id)> {
         let parser::ParseResult { root, errors, .. } =
             self.angular_html_parser_parse(range, &options, true)?;
-        // A void element at the top makes the errors those of the second result.
-        let mut has_errors_of_second = false;
+        // A top-level void element makes Prettier report the second result's errors.
+        let mut reports_second_result_errors = false;
         let is_html = self.tree.children(root).any(|id| {
             let node = &self.tree[id];
             match node.kind {
@@ -169,9 +169,9 @@ impl<'a> Context<'a, '_> {
             return self.parse_html(range, parse_options(Parser::Html));
         }
         let mut second: Option<parser::ParseResult<'a>> = None;
-        // The first error of the second result, before they are sorted.
-        let mut first_of_second = None;
-        // The first of what the second result has at the top that does not start before the element that is looked at.
+        // The second result's first error, before the errors are sorted.
+        let mut second_result_first_error = None;
+        // The first top-level node of the second result that doesn't start before the current element.
         let mut candidate = None;
         let mut next = self.tree.first_child(root);
         while let Some(id) = next {
@@ -208,16 +208,16 @@ impl<'a> Context<'a, '_> {
                 None => {
                     let second =
                         second.insert(self.angular_html_parser_parse(range, &options, false)?);
-                    first_of_second = second.errors.first().copied();
+                    second_result_first_error = second.errors.first().copied();
                     crate::sort::sort_by_key(&mut second.errors[..], |it| it.at);
                     candidate = self.tree.first_child(second.root);
                     &*second
                 }
             };
             if is_void {
-                has_errors_of_second = true;
+                reports_second_result_errors = true;
             } else {
-                // Without an end tag, Prettier fails when it asks where that ends.
+                // Without an end tag, Prettier throws when it reads the end tag's span.
                 let first = second
                     .errors
                     .partition_point(|it| it.at <= start_span.start);
@@ -225,12 +225,12 @@ impl<'a> Context<'a, '_> {
                     .take_while(|it| end_span.is_none_or(|span| it.at < span.end));
                 if let Some(&first) = errors.clone().next() {
                     let error = errors
-                        .find(|it| it.kind.is_of_lexer())
+                        .find(|it| it.kind.is_lexer_error())
                         .map_or(first, |it| *it);
                     return Err(ParseError::Syntax(error));
                 }
             }
-            // `getElementWithSameLocation`. Both lists are in the order of the text.
+            // `getElementWithSameLocation`. Both lists are in source order.
             while let Some(other) =
                 candidate.filter(|&it| self.tree[it].span.start < start_span.start)
             {
@@ -245,8 +245,8 @@ impl<'a> Context<'a, '_> {
                 self.tree.replace(id, same);
             }
         }
-        let error = match has_errors_of_second {
-            true => first_of_second,
+        let error = match reports_second_result_errors {
+            true => second_result_first_error,
             false => errors.first().copied(),
         };
         match error {
@@ -255,7 +255,7 @@ impl<'a> Context<'a, '_> {
         }
     }
 
-    /// `parse`, without the front matter. Returns what has the children of the root as its children.
+    /// `parse`, without the front matter. Returns a node whose children are the root's children.
     fn parse(&mut self, range: Span, options: ParseOptions) -> Result<'a, Id> {
         let (actual_options, root) = match self.is_vue {
             true => self.parse_vue(range, options)?,
@@ -265,7 +265,7 @@ impl<'a> Context<'a, '_> {
         Ok(root)
     }
 
-    /// What `postprocess` does with `id` itself.
+    /// The part of `postprocess` that handles `id` itself.
     fn postprocess_node(&mut self, id: Id, options: ParseOptions) -> Result<'a, ()> {
         let text = self.text;
         match self.tree[id].kind {
@@ -317,7 +317,7 @@ impl<'a> Context<'a, '_> {
         let old_name = std::mem::replace(&mut node.name, Cow::Borrowed(name));
         node.flags
             .set(Flags::HAS_EXPLICIT_NAMESPACE, has_explicit_namespace);
-        // `addTagDefinition`. Without a namespace, the parser has looked for the same name.
+        // `addTagDefinition`. Without a namespace, the parser has already looked up the same name.
         let definition = match node.namespace.is_empty() && *old_name == *name {
             true => node.tag_definition,
             false => parser::definition_of(name, options.is_tag_name_case_sensitive),
@@ -344,7 +344,8 @@ impl<'a> Context<'a, '_> {
             .get_mut(start as usize..end as usize)
             .unwrap_or_default()
         {
-            // What Prettier takes for `:namespace:name` can be a name that starts with a colon: `::a` is `:a` without a prefix.
+            // What Prettier treats as `:namespace:name` can be a name that starts with a colon: `::a` is `:a` without a
+            // prefix.
             if attr.namespace.is_empty()
                 && let Cow::Borrowed([b':', rest @ ..]) = attr.name
             {
@@ -370,13 +371,13 @@ impl<'a> Context<'a, '_> {
         }
     }
 
-    /// `postprocess`, for everything in `root`.
+    /// `postprocess`, for all descendants of `root`.
     fn postprocess(&mut self, root: Id, options: ParseOptions) -> Result<'a, ()> {
-        // What is in a node comes behind it, and no node is looked at before its parent.
+        // Preorder: a node's descendants come right after it, and no node is visited before its parent.
         let mut next = self.tree.first_child(root);
         while let Some(id) = next {
             self.postprocess_node(id, options)?;
-            // What is in a conditional comment has been through this.
+            // A conditional comment's contents have already been postprocessed.
             let first_child = self
                 .tree
                 .first_child(id)
@@ -394,7 +395,7 @@ impl<'a> Context<'a, '_> {
         Ok(())
     }
 
-    /// `parseIeConditionalComment`: the comment becomes what it is.
+    /// `parseIeConditionalComment`: changes the comment's kind if it's a conditional comment.
     fn parse_ie_conditional_comment(&mut self, id: Id, options: ParseOptions) -> Result<'a, ()> {
         let text = self.text;
         let span = self.tree[id].span;
@@ -402,7 +403,7 @@ impl<'a> Context<'a, '_> {
             Cow::Borrowed(value) => value,
             Cow::Owned(_) => return Ok(()),
         };
-        // `<!\s*\[endif\]$`: what is before it.
+        // `<!\s*\[endif\]$`: this is the text before the match.
         let before_end = value
             .strip_suffix(b"[endif]")
             .and_then(|rest| strings::trim_js_whitespace_end(rest).strip_suffix(b"<!"));
@@ -439,7 +440,7 @@ impl<'a> Context<'a, '_> {
         let parsed = self.parse(content, options);
         let is_complete = match parsed {
             Ok(root) => {
-                // Prettier parses it with blanks in the place of what is before it, so the first child is a text.
+                // Prettier parses it with everything before it replaced with spaces, so the first child is a text.
                 let starts_with_text = self.tree.first_child(root).is_some_and(|first| {
                     self.tree[first].kind == Kind::Text
                         && self.tree[first].span.start == content.start
@@ -478,7 +479,7 @@ impl<'a> Context<'a, '_> {
 }
 
 /// `text.trim().replaceAll(/\s+/g, " ")`
-pub(crate) fn collapse_white_space(value: &[u8]) -> Vec<u8> {
+fn collapse_white_space(value: &[u8]) -> Vec<u8> {
     let mut rest = strings::trim_js_whitespace(value);
     let mut result = Vec::with_capacity(rest.len());
     while let Some(&byte) = rest.first() {
@@ -498,8 +499,8 @@ pub(crate) fn collapse_white_space(value: &[u8]) -> Vec<u8> {
     result
 }
 
-/// Fills `tree` with the syntax of `text`, in which there are blanks in the place of the front matter, which is
-/// `front_matter_len` long.
+/// Parses `text` into `tree`. The front matter, which is `front_matter_len` bytes long, must have been replaced with
+/// spaces.
 pub(crate) fn parse<'a>(
     text: &'a [u8],
     front_matter_len: Option<usize>,

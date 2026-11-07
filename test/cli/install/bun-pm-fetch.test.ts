@@ -125,8 +125,7 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
     Fetched 1 package into cache
     Cache: <cache>"
   `);
-  // Nothing needed resolving, so only the second pass (the one that walks the
-  // lockfile) printed anything.
+  // Nothing had to be resolved, so only the second pass (the one that walks the lockfile) printed anything.
   expect(stderr).toBe("Fetching packages\n");
   expect(exitCode).toBe(0);
 
@@ -135,6 +134,77 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
   expect(await cachedPackages(cacheDir())).toBe(1);
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 });
+
+// Simulates a Docker layer: `COPY package.json bun.lock ./` followed by `RUN bun pm fetch`.
+it.each(["packages/*", "packages/web"])(
+  "should fetch the dependencies of a workspace in %s that isn't on disk yet",
+  async workspace => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeBunfig(textLockfile);
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", workspaces: [workspace] }));
+    await mkdir(join(package_dir, "packages", "web"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "web", "package.json"),
+      JSON.stringify({ name: "web", dependencies: { bar: "^0.0.2" } }),
+    );
+    {
+      const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    for (const name of [".bun-cache", "node_modules", "packages"]) {
+      await rm(join(package_dir, name), { recursive: true, force: true });
+    }
+    urls.length = 0;
+
+    const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+    expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
+
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+    expect(stderr).toContain('skipped 1 workspace listed in bun.lock but not on disk: "web"');
+    expect(urls).toEqual([`${root_url}/bar-0.0.2.tgz`]);
+    expect(await cachedPackages(cacheDir())).toBe(1);
+    expect(exitCode).toBe(0);
+  },
+);
+
+it.each(["*", "^1.0.0", "workspace:*"])(
+  "should not look up a missing workspace in the registry when the root depends on it as %s",
+  async range => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeBunfig(textLockfile);
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { lib: range } }),
+    );
+    await mkdir(join(package_dir, "packages", "lib"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "lib", "package.json"),
+      JSON.stringify({ name: "lib", version: "1.0.0" }),
+    );
+    {
+      const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    for (const name of [".bun-cache", "node_modules", "packages"]) {
+      await rm(join(package_dir, name), { recursive: true, force: true });
+    }
+    urls.length = 0;
+
+    const { stderr, exitCode } = await fetchIntoCache(cacheDir());
+    expect(stderr).toContain(
+      'error: the root package depends on workspace "lib" (packages/lib), which is listed in bun.lock but not on disk',
+    );
+    expect(urls).toEqual([]);
+    expect(exitCode).toBe(1);
+  },
+);
 
 it("should not write bun.lock when the lockfile comes from package-lock.json", async () => {
   const urls: string[] = [];
@@ -245,7 +315,7 @@ describe.each([
   { title: "dryRun = true in bunfig.toml", flags: [], bunfig: "dryRun = true\n" },
 ])("$title", ({ flags, bunfig }) => {
   it.each(["with", "without"])(
-    "counts what the cache lacks and downloads none of it, %s a lockfile",
+    "counts the packages that are missing from the cache and downloads none of them, %s a lockfile",
     async lockfile => {
       const urls: string[] = [];
       setHandler(dummyRegistry(urls));
@@ -467,8 +537,8 @@ describe.each(kinds)("a %s dependency", kind => {
     expect(await files()).toEqual(before);
     requested();
 
-    // What a `github:` ref or a URL stands for is not known without asking, so without a lockfile
-    // `--offline` cannot find their entries. Everything below them comes from the cache.
+    // There's no way to know what a `github:` ref or a URL points to without a request, so without a lockfile
+    // `--offline` can't find their entries. Everything below them comes from the cache.
     const again = { github: ["/repos/owner/repo/tarball/v1"], url: ["/files/url-dep-1.0.0.tgz"] }[kind as string];
     const install = await bun("cache", "install", ...(again ? [] : ["--offline"]));
     expect(install.stderr).not.toContain("error:");
@@ -495,7 +565,7 @@ it("--frozen-lockfile fails like bun install when package.json has moved on", as
   expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockfile);
 });
 
-it("--offline reports what the cache lacks and requests nothing", async () => {
+it("--offline reports the packages that are missing from the cache and requests nothing", async () => {
   await using fixture = await projectWith("npm");
   const { bun, requested } = fixture;
   expect(await bun("other-cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });

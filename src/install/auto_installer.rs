@@ -135,7 +135,8 @@ static WAKES: AtomicU32 = AtomicU32::new(0);
 /// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
 
-/// Blocks: an event loop would run timers inside `require()`. SeqCst: write own word, read other's.
+/// Blocks the thread, because an event loop would run timers inside `require()`. Uses SeqCst
+/// because each side writes its own word and then reads the other's.
 pub(crate) struct Parked(());
 
 impl Parked {
@@ -144,7 +145,8 @@ impl Parked {
         Parked(())
     }
 
-    /// Read before the drain: a task that finishes after it ends [`Parked::wait`] at once.
+    /// Read this before draining. A task that finishes after the read then makes [`Parked::wait`]
+    /// return immediately.
     pub(crate) fn wakes(&self) -> u32 {
         WAKES.load(Ordering::SeqCst)
     }
@@ -275,17 +277,8 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         package_id: PackageID,
         resolution: &hooks::Resolution,
-        buf: &'b mut [u8],
+        path_buf: &'b mut bun_paths::PathBuffer,
     ) -> Result<&'b [u8], bun_core::Error> {
-        // The resolver passes a `bun_paths::PathBuffer`-sized slice
-        // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
-        // signature's `&mut PathBuffer`.
-        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
-        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
-        // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
-        // (asserted above).
-        let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
@@ -413,6 +406,7 @@ impl hooks::AutoInstaller for PackageManager {
 
 // `PackageJSON::parse` runs before the first bare import creates the manager.
 #[unsafe(no_mangle)]
+#[inline(never)]
 fn __bun_resolver_parse_dependency(
     name: SemverString,
     name_hash: hooks::PackageNameHash,
@@ -445,6 +439,7 @@ fn __bun_resolver_parse_dependency(
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
+#[inline(never)]
 unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,

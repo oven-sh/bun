@@ -393,7 +393,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& h
 
     hadMessage = true;
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
-    return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
+    return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::Throwing);
 }
 
 void MessagePort::dispatchEvent(Event& event)
@@ -407,6 +407,8 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
+    // close() can drop the last reference if no stop phase ran first, e.g. for a collected ShadowRealm.
+    Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
 }

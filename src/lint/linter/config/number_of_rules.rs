@@ -1,4 +1,4 @@
-//! How many rules a configuration of oxlint has on.
+//! Counts the rules that an oxlint config turns on.
 
 use super::Config;
 use super::merge::RuleSetting;
@@ -6,20 +6,20 @@ use crate::context::Severity;
 use crate::linter::registry::Registry;
 use rustc_hash::FxHashSet;
 
-/// What is the same for two settings of one rule. A rule of a plugin in JavaScript can have the name of one that is built in: see
-/// `merge_rules`.
+/// Two settings apply to the same rule if they have the same key. A JavaScript plugin's rule can have the same name as
+/// a built-in one: see `merge_rules`.
 fn key(it: &RuleSetting) -> (&[u8], bool) {
-    (&it.id[..], it.written_for.is_some())
+    (&it.id[..], it.builtin_plugin.is_some())
 }
 
 impl Config {
-    /// oxlint's `ConfigStore::number_of_rules`, of an `.oxlintrc.json`: the rules that warn or are errors where no override
-    /// applies, and those that an override makes warn or an error, whichever files it is for. What an override turns off still
-    /// counts. What `categories` turn on for a plugin that only an override has doesn't. `with_types`: the rules that need
-    /// types count too.
+    /// oxlint's `ConfigStore::number_of_rules` for an `.oxlintrc.json`. Counts the rules that are warnings or errors
+    /// where no override applies, plus the rules that an override sets to warn or error, whichever files it covers. A
+    /// rule that an override turns off still counts. Rules that `categories` turn on for a plugin that only an override
+    /// enables don't count. With `with_types`, rules that need types count too.
     ///
-    /// A rule that only a category turns on and that does not exist here is not counted.
-    pub fn number_of_rules_of_oxlint(&self, registry: &Registry, with_types: bool) -> usize {
+    /// A rule that only a category turns on and that Bun doesn't have isn't counted.
+    pub fn oxlint_number_of_rules(&self, registry: &Registry, with_types: bool) -> usize {
         let settings = |are_of_overrides: bool| {
             let objects = self.objects.iter();
             objects

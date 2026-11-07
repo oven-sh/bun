@@ -1,11 +1,11 @@
-//! `oxc_codegen`, as far as the fixes of oxlint print a part of the tree anew with it.
+//! The parts of `oxc_codegen` that oxlint's fixes use to reprint part of the tree.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
 
-/// `Codegen::print_string` and `print_string_literal`: the string with the value `value` in `quote`s. The fixes of oxlint
-/// print `'` (`fixer.codegen()`), and `"` where they take the default options of `oxc_codegen`.
+/// `Codegen::print_string` and `print_string_literal`: prints a string literal with the value `value`, quoted with
+/// `quote`. oxlint's fixes use `'` (`fixer.codegen()`), or `"` where they use `oxc_codegen`'s default options.
 pub fn print_string(out: &mut Vec<u8>, value: &[u8], quote: u8) {
     out.push(quote);
     let mut rest = value;
@@ -33,7 +33,7 @@ pub fn print_string(out: &mut Vec<u8>, value: &[u8], quote: u8) {
             (0xE2, [0x80, 0xA8, ..]) => (b"\\u2028", 3),
             (0xE2, [0x80, 0xA9, ..]) => (b"\\u2029", 3),
             (0xC2, [0xA0, ..]) => (b"\\xA0", 2),
-            // Half of a surrogate pair.
+            // A lone surrogate.
             (0xED, [second @ 0xA0..=0xBF, third @ 0x80..=0xBF, ..]) => {
                 let unit = 0xD000 | u32::from(second & 0x3F) << 6 | u32::from(third & 0x3F);
                 out.extend_from_slice(format!("\\u{unit:04x}").as_bytes());
@@ -47,7 +47,7 @@ pub fn print_string(out: &mut Vec<u8>, value: &[u8], quote: u8) {
     out.push(quote);
 }
 
-/// `Codegen::print_non_negative_float`: the shortest way to write `n`.
+/// `Codegen::print_non_negative_float`: prints the shortest representation of `n`.
 fn print_number(out: &mut Vec<u8>, n: f64) {
     let text = text::number_to_string(n);
     let text = text.as_slice();
@@ -76,7 +76,7 @@ fn print_number(out: &mut Vec<u8>, n: f64) {
         is_hex = hex.len() < best.len();
         best = shorter_of(best, hex);
     } else if best.starts_with(b".0") {
-        // `.0005` is `5e-4`.
+        // `.0005` becomes `5e-4`.
         let zeros = best.iter().skip(1).take_while(|it| **it == b'0').count();
         let digits = best.get(1 + zeros..).unwrap_or_default();
         if !digits.is_empty() {
@@ -91,7 +91,7 @@ fn print_number(out: &mut Vec<u8>, n: f64) {
         let candidate = [digits, b"e", zeros.to_string().as_bytes()].concat();
         best = shorter_of(best, candidate);
     }
-    // `1.2e101` is `12e100`.
+    // `1.2e101` becomes `12e100`.
     if let Some((integer, rest)) = strings::split_once_char(&best, b'.')
         && let Some((fraction, exponent)) = strings::split_once_char(rest, b'e')
         && let Some(exponent) = std::str::from_utf8(exponent)
@@ -105,9 +105,9 @@ fn print_number(out: &mut Vec<u8>, n: f64) {
     out.extend_from_slice(&best);
 }
 
-/// What the fixes of oxlint print a part of the tree anew with: oxc's `Codegen`, with single quotes. Strings, numbers,
-/// objects and arrays are printed as there. Everything else stays as it is written, which is the same only if it is
-/// written as oxc prints it.
+/// oxc's `Codegen` with single quotes, which oxlint's fixes use to reprint part of the tree. Strings, numbers, objects
+/// and arrays are printed like oxc prints them. Everything else is copied from the source, so it only matches oxc's
+/// output if the source is already formatted that way.
 #[derive(Default)]
 pub struct Codegen {
     pub code: Vec<u8>,
@@ -133,8 +133,8 @@ impl Codegen {
         self.print_expr(e, false);
     }
 
-    /// `in_list`: where a comma separates, so that `a, b` needs parentheses. Those that `e` is written in are not
-    /// printed, except around a function.
+    /// `in_list` means a comma is a separator here, so `a, b` needs parentheses. The parentheses around `e` in the
+    /// source aren't printed, except around a function.
     fn print_expr(&mut self, e: Expr, in_list: bool) {
         let is_wrapped = match e.tag() {
             ExprTag::Fn => e.is_parenthesized(),
@@ -148,7 +148,7 @@ impl Codegen {
                 print_string(&mut self.code, value.bytes(), b'\'')
             }
             ExprKind::Number(n) => print_number(&mut self.code, n),
-            // In base 10.
+            // `digits` is in base 10.
             ExprKind::BigInt(digits) => {
                 self.code.extend_from_slice(digits.bytes());
                 self.code.push(b'n');
@@ -172,7 +172,7 @@ impl Codegen {
         }
     }
 
-    /// An object literal with `properties`.
+    /// Prints an object literal with `properties`.
     pub fn print_object_expression(&mut self, properties: &[Prop]) {
         let is_multi_line = properties.len() > 1;
         self.indent += usize::from(is_multi_line);
@@ -203,7 +203,7 @@ impl Codegen {
                 self.print_expr(argument, true);
             }
             (PropKind::Init, Some(key), Some(value)) => {
-                let written = property.file().slice(key.inner_span(property.file()));
+                let key_text = property.file().slice(key.inner_span(property.file()));
                 let (open, close): (&[u8], &[u8]) = if key.is_computed() {
                     (b"[", b"]: ")
                 } else {
@@ -213,19 +213,19 @@ impl Codegen {
                 match key.kind() {
                     KeyKind::Computed(e) => self.print_expr(e, true),
                     KeyKind::String(name) | KeyKind::ComputedString(name)
-                        if !written.starts_with(b"`") =>
+                        if !key_text.starts_with(b"`") =>
                     {
                         print_string(&mut self.code, name.bytes(), b'\'');
                     }
                     KeyKind::Number(name) | KeyKind::ComputedNumber(name)
-                        if !written.ends_with(b"n") =>
+                        if !key_text.ends_with(b"n") =>
                     {
                         print_number(
                             &mut self.code,
                             bun_core::fmt::js_string_to_number(name.bytes()),
                         );
                     }
-                    _ => self.code.extend_from_slice(written),
+                    _ => self.code.extend_from_slice(key_text),
                 }
                 self.code.extend_from_slice(close);
                 self.print_expr(value, true);
@@ -261,13 +261,14 @@ impl Codegen {
     }
 }
 
-/// [`Codegen::print_expression`], which leaves a call as it is written. Here calls, `new`, member expressions and `a, b` are printed as
-/// oxc prints them, so that what is in their parentheses and brackets is printed anew too. The parentheses around `e` are not printed.
+/// Like [`Codegen::print_expression`], which copies a call from the source. This one prints calls, `new`, member
+/// expressions and `a, b` like oxc, so their arguments and indices are reprinted too. The parentheses around `e` aren't
+/// printed.
 pub fn print_expression(codegen: &mut Codegen, e: Expr) {
     print_expression_in(codegen, e, false);
 }
 
-/// Whether oxc prints no parentheses around it where it is called or a member of it is read.
+/// True if oxc doesn't parenthesize `e` as a callee or as the object of a member access.
 fn is_primary(e: Expr) -> bool {
     match e.tag() {
         ExprTag::Ident
@@ -291,12 +292,12 @@ fn is_primary(e: Expr) -> bool {
     }
 }
 
-/// `is_callee_of_new`: a call that it starts with is in parentheses.
+/// With `is_callee_of_new`, a call at the start of `e` is parenthesized.
 fn print_expression_in(codegen: &mut Codegen, e: Expr, is_callee_of_new: bool) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return codegen.print_expression(e);
     }
-    // Also `a, (b, c)` is `a, b, c`.
+    // `a, (b, c)` is also printed as `a, b, c`.
     if e.binary_op() == Some(BinOp::Comma) {
         for (i, item) in e.sequence().iter().enumerate() {
             if i != 0 {
@@ -306,7 +307,8 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, is_callee_of_new: bool) {
         }
         return;
     }
-    // `a.b(c)[d]`, which can be as long as one likes: the `[d]`, the `(c)` and the `.b`, and then the `a`.
+    // A chain like `a.b(c)[d]` can be arbitrarily long, so collect its links iteratively: `[d]`, `(c)`, `.b`, which
+    // leaves `a`.
     let mut links: SmallVec<[Expr; 8]> = SmallVec::new();
     let mut at = e;
     while at == e || !at.is_parenthesized() || is_primary(at) {
@@ -319,7 +321,7 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, is_callee_of_new: bool) {
         links.push(at);
         at = next;
     }
-    // `new (a().b)` is `new (a()).b()`.
+    // `new (a().b)` is printed as `new (a()).b()`.
     let last_call = links
         .iter()
         .position(|it| it.tag() == ExprTag::Call)
@@ -397,7 +399,7 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, is_callee_of_new: bool) {
     }
 }
 
-/// The arguments and the `)`.
+/// Prints the arguments and the `)`.
 fn print_arguments(codegen: &mut Codegen, call: Call) {
     for (i, argument) in call.args().iter().enumerate() {
         if i != 0 {

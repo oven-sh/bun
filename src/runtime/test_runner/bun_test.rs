@@ -248,6 +248,7 @@ pub(crate) mod js_fns {
 
             let cfg = ExecutionEntryCfg {
                 calling,
+                flavor,
                 fixtures,
                 timeout: args.options.timeout,
                 around: tag.around().map(|around| (around, AroundPhase::SetUp)),
@@ -914,6 +915,14 @@ impl BunTest {
         }
     }
 
+    /// `get_current_state_data()`, with the sequence that the state names. Inlined, the lookup folds into the walk before it.
+    #[inline]
+    pub(crate) fn current_state_data_and_sequence(&mut self) -> (RefDataValue, Option<&mut Execution::ExecutionSequence>) {
+        let state = self.get_current_state_data();
+        let sequence = state.sequence(self);
+        (state, sequence)
+    }
+
     pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
@@ -922,6 +931,7 @@ impl BunTest {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
             timed_out: core::cell::Cell::new(false),
+            expect_call_counted: core::cell::Cell::new(false),
             ref_count: bun_ptr::RefCount::init(),
         })
     }
@@ -1840,6 +1850,8 @@ pub(crate) struct RefData {
     pub(crate) phase: RefDataValue,
     /// The callback ran into its time limit. As in Vitest and Jest, a later rejection of its promise isn't an error.
     pub(crate) timed_out: core::cell::Cell<bool>,
+    /// `expect()` counted its call when it made this ref, as Vitest does, so the matchers of that `Expect` count nothing.
+    pub(crate) expect_call_counted: core::cell::Cell<bool>,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
 impl Drop for RefData {
@@ -1952,6 +1964,17 @@ pub(crate) enum Flavor {
     #[default]
     Jest,
     Vitest,
+}
+
+impl Flavor {
+    /// Whose rules a callback follows: its test's module. A hook that runs for no test, such as `beforeAll`, follows its own.
+    pub(crate) fn of(
+        test: Option<NonNull<ExecutionEntry>>,
+        hook: impl FnOnce() -> Option<NonNull<ExecutionEntry>>,
+    ) -> Flavor {
+        // SAFETY: arena-owned entries, alive for the lifetime of their `BunTest`.
+        test.or_else(hook).map_or(Flavor::Jest, |entry| unsafe { entry.as_ref() }.flavor)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -2277,6 +2300,7 @@ impl DescribeScope {
                 let slot_cfg = ExecutionEntryCfg {
                     timeout: cfg.timeout,
                     calling: Calling::Vitest { context: false },
+                    flavor: cfg.flavor,
                     ..Default::default()
                 };
                 let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
@@ -2287,6 +2311,7 @@ impl DescribeScope {
                 let slot_cfg = ExecutionEntryCfg {
                     timeout: cfg.timeout,
                     calling: Calling::Vitest { context: false },
+                    flavor: cfg.flavor,
                     around: Some((Around::All, AroundPhase::TearDown)),
                     ..Default::default()
                 };
@@ -2338,6 +2363,7 @@ pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) calling: Calling,
+    pub(crate) flavor: Flavor,
     pub(crate) around: Option<(Around, AroundPhase)>,
     pub(crate) fixtures: Option<JSValue>,
     /// Number of times to retry a failed test (0 = no retries)
@@ -2358,7 +2384,10 @@ pub(crate) struct ExecutionEntry {
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
+    /// How the callback is called. An around hook's is `Vitest` in every flavor.
     pub(crate) calling: Calling,
+    /// The module the entry was registered through.
+    pub(crate) flavor: Flavor,
     pub(crate) around: Option<(Around, AroundPhase)>,
     pub(crate) fixtures: Option<Strong>,
     pub(crate) parameter: Option<SharedContextParameter>,
@@ -2391,6 +2420,7 @@ impl ExecutionEntry {
             callback: None,
             timeout: cfg.timeout,
             calling: cfg.calling,
+            flavor: cfg.flavor,
             around: cfg.around,
             fixtures: None,
             parameter: (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default),

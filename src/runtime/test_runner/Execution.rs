@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry, Flavor,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
@@ -163,7 +163,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
-    /// Number of expect() calls observed in this sequence.
+    /// What `expect.assertions()` counts in this attempt: `expect()` calls if `counts_expect_calls`, else matcher calls.
     pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
@@ -179,6 +179,9 @@ pub(crate) struct ExecutionSequence {
     pub(crate) failure: Option<test_command::TestFailure>,
     /// Failures from earlier attempts, for the JUnit report.
     pub(crate) earlier_failures: Vec<test_command::TestFailure>,
+    /// Vitest counts a call when `expect()` is called. Jest counts it when a matcher is called.
+    /// The test decides for its hooks. A `beforeAll`, `afterAll` or `aroundAll` hook decides for itself.
+    pub(crate) counts_expect_calls: bool,
 }
 
 impl ExecutionSequence {
@@ -208,6 +211,7 @@ impl ExecutionSequence {
             counted_snapshots: Vec::new(),
             failure: None,
             earlier_failures: Vec::new(),
+            counts_expect_calls: Flavor::of(test_entry, || first_entry) == Flavor::Vitest,
         }
     }
 

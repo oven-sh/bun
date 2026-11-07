@@ -1642,11 +1642,17 @@ declare module "bun:test" {
 
     /**
      * Ensures that an assertion is made
+     *
+     * An assertion is a matcher call. In a test from `"vitest"`, `test.for()` or
+     * `test.extend()` it is an `expect()` call, whether or not a matcher follows, as in Vitest.
      */
     hasAssertions(): void;
 
     /**
      * Ensures that a specific number of assertions are made
+     *
+     * An assertion is a matcher call. In a test from `"vitest"`, `test.for()` or
+     * `test.extend()` it is an `expect()` call, whether or not a matcher follows, as in Vitest.
      */
     assertions(neededAssertions: number): void;
 
@@ -1704,7 +1710,10 @@ declare module "bun:test" {
   }
 
   export interface ExpectState {
-    /** The number of assertions the current test has made. */
+    /**
+     * The number of assertions the current test has made: matcher calls, or `expect()`
+     * calls in a test from `"vitest"`, `test.for()` or `test.extend()`.
+     */
     assertionCalls: number;
     /** The enclosing `describe` blocks' names and the current test's name, joined by a space. */
     currentTestName?: string;

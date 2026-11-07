@@ -535,17 +535,22 @@ describe("net.Socket write", () => {
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.once("close", resolve);
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");
       });
     }
 
-    for (let i = 0; i < 10; i++) {
-      await run();
+    try {
+      for (let i = 0; i < 10; i++) {
+        await run();
+      }
+    } finally {
+      socket.destroy();
+      server.close();
     }
-    server.close();
   });
 
   // Client-mode `Handlers.markInactive()` frees the per-connection Handlers

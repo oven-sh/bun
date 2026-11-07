@@ -325,6 +325,8 @@ pub(crate) struct Formatter<'a> {
     same_as_older_bun: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
+    /// The `target` of the event that a failure message prints. It prints as `[Class]`.
+    dispatcher: JSValue,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -359,6 +361,7 @@ impl<'a> Formatter<'a> {
             like_older_bun: None,
             same_as_older_bun: true,
             output_length: None,
+            dispatcher: JSValue::ZERO,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -957,14 +960,10 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        let Ok(mut tag) = Tag::get(value, global_this) else { return };
+        let Ok(tag) = Tag::get(value, global_this) else { return };
 
         if tag.cell.is_hidden() {
             return;
-        }
-        // The target of an event that was dispatched on the global object. It holds `process.env`, so it prints by its name.
-        if tag.cell == JSType::GlobalObject && ctx.formatter.output_length.is_some() && ctx.parent.js_type() == JSType::Event {
-            tag.tag = Tag::GlobalObject;
         }
         // reshaped for borrowck — `handle_first_property` needs `&mut *ctx`,
         // so the split borrows of `ctx.formatter`/`ctx.writer` are taken *after* it.
@@ -1894,11 +1893,17 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Event => {
-                    // In a failure message the walk of the Object arm prints what `deepEquals` reads of an event.
+                    // In a failure message the walk of the Object arm prints what `toEqual` reads of an event.
                     if self.output_length.is_some() {
-                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Event,
-                        );
+                        let dispatcher = match value.get(self.global_this, "target") {
+                            Ok(target) => target.unwrap_or(JSValue::ZERO),
+                            Err(JsError::Thrown) if self.global_this.clear_exception_except_termination() => JSValue::ZERO,
+                            Err(error) => return Err(error),
+                        };
+                        let outer = core::mem::replace(&mut self.dispatcher, dispatcher);
+                        let printed = self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer.ctx, value, JSType::Event);
+                        self.dispatcher = outer;
+                        return printed;
                     }
 
                     let event_type_value: JSValue = 'brk: {
@@ -2548,10 +2553,24 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
-        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
-        if !result.tag.is_primitive() && self.output_length.is_some_and(|length| length.get() > 1_000_000) {
-            let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
-            return Ok(());
+        if !result.tag.is_primitive() && let Some(length) = self.output_length {
+            // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
+            if length.get() > 1_000_000 {
+                let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
+                return Ok(());
+            }
+            // Where another value holds the global object, it prints as `console.log` prints it there. It holds `process.env`.
+            if result.cell == JSType::GlobalObject && self.indent > 0 {
+                let global_object = if value.js_type() == JSType::GlobalProxy { value.get_proxy_target() } else { value };
+                if global_object == global_this.to_js_value() {
+                    let _ = writer.write_all(b"[Global Object]");
+                    return Ok(());
+                }
+            }
+            if value == self.dispatcher {
+                let _ = writer.write_fmt(format_args!("[{}]", value.get_class_name(global_this)?));
+                return Ok(());
+            }
         }
         let mut result = result;
         if result.tag == Tag::JSX

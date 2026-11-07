@@ -2487,7 +2487,7 @@ impl JSValue {
         scope.return_if_exception()
     }
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
-    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same own properties. With `event_attributes`, an event also gets the accessors it inherits.
+    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same own properties. With `event_attributes`, the walk of an event also visits what `toEqual` reads through its prototypes.
     #[inline(always)]
     pub fn for_each_property_ordered_calling_getters(
         self,

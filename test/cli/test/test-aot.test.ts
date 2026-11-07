@@ -217,18 +217,18 @@ describe.skipIf(!supported)("bun test --aot", () => {
     );
   });
 
-  test.concurrent("an event with a getter that throws is printed in a failure as without --aot", async () => {
+  test.concurrent("an event with a prototype of the program is printed in a failure as without --aot", async () => {
     const { stderr } = await expectSameAsBunTest({
       "event.test.ts": `
         import { expect, test } from "bun:test";
         test("an event", () => {
-          const prototype: object = { get code(): number { throw new Error("not ready"); } };
+          const prototype: object = { kind: 1, get code(): number { throw new Error("not ready"); } };
           const event: unknown = Object.setPrototypeOf(new CloseEvent("close", { reason: "r" }), prototype);
           expect(event).toEqual(1);
         });
       `,
     });
-    expect(stderr).toContain(`+   "code": [native code],\n+   "isTrusted": false,\n`);
+    expect(stderr).toContain(`+   "code": [native code],\n+   "isTrusted": false,\n+   "kind": 1,\n`);
   });
 
   test.concurrent("other options work the same as without --aot", async () => {

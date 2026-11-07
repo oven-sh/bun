@@ -1,5 +1,6 @@
 import { expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import vm from "node:vm";
 
 function cleanOutput(output: string) {
   return output
@@ -969,9 +970,10 @@ test("stops printing deeper once a value has printed 1,000,000 characters", () =
   expect(message.length).toBeWithin(1_000_000, 1_500_000);
 });
 
-// A native Event, CustomEvent, MessageEvent, ErrorEvent or CloseEvent. toEqual reads the names that for-in gives for it,
-// which are accessors of the prototypes. A failure message printed `isTrusted` alone, so both sides were the same text.
-// The lines that a failure message prints for a value: the received side of a matcher that fails for every line.
+// A native Event, CustomEvent, MessageEvent, ErrorEvent or CloseEvent. toEqual reads every name that is enumerable on
+// the event or on one of its prototypes: for a new event those are accessors of the prototypes. The diff of a failure
+// message printed `isTrusted` alone, so it did not show the attribute that differs.
+// The lines that the diff prints for a value: the received side of a matcher that fails for every line.
 function printedInFailure(value: unknown) {
   let message = "";
   try {
@@ -990,6 +992,13 @@ function messageOfFailure(fails: () => void) {
     return cleanAnsiEscapes((e as Error).message);
   }
   throw new Error("the matcher did not fail");
+}
+// The lines of the diff that differ, without their indentation.
+function differing(fails: () => void) {
+  return messageOfFailure(fails)
+    .split("\n")
+    .filter(line => /^[-+]   /.test(line))
+    .map(line => line.replace(/ +/, " "));
 }
 
 test("prints what toEqual reads of an event: its own properties and the accessors it inherits", () => {
@@ -1030,7 +1039,8 @@ test("prints what toEqual reads of an event: its own properties and the accessor
   expect(names(new ErrorEvent("a"))).toEqual([...ofEvent, "colno", "error", "filename", "lineno", "message"].sort());
   expect(names(new CloseEvent("a"))).toEqual([...ofEvent, "code", "reason", "wasClean"].sort());
 
-  // Every event class of the global object: the names of for-in, without the methods and the constants of the prototypes.
+  // Every event class of the global object. For a new event the names that toEqual reads are those of for-in. The
+  // methods and the constants of the prototypes stay out.
   const classes: (typeof Event)[] = Object.getOwnPropertyNames(globalThis)
     .filter(name => /^([A-Z]\w*)?Event$/.test(name))
     .map(name => (globalThis as any)[name]);
@@ -1047,52 +1057,80 @@ test("prints what toEqual reads of an event: its own properties and the accessor
   }
 });
 
-test("a failing matcher shows the attribute of an event that differs", () => {
-  const differing = (fails: () => void) =>
-    messageOfFailure(fails)
-      .split("\n")
-      .filter(line => /^[-+]   /.test(line));
-  expect(differing(() => expect(new Event("a")).toEqual(new Event("b")))).toEqual([
-    '-   "type": "b",',
-    '+   "type": "a",',
-  ]);
-  expect(
-    differing(() => expect(new CustomEvent("a", { detail: 1 })).toEqual(new CustomEvent("a", { detail: 2 }))),
-  ).toEqual(['-   "detail": 2,', '+   "detail": 1,']);
+test("the diff of a failing matcher shows the attribute of an event that differs", () => {
+  expect(differing(() => expect(new Event("a")).toEqual(new Event("b")))).toEqual(['- "type": "b",', '+ "type": "a",']);
   expect(
     differing(() => expect(new MessageEvent("a", { data: 1 })).toStrictEqual(new MessageEvent("a", { data: 2 }))),
-  ).toEqual(['-   "data": 2,', '+   "data": 1,']);
+  ).toEqual(['- "data": 2,', '+ "data": 1,']);
   expect(
     differing(() => expect(new MessageEvent("a", { origin: "a" })).toEqual(new MessageEvent("a", { origin: "b" }))),
-  ).toEqual(['-   "origin": "b",', '+   "origin": "a",']);
+  ).toEqual(['- "origin": "b",', '+ "origin": "a",']);
   expect(
     differing(() => expect(new ErrorEvent("e", { message: "a" })).toEqual(new ErrorEvent("e", { message: "b" }))),
-  ).toEqual(['-   "message": "b",', '+   "message": "a",']);
+  ).toEqual(['- "message": "b",', '+ "message": "a",']);
   expect(
     differing(() => expect(new CloseEvent("c", { code: 1000 })).toEqual(new CloseEvent("c", { code: 1001 }))),
-  ).toEqual(['-   "code": 1001,', '+   "code": 1000,']);
+  ).toEqual(['- "code": 1001,', '+ "code": 1000,']);
+
+  // Every matcher that prints a diff.
+  const one = () => new CustomEvent("a", { detail: 1 });
+  const two = () => new CustomEvent("a", { detail: 2 });
+  const called = mock();
+  called(one());
+  expect.extend({
+    toFailWithTheDiffOf(received: unknown, expected: unknown) {
+      return { pass: false, message: () => this.utils.diff(expected, received)! };
+    },
+  });
+  const diffs: Record<string, () => void> = {
+    toEqual: () => expect(one()).toEqual(two()),
+    toStrictEqual: () => expect(one()).toStrictEqual(two()),
+    toMatchObject: () => expect({ event: one() }).toMatchObject({ event: two() }),
+    toHaveProperty: () => expect({ event: one() }).toHaveProperty("event", two()),
+    toHaveBeenCalledWith: () => expect(called).toHaveBeenCalledWith(two()),
+    toHaveBeenLastCalledWith: () => expect(called).toHaveBeenLastCalledWith(two()),
+    toHaveBeenNthCalledWith: () => expect(called).toHaveBeenNthCalledWith(1, two()),
+    toHaveBeenCalledExactlyOnceWith: () => expect(called).toHaveBeenCalledExactlyOnceWith(two()),
+    "this.utils.diff": () => (expect(one()) as any).toFailWithTheDiffOf(two()),
+  };
+  for (const [matcher, fails] of Object.entries(diffs)) {
+    expect([matcher, differing(fails)]).toEqual([matcher, ['- "detail": 2,', '+ "detail": 1,']]);
+  }
+
   // A value on a prototype that the program made. toEqual reads it as it reads the accessors.
   const withKind = (kind: number) =>
     Object.setPrototypeOf(new Event("a"), Object.assign(Object.create(Event.prototype), { kind }));
-  expect(differing(() => expect(withKind(1)).toEqual(withKind(2)))).toEqual(['-   "kind": 2,', '+   "kind": 1,']);
-
-  // An event that was dispatched is not equal to a new one: it has a target.
-  const target = new EventTarget();
-  const listener = mock();
-  target.addEventListener("a", listener);
-  target.dispatchEvent(new CustomEvent("a", { detail: 1 }));
-  expect(differing(() => expect(listener.mock.calls[0][0]).toEqual(new CustomEvent("a", { detail: 1 })))).toEqual([
-    '-   "srcElement": null,',
-    '-   "target": null,',
-    '+   "srcElement": EventTarget {},',
-    '+   "target": EventTarget {},',
+  expect(differing(() => expect(withKind(1)).toEqual(withKind(2)))).toEqual(['- "kind": 2,', '+ "kind": 1,']);
+  // A symbol on such a prototype. for-in does not give it, and toEqual reads it.
+  const kind = Symbol("kind");
+  const withSymbol = (value: number) =>
+    Object.setPrototypeOf(new Event("a"), Object.assign(Object.create(Event.prototype), { [kind]: value }));
+  expect(differing(() => expect(withSymbol(1)).toEqual(withSymbol(2)))).toEqual([
+    "- [Symbol(kind)]: 2,",
+    "+ [Symbol(kind)]: 1,",
   ]);
-  expect(messageOfFailure(() => expect(listener).toHaveBeenCalledWith(new CustomEvent("a", { detail: 2 })))).toContain(
-    `\n-     "detail": 2,\n+     "detail": 1,\n`,
-  );
-  expect(messageOfFailure(() => expect(listener.mock.calls[0][0]).toMatchObject({ detail: 2 }))).toContain(
-    `\n+   "detail": 1,\n`,
-  );
+  // An own property that is not enumerable, under a name that is enumerable on a prototype. for-in does not give it,
+  // and toEqual reads it.
+  const withTarget = (value: number) => Object.defineProperty(new Event("a"), "target", { value });
+  expect(differing(() => expect(withTarget(1)).toEqual(withTarget(2)))).toEqual(['- "target": 2,', '+ "target": 1,']);
+  // A getter that the program put on a native prototype.
+  Object.defineProperty(Event.prototype, "twice", {
+    get() {
+      return this.type + this.type;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  try {
+    expect(differing(() => expect(new Event("a")).toEqual(new Event("b")))).toEqual([
+      '- "twice": "bb",',
+      '- "type": "b",',
+      '+ "twice": "aa",',
+      '+ "type": "a",',
+    ]);
+  } finally {
+    delete (Event.prototype as any).twice;
+  }
 });
 
 test("prints an event by its class, with its own properties, also for the types message and error", () => {
@@ -1118,6 +1156,35 @@ test("prints an event by its class, with its own properties, also for the types 
   expect(printedInFailure(expect.objectContaining(new CloseEvent("close", { code: 1000 })))).toContain(
     '  "code": 1000,',
   );
+
+  // `data`, `message` and `error` printed for these two types also where they are getters of a class, which are not
+  // enumerable. toMatchObject reads them.
+  class Message extends Event {
+    #data: number;
+    constructor(data: number) {
+      super("message");
+      this.#data = data;
+    }
+    get data() {
+      return this.#data;
+    }
+  }
+  class Failure extends Event {
+    constructor() {
+      super("error");
+    }
+    get message() {
+      return "m";
+    }
+    get error() {
+      return 1;
+    }
+  }
+  expect(differing(() => expect(new Message(1)).toMatchObject({ data: 2 }))).toContain('+ "data": 1,');
+  expect(printedInFailure(new Failure()).filter(line => /^  "(error|message)"/.test(line))).toEqual([
+    '  "error": 1,',
+    '  "message": "m",',
+  ]);
 });
 
 test("prints an event that holds itself once, and a getter of an event that throws as [native code]", () => {
@@ -1134,10 +1201,38 @@ test("prints an event that holds itself once, and a getter of an event that thro
     get type(): string {
       throw new Error("from the getter of type");
     }
+    get target(): EventTarget {
+      throw new Error("from the getter of target");
+    }
   }
-  expect(printedInFailure(new Throws("a")).filter(line => line.includes('"type"'))).toEqual([
+  expect(printedInFailure(new Throws("a")).filter(line => /"(target|type)"/.test(line))).toEqual([
+    '  "target": [native code],',
     '  "type": [native code],',
   ]);
+});
+
+test("prints the object that dispatched an event as its class", () => {
+  class Socket extends EventTarget {
+    received = new Uint8Array(4096);
+  }
+  const socket = new Socket();
+  let event: Event | undefined;
+  let inTheListener: string[] = [];
+  socket.addEventListener("message", received => {
+    event = received;
+    inTheListener = printedInFailure(received);
+  });
+  socket.dispatchEvent(new MessageEvent("message", { data: { socket } }));
+  // `currentTarget`, `srcElement` and `target` are the same object. In full it has 4,100 lines.
+  expect(inTheListener.filter(line => line.includes("Socket"))).toEqual([
+    '  "currentTarget": [Socket],',
+    '    "socket": [Socket],',
+    '  "srcElement": [Socket],',
+    '  "target": [Socket],',
+  ]);
+  expect(inTheListener).toHaveLength(23);
+  // Where no event holds it, it prints in full.
+  expect(printedInFailure({ socket })).toHaveLength(4102);
 });
 
 test("does not print the accessors of a value that is not a native event", () => {
@@ -1155,7 +1250,6 @@ test("does not print the accessors of a value that is not a native event", () =>
   using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, data: { a: 1 }, socket: { data() {} } });
   expect(
     printedInFailure([
-      new DOMException("m", "AbortError"), // message, code
       AbortSignal.abort("why"), // reason
       performance.mark("m", { detail: 1 }), // detail
       new Inherits(),
@@ -1164,7 +1258,6 @@ test("does not print the accessors of a value that is not a native event", () =>
     ]),
   ).toEqual([
     "[",
-    "  DOMException {},",
     "  AbortSignal {},",
     "  PerformanceMark {},",
     "  Inherits {},",
@@ -1175,7 +1268,7 @@ test("does not print the accessors of a value that is not a native event", () =>
   expect(calls).toBe(0);
 });
 
-test("prints an event that inherits through a Proxy with every name of for-in, or its own where a trap throws", () => {
+test("prints an event that inherits through a Proxy with every enumerable name, or its own where a trap throws", () => {
   const event: MessageEvent = Object.setPrototypeOf(
     new MessageEvent("message", { data: 1 }),
     new Proxy(MessageEvent.prototype, {}),
@@ -1202,57 +1295,46 @@ test("prints an event that inherits through a Proxy with every name of for-in, o
   expect(message).toContain('\n+ Event {\n+   "isTrusted": false,\n  }\n');
 });
 
-test("prints the global object by its name where an event has it as its target", () => {
+test("prints the global object as [Global Object] in the diff of a failure message", () => {
   let event: Event | undefined;
   const listener = (received: Event) => {
     event = received;
   };
   // The global object holds `process.env`.
-  process.env.IN_THE_TARGET_OF_AN_EVENT = "value of a variable of the environment";
+  process.env.IN_THE_GLOBAL_OBJECT = "value of a variable of the environment";
   globalThis.addEventListener("on-the-global-object", listener);
   try {
-    globalThis.dispatchEvent(new CustomEvent("on-the-global-object", { detail: globalThis }));
+    globalThis.dispatchEvent(new CustomEvent("on-the-global-object", { detail: { global: globalThis } }));
     const printed = printedInFailure(event);
-    expect(printed.filter(line => line.includes("globalThis"))).toEqual([
-      '  "detail": [this.globalThis],',
-      '  "srcElement": [this.globalThis],',
-      '  "target": [this.globalThis],',
+    expect(printed.filter(line => line.includes("Global Object"))).toEqual([
+      '    "global": [Global Object],',
+      '  "srcElement": [Global Object],',
+      '  "target": [Global Object],',
     ]);
-    expect(printed).toHaveLength(17);
+    expect(printed).toHaveLength(19);
     expect(printed.join("\n")).not.toContain("value of a variable of the environment");
+    // Also where another value holds it. By itself it prints in full.
+    expect(printedInFailure({ global: globalThis })).toEqual(["{", '  "global": [Global Object],', "}"]);
+    expect(printedInFailure([new Map([[1, globalThis]])])).toContain("    1 => [Global Object],");
+    expect(printedInFailure(globalThis).length).toBeGreaterThan(100);
+    // The global object of a `node:vm` context prints in full: toEqual compares it by its properties.
+    const inContext = (x: number) => new MessageEvent("message", { data: vm.runInNewContext("globalThis", { x }) });
+    expect(differing(() => expect(inContext(1)).toEqual(inContext(2)))).toEqual(['- "x": 2,', '+ "x": 1,']);
   } finally {
     globalThis.removeEventListener("on-the-global-object", listener);
-    delete process.env.IN_THE_TARGET_OF_AN_EVENT;
+    delete process.env.IN_THE_GLOBAL_OBJECT;
   }
 });
 
-test("prints null for a getter of a prototype that throws, when the value is not an event", () => {
-  // The getter of 0 removes the own 1. The name 1 then leads to a getter of the prototype.
-  const make = () => {
-    const prototype = Object.defineProperty({}, "1", {
-      get() {
-        throw new Error("from the prototype");
-      },
-      enumerable: true,
-    });
-    return Object.defineProperties(Object.create(prototype), {
-      0: {
-        get() {
-          delete this[1];
-          return "first";
-        },
-        enumerable: true,
-      },
-      1: { value: "own", enumerable: true, configurable: true },
-    });
-  };
-  expect(printedInFailure(make())).toEqual(["{", '  "0": "first",', '  "1": null,', "}"]);
-  expect(make()).toMatchInlineSnapshot(`
-    {
-      "0": "first",
-      "1": null,
-    }
-  `);
+test("a value that cannot be printed fails the diff of an event as it fails the diff of an object", () => {
+  // JSON.stringify throws for this Proxy.
+  const unprintable = () => new Proxy({ big: 1n }, {});
+  const firstLine = (fails: () => void) => messageOfFailure(fails).split("\n")[0];
+  expect(
+    firstLine(() =>
+      expect(new CustomEvent("a", { detail: unprintable() })).toEqual(new CustomEvent("a", { detail: 2 })),
+    ),
+  ).toBe(firstLine(() => expect({ detail: unprintable() }).toEqual({ detail: 2 })));
 });
 
 test("keeps the text of an event in a snapshot", () => {

@@ -10464,10 +10464,15 @@ declare module "bun" {
      *
      * Actionability is checked page-side at rAF rate: the element must be
      * attached, have non-zero size, be in the viewport, be stable (bounding
-     * box unchanged for 2 consecutive frames, and no animation of it or of
-     * an ancestor that the browser has yet to start), and be the topmost
-     * element at its center point (not obscured). Once actionable, a native
-     * click fires at the center coordinates.
+     * box unchanged for 2 consecutive frames), and be the topmost element
+     * at its center point (not obscured). Once actionable, a native click
+     * fires at the center coordinates.
+     *
+     * An animation that the page has just created holds its element still
+     * until the browser starts it. The check waits up to 8 more frames for
+     * one to start, anywhere in the document. It does not wait for an
+     * `animation-delay`, a `transition-delay`, or a movement that a script
+     * begins later.
      *
      * @example
      * ```ts

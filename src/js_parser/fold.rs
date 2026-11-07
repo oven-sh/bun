@@ -56,7 +56,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> RelocateVars {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
-        if p.current_scope == p.module_scope {
+        if p.current_scope == p.module_scope && !p.relocates_single_stmt_body_decls() {
             return RelocateVars {
                 ok: false,
                 ..Default::default()

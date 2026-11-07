@@ -169,15 +169,15 @@ onDestroy 1
 got /warm
 got /one
 -- a GET without a body: 1
-emitResponseFinished 1 x1
+finishResponse 1 x1
 posted the body
 -- a POST with a body: 9
 clearServerParserIncoming 2 x1
 emitCloseNT 1 x1
 emitEOFIncomingMessageOuter 1 x1
 emitErrorNextTickIfErrorListener 3 x1
-emitResponseFinished 1 x1
 endReadableNT 2 x1
+finishResponse 1 x1
 flushWriteAccountingNT 1 x1
 maybeReadMore_ 2 x1
 resume_ 2 x1

@@ -121,7 +121,7 @@ process.stdin.on("end", () => {
       counts.requests++;
       if (dispatcher !== "unknown" && dispatcher !== slowDispatcher) counts.fastDispatch++;
       if (storedOutgoingHeaders(res) === null) counts.compactHeaders++;
-      if (ticks.at(-1) === "emitResponseFinished 1") counts.singleTickFinish++;
+      if (ticks.at(-1) === "finishResponse 1" && !ticks.includes("markResponseEndedNT 1")) counts.singleTickFinish++;
     }
     console.log(JSON.stringify(coverage));
   });

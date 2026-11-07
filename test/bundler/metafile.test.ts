@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { statSync } from "node:fs";
+import { readFileSync, statSync, symlinkSync } from "node:fs";
+import { join, relative } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -859,10 +860,283 @@ describe("Bun.build metafile option variants", () => {
     expect(metafile.inputs).toBeDefined();
     expect(metafile.outputs).toBeDefined();
   });
+
+  // A relative metafile path counts from outdir. An absolute one names the file itself.
+  describe("absolute path", () => {
+    const entry = { "entry.js": `export const value = 42;` };
+    const firstBytes = { "metafile-json": "{", "metafile-markdown": "# Bundle Analysis Report" };
+    const filesIn = (folder: string) =>
+      [...new Bun.Glob("**/*").scanSync({ cwd: folder })].map(file => file.replaceAll("\\", "/")).sort();
+
+    type Written = [kind: keyof typeof firstBytes, path: string];
+    const reports = (root: string, name: string) => join(root, "reports", "deep", name);
+    const forms: [string, (root: string) => unknown, Written[]][] = [
+      ["string", root => reports(root, "meta.json"), [["metafile-json", "reports/deep/meta.json"]]],
+      ["{ json }", root => ({ json: reports(root, "meta.json") }), [["metafile-json", "reports/deep/meta.json"]]],
+      [
+        "{ markdown }",
+        root => ({ markdown: reports(root, "meta.md") }),
+        [["metafile-markdown", "reports/deep/meta.md"]],
+      ],
+      [
+        "{ json, markdown }",
+        root => ({ json: reports(root, "meta.json"), markdown: reports(root, "meta.md") }),
+        [
+          ["metafile-json", "reports/deep/meta.json"],
+          ["metafile-markdown", "reports/deep/meta.md"],
+        ],
+      ],
+      [
+        "{ json, markdown: relative }",
+        root => ({ json: reports(root, "meta.json"), markdown: "meta.md" }),
+        [
+          ["metafile-json", "reports/deep/meta.json"],
+          ["metafile-markdown", "dist/meta.md"],
+        ],
+      ],
+    ];
+
+    test.each(forms)("metafile: %s", async (_, metafile, written) => {
+      using dir = tempDir("metafile-absolute", entry);
+      const root = String(dir);
+
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        outdir: join(root, "dist"),
+        metafile: metafile(root) as any,
+      });
+
+      const artifacts = result.outputs.filter(output => output.kind.startsWith("metafile"));
+      expect({
+        success: result.success,
+        artifacts: artifacts.map(artifact => [artifact.kind, relative(root, artifact.path).replaceAll("\\", "/")]),
+        files: filesIn(root),
+      }).toEqual({
+        success: true,
+        artifacts: written,
+        files: ["dist/entry.js", "entry.js", ...written.map(([, path]) => path)].sort(),
+      });
+      for (const [index, [kind, path]] of written.entries()) {
+        const text = readFileSync(join(root, path), "utf8");
+        expect(text).toStartWith(firstBytes[kind]);
+        expect(await artifacts[index].text()).toBe(text);
+      }
+    });
+
+    test("replaces the file that is there", async () => {
+      using dir = tempDir("metafile-absolute-replace", { ...entry, "meta.json": Buffer.alloc(10_000, "x").toString() });
+      const root = String(dir);
+
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        outdir: join(root, "dist"),
+        metafile: join(root, "meta.json") as any,
+      });
+
+      expect(result.success).toBe(true);
+      expect(JSON.parse(readFileSync(join(root, "meta.json"), "utf8"))).toEqual(result.metafile);
+    });
+
+    test("with a relative outdir", async () => {
+      using dir = tempDir("metafile-absolute-relative-outdir", {
+        "src/index.ts": `export const a = 1;\nconsole.log(a);\n`,
+        "build.ts": `
+          import { relative } from "node:path";
+          const cwd = process.cwd();
+          const slashes = (path: string) => path.replaceAll("\\\\", "/");
+          const result = await Bun.build({
+            entrypoints: ["./src/index.ts"],
+            outdir: "./dist",
+            metafile: {
+              json: cwd + "/abs/meta.json",
+              // On Windows this path has a root and no drive. It takes the drive of the working directory.
+              markdown: cwd.replace(/^[A-Za-z]:/, "") + "/abs/meta.md",
+            },
+          });
+          const artifacts = [];
+          for (const output of result.outputs) {
+            if (!output.kind.startsWith("metafile")) continue;
+            const read = await output.text().then(text => text.length > 0, error => error.code);
+            artifacts.push([output.kind, slashes(relative(cwd, output.path)), read]);
+          }
+          const files = [...new Bun.Glob("**/*").scanSync()].map(slashes).sort();
+          console.log(JSON.stringify({ success: result.success, artifacts, files }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const expected = {
+        success: true,
+        artifacts: [
+          ["metafile-json", "abs/meta.json", true],
+          ["metafile-markdown", "abs/meta.md", true],
+        ],
+        files: ["abs/meta.json", "abs/meta.md", "build.ts", "dist/index.js", "src/index.ts"],
+      };
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // For the OS, `link/..` is `real`. For a join of the path as text, it is the folder of `link`.
+    // Windows takes `..` out of a path before it follows a link.
+    test.skipIf(isWindows)("goes to the OS as it is given", async () => {
+      using dir = tempDir("metafile-absolute-as-given", { ...entry, "real/inner/keep.txt": "" });
+      const root = String(dir);
+      symlinkSync(join(root, "real", "inner"), join(root, "link"));
+      const given = `${root}/link/../meta.json`;
+
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        outdir: join(root, "dist"),
+        metafile: given as any,
+      });
+
+      expect({ success: result.success, files: filesIn(root) }).toEqual({
+        success: true,
+        files: ["dist/entry.js", "entry.js", "real/inner/keep.txt", "real/meta.json"],
+      });
+      expect(JSON.parse(readFileSync(given, "utf8"))).toEqual(result.metafile);
+    });
+
+    // A path buffer holds MAX_PATH_BYTES with the NUL. Windows refuses a path long before it fills one.
+    describe.skipIf(isWindows)("as long as a path buffer", () => {
+      const ofLength = (folder: string, length: number) => {
+        let path = folder;
+        while (length - path.length > 250) path += "/" + Buffer.alloc(200, "a").toString();
+        return path + "/" + Buffer.alloc(length - path.length - 1, "m").toString();
+      };
+
+      test("the longest path that fits is written", async () => {
+        using dir = tempDir("metafile-absolute-longest", entry);
+        const root = String(dir);
+        const given = ofLength(join(root, "long"), MAX_PATH_BYTES - 1);
+
+        const result = await Bun.build({
+          entrypoints: [join(root, "entry.js")],
+          outdir: join(root, "dist"),
+          metafile: given as any,
+        });
+
+        const artifacts = result.outputs.filter(output => output.kind === "metafile-json");
+        expect({ success: result.success, paths: artifacts.map(artifact => artifact.path) }).toEqual({
+          success: true,
+          paths: [given],
+        });
+        expect(JSON.parse(await artifacts[0].text())).toEqual(result.metafile);
+      });
+
+      test("a path that is one byte longer is not written", async () => {
+        using dir = tempDir("metafile-absolute-too-long", entry);
+        const root = String(dir);
+        const given = ofLength(join(root, "long"), MAX_PATH_BYTES);
+
+        const result = await Bun.build({
+          entrypoints: [join(root, "entry.js")],
+          outdir: join(root, "dist"),
+          metafile: given as any,
+        });
+
+        expect({ success: result.success, files: filesIn(root) }).toEqual({
+          success: true,
+          files: ["dist/entry.js", "entry.js"],
+        });
+      });
+    });
+
+    test("a path that cannot be written is a warning", async () => {
+      using dir = tempDir("metafile-absolute-not-written", {
+        ...entry,
+        "reports/meta.json/keep.txt": "",
+        "build.ts": `
+          const result = await Bun.build({ entrypoints: ["./entry.js"], outdir: "./dist", metafile: process.argv[2] });
+          const files = [...new Bun.Glob("**/*").scanSync()].map(file => file.replaceAll("\\\\", "/")).sort();
+          console.log(JSON.stringify({ success: result.success, logs: result.logs.length, files }));
+        `,
+      });
+      // A folder is at the path.
+      const given = join(String(dir), "reports", "meta.json");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts", given],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The reason that follows is the error of the OS.
+      const warning = `warn: Failed to write metafile to '${given}': `;
+      const expected = {
+        success: true,
+        logs: 0,
+        files: ["build.ts", "dist/entry.js", "entry.js", "reports/meta.json/keep.txt"],
+      };
+      expect({ stdout, stderr: stderr.slice(0, warning.length), exitCode }).toEqual({
+        stdout: JSON.stringify(expected) + "\n",
+        stderr: warning,
+        exitCode: 0,
+      });
+    });
+
+    // Such a path takes the drive of the working directory, whichever drive the outdir is on.
+    test.skipIf(!isWindows)("a path with a root and no drive, and an outdir on another drive", async () => {
+      using dir = tempDir("metafile-absolute-other-drive", {
+        ...entry,
+        "other/keep.txt": "",
+        "build.ts": `
+          import { relative } from "node:path";
+          const cwd = process.cwd();
+          const result = await Bun.build({
+            entrypoints: ["./entry.js"],
+            outdir: process.argv[2] + "out",
+            metafile: cwd.replace(/^[A-Za-z]:/, "") + "\\\\abs\\\\meta.json",
+          });
+          const artifact = result.outputs.find(output => output.kind === "metafile-json");
+          const read = await artifact.text().then(text => text.length > 0, error => error.code);
+          const files = [...new Bun.Glob("{abs,other}/**/*").scanSync()].map(file => file.replaceAll("\\\\", "/")).sort();
+          console.log(JSON.stringify({ success: result.success, path: relative(cwd, artifact.path), read, files }));
+        `,
+      });
+      using drive = substDrive(join(String(dir), "other"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts", drive.root],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const expected = {
+        success: true,
+        path: "abs\\meta.json",
+        read: true,
+        files: ["abs/meta.json", "other/keep.txt", "other/out/entry.js"],
+      };
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe, isWindows } from "harness";
+import { MAX_PATH_BYTES, bunEnv, bunExe, isWindows, substDrive } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {

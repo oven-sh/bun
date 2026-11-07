@@ -1582,7 +1582,7 @@ await Bun.build({
 await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist",
-  metafile: "./dist/meta.json",
+  metafile: "meta.json", // ./dist/meta.json
 });
 
 // Object — specify separate paths for JSON and markdown output
@@ -1590,11 +1590,13 @@ await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist",
   metafile: {
-    json: "./dist/meta.json",
-    markdown: "./dist/meta.md",
+    json: "meta.json", // ./dist/meta.json
+    markdown: "meta.md", // ./dist/meta.md
   },
 });
 ```
+
+When the build has an `outdir`, Bun resolves a relative `metafile` path from `outdir` and uses an absolute path unchanged. The `--metafile` and `--metafile-md` flags resolve a relative path from the working directory.
 
 The metafile structure contains:
 

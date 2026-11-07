@@ -296,4 +296,42 @@ process.stdout.write(
       }),
     buildLimit,
   );
+
+  test(
+    "Bun.build writes an absolute metafile path where it points",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-metafile-api-absolute", {
+          // The metafile of the first build lies where this path may point. It is no file of the program.
+          "main.ts": `const report = process.argv[2] ? require("./reports/" + process.argv[2] + ".json") : undefined;\nconsole.log(typeof report);\n`,
+          "build.ts": `import { readFileSync } from "fs";
+import { join } from "path";
+const reports = join(process.cwd(), "reports");
+const builds = [];
+for (let turn = 0; turn < 2; turn++) {
+  const build = await Bun.build({
+    entrypoints: ["./main.ts"],
+    outdir: "./out",
+    metafile: { json: join(reports, "build.json"), markdown: join(reports, "build.md") },
+    compile: { outfile: "app", aot: true },
+  });
+  const inputs = Object.keys(JSON.parse(readFileSync(join(reports, "build.json"), "utf8")).inputs);
+  builds.push({ success: build.success, outputs: build.outputs.length, inputs });
+}
+const files = [...new Bun.Glob("{out,reports}/**/*").scanSync()].map(file => file.replaceAll("\\\\", "/")).sort();
+process.stdout.write(JSON.stringify({ builds, files }));
+`,
+        });
+        const folder = String(dir);
+        const build = await bun(folder, "build.ts");
+        expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+        const eachBuild = { success: true, outputs: 1, inputs: ["main.ts"] };
+        expect(JSON.parse(build.stdout)).toEqual({
+          builds: [eachBuild, eachBuild],
+          files: [isWindows ? "out/app.exe" : "out/app", "reports/build.json", "reports/build.md"],
+        });
+        expect(readFileSync(join(folder, "reports", "build.md"), "utf8")).toStartWith("# Bundle Analysis Report");
+      }),
+    buildLimit,
+  );
 });

@@ -4,7 +4,7 @@ use bun_alloc::Arena;
 use bun_aot::report::ReportMessage;
 use bun_ast::{Data, Kind, Log, Msg};
 use bun_bundler::aot::{MetafileFiles, PluginSetup, write_metafile_files};
-use bun_bundler::bundle_v2::{BuildResult, BundleV2Result, CompletionStruct};
+use bun_bundler::bundle_v2::{BuildResult, BundleV2Result, CompletionStruct, metafile_disk_path};
 use bun_bundler::options;
 use bun_bundler::transpiler::Transpiler;
 use bun_options_types::WindowsOptions;
@@ -218,13 +218,14 @@ impl JSBundleCompletionTask {
 
         // Without an output directory a metafile is handed to the caller and not written.
         let outdir = &self.config.outdir.list[..];
-        let in_output_directory = |path: &[u8]| match path.is_empty() || outdir.is_empty() {
+        let written_at = |path: &[u8]| match path.is_empty() || outdir.is_empty() {
             true => Vec::new(),
-            false => [outdir, b"/", path].concat(),
+            false => metafile_disk_path(outdir, path, &mut paths::path_buffer_pool::get())
+                .map_or_else(Vec::new, |path| path.as_bytes().to_vec()),
         };
         let metafiles = [
-            in_output_directory(&self.config.metafile_json_path.list),
-            in_output_directory(&self.config.metafile_markdown_path.list),
+            written_at(&self.config.metafile_json_path.list),
+            written_at(&self.config.metafile_markdown_path.list),
         ];
         let mut request = CompileRequest {
             origin: RequestOrigin::BuildApi,

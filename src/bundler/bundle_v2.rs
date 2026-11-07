@@ -19,7 +19,7 @@ pub(crate) use bv2_impl::write_metafile_output;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
-    target_from_hashbang,
+    metafile_disk_path, target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -5588,7 +5588,6 @@ pub mod bv2_impl {
             };
 
             // Write metafile outputs to disk and add them as OutputFiles.
-            // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
             if !self.transpiler.options.metafile_json_path.is_empty() {
@@ -5622,8 +5621,29 @@ pub mod bv2_impl {
         }
     }
 
+    /// Where a build with an outdir writes a metafile. A relative path is relative to outdir.
+    /// An absolute one is used as it is. `None`: the path does not fit `buf`.
+    pub fn metafile_disk_path<'a>(
+        outdir: &[u8],
+        file_path: &[u8],
+        buf: &'a mut bun_paths::PathBuffer,
+    ) -> Option<&'a bun_core::ZStr> {
+        if bun_paths::is_absolute(file_path) {
+            // Windows: a path with a root and no drive takes the drive of the working directory.
+            bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
+                buf, file_path,
+            )
+            .ok()
+            .map(|destination| &*destination)
+        } else {
+            bun_paths::resolve_path::join_z_buf_checked::<bun_paths::resolve_path::platform::Auto>(
+                &mut buf.0[..],
+                &[outdir, file_path],
+            )
+        }
+    }
+
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
-    /// Metafile paths are relative to outdir, like all other output files.
     pub(crate) fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
@@ -5631,23 +5651,23 @@ pub mod bv2_impl {
         content: &[u8],
         output_kind: crate::options::OutputKind,
     ) -> Result<(), Error> {
+        let mut output_path = None;
         if !outdir.is_empty() {
-            // Open the output directory and write the metafile relative to it,
-            // routed through `bun_sys::File`.
             let mut buf = bun_paths::path_buffer_pool::get();
-            let written = match bun_paths::resolve_path::join_z_buf_checked::<
-                bun_paths::resolve_path::platform::Auto,
-            >(&mut buf.0[..], &[outdir, file_path])
-            {
-                Some(joined_z) => {
-                    // Create parent directories if needed (relative to outdir).
+            let written = match metafile_disk_path(outdir, file_path, &mut buf) {
+                Some(destination) => {
+                    if bun_paths::is_absolute(file_path) {
+                        // On Windows the destination has the drive that a path like `\a\b` lacks, and the artifact has to name it.
+                        output_path = Some(Box::<[u8]>::from(destination.as_bytes()));
+                    }
+                    // Create parent directories if needed.
                     let parent = bun_paths::resolve_path::dirname::<
                         bun_paths::resolve_path::platform::Loose,
-                    >(joined_z.as_bytes());
+                    >(destination.as_bytes());
                     if !parent.is_empty() {
                         let _ = bun_sys::mkdir_recursive(parent);
                     }
-                    bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content)
+                    bun_sys::File::write_file(bun_core::Fd::cwd(), destination, content)
                 }
                 None => Err(bun_sys::Error::from_code(
                     bun_sys::E::ENAMETOOLONG,
@@ -5676,7 +5696,7 @@ pub mod bv2_impl {
             } else {
                 b"metafile.md".as_slice()
             }),
-            output_path: Box::<[u8]>::from(file_path),
+            output_path: output_path.unwrap_or_else(|| Box::from(file_path)),
             data: crate::output_file::OptionsData::Saved(content.len()),
             output_kind,
             is_executable: false,

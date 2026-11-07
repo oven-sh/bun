@@ -16,6 +16,11 @@ pub struct UnknownAtRule {
 }
 
 impl UnknownAtRule {
+    /// Whether the rule has no block, as `@foo bar;`.
+    pub fn is_statement(&self) -> bool {
+        self.block.is_none()
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);

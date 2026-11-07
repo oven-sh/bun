@@ -1393,6 +1393,9 @@ pub enum CssImportOrderKind<'a> {
     ExternalPath(bun_fs::Path<'a>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
+    /// The `@namespace` rules of the chunk. Its files do not print their own.
+    #[strum(serialize = "namespaces")]
+    Namespaces(Vec<bun_css::css_parser::NamespaceRule>),
 }
 
 // Copy-on-write list of layer names.
@@ -1447,6 +1450,7 @@ impl CssImportOrder<'_> {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
+            CssImportOrderKind::Namespaces(_) => 3,
         };
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
@@ -1467,6 +1471,14 @@ impl CssImportOrder<'_> {
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
             CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
+            }
+            CssImportOrderKind::Namespaces(namespaces) => {
+                for rule in namespaces {
+                    hasher.update(rule.prefix().unwrap_or_default());
+                    hasher.update(b"\x00");
+                    hasher.update(rule.url());
+                    hasher.update(b"\x00");
+                }
             }
         }
     }
@@ -1522,6 +1534,12 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
                     source_index.get(),
                     bstr::BStr::new(&source.path.text)
                 )?;
+            }
+            CssImportOrderKind::Namespaces(namespaces) => {
+                for rule in namespaces {
+                    let prefix = bstr::BStr::new(rule.prefix().unwrap_or_default());
+                    write!(writer, "{} \"{}\"; ", prefix, bstr::BStr::new(rule.url()))?;
+                }
             }
         }
         Ok(())

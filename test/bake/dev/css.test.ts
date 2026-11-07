@@ -164,6 +164,57 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest("css @namespace rules come before the rules of the imported files", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      @import "./icons.css" screen;
+      @namespace svg url(http://www.w3.org/2000/svg);
+      svg|a {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+    "icons.css": `
+      @namespace xl "urn:example:xlink";
+      xl|b {
+        color: green;
+      }
+    `,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toBe(`@namespace xl "urn:example:xlink";
+@namespace svg "http://www.w3.org/2000/svg";
+
+/* second.css */
+h1 {
+  color: #00f;
+}
+
+/* icons.css */
+@media screen {
+  xl|b {
+    color: green;
+  }
+}
+
+/* styles.css */
+svg|a {
+  color: red;
+}
+`);
+  },
+});
+
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

@@ -403,6 +403,11 @@ static TLS_WORKER: core::cell::Cell<(u64, *mut Worker)> =
 
 static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
+/// Pools made so far in the process, one per `BundleV2::init`. Read by `bun:internal-for-testing`.
+pub fn pools_created() -> u64 {
+    POOL_GENERATION.load(Ordering::SeqCst) - 1
+}
+
 /// `Worker`s created and not yet torn down by their thread, across every pool in the process.
 /// Read by `bun:internal-for-testing`.
 pub static WORKER_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);

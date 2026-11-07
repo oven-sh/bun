@@ -80,19 +80,19 @@ impl Rule for NoCycle {
             return None;
         }
         // How a specifier resolves depends on the settings, in every file the graph reaches.
-        Resolvers::of(file.settings())?;
+        Resolvers::of(file)?;
         modules.resolve_by(&|| {
             let settings = Arc::new(file.settings().clone());
             let same = Arc::clone(&settings);
             ResolveBy {
                 resolve: Box::new(move |modules, from, specifier, is_require| {
-                    let found = Resolvers::of(&settings)?.resolve_from(modules, from, specifier, is_require);
+                    let found = Resolvers::of_settings(&settings, false)?.resolve_from(modules, from, specifier, is_require);
                     found.file().map(<[u8]>::to_vec)
                 }),
-                is_known: Box::new(move |path, text| has_export_map(&Settings::new(&same), path, text)),
+                is_known: Box::new(move |path, text| has_export_map(&Settings::of_settings(&same, false), path, text)),
             }
         });
-        let has_export_map = has_export_map(&Settings::new(file.settings()), file.path(), file.text());
+        let has_export_map = has_export_map(&Settings::of(file), file.path(), file.text());
         if !has_export_map {
             requests.clear();
         }
@@ -351,7 +351,7 @@ impl NoCycle {
         let Some(types) = ImportTypes::of(file) else {
             return;
         };
-        let search = Search { rule: self, modules, settings: Settings::new(file.settings()), types, file, me };
+        let search = Search { rule: self, modules, settings: Settings::of(file), types, file, me };
         // `scc` covers the modules that value imports lead to from here. Without any it's empty, and all modules
         // compare equal in it.
         let imports_value = |it: &Request| {

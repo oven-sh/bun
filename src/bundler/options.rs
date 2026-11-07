@@ -19,6 +19,7 @@ pub use defines::Define;
 // B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
+use crate::aot::paths::absolute_path;
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
 pub use bun_options_types::offline_mode::OfflineMode;
@@ -66,6 +67,54 @@ pub(crate) fn validate_path(
         return Box::default();
     }
     Box::from(out)
+}
+
+/// The default `root`: the directory that holds every entry point. `../worker.ts` does not lift it above `./index.ts`.
+pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
+    use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+    let paths: Vec<Vec<u8>> = entry_points
+        .iter()
+        .map(|entry| absolute_path(working_directory, entry))
+        .collect();
+    let working_directory = absolute_path(working_directory, b"");
+    let is_inside =
+        |path: &[u8]| is_parent_or_equal(&working_directory, path) != ParentEqual::Unrelated;
+    let is_above = |path: &[u8]| {
+        let directory = bun_core::dirname(path).unwrap_or(path);
+        is_parent_or_equal(directory, &working_directory) == ParentEqual::Parent
+    };
+    let common: Vec<u8> = match &paths[..] {
+        [only] => absolute_path(&working_directory, bun_core::dirname(only).unwrap_or(only)),
+        all if all.iter().any(|path| is_inside(path))
+            && all.iter().any(|path| !is_inside(path))
+            && all.iter().all(|path| is_inside(path) || is_above(path)) =>
+        {
+            working_directory
+        }
+        all => {
+            let all: Vec<&[u8]> = all.iter().map(|path| &path[..]).collect();
+            absolute_path(&working_directory, longest_common_path_of(&all))
+        }
+    };
+    bun_paths::string_paths::without_trailing_slash_windows_path(&common).to_vec()
+}
+
+/// Whether the working directory replaces `common_entry_directory`, which failed to open with `err`: the path names no directory, or the user may not list it.
+pub fn common_entry_directory_falls_back(err: &bun_sys::Error) -> bool {
+    matches!(
+        err.get_errno(),
+        bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ELOOP | bun_sys::E::EACCES
+    )
+}
+
+/// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.
+pub(crate) fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
+    let Some((&first, rest)) = paths.split_first() else {
+        return b"";
+    };
+    rest.iter().fold(first, |common, &path| {
+        bun_paths::resolve_path::longest_common_path_native(&[common, path])
+    })
 }
 
 // `AllowUnresolved` is defined canonically in

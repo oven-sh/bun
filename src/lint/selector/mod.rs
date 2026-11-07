@@ -112,12 +112,6 @@ impl PartialEq for EsNode<'_> {
     }
 }
 impl Eq for EsNode<'_> {}
-impl std::hash::Hash for EsNode<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.node.hash(state);
-    }
-}
 
 impl<'a> EsNode<'a> {
     /// `node_type` must be `node`'s type.

@@ -553,13 +553,6 @@ bitflags::bitflags! {
     }
 }
 
-impl From<DeclarationKind> for DeclarationKinds {
-    #[inline]
-    fn from(kind: DeclarationKind) -> DeclarationKinds {
-        DeclarationKinds::from_bits_retain(1 << kind as u16)
-    }
-}
-
 impl<'a> Declaration<'a> {
     #[inline]
     fn new(file: &'a File<'a>, decl: Decl) -> Self {
@@ -724,12 +717,6 @@ impl PartialEq for Reference<'_> {
     }
 }
 impl Eq for Reference<'_> {}
-impl std::hash::Hash for Reference<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::ptr::from_ref(self.raw).addr().hash(state);
-    }
-}
 impl std::fmt::Debug for Reference<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

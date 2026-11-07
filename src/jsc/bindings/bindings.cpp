@@ -2452,6 +2452,33 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
+// A Date and an Error have no enumerable properties. Like Jest, an expected one needs the same time value or the same message.
+static bool subsetDateOrErrorMismatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* obj, JSObject* subsetObj)
+{
+    if (auto* subsetDate = dynamicDowncast<JSC::DateInstance>(subsetObj)) {
+        auto* objDate = dynamicDowncast<JSC::DateInstance>(obj);
+        return !objDate || objDate->internalNumber() != subsetDate->internalNumber();
+    }
+    ASSERT(subsetObj->type() == ErrorInstanceType);
+
+    VM& vm = globalObject->vm();
+    if (obj->type() != ErrorInstanceType) {
+        // `instanceof Error`, so that a DOMException counts.
+        bool isError = JSObject::defaultHasInstance(globalObject, obj, globalObject->errorPrototype());
+        RETURN_IF_EXCEPTION(scope, true);
+        if (!isError) {
+            return true;
+        }
+    }
+    JSValue subsetMessage = subsetObj->get(globalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, true);
+    JSValue objMessage = obj->get(globalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, true);
+    bool sameMessage = JSC::sameValue(globalObject, objMessage, subsetMessage);
+    RETURN_IF_EXCEPTION(scope, true);
+    return !sameMessage;
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  */
@@ -2496,9 +2523,16 @@ bool Bun__deepMatch(
         }
     }
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
+
+    JSC::JSType subsetType = subsetObj->type();
+    if ((subsetType == JSDateType || subsetType == ErrorInstanceType) && !isMatchingObjectContaining) [[unlikely]] {
+        bool mismatch = subsetDateOrErrorMismatch(globalObject, throwScope, obj, subsetObj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (mismatch) return false;
+    }
 
     // TODO: add fast paths for:
     // - two "simple" objects (using ->forEachProperty in both)
@@ -2508,13 +2542,14 @@ bool Bun__deepMatch(
     // arrays should match exactly
     bool objIsArray = isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+        // An array pattern needs an array. An object pattern can be satisfied by one.
+        if (!objIsArray || obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {

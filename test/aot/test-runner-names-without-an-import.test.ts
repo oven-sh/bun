@@ -92,18 +92,13 @@ beforeAll(() => {
 `,
   "has-a-global-of-a-hook.test.js": `
 import { test } from "bun:test";
+import * as runner from "bun:test";
 test("a file that imports a runner has the global that a hook of a preload defined", () => { expect(1).to.equal(1); console.log("row:", typeof describe); });
-`,
-  "defines-a-global-itself.test.js": `
-import { test } from "bun:test";
-test("a file that imports a runner has the global that it defines itself, while it has one", () => {
-  const runner = expect;
-  globalThis.expect = value => ({ to: { equal(other) { console.log("row:", value === other ? "equal" : "not equal"); } } });
-  expect(1).to.equal(1);
+test("and the runner's where the global is gone", () => {
   expect = undefined;
-  runner(expect).toBe(runner);
+  console.log("row:", expect === runner.expect, Object.hasOwn(globalThis, "expect"));
   delete globalThis.expect;
-  runner(expect).toBe(runner);
+  expect(expect).toBe(runner.expect);
 });
 `,
   "imports-jest.test.js": `

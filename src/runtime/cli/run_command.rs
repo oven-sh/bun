@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -463,17 +463,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             ipc: ipc_fd,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: `env` outlives the mini event loop.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Err(err) => {
@@ -533,17 +522,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_spawn::ctrl_c::exit_like_child();
                 }
 
-                if exit_code.code != 0 {
-                    if exit_code.code != 2 && !silent {
+                let code = exit_code.full_code();
+                if code != 0 {
+                    if code != 2 && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
                             bstr::BStr::new(name),
-                            exit_code.code,
+                            code,
                         );
                         Output::flush();
                     }
 
-                    Global::exit(exit_code.code as u32);
+                    Global::exit(code);
                 }
             }
 
@@ -1532,9 +1522,7 @@ impl Run<'_> {
                     }
                     // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
                     if entry.is_none() {
-                        bun_jsc::posix_signal_handle::set_watch_kill_signal(
-                            ctx.debug.watch_kill_signal,
-                        );
+                        bun_jsc::signal_handle::set_watch_kill_signal(ctx.debug.watch_kill_signal);
                     }
                 })
             }
@@ -1548,9 +1536,7 @@ impl Run<'_> {
                             entry,
                         )
                     }
-                    bun_jsc::posix_signal_handle::enable_watch_mode_signals(
-                        ctx.debug.watch_kill_signal,
-                    );
+                    bun_jsc::signal_handle::enable_watch_mode_signals(ctx.debug.watch_kill_signal);
                     crate::cli::run_compiled::watch_files_of_check(vm);
                 })
             }
@@ -1727,7 +1713,7 @@ impl Run<'_> {
         }
 
         // These create undefined references to externally-defined C symbols
-        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+        // (uv_* stubs, v8:: shims) so the linker pulls those archive
         // members from libbun.a in CI's split link-only mode and keeps them
         // through `--gc-sections`. Without them, dlopen'd NAPI modules see
         // `undefined symbol: uv_*` instead of the friendly crash message.
@@ -2224,17 +2210,6 @@ impl RunCommand {
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: env loader is process-lifetime.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Ok(r) => r,
@@ -2344,7 +2319,7 @@ impl RunCommand {
                             bun_spawn::ctrl_c::exit_like_child();
                         }
 
-                        let code = exit_code.code;
+                        let code = exit_code.full_code();
                         if code != 0 {
                             if !silent {
                                 let is_probably_trying_to_run_a_pkg_script =
@@ -2395,7 +2370,7 @@ impl RunCommand {
                             }
                         }
 
-                        Global::exit(code as u32);
+                        Global::exit(code);
                     }
                     SpawnStatus::Running => panic!("Unexpected state: process is running"),
                 }
@@ -2999,12 +2974,6 @@ impl RunCommand {
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
             return false;
         };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
-            return false;
-        };
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
@@ -3175,8 +3144,8 @@ impl RunCommand {
         if ctx.positionals.is_empty() {
             // Node: bare `node` on a TTY starts the REPL. Only in emulation
             // mode; bun's own `bun` with no args stays the help text. Use
-            // Output's cached stdio flag (set at startup via libuv's handle
-            // probe), which is the same check `bun update --interactive` uses.
+            // Output's cached stdio flag (set at startup),
+            // which is the same check `bun update --interactive` uses.
             if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }

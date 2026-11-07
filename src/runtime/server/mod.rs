@@ -1754,10 +1754,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         // A graceful stop with work in flight keeps the ref (deinit_if_we_can
-        // unrefs when the drain completes): on Windows uv_run skips I/O with
-        // zero ref'd handles, so unrefing here wedged server.close() teardown.
+        // unrefs when the drain completes).
 
-        if !SSL {
+        // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+        let is_pipe = bun_opaque::opaque_deref_mut(listener).is_pipe();
+        if !SSL && !is_pipe {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
             // from `self.listener`; deref'd once to read the socket fd. `vm` is a
             // STATIC ref (see `NewServer::vm_mut`) — non-null for the server's
@@ -1772,7 +1773,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         match &self.config.get().address {
             server_config::Address::Unix(path) => {
                 let bytes = path.as_bytes();
-                if !bytes.is_empty() && bytes[0] != 0 {
+                // Opening the name of a pipe to delete it would connect to it.
+                if !bytes.is_empty() && bytes[0] != 0 && !is_pipe {
                     let _ = bun_sys::unlink(path.as_zstr());
                 }
             }
@@ -2003,8 +2005,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
         unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
-        if !SSL {
-            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+        // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+        if !SSL && !bun_opaque::opaque_deref_mut(socket).is_pipe() {
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
             // SAFETY: `vm` is a STATIC ref (see `NewServer::vm_mut`) — non-null
             // for the server's lifetime, so the raw→`&mut` deref is sound.

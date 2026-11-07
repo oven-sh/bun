@@ -804,7 +804,8 @@ struct Http2Context {
             if (!conn->streams.empty() && !closeWhenIdle) return;
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            if (conn->streams.empty()) {
+            /* With bytes of a finished response unsent, it closes when they are out. */
+            if (conn->drainedAfterGoaway()) {
                 us_socket_close(conn->s, 0, nullptr);
                 closedNow++;
             }

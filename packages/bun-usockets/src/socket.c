@@ -26,9 +26,37 @@
 #include <fcntl.h>
 #endif
 
+static ssize_t us_internal_socket_sendv(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+#ifdef LIBUS_USE_IOCP
+    if (us_internal_poll_is_pipe(&s->p)) {
+        return us_internal_pipe_writev(s->group->loop, &s->p, iov, count);
+    }
+#endif
+    return bsd_writev(us_poll_fd(&s->p), iov, count);
+}
+
+static ssize_t us_internal_socket_send(struct us_socket_t *s, const char *data, int length) {
+#ifdef LIBUS_USE_IOCP
+    if (us_internal_poll_is_pipe(&s->p)) {
+        return us_internal_pipe_write(s->group->loop, &s->p, data, length);
+    }
+#endif
+    return bsd_send(us_poll_fd(&s->p), data, length);
+}
+
+static ssize_t us_internal_socket_send2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+#ifdef LIBUS_USE_IOCP
+    if (us_internal_poll_is_pipe(&s->p)) {
+        struct us_iovec_t chunks[2] = {{(void *) header, (size_t) header_length}, {(void *) payload, (size_t) payload_length}};
+        return us_internal_pipe_writev(s->group->loop, &s->p, chunks, 2);
+    }
+#endif
+    return bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+}
+
 int us_socket_local_port(struct us_socket_t *s) {
     struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+    if (us_internal_poll_is_pipe(&s->p) || bsd_local_addr(us_poll_fd(&s->p), &addr)) {
         return -1;
     } else {
         return bsd_addr_get_port(&addr);
@@ -37,7 +65,7 @@ int us_socket_local_port(struct us_socket_t *s) {
 
 int us_socket_remote_port(struct us_socket_t *s) {
     struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+    if (us_internal_poll_is_pipe(&s->p) || bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
         return -1;
     } else {
         return bsd_addr_get_port(&addr);
@@ -45,8 +73,13 @@ int us_socket_remote_port(struct us_socket_t *s) {
 }
 
 void us_socket_shutdown_read(struct us_socket_t *s) {
-    /* This syscall is idempotent so no extra check is needed */
-    bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
+    if (!us_internal_poll_is_pipe(&s->p)) {
+        /* This syscall is idempotent so no extra check is needed */
+        bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
+    }
+#ifdef LIBUS_USE_IOCP
+    us_internal_poll_read_was_shut_down(&s->p);
+#endif
 }
 
 void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) {
@@ -55,7 +88,7 @@ void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) {
 
 void us_socket_remote_address(struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    if (us_internal_poll_is_pipe(&s->p) || bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
         *length = 0;
     } else {
         *length = bsd_addr_get_ip_length(&addr);
@@ -65,7 +98,7 @@ void us_socket_remote_address(struct us_socket_t *s, char *buf, int *length) {
 
 void us_socket_local_address(struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    if (us_internal_poll_is_pipe(&s->p) || bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
         *length = 0;
     } else {
         *length = bsd_addr_get_ip_length(&addr);
@@ -130,7 +163,7 @@ void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigne
 }
 
 __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
-    if (!us_socket_is_shut_down(s)) {
+    if (!us_socket_is_shut_down(s) && !us_internal_poll_is_pipe(&s->p)) {
         bsd_socket_flush(us_poll_fd((struct us_poll_t *) s));
     }
 }
@@ -138,6 +171,16 @@ __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
 __attribute__((always_inline)) int us_socket_is_closed(struct us_socket_t *s) {
     return s->flags.is_closed;
 }
+
+int us_socket_is_pipe(struct us_socket_t *s) {
+    return us_internal_poll_is_pipe(&s->p);
+}
+
+#ifdef LIBUS_USE_IOCP
+int us_socket_get_crt_descriptor(struct us_socket_t *s) {
+    return us_internal_pipe_get_crt_descriptor(&s->p);
+}
+#endif
 
 int us_socket_is_ssl_handshake_finished(struct us_socket_t *s) {
     if (s->ssl) {
@@ -182,7 +225,7 @@ int us_socket_ssl_send_rejected(struct us_socket_t *s) {
 }
 
 int us_socket_queued_input(struct us_socket_t *s) {
-    if (s->flags.is_closed || !us_socket_is_established(s)) {
+    if (s->flags.is_closed || !us_socket_is_established(s) || us_internal_poll_is_pipe(&s->p)) {
         return LIBUS_QUEUED_INPUT_NONE;
     }
     return bsd_queued_input(us_poll_fd(&s->p));
@@ -239,11 +282,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
         // already set (the callback has fired or is about to), in which case
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
-#ifdef _WIN32
-            group->loop->uv_loop->active_handles--;
-#else
             group->loop->num_polls--;
-#endif
             c->pending_resolve_callback = 0;
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             c->addrinfo_req = 0;
@@ -255,11 +294,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
              * see c->closed and only push c to the loop's closed list without
              * touching the (possibly freed) group. Balance the keep-alive here
              * for the same reason. */
-#ifdef _WIN32
-            group->loop->uv_loop->active_handles--;
-#else
             group->loop->num_polls--;
-#endif
             us_dispatch_connecting_error(c, c->error);
             us_internal_connecting_socket_detach(c, group->loop);
         }
@@ -269,7 +304,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->addrinfo_req) {
         /* Invalidate the cache entry for a refused connect (addresses may be
          * stale) and for a resolver failure (never cache a negative result). */
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == LIBUS_ECONNREFUSED || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);
@@ -320,7 +355,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             us_poll_stop((struct us_poll_t *) s, loop);
         #endif
 
-        if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET) {
+        if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET && !us_internal_poll_is_pipe(&s->p)) {
             // Prevent entering TIME_WAIT state when forcefully closing
             struct linger l = { 1, 0 };
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
@@ -331,8 +366,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
         /* Mark the socket as closed */
         s->flags.is_closed = 1;
 
-        /* The fd is closed first: a handler may dial again (node:net autoSelectFamily), and on
-         * libuv a second uv_poll_t started while this one is active never fires. */
+        /* The fd is closed first: a handler may dial again (node:net autoSelectFamily). */
         struct us_socket_t *res = s;
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
@@ -383,7 +417,7 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+#ifdef _WIN32
     return 0;
 #else
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
@@ -425,14 +459,14 @@ static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t wri
 }
 
 /* See libusockets.h: whether a zero-progress write on a writable event proves
- * the peer is gone. Only the libuv backend has to ask the kernel. */
+ * the peer is gone. Only Windows has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
+#ifdef _WIN32
     if (us_socket_is_closed(s)) {
         return 1;
     }
     return us_socket_get_error(s) != 0 ||
-           us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+           (!us_internal_poll_is_pipe(&s->p) && bsd_socket_peer_reset_probe(us_poll_fd(&s->p)));
 #else
     return 1;
 #endif
@@ -443,7 +477,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
         return 0;
     }
 
-    ssize_t sent = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    ssize_t sent = us_internal_socket_send2(s, header, header_length, payload, payload_length);
     int written = us_internal_reject_excess_send(s, sent, (size_t) header_length + (size_t) payload_length);
     if (written != header_length + payload_length) {
         s->flags.last_write_failed = 1;
@@ -454,14 +488,53 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
+#ifdef LIBUS_USE_IOCP
+    int crt_descriptor = -1;
+    HANDLE duplicate = NULL;
+    if (options & LIBUS_SOCKET_CRT_DESCRIPTOR) {
+        crt_descriptor = (int) fd;
+        fd = (LIBUS_SOCKET_DESCRIPTOR) Bun__getOSFHandle(crt_descriptor);
+    }
+    /* A file or a device can be read and written too, but it is not the stream that the caller takes it for. */
+    if ((ipc || crt_descriptor != -1) && !(options & LIBUS_SOCKET_OWN_PIPE) && GetFileType((HANDLE) fd) != FILE_TYPE_PIPE) {
+        SetLastError(WSAENOTSOCK);
+        return 0;
+    }
+    if (crt_descriptor != -1) {
+        if (crt_descriptor <= 2) {
+            if (!DuplicateHandle(GetCurrentProcess(), (HANDLE) fd, GetCurrentProcess(), &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+                return 0;
+            }
+            fd = (LIBUS_SOCKET_DESCRIPTOR) duplicate;
+            crt_descriptor = -1;
+        }
+    }
+#endif
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
+#ifdef LIBUS_USE_IOCP
+    if (options & LIBUS_SOCKET_OWN_PIPE) {
+        us_internal_poll_set_kind(p1, LIBUS_POLL_KIND_PIPE);
+    } else if (ipc || (options & LIBUS_SOCKET_CRT_DESCRIPTOR)) {
+        us_internal_poll_set_kind(p1, us_internal_pipe_is_overlapped((HANDLE) fd) ? LIBUS_POLL_KIND_PIPE : LIBUS_POLL_KIND_FOREIGN_PIPE);
+    }
+#endif
     int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
     int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
         us_poll_free(p1, group->loop);
+#ifdef LIBUS_USE_IOCP
+        if (duplicate) {
+            CloseHandle(duplicate);
+        }
+#endif
         return 0;
     }
+#ifdef LIBUS_USE_IOCP
+    if (crt_descriptor != -1) {
+        us_internal_pipe_set_crt_descriptor(p1, crt_descriptor);
+    }
+#endif
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
     s->group = group;
@@ -482,10 +555,12 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->send_rejected = 0;
     s->connect_state = NULL;
 
-    /* We always use nodelay */
-    bsd_socket_nodelay(fd, 1);
-    apple_no_sigpipe(fd);
-    bsd_set_nonblocking(fd);
+    if (!us_internal_poll_is_pipe(p1)) {
+        /* We always use nodelay */
+        bsd_socket_nodelay(fd, 1);
+        apple_no_sigpipe(fd);
+        bsd_set_nonblocking(fd);
+    }
     us_internal_socket_group_link_socket(group, s);
 
     /* Bun.connect({fd, tls}) hands us an already-connected fd that should
@@ -518,7 +593,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
         return 0;
     }
 
-    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    int written = us_internal_reject_excess_send(s, us_internal_socket_send(s, data, length), length);
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -616,7 +691,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return written;
     }
 
-    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    int written = us_internal_reject_excess_send(s, us_internal_socket_send(s, data, length), length);
     if (written < 0) {
         int fatal_send_error = us_internal_classify_failed_send(s);
         if (!fatal_send_error) {
@@ -652,7 +727,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     size_t total = 0;
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
-    ssize_t written = us_internal_reject_excess_send(s, bsd_writev(us_poll_fd(&s->p), iov, count), total);
+    ssize_t written = us_internal_reject_excess_send(s, us_internal_socket_sendv(s, iov, count), total);
     if (written != (ssize_t)total) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -670,7 +745,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         return 0;
     }
 
-    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    int written = us_internal_reject_excess_send(s, us_internal_socket_send(s, data, length), length);
     int fatal = 0;
     if (written >= 0) {
         s->unclassified_send_failures = 0;
@@ -762,6 +837,12 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     if (us_internal_socket_can_raw_write(s)) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+#ifdef LIBUS_USE_IOCP
+        if (us_internal_poll_is_pipe(&s->p)) {
+            us_internal_pipe_shutdown(&s->p);
+            return;
+        }
+#endif
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
@@ -804,7 +885,7 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     //      AsyncSocket::getRemoteAddress
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+    if (us_internal_poll_is_pipe(&s->p) || bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
         return 0;
     }
 
@@ -822,7 +903,7 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
 unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
 {
     struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+    if (us_internal_poll_is_pipe(&s->p) || bsd_local_addr(us_poll_fd(&s->p), &addr)) {
         return 0;
     }
 
@@ -837,15 +918,8 @@ unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const c
     return length;
 }
 
-void us_socket_ref(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    uv_ref((uv_handle_t *) s->p.uv_p);
-#endif
-    // do nothing if not using libuv
-}
-
 void us_socket_nodelay(struct us_socket_t *s, int enabled) {
-    if (!us_socket_is_shut_down(s)) {
+    if (!us_socket_is_shut_down(s) && !us_internal_poll_is_pipe(&s->p)) {
         bsd_socket_nodelay(us_poll_fd((struct us_poll_t *) s), enabled);
     }
 }
@@ -856,7 +930,7 @@ void us_socket_nodelay(struct us_socket_t *s, int enabled) {
 
 /* Returns 0 on success or a negative platform errno. */
 int us_socket_set_tos(struct us_socket_t *s, int tos) {
-    if (us_socket_is_closed(s)) {
+    if (us_socket_is_closed(s) || us_internal_poll_is_pipe(&s->p)) {
         return -EBADF;
     }
     return bsd_socket_set_tos(us_poll_fd((struct us_poll_t *) s), tos);
@@ -864,7 +938,7 @@ int us_socket_set_tos(struct us_socket_t *s, int tos) {
 
 /* Returns the current TOS / traffic class (>= 0) or a negative platform errno. */
 int us_socket_get_tos(struct us_socket_t *s) {
-    if (us_socket_is_closed(s)) {
+    if (us_socket_is_closed(s) || us_internal_poll_is_pipe(&s->p)) {
         return -EBADF;
     }
     return bsd_socket_get_tos(us_poll_fd((struct us_poll_t *) s));
@@ -872,21 +946,15 @@ int us_socket_get_tos(struct us_socket_t *s) {
 
 /// Returns 0 on success. Returned error values depend on the platform.
 /// - on posix, returns `errno`
-/// - on windows, when libuv is used, returns a UV err code
-/// - on windows, LIBUS_USE_LIBUV is set, returns `WSAGetLastError()`
-/// - on windows, otherwise returns result of `WSAGetLastError`
+/// - on windows, returns `WSAGetLastError()`
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
+    if (us_internal_poll_is_pipe(&s->p)) {
+        return EBADF;
+    }
     if (!us_socket_is_shut_down(s)) {
         return bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
     }
     return 0;
-}
-
-void us_socket_unref(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    uv_unref((uv_handle_t *) s->p.uv_p);
-#endif
-    // do nothing if not using libuv
 }
 
 void us_socket_pause(struct us_socket_t *s) {

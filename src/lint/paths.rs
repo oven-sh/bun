@@ -259,17 +259,6 @@ pub fn extname(path: &[u8]) -> &[u8] {
     }
 }
 
-/// `path.win32.toNamespacedPath(path)`: `\\?\C:\a`, `\\?\UNC\server\share\a`. Windows doesn't normalize what follows
-/// `\\?\` or limit its length.
-pub fn namespaced(path: &[u8]) -> Vec<u8> {
-    let len = node::to_namespaced_path_buf_len::<u8>(path);
-    let mut buffers = vec![0; 2 * len];
-    let (buf, buf2) = buffers.split_at_mut(len);
-    node::to_namespaced_path_windows_t(path, buf, buf2)
-        .unwrap_or(path)
-        .to_vec()
-}
-
 /// Resolves `path`. A relative path is resolved against `/`.
 pub(crate) fn absolute(path: &[u8]) -> Vec<u8> {
     match path {

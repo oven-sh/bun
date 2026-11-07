@@ -455,7 +455,7 @@ impl SharedConnection {
             fd,
             Default::default(),
             Async::Owner::new(
-                Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
+                Async::file_poll::poll_tag::GET_ADDR_INFO_REQUEST,
                 (&raw mut *this).cast(),
             ),
         );
@@ -466,7 +466,7 @@ impl SharedConnection {
         let rc = poll.register_with_fd(
             loop_,
             Async::PollKind::Readable,
-            Async::posix_event_loop::OneShotFlag::None,
+            Async::file_poll::OneShotFlag::None,
             fd,
         );
         if rc.is_err() {

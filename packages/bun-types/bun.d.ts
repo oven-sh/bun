@@ -2603,7 +2603,7 @@ declare module "bun" {
          * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
          *
-         * On Windows, libuv's non-blocking DNS resolver is used by default, and
+         * On Windows, `GetAddrInfoW` runs in Bun's thread pool by default, and
          * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
          * backend isn't supported on Windows.
          */
@@ -8078,7 +8078,8 @@ declare module "bun" {
        * - POSIX: calls `setsid()` so the child starts a new session and becomes
        *   the process group leader. It can outlive the parent and receive
        *   signals independently of the parent’s terminal/process group.
-       * - Windows: sets `UV_PROCESS_DETACHED`, allowing the child to outlive
+       * - Windows: the child gets no console and a process group of its own
+       *   (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`), allowing it to outlive
        *   the parent and receive signals independently.
        *
        * Note: stdio may keep the parent process alive. Pass `stdio: ["ignore",
@@ -8158,12 +8159,11 @@ declare module "bun" {
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process writes to the file descriptor
        *
-       * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
-       * creates a socketpair like `"pipe"`, but the parent-end fd exposed
+       * At indices >= 3, `"socket-fd"` is also accepted: creates a socketpair
+       * (on Windows a named pipe) like `"pipe"`, but the parent-end fd exposed
        * via {@link Subprocess.stdio} is owned by the caller and is never
        * closed by the subprocess. Use this when you wrap the fd in
        * something that will close it itself (e.g. `net.connect({fd})`).
-       * On Windows it behaves the same as `"pipe"`.
        *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
@@ -8608,12 +8608,12 @@ declare module "bun" {
     /**
      * Extra file descriptors passed to the `stdio` option.
      *
-     * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
-     * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
-     * returned). On POSIX, reading this property transfers ownership of any
+     * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and
+     * for slots where a raw file descriptor was supplied (the same fd is
+     * returned). Reading this property transfers ownership of any
      * `"pipe"` fds to the caller, who is then responsible for closing them; the
      * subprocess will not close them. `"socket-fd"` and raw-fd slots are likewise
-     * caller-owned. Other slots — including raw fds on Windows — are `null`.
+     * caller-owned. Other slots are `null`.
      */
     readonly stdio: [null, null, null, ...(number | null)[]];
 

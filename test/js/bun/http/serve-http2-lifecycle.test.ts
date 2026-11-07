@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import http2 from "node:http2";
+import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 import {
   F,
@@ -104,6 +106,73 @@ describe("Bun.serve http2 lifecycle", () => {
     // The timer-resolved response retired the last stream from a JS callback;
     // the server must still notice the drained GOAWAY'd connection and close it.
     await closed;
+  });
+
+  test("graceful stop on a unix socket: a response that the socket has no room for arrives whole", async () => {
+    using dir = tempDir("serve-http2-unix", {});
+    const unix = isWindows ? `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}` : join(String(dir), "s.sock");
+    const size = 250_000;
+    const arrived = Promise.withResolvers<void>();
+    const stopping = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      unix,
+      http2: true,
+      async fetch() {
+        arrived.resolve();
+        await stopping.promise;
+        return new Response(Buffer.alloc(size, "b"));
+      },
+    });
+    const session = await connectH2(0, false, {
+      createConnection: () => net.connect(unix),
+      settings: { initialWindowSize: 1 << 20 },
+    });
+    session.setLocalWindowSize(1 << 20);
+    const response = request(session, { ":path": "/" });
+    await arrived.promise;
+    const stopped = server.stop();
+    stopping.resolve();
+    expect((await response).body.length).toBe(size);
+    await stopped;
+  });
+
+  test("graceful stop on a unix socket: a finished response that the client has yet to read arrives whole", async () => {
+    using dir = tempDir("serve-http2-unix", {});
+    const unix = isWindows ? `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}` : join(String(dir), "s.sock");
+    // More than the socket has room for, and little enough for the connection to buffer the rest.
+    const size = 250_000;
+    const finished = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      unix,
+      http2: true,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(Buffer.alloc(size, "b"));
+              await controller.end();
+              finished.resolve();
+            },
+          }),
+        );
+      },
+    });
+    const socket = net.connect(unix);
+    const session = await connectH2(0, false, {
+      createConnection: () => socket,
+      settings: { initialWindowSize: 1 << 20 },
+    });
+    session.setLocalWindowSize(1 << 20);
+    const response = request(session, { ":path": "/" });
+    socket.pause();
+    await finished.promise;
+    // The server forgets a finished stream once the handler has returned.
+    await new Promise(setImmediate);
+    const stopped = server.stop();
+    socket.resume();
+    expect((await response).body.length).toBe(size);
+    await stopped;
   });
 
   test("graceful stop: GOAWAY carries the last processed stream id; later streams get nothing and their DATA is tolerated", async () => {

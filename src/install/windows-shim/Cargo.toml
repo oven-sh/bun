@@ -21,7 +21,7 @@
 # `#![no_std]`, zero `#[no_mangle]`) are the ONLY workspace crates. Pulling
 # `bun_core` / `bun_sys` / `bun_string` would drag in their `#[no_mangle]`
 # C-ABI surface (`Bun__*`, `__bun_dispatch__*`), which references
-# libuv/simdutf/highway/ICU and makes those undefined symbols link roots — the
+# simdutf/highway/ICU and makes those undefined symbols link roots — the
 # shim can't satisfy them and shouldn't carry them. `main.rs` provides local
 # stand-ins for the handful of helpers the shared source reaches for
 # (`bun_core::ffi::{slice,slice_mut,zeroed}`, `RacyCell`, `bun_str::w!`,

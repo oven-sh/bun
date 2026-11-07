@@ -12,6 +12,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_paths as path;
 
 use crate::Command;
@@ -20,10 +21,9 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
+    self as spawn, Rusage, SpawnOptions, SpawnResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -72,12 +72,6 @@ impl<'a> PipeReader<'a> {
             line_buffer: Vec::new(),
         }
     }
-
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop {
-        // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
-        // outlives all handles (lives on `run`'s stack frame for the whole event loop).
-        unsafe { (*(*self.handle).state).event_loop }
-    }
 }
 
 // Callbacks here touch only `line_buffer` / `ended` / `handle` / the State
@@ -104,7 +98,6 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
     event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -153,7 +146,7 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let spawned: SpawnProcessResult = {
+        let spawned: SpawnResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader; nothing else reaches it before the guard drops.
             let env = unsafe { &mut *state.env };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -178,17 +171,7 @@ impl<'a> ProcessHandle<'a> {
             }?
             .map_err(Error::from)?
         };
-        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
-        // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
-        // `self` by value.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
-        // On Windows the readers are wired via `Source::Pipe` taken from
-        // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
-        #[cfg(unix)]
         let stdout_fd = spawned.stdout;
-        #[cfg(unix)]
         let stderr_fd = spawned.stderr;
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
@@ -201,55 +184,17 @@ impl<'a> ProcessHandle<'a> {
         let stderr_parent = (&raw mut self.stderr_reader).cast::<c_void>();
         self.stderr_reader.reader.set_parent(stderr_parent);
 
-        #[cfg(windows)]
-        {
-            // `spawn_process_windows` has *already* reclaimed
-            // sole ownership of that heap pipe into
-            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
-            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
-            // second Box from `self.options.stdout` here would alias the same
-            // allocation and double-free when `spawned` drops. Instead, move
-            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
-            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                self.stdout_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
+        for (pipe, fd) in [
+            (&mut self.stdout_reader, stdout_fd),
+            (&mut self.stderr_reader, stderr_fd),
+        ] {
+            if let Some(fd) = fd {
+                let _ = bun_sys::set_nonblocking(fd);
+                pipe.reader
+                    .flags
+                    .insert(ReaderFlags::CHILD_STDIO | ReaderFlags::IN_TURNS);
+                pipe.reader.start(fd, true).map_err(Error::from)?;
             }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                self.stderr_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            if let Some(stdout_fd) = stdout_fd {
-                let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader
-                    .reader
-                    .start(stdout_fd, true)
-                    .map_err(Error::from)?;
-            }
-            if let Some(stderr_fd) = stderr_fd {
-                let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader
-                    .reader
-                    .start(stderr_fd, true)
-                    .map_err(Error::from)?;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            self.stdout_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
-            self.stderr_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
         }
 
         self.process = Some(ProcessSlot {
@@ -285,8 +230,7 @@ impl<'a> ProcessHandle<'a> {
 
     /// On process exit, read what the pipes already hold, then force-end any
     /// pipe a leftover child still keeps open: its EOF may never come and
-    /// must not stall the finish. Windows has no synchronous drain, so only
-    /// the force-end applies there.
+    /// must not stall the finish.
     ///
     /// # Safety
     /// `this` is the live handle; the reader callbacks re-enter
@@ -299,7 +243,6 @@ impl<'a> ProcessHandle<'a> {
                 &raw mut (*this).stdout_reader,
                 &raw mut (*this).stderr_reader,
             ] {
-                #[cfg(unix)]
                 if !(*pipe).ended && (*pipe).reader.get_fd() != bun_sys::Fd::INVALID {
                     // EOF here dispatches `on_reader_done`, setting `ended`.
                     BufferedReader::read(&raw mut (*pipe).reader);
@@ -372,16 +315,24 @@ impl<'a> State<'a> {
             Output::writer()
         };
 
+        // SAFETY: pipe.handle backref set in ProcessHandle::start()
+        let config = unsafe { (*pipe.handle).config };
         // Process complete lines
-        while let Some(newline_pos) = strings::index_of_char_usize(&pipe.line_buffer, b'\n') {
-            let line = &pipe.line_buffer[0..newline_pos + 1];
-            // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let config = unsafe { (*pipe.handle).config };
-            self.write_line_with_prefix(config, line, writer)?;
-            // Remove processed line from buffer
-            pipe.line_buffer.drain_front(newline_pos + 1);
+        let mut printed = 0;
+        let mut result = Ok(());
+        while let Some(newline_pos) =
+            strings::index_of_char_usize(&pipe.line_buffer[printed..], b'\n')
+        {
+            let end = printed + newline_pos + 1;
+            result = self.write_line_with_prefix(config, &pipe.line_buffer[printed..end], writer);
+            if result.is_err() {
+                break;
+            }
+            printed = end;
         }
-        Ok(())
+        // Remove processed lines from buffer
+        pipe.line_buffer.drain_front(printed);
+        result
     }
 
     fn write_line_with_prefix(
@@ -902,7 +853,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which escape the SILENT_BREAKAWAY job of `spawn_process`) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
@@ -1145,24 +1096,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             next_dependents: Vec::new(),
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: config.cwd.clone(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
                 ..Default::default()
             },

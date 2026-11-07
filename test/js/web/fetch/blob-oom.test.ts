@@ -1,7 +1,7 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync, truncateSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tempDirWithFiles } from "harness";
 import os from "node:os";
 import path from "path";
 
@@ -220,11 +220,9 @@ describe.concurrent.skipIf(!fitsOneChild)("byte sources at the 2 GiB string limi
 // file path hands the bytes it read to JSC without a copy; converting the
 // length through u32 on the way panicked at exactly 2^32, and JSC aborts when
 // it is asked to adopt more than that. The file is sparse, but each case still
-// reads a real 4 GiB into the child. On Windows the file reader itself rejects
-// files of 2^32 bytes or more with ENOMEM (read_file.rs, ReadFileUV), so
-// neither case reaches the ArrayBuffer hand-off there.
+// reads a real 4 GiB into the child.
 const describeFourGiB = fitsAllChildren ? describe.concurrent : describe;
-describeFourGiB.skipIf(isWindows || !fitsOneChild)("Bun.file().arrayBuffer() at the 4 GiB ArrayBuffer limit", () => {
+describeFourGiB.skipIf(!fitsOneChild)("Bun.file().arrayBuffer() at the 4 GiB ArrayBuffer limit", () => {
   async function readSparseFileAsArrayBuffer(size: number): Promise<ChildResult> {
     using dir = tempDir("blob-4gib", {});
     const file = path.join(String(dir), "big.bin");

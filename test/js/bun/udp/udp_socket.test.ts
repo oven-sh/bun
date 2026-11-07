@@ -1,4 +1,5 @@
 import { udpSocket } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import {
@@ -13,6 +14,7 @@ import {
 } from "harness";
 import { closeSync, openSync } from "node:fs";
 import path from "node:path";
+import { getSystemErrorName } from "node:util";
 import { dataCases, dataTypes } from "./testdata";
 
 describe("udpSocket()", () => {
@@ -244,6 +246,57 @@ describe("udpSocket()", () => {
       }
       expect(pick(error)).toEqual(resolverError);
     });
+  });
+
+  // Windows refuses to connect to the unspecified address. Linux and macOS take it for this machine.
+  test.skipIf(!isWindows)("the connect option reports the system's error, not a resolver error", async () => {
+    let error: any;
+    try {
+      (await udpSocket({ hostname: "127.0.0.1", port: 0, connect: { hostname: "0.0.0.0", port: 9 } })).close();
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, syscall: error?.syscall, name: getSystemErrorName(error?.errno) }).toEqual({
+      code: "EADDRNOTAVAIL",
+      syscall: "connect",
+      name: "EADDRNOTAVAIL",
+    });
+  });
+
+  test("a port in use is reported as EADDRINUSE", async () => {
+    const first = await udpSocket({ hostname: "127.0.0.1", port: 0 });
+    let error: any;
+    try {
+      (await udpSocket({ hostname: "127.0.0.1", port: first.port })).close();
+    } catch (e) {
+      error = e;
+    } finally {
+      first.close();
+    }
+    expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRINUSE", syscall: "bind" });
+    // The system's own number would be a Winsock error there.
+    if (isWindows) expect(getSystemErrorName(error.errno)).toBe("EADDRINUSE");
+  });
+
+  // The setsockopt of wsock32.dll takes the option for a Winsock 1.1 number and sets IP_DONTFRAGMENT instead.
+  test.skipIf(!isWindows)("setMulticastInterface sets IP_MULTICAST_IF", async () => {
+    const ws2_32 = dlopen("ws2_32.dll", {
+      getsockopt: { args: ["usize", "i32", "i32", "ptr", "ptr"], returns: "i32" },
+    });
+    const socket = await udpSocket({ hostname: "127.0.0.1", port: 0 });
+    try {
+      expect(socket.setMulticastInterface("127.0.0.1")).toBe(true);
+      const IPPROTO_IP = 0;
+      const IP_MULTICAST_IF = 9;
+      const value = new Uint8Array(4);
+      const length = new Int32Array([value.length]);
+      const fd = (socket as unknown as { fd: number }).fd;
+      expect(ws2_32.symbols.getsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, ptr(value), ptr(length))).toBe(0);
+      expect([...value]).toEqual([127, 0, 0, 1]);
+    } finally {
+      socket.close();
+      ws2_32.close();
+    }
   });
 
   // Out-of-range connect.port used to be silently rewritten to 0, so send()

@@ -445,11 +445,8 @@ test("node:net socket nothing references still connects when GC runs during the 
   }
 });
 
-// Windows routes `unix:` through WindowsNamedPipeContext. A connect that fails
-// before libuv queues it (here: a TLS config that cannot build a context)
-// reports the error through `handle_connect_error` while the socket is still
-// detached, so that path releases nothing. The attempt ref taken in
-// `connect_inner` must be released by the caller, as the POSIX path does.
+// A connect that fails before anything is queued (here: a TLS config that
+// cannot build a context) must release everything the attempt allocated.
 test.skipIf(!isWindows)(
   "a named-pipe connect that fails synchronously does not leak the native socket",
   async () => {
@@ -462,7 +459,15 @@ test.skipIf(!isWindows)(
     };
     async function run(n) {
       for (let i = 0; i < n; i += 100) {
-        await Promise.all(Array.from({ length: 100 }, () => Bun.connect({ ...opts, socket }).catch(() => {})));
+        await Promise.all(
+          Array.from({ length: 100 }, async () => {
+            try {
+              await Bun.connect({ ...opts, socket });
+            } catch {
+              failed++;
+            }
+          }),
+        );
       }
       for (let k = 0; k < 3; k++) {
         Bun.gc(true);
@@ -473,11 +478,12 @@ test.skipIf(!isWindows)(
     function pageCount() {
       return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
     }
+    let failed = 0;
     await run(4000);
     const before = pageCount();
     await run(4000);
     const after = pageCount();
-    console.log(JSON.stringify({ before, after, delta: after - before }));
+    console.log(JSON.stringify({ before, after, delta: after - before, failed }));
   `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -487,9 +493,10 @@ test.skipIf(!isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref each run of 4000 leaks about 16 pages
-    // (release) and many more under debug. With it the delta is heap noise.
+    const { before, after, delta, failed } = JSON.parse(stdout.trim().split("\n").pop()!);
+    expect(failed).toBe(8000);
+    // A native socket leaked per attempt is about 16 pages per run of 4000
+    // (release) and many more under debug. Without one the delta is heap noise.
     expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
     expect(exitCode).toBe(0);
   },

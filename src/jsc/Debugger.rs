@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
-use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
+use bun_io::file_poll::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
 use crate::{self as jsc, JSGlobalObject, ZigException};
@@ -262,53 +262,6 @@ impl Debugger {
             bun_core::Timespec { sec: 0, nsec: 0 }
         };
 
-        #[cfg(windows)]
-        {
-            // Arm a one-shot libuv timer that unrefs `poll_ref` after the
-            // delay (Windows lacks a working `tickWithTimeout`). TODO: remove
-            // this when tickWithTimeout actually works properly on Windows.
-            use bun_sys::windows::libuv as uv;
-            use bun_sys::windows::libuv::UvHandle as _;
-            if wait == Wait::Shortly {
-                let uv_loop = this.uv_loop();
-                // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
-                unsafe { uv::uv_update_time(uv_loop) };
-                let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
-                // SAFETY: `timer` freshly allocated; `uv_loop` valid.
-                unsafe { (*timer).init(uv_loop) };
-
-                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    // SAFETY: `vm` is the per-thread singleton; called on the
-                    // JS thread (libuv timer callback). Unwinding across
-                    // `extern "C"` is UB so we early-return if no debugger.
-                    if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-                        d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
-                    }
-                    // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
-                    // at offset 0); `deinit_timer` matches `uv_close_cb`.
-                    unsafe {
-                        uv::uv_close(handle.cast(), Some(deinit_timer));
-                    }
-                }
-                extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
-                    // SAFETY: `handle` is the `Box<Timer>` allocated above
-                    // (cast through `uv_handle_t` at offset 0); this is the
-                    // sole owner reclaiming it after `uv_close` completes.
-                    drop(unsafe { bun_core::heap::take(handle.cast::<uv::Timer>()) });
-                }
-                // SAFETY: `timer` initialized above.
-                unsafe {
-                    (*timer).start(
-                        WAIT_FOR_CONNECTION_DELAY_MS as u64,
-                        0,
-                        Some(on_debugger_timer),
-                    );
-                    (*timer).ref_();
-                }
-            }
-        }
-
         // Drop the long-lived `&mut Debugger` before re-entering JS — see
         // the aliasing note on this fn. Each loop iteration re-fetches via `debugger_mut()`
         // so re-entrant JS may independently borrow the VM.
@@ -340,16 +293,18 @@ impl Debugger {
                 }
                 Wait::Shortly => {
                     // Handle .incrementRefConcurrently
-                    #[cfg(unix)]
-                    {
-                        let pending_unref = this.take_pending_unref();
-                        if pending_unref > 0 {
-                            this.uws_loop_ref().unref_count(pending_unref);
-                        }
+                    let pending_unref = this.take_pending_unref();
+                    if pending_unref > 0 {
+                        this.uws_loop_ref().unref_count(pending_unref);
                     }
 
-                    this.uws_loop_ref()
-                        .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
+                    let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+                    if now.order(&deadline) == core::cmp::Ordering::Less {
+                        this.uws_loop_ref().tick_with_timeout(
+                            Some(&deadline.duration(&now)),
+                            bun_uws::NOW_NS_UNKNOWN,
+                        );
+                    }
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(

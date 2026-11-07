@@ -1205,7 +1205,7 @@ impl Image {
 // ───────────────────────────── worker task ──────────────────────────────────
 
 /// `.blob` source: ask the Blob for its bytes via the store-agnostic
-/// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
+/// `Blob.readBytesToHandler` (file → ReadFile, S3 → S3.download,
 /// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
 /// JSValue — swap it into `image.source = .owned`, and re-enter `schedule()`.
 /// Promise-of-promise flattens, so the caller sees one `await` for

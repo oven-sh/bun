@@ -763,7 +763,7 @@ fn lay_link(
                         &mut to_buf[..],
                         &[name.as_bytes()],
                     )
-                    && sys::sys_uv::link(&real, to).is_ok()
+                    && sys::link(&real, to).is_ok()
                 {
                     return Ok(());
                 }
@@ -2172,11 +2172,9 @@ impl<'a> PackageInstall<'a> {
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {
-        #[cfg(windows)]
-        let opened = sys::sys_uv::open(path, 0, 0);
-        #[cfg(not(windows))]
-        let opened = sys::open(path, sys::O::PATH, 0);
-        opened.map(|fd| fd.close()).is_err()
+        sys::open(path, sys::O::PATH, 0)
+            .map(|fd| fd.close())
+            .is_err()
     }
 
     pub(crate) fn install_from_link(

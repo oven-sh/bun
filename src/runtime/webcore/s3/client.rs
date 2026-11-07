@@ -486,10 +486,6 @@ pub(crate) fn writable_stream(
     }
 
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
-    // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
-    // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
-    // MultiPartUpload.
-    let global_static = GlobalRef::from(cx.global());
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         root: Cell::new(None),
         queue: JsCell::new(None),
@@ -509,7 +505,6 @@ pub(crate) fn writable_stream(
         // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
         // keeping this task alive). Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
-        global_this: global_static,
         buffered: JsCell::new(StreamBuffer::default()),
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
@@ -873,7 +868,7 @@ pub(crate) fn upload_stream(
         );
     }
 
-    // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
+    // JSC_BORROW: the global outlives the task, whose JS owners live in its heap.
     let global_static = GlobalRef::from(cx.global());
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         root: Cell::new(None),
@@ -893,7 +888,6 @@ pub(crate) fn upload_stream(
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload. Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
-        global_this: global_static,
         buffered: JsCell::new(StreamBuffer::default()),
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),

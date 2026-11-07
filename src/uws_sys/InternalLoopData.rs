@@ -1,8 +1,6 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 
-#[cfg(windows)]
-use crate::Timer;
 use crate::{ConnectingSocket, Loop, SocketGroup, udp, us_socket_t};
 
 /// Layout placeholder for the `mutex` field of `us_internal_loop_data_t`.
@@ -28,9 +26,6 @@ bun_opaque::opaque_ffi! {
 /// never reads it.
 #[repr(C)]
 pub struct InternalLoopData {
-    #[cfg(windows)]
-    sweep_timer: Cell<*mut Timer>,
-    #[cfg(not(windows))]
     sweep_next_tick_ns: Cell<i64>,
     sweep_timer_count: Cell<i32>,
     wakeup_async: Cell<*mut us_internal_async>,
@@ -39,8 +34,6 @@ pub struct InternalLoopData {
     quic_next_tick_us: Cell<i64>,
     /// `us_nq_driver_s *` — node:quic's loop driver list.
     pub(crate) nq_head: Cell<*mut c_void>,
-    #[cfg(windows)]
-    quic_timer: Cell<*mut Timer>,
     pub iterator: Cell<*mut SocketGroup>,
     recv_buf: Cell<*mut u8>,
     send_buf: Cell<*mut u8>,

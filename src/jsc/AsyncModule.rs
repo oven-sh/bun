@@ -273,9 +273,9 @@ impl Queue {
         bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
-        module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        module
+            .poll_ref
+            .ref_(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js));
 
         // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
@@ -608,9 +608,8 @@ impl AsyncModule {
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = bun_ast::Log::init();
-        this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        this.poll_ref
+            .unref(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js));
         let result = this.resume_loading_module(&mut log);
         let spec = StringView::borrow_utf8(this.specifier());
         let referrer = StringView::borrow_utf8(this.referrer());
@@ -801,9 +800,8 @@ impl AsyncModule {
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        self.poll_ref
+            .unref(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js));
         // The caller (Queue::retain_mut) returns `false` and Vec drops the
         // element, running Drop.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
@@ -996,9 +994,8 @@ impl AsyncModule {
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        self.poll_ref
+            .unref(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js));
         // Caller drops via retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.

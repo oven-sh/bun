@@ -204,7 +204,7 @@ describe("emitBindgen", () => {
       const schemas = n
         .toString()
         .replaceAll("$:", ":")
-        .match(/--(sources|types-only)=[^\s'"]*/g)!;
+        .match(/--(sources-file|types-only)=[^\s'"]*/g)!;
       expect(
         await bunRun([
           "run",

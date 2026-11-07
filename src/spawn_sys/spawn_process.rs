@@ -1,6 +1,7 @@
 //! Raw `spawn_process_posix` + option/result types — split out of
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
+//! `spawn_process_windows` is in `windows.rs`.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
@@ -12,7 +13,6 @@ use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-#[cfg(unix)]
 use bun_sys::FdExt as _;
 use bun_sys::{self, Fd};
 
@@ -31,7 +31,7 @@ use crate::{Argv, Envp};
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
 #[cfg(windows)]
-pub type PidT = bun_libuv_sys::uv_pid_t;
+pub type PidT = core::ffi::c_int;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
@@ -45,10 +45,8 @@ pub type PidFdType = FdT;
 // One Bun-level type per target. On every Unix this is `libc::rusage` —
 // the libc crate defines `rusage` on FreeBSD with
 // the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
-// needed. On Windows it is the value-typed `WinRusage` below (NOT
-// `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
-// untouched; our Windows path fills `WinRusage` directly from Win32, not
-// via libuv).
+// needed. On Windows it is the value-typed `WinRusage` below, which
+// `windows::rusage` fills.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
@@ -69,70 +67,6 @@ pub struct WinRusage {
 }
 
 pub type IoCounters = bun_windows_sys::IO_COUNTERS;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    // IoCounters = bun_windows_sys::IO_COUNTERS (alias resolves, no change)
-    fn GetProcessIoCounters(
-        handle: bun_sys::windows::HANDLE,
-        counters: *mut IoCounters,
-    ) -> core::ffi::c_int;
-}
-
-#[cfg(windows)]
-pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
-    use core::ffi::c_void;
-    let mut usage_info = Rusage::default();
-    let process_pid: *mut c_void = process.process_handle;
-    type WinTime = bun_sys::windows::FILETIME;
-    let mut starttime: WinTime = bun_core::ffi::zeroed();
-    let mut exittime: WinTime = bun_core::ffi::zeroed();
-    let mut kerneltime: WinTime = bun_core::ffi::zeroed();
-    let mut usertime: WinTime = bun_core::ffi::zeroed();
-    // We at least get process times
-    // SAFETY: FFI call with valid out-pointers
-    if unsafe {
-        bun_sys::windows::GetProcessTimes(
-            process_pid,
-            &mut starttime,
-            &mut exittime,
-            &mut kerneltime,
-            &mut usertime,
-        )
-    } != 0
-    {
-        // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. A `temp % 1_000_000` computation here would be
-        // unit-mismatched (a 100-ns tick count modulo a microsecond
-        // denominator): a 178 125 µs run (1_781_250 ticks) would report as
-        // 781_250 µs, which is what tips the "does not use 100% cpu >
-        // install" test (`cpuTime.total < 750_000`) on Windows aarch64.
-        // Convert correctly: `(ticks % 10_000_000) / 10`.
-        let mut temp: u64 =
-            ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.stime.sec = (temp / 10_000_000) as i64;
-            usage_info.stime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
-        temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.utime.sec = (temp / 10_000_000) as i64;
-            usage_info.utime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
-    }
-    let mut counters = IoCounters::default();
-    // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
-    usage_info.inblock = counters.ReadOperationCount;
-    usage_info.oublock = counters.WriteOperationCount;
-
-    let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
-        return usage_info;
-    };
-    usage_info.maxrss = memory.PeakWorkingSetSize as u64;
-
-    usage_info
-}
 
 #[cfg(windows)]
 pub type Rusage = WinRusage;
@@ -299,12 +233,12 @@ impl RusageFields for WinRusage {
 // Spawn option / result types
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PosixSpawnOptions {
-    pub stdin: PosixStdio,
-    pub stdout: PosixStdio,
-    pub stderr: PosixStdio,
+pub struct SpawnOptions {
+    pub stdin: Stdio,
+    pub stdout: Stdio,
+    pub stderr: Stdio,
     pub ipc: Option<Fd>,
-    pub extra_fds: Box<[PosixStdio]>,
+    pub extra_fds: Box<[Stdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
     /// Run the child as this user id (`setuid` after fork, like libuv/Node).
@@ -342,14 +276,40 @@ pub struct PosixSpawnOptions {
     /// Linux only. Directory fd of a cgroup the child starts inside
     /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.
     pub cgroup_fd: Option<Fd>,
+    #[cfg(windows)]
+    pub windows: WindowsOptions,
+    /// The child's terminal, which supplies its standard handles: `stdin`, `stdout`, `stderr` and `extra_fds` are not looked at.
+    #[cfg(windows)]
+    pub pseudoconsole: Option<bun_sys::windows::HPCON>,
 }
 
-impl Default for PosixSpawnOptions {
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub struct WindowsOptions {
+    /// Joins the arguments with spaces as they are, for a program that parses its own command line (cmd.exe).
+    pub verbatim_arguments: bool,
+    pub hide_window: bool,
+    /// Whether the child's end of a `Stdio::Buffer` at 0, 1 and 2 is opened for overlapped I/O.
+    pub overlapped_stdio: [bool; 3],
+}
+
+#[cfg(windows)]
+impl Default for WindowsOptions {
     fn default() -> Self {
         Self {
-            stdin: PosixStdio::Inherit,
-            stdout: PosixStdio::Inherit,
-            stderr: PosixStdio::Inherit,
+            verbatim_arguments: false,
+            hide_window: true,
+            overlapped_stdio: [false; 3],
+        }
+    }
+}
+
+impl Default for SpawnOptions {
+    fn default() -> Self {
+        Self {
+            stdin: Stdio::Inherit,
+            stdout: Stdio::Inherit,
+            stderr: Stdio::Inherit,
             ipc: None,
             extra_fds: Box::default(),
             cwd: Box::default(),
@@ -366,16 +326,12 @@ impl Default for PosixSpawnOptions {
             pty_slave_fd: -1,
             linux_pdeathsig: None,
             cgroup_fd: None,
+            #[cfg(windows)]
+            windows: WindowsOptions::default(),
+            #[cfg(windows)]
+            pseudoconsole: None,
         }
     }
-}
-
-impl PosixSpawnOptions {
-    /// No-op.
-    /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
-    /// heap-allocated `uv::Pipe` handles on the spawn error path.
-    #[inline]
-    pub fn deinit(&mut self) {}
 }
 
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
@@ -411,7 +367,7 @@ pub struct Dup2 {
     pub to: StdioKind,
 }
 
-pub enum PosixStdio {
+pub enum Stdio {
     Path(Box<[u8]>),
     Inherit,
     Ignore,
@@ -426,28 +382,14 @@ pub enum PosixStdio {
     Dup2(Dup2),
 }
 
-impl PosixStdio {
-    // Constructor helpers — keep parity with `WindowsStdio::buffer(*mut Pipe)`
-    // so `sync::SyncStdio::to_stdio` can spell both platforms uniformly.
-    #[inline]
-    pub fn inherit() -> Self {
-        PosixStdio::Inherit
-    }
-    #[inline]
-    pub fn ignore() -> Self {
-        PosixStdio::Ignore
-    }
-    #[inline]
-    pub fn buffer() -> Self {
-        PosixStdio::Buffer
-    }
-}
-
 #[derive(Default)]
-pub struct PosixSpawnResult {
+pub struct SpawnResult {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub pidfd: Option<PidFdType>,
+    /// `pid` is this child's for as long as this is open. The caller closes it.
+    #[cfg(windows)]
+    pub process_handle: Option<Fd>,
     pub stdin: Option<Fd>,
     pub stdout: Option<Fd>,
     pub stderr: Option<Fd>,
@@ -480,9 +422,22 @@ impl ExtraPipe {
             ExtraPipe::Unavailable => Fd::INVALID,
         }
     }
+
+    /// From here on the caller closes an `OwnedFd`, by the number that `.stdio` has for it.
+    pub fn release_to_caller(&mut self) {
+        if let ExtraPipe::OwnedFd(fd) = *self {
+            *self = match fd.make_crt_owned() {
+                Ok(fd) => ExtraPipe::UnownedFd(fd),
+                Err(_) => {
+                    fd.close();
+                    ExtraPipe::Unavailable
+                }
+            };
+        }
+    }
 }
 
-impl PosixSpawnResult {
+impl SpawnResult {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
         // PIDFD_NONBLOCK is only supported on kernel 5.10+ (the EINVAL retry
@@ -618,10 +573,10 @@ impl Drop for PosixSpawnFdGuard {
 /// for the duration of the call.
 #[cfg(unix)]
 pub unsafe fn spawn_process_posix(
-    options: &PosixSpawnOptions,
+    options: &SpawnOptions,
     argv: Argv,
     envp: Envp,
-) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
+) -> crate::Result<bun_sys::Result<SpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
 
@@ -647,9 +602,9 @@ pub unsafe fn spawn_process_posix(
             if options.use_execve_on_macos {
                 f |= POSIX_SPAWN_SETEXEC;
 
-                if matches!(options.stdin, PosixStdio::Buffer)
-                    || matches!(options.stdout, PosixStdio::Buffer)
-                    || matches!(options.stderr, PosixStdio::Buffer)
+                if matches!(options.stdin, Stdio::Buffer)
+                    || matches!(options.stdout, Stdio::Buffer)
+                    || matches!(options.stderr, Stdio::Buffer)
                 {
                     Output::panic(format_args!(
                         "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
@@ -700,7 +655,7 @@ pub unsafe fn spawn_process_posix(
     if !options.cwd.is_empty() {
         actions.chdir(&options.cwd)?;
     }
-    let mut spawned = PosixSpawnResult::default();
+    let mut spawned = SpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
     // Cleanup is owned by an RAII guard so every `?`
     // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
@@ -727,10 +682,10 @@ pub unsafe fn spawn_process_posix(
         spawned.ipc = Some(ipc);
     }
 
-    let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
+    let stdio_options: [&Stdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
     // Probed before this function creates any fd: a socketpair end can land on a closed slot number and make that slot look open.
-    let inherits_closed_fd = |stdio: &PosixStdio, slot: usize| {
-        matches!(stdio, PosixStdio::Inherit)
+    let inherits_closed_fd = |stdio: &Stdio, slot: usize| {
+        matches!(stdio, Stdio::Inherit)
             && bun_sys::get_fcntl_flags(Fd::from_native(slot as FdT)).is_err()
     };
     let closed_stdio: [bool; 3] = core::array::from_fn(|i| inherits_closed_fd(stdio_options[i], i));
@@ -763,7 +718,7 @@ pub unsafe fn spawn_process_posix(
         }) as u32;
 
         match stdio_options[i] {
-            PosixStdio::Dup2(dup2) => {
+            Stdio::Dup2(dup2) => {
                 // This is a hack to get around the ordering of the spawn actions.
                 // If stdout is set so that it redirects to stderr, the order of actions will be like this:
                 // 0. dup2(stderr, stdout) - this makes stdout point to stderr
@@ -777,7 +732,7 @@ pub unsafe fn spawn_process_posix(
                     actions.dup2(dup2.to.to_fd(), dup2.out.to_fd())?;
                 }
             }
-            PosixStdio::Inherit => {
+            Stdio::Inherit => {
                 // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
                 if closed_stdio[i] {
                     actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
@@ -787,13 +742,13 @@ pub unsafe fn spawn_process_posix(
                     actions.inherit(fileno)?;
                 }
             }
-            PosixStdio::Ipc | PosixStdio::Ignore => {
+            Stdio::Ipc | Stdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
-            PosixStdio::Path(path) => {
+            Stdio::Path(path) => {
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
-            PosixStdio::Buffer => {
+            Stdio::Buffer => {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 'use_memfd: {
                     if !options.stream && i > 0 && bun_sys::can_use_memfd() {
@@ -909,7 +864,7 @@ pub unsafe fn spawn_process_posix(
 
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
-            PosixStdio::Pipe(fd) => {
+            Stdio::Pipe(fd) => {
                 let _ = bun_sys::update_nonblocking(*fd, false);
                 let src = match cleanup.source_above_slots(max_slot, *fd) {
                     Ok(src) => src,
@@ -918,7 +873,7 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(src, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
-            PosixStdio::SocketFd => {
+            Stdio::SocketFd => {
                 // Rejected at i < 3 in Stdio::extract(); unreachable here.
                 unreachable!("SocketFd at stdin/stdout/stderr");
             }
@@ -926,7 +881,7 @@ pub unsafe fn spawn_process_posix(
     }
 
     if dup_stdout_to_stderr {
-        if let PosixStdio::Dup2(d) = stdio_options[1] {
+        if let Stdio::Dup2(d) = stdio_options[1] {
             actions.dup2(d.to.to_fd(), d.out.to_fd())?;
         }
     }
@@ -935,19 +890,19 @@ pub unsafe fn spawn_process_posix(
         let fileno = Fd::from_native(FdT::try_from(3 + i).unwrap());
 
         match ipc {
-            PosixStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
-            PosixStdio::Inherit => {
+            Stdio::Dup2(_) => panic!("TODO dup2 extra fd"),
+            Stdio::Inherit => {
                 actions.inherit(fileno)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Ignore => {
+            Stdio::Ignore => {
                 // Node leaves "ignore" at an extra slot closed in the child;
                 // only fds 0-2 need a /dev/null placeholder. Close explicitly:
                 // the post-exec close-range floor only covers higher fds.
                 actions.close(fileno)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Path(path) => {
+            Stdio::Path(path) => {
                 actions.open(
                     fileno,
                     path,
@@ -956,7 +911,7 @@ pub unsafe fn spawn_process_posix(
                 )?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
+            Stdio::Ipc | Stdio::Buffer | Stdio::SocketFd => {
                 // Only the parent's end goes nonblocking: a child that is not bun or node does a plain write(2) on its end, and libuv hands out a blocking one too.
                 let fds: [Fd; 2] =
                     match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false) {
@@ -990,7 +945,7 @@ pub unsafe fn spawn_process_posix(
                 // js_bun_spawn_bindings.rs after all fallible init succeeds.
                 extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
-            PosixStdio::Pipe(fd) => {
+            Stdio::Pipe(fd) => {
                 let src = match cleanup.source_above_slots(max_slot, *fd) {
                     Ok(src) => src,
                     Err(e) => return Ok(Err(e)),
@@ -1052,7 +1007,7 @@ pub unsafe fn spawn_process_posix(
 }
 
 #[cfg(unix)]
-fn set_spawned_stdio(spawned: &mut PosixSpawnResult, i: usize, fd: Fd) {
+fn set_spawned_stdio(spawned: &mut SpawnResult, i: usize, fd: Fd) {
     match i {
         0 => spawned.stdin = Some(fd),
         1 => spawned.stdout = Some(fd),

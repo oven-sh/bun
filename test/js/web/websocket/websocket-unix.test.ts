@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tls from "node:tls";
+import { WebSocketServer } from "ws";
+import { createPeer, response101 } from "./raw-peer";
 
 // Unix domain sockets are not supported on Windows via ws+unix://
 // (uSockets uses AF_UNIX which has limited support there).
@@ -269,5 +273,176 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("pong:from-child");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("WebSocket to a peer on a unix socket that is slow to read", () => {
+  // More than a unix socket or a Windows named pipe has room for.
+  const size = 1_000_000;
+
+  /** A peer that reads nothing behind the request before it is told to. */
+  function createSlowPeer(dir: string) {
+    return createPeer({
+      path: isWindows ? `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}` : join(dir, "s.sock"),
+      respond(connection) {
+        connection.socket.pause();
+        return response101(connection);
+      },
+    });
+  }
+
+  /** Runs `script` in a process of its own. The peer reads once the process has printed a line, or is gone. */
+  async function sendFromProcess(script: string) {
+    using dir = tempDir("ws-slow-peer", {});
+    await using peer = await createSlowPeer(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, PEER: peer.url },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const connection = await peer.connection();
+    await proc.stdout.getReader().read();
+    connection.socket.resume();
+    const [frame, exitCode] = await Promise.all([connection.nextFrame(), proc.exited]);
+    return { received: frame?.length, exitCode };
+  }
+
+  test("bufferedAmount counts what the peer has yet to take", async () => {
+    using dir = tempDir("ws-slow-peer", {});
+    await using peer = await createSlowPeer(String(dir));
+    const ws = new WebSocket(peer.url);
+    await once(ws, "open");
+    ws.send(new Uint8Array(size));
+    const buffered = ws.bufferedAmount;
+    const connection = await peer.connection();
+    connection.socket.resume();
+    const frame = await connection.nextFrame();
+    while (ws.bufferedAmount > 0) await new Promise(setImmediate);
+    ws.terminate();
+    expect({ isBuffered: buffered > 0, received: frame?.length }).toEqual({ isBuffered: true, received: size });
+  });
+
+  test("the message has left the process when the callback of ws.send() runs", async () => {
+    const result = await sendFromProcess(`
+      const ws = new (require("ws"))(process.env.PEER);
+      ws.on("open", async () => {
+        ws.send(new Uint8Array(${size}), () => process.exit(0));
+        for (let turn = 0; turn < 5; turn++) await new Promise(setImmediate);
+        console.log("waiting");
+      });
+    `);
+    expect(result).toEqual({ received: size, exitCode: 0 });
+  });
+
+  test("the callback of a server's ws.send() hears that terminate() cut the message off", async () => {
+    using dir = tempDir("ws-slow-peer", {});
+    const path = isWindows ? `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}` : join(String(dir), "s.sock");
+    const server = http.createServer();
+    const sent = Promise.withResolvers<Error | null | undefined>();
+    new WebSocketServer({ server }).on("connection", ws => {
+      ws.send(new Uint8Array(size), sent.resolve);
+      ws.terminate();
+    });
+    server.listen(path);
+    await once(server, "listening");
+    const client = net.connect(path);
+    client.pause();
+    client.on("error", () => {});
+    client.write(
+      "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    expect(await sent.promise).toBeInstanceOf(Error);
+    client.destroy();
+    server.close();
+  });
+
+  test("terminate() does not wait for the peer to read", async () => {
+    const { exitCode } = await sendFromProcess(`
+      const ws = new WebSocket(process.env.PEER);
+      ws.onopen = () => {
+        ws.send(new Uint8Array(${size}));
+        ws.terminate();
+      };
+    `);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!isWindows)("WebSocket over a named pipe", () => {
+  const pipePath = (name: string) => `\\\\.\\pipe\\bun.ws.${name}.${process.pid}`;
+
+  test("ws+unix: echoes through Bun.serve({ unix })", async () => {
+    const unix = pipePath("echo");
+    using server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        return server.upgrade(req) ? undefined : new Response(new URL(req.url).pathname, { status: 400 });
+      },
+      websocket: {
+        message(ws, message) {
+          ws.send("echo:" + message);
+        },
+      },
+    });
+    const ws = new WebSocket(`ws+unix:${unix}:/chat`);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    ws.onopen = () => ws.send("hello");
+    ws.onmessage = event => resolve(String(event.data));
+    ws.onerror = reject;
+    expect(await promise).toBe("echo:hello");
+    ws.close();
+  });
+
+  // The server has all of the request, and answers, before the client's loop hears that its write is through.
+  test("ws+unix: to a pipe that has less room than the upgrade request", async () => {
+    const fixture = JSON.stringify(join(import.meta.dir, "..", "..", "node", "net", "windows-foreign-pipe-fixture.js"));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = require(${fixture}).createServer({ quota: 16, outQuota: 4096 });
+          async function receive(isWhole) {
+            let received = "";
+            while (!isWhole(received)) {
+              await new Promise(setImmediate);
+              // Throws once the client is gone.
+              if (server.available()) received += server.text();
+            }
+            return received;
+          }
+          const ws = new WebSocket("ws+unix:" + server.name);
+          ws.onopen = () => ws.send("hello");
+          const request = await receive(text => text.endsWith("\\r\\n\\r\\n"));
+          const key = /sec-websocket-key: (.*)\\r\\n/i.exec(request)[1] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+          const accept = new Bun.CryptoHasher("sha1").update(key).digest("base64");
+          server.write(
+            "HTTP/1.1 101 x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+          );
+          // Two bytes of header, four of mask, and the text.
+          console.log((await receive(text => text.length >= 11)).length);
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "11\n", exitCode: 0 });
+  });
+
+  test.each([
+    ["does not exist", "missing"],
+    ["has a name that is too long to exist", Buffer.alloc(300, "n").toString()],
+  ])("ws+unix: fails with ENOENT when the pipe %s", async (_, name) => {
+    const ws = new WebSocket(`ws+unix:${pipePath(name)}`);
+    const { promise, resolve } = Promise.withResolvers<{ error: unknown; close: number }>();
+    let error: unknown;
+    ws.onerror = event => (error = (event as ErrorEvent).error?.code);
+    ws.onclose = event => resolve({ error, close: event.code });
+    expect(await promise).toEqual({ error: "ENOENT", close: 1006 });
   });
 });

@@ -2771,12 +2771,10 @@ pub fn init(
             // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
             // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
             // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
+            // with env/top_level_dir fully wired, then that becomes the
             // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
-            // `init_global`'s uv-loop setup. The shell's IOWriter then opens
-            // stdout/stderr against an under-initialised loop → EBADF (exit 9).
+            // *this* embedded mini instead — which was constructed without env
+            // and without top_level_dir.
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
     }

@@ -1420,12 +1420,9 @@ class ChildProcess extends EventEmitter {
     // as UnownedFd from the start and Subprocess.finalize_streams never
     // double-closes it. Async path only: spawnSync never wraps extra fds in
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
-    // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
-    if (process.platform !== "win32") {
-      for (let i = 3; i < bunStdio.length; i++) {
-        if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
-      }
+    // them OwnedFd so finalize_streams still closes them.
+    for (let i = 3; i < bunStdio.length; i++) {
+      if (bunStdio[i] === "pipe" || bunStdio[i] === "overlapped") bunStdio[i] = "socket-fd";
     }
 
     const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
@@ -1441,7 +1438,7 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#stdioOptions = bunStdio;
+    this.#stdioOptions = bunStdio.map(item => (item === "overlapped" ? "pipe" : item));
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
@@ -1641,7 +1638,12 @@ class ChildProcess extends EventEmitter {
   }
 
   kill(sig?) {
-    const signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
+    let signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
+    if (process.platform === "win32" && signal !== 0) {
+      // Windows cannot send the others, so they end the child (node: ProcessWrap::Kill).
+      const { SIGKILL, SIGTERM, SIGINT, SIGQUIT, SIGWINCH } = getSignals();
+      if (signal !== SIGTERM && signal !== SIGINT && signal !== SIGQUIT && signal !== SIGWINCH) signal = SIGKILL;
+    }
 
     const handle = this.#handle;
     if (handle) {
@@ -1656,7 +1658,9 @@ class ChildProcess extends EventEmitter {
         handle.kill(signal);
         this.killed = true;
         return true;
-      } catch (e) {
+      } catch (e: any) {
+        // The platform cannot send this signal.
+        if (e?.code === "ENOSYS" || e?.code === "EINVAL") throw e;
         this.emit("error", e);
       }
     }
@@ -1754,7 +1758,7 @@ class ChildProcess extends EventEmitter {
 const nodeToBunLookup = {
   ignore: null,
   pipe: "pipe",
-  overlapped: "pipe", // TODO: this may need to work differently for Windows
+  overlapped: "overlapped",
   inherit: "inherit",
   ipc: "ipc",
 };
@@ -1769,7 +1773,7 @@ function isInternalIpcMessage(message) {
   return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
 }
 
-function streamFdOf(item): number | undefined {
+function streamFdOf(item): number | $Bindgen.TCPSocket | undefined {
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number") return itemFd;
 
@@ -1781,7 +1785,8 @@ function streamFdOf(item): number | undefined {
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number") return handleFd;
+  // Not the number: on Windows that of a network socket is no descriptor, and a connected pipe has none.
+  if (typeof handleFd === "number") return handle;
 
   if (item.destroyed) return undefined;
 
@@ -1882,7 +1887,7 @@ function getBunStdioFromOptions(stdio) {
 
   // Translations: node -> bun
   // pipe -> pipe
-  // overlapped -> pipe
+  // overlapped -> overlapped (a pipe; on Windows the child's end of it is overlapped)
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now

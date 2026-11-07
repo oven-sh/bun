@@ -1291,7 +1291,9 @@ mod _event_loop_draft {
             // `bun_core::w!` does NOT append a sentinel on its own (see
             // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
             // in the literal.
-            if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
+            if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0"))
+                .is_none_or(|it| it.is_empty())
+            {
                 Output::err_generic(
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
                     (),
@@ -1336,14 +1338,7 @@ mod _event_loop_draft {
     impl HttpThread {
         fn process_events(&mut self) -> ! {
             let uws_loop = self.uws_loop_ref();
-            #[cfg(unix)]
-            {
-                uws_loop.num_polls.set(uws_loop.num_polls.get().max(2));
-            }
-            #[cfg(windows)]
-            {
-                uws_loop.inc();
-            }
+            uws_loop.num_polls.set(uws_loop.num_polls.get().max(2));
 
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {

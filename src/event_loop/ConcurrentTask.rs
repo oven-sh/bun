@@ -71,12 +71,8 @@ pub mod task_tag {
         BundleV2PluginLoadAnswered, // bun.bundle_v2.Load (hop back to the bundle's loop)
         BundleV2PluginLoadDeferred, // bun.bundle_v2.Load (`.defer()` notice to the bundle's loop)
         BundleV2ParseTaskResult,  // bun.bundle_v2.ParseTask.Result
-        ChromePipeEvent,
-        CopyFileWindowsMkdirp,
-        WriteFileWindowsMkdirp,
         DnsErrorDeferred,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
-        Close,
         CppTask,
         DuplexUpgradeContext,
         FetchTasklet,
@@ -84,7 +80,6 @@ pub mod task_tag {
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
         FSWatchTask,
-        GetAddrInfoLibuvComplete,
         GraphContextStopAgain,
         GraphContextStopAndFree,
         DeadContextStopAgain,
@@ -100,13 +95,10 @@ pub mod task_tag {
         NativeBrotli,
         NativeZlib,
         NativeZstd,
-        Open,
         PollPendingModulesTask,
-        PosixSignalTask,
+        SignalTask,
         MemoryPressureTask,
         ProcessWaiterThreadTask,
-        Read,
-        Readv,
         FlushPendingFileSinkTask,
         RunTestsTask,
         RuntimeTranspilerStore,
@@ -132,21 +124,16 @@ pub mod task_tag {
         ShellRmDirTask,
         ShellRmTask,
         ShellTouchTask,
-        StatFS,
         StatWatcherTimerUpdate,
         StatWatcherHop,
         AsyncCpTask,
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
-        UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
-        UvHandleClose,            // an addon's uv_close (posix)
-        UvLoopDispatch,           // an addon's uv_async_send (posix)
+        UvHandleClose,            // an addon's uv_close
+        UvLoopDispatch,           // an addon's uv_async_send
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
-        WindowsNamedPipeContext,
-        Write,
-        Writev,
     }
 }
 

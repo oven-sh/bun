@@ -402,7 +402,6 @@ impl From<bun_archive::Error> for Error {
             bun_archive::Error::Fail => Self::Fail,
             bun_archive::Error::Sys(s) => Self::Sys(s),
             bun_archive::Error::Alloc(a) => Self::Alloc(a),
-            bun_archive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
             bun_archive::Error::Paths(p) => Self::Paths(p),
             bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
         }

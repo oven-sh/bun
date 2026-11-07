@@ -98,7 +98,7 @@ private:
 extern "C" HandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable);
 extern "C" void NapiHandleScope__close(napi_env env, HandleScopeImpl* current);
 
-// Used around libuv callbacks (uv_posix.rs), which have no napi_env.
+// Used around libuv callbacks (uv.rs), which have no napi_env.
 extern "C" HandleScopeImpl* HandleScopeImpl__open(Zig::GlobalObject* globalObject);
 extern "C" void HandleScopeImpl__close(Zig::GlobalObject* globalObject, HandleScopeImpl* current);
 

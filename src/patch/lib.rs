@@ -121,11 +121,6 @@ fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
-    // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
-    let fd = fd.make_libuv_owned().map_err(|()| {
-        fd.close();
-        sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
-    })?;
     let _close = sys::CloseOnDrop::new(fd);
     sys::fchmod(fd, change.new_mode.to_bun_mode())
 }
@@ -1395,7 +1390,6 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, GitDiffEnv) {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
@@ -1443,24 +1437,12 @@ pub fn spawn_opts(
     }
     envp_buf.push(core::ptr::null()); // sentinel
 
-    #[cfg(not(windows))]
-    let _ = loop_;
-
     let opts = bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
-        // zeroed.
-        #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
-            ..Default::default()
-        },
         ..Default::default()
     };
 
@@ -1512,7 +1494,6 @@ pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
@@ -1529,7 +1510,7 @@ pub fn git_diff_internal(
     )
     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
-    let (opts, _env) = spawn_opts(old_folder, new_folder, ZStr::EMPTY, git, loop_);
+    let (opts, _env) = spawn_opts(old_folder, new_folder, ZStr::EMPTY, git);
 
     let mut result = bun_spawn::sync::spawn(&opts)??;
     diff_post_process(&mut result, old_folder, new_folder)

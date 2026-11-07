@@ -44,7 +44,7 @@ macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
-        /// Full (negated code, name) table: libuv-synthetic codes (vendor/libuv/include/uv/errno.h)
+        /// Full (negated code, name) table: libuv-synthetic codes (`uv/errno.h`)
         /// first, then per-OS rows. Consumed by `name()` and node:util `getSystemErrorMap()`.
         pub static ENTRIES: &[(i32, &'static str)] = &[
             (-4095, "EOF"),
@@ -86,14 +86,14 @@ macro_rules! __decl_uv_e {
 // The (IDENT, "E…") column pair is byte-for-byte identical across
 // linux/darwin/freebsd/windows; only the middle `i32` value differs by design
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// `-uv_codes::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
 // `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
 // `__decl_uv_e!` expander (consts + reverse `name()` fn).
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -$crate::uv_codes::$uv }` — while
 // a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default.
 // ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
@@ -175,6 +175,8 @@ macro_rules! __uv_e_rows {
     };
 }
 
+pub mod uv_codes;
+
 #[cfg(target_os = "macos")]
 pub mod darwin_errno;
 #[cfg(target_os = "macos")]
@@ -193,17 +195,14 @@ pub use linux_errno::*;
 #[cfg(windows)]
 pub mod windows_errno;
 #[cfg(windows)]
-pub use windows_errno::{posix, *};
+pub use windows_errno::*;
 
 // ──────────────────────────────────────────────────────────────────────────
 // posix — mode_t, the errno enum, S_* mode bits, and the C errno accessor
 //
 // Landed here so the errno
-// crate stays leaf (T0) and bun_sys (T≥1) imports forward. Windows keeps its
-// own divergent `mod posix` in windows_errno.rs (no `errno()` fn, unprefixed
-// `E`); this block is the shared POSIX-target definition.
+// crate stays leaf (T0) and bun_sys (T≥1) imports forward.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(not(windows))]
 #[allow(non_camel_case_types)]
 pub mod posix {
     /// glibc/musl/bionic `mode_t` == `unsigned int`.
@@ -214,7 +213,7 @@ pub mod posix {
     pub type mode_t = u16;
 
     /// Kernel errno enum. `E` and `SystemErrno` share the exact same
-    /// discriminant space on each POSIX target; alias rather than duplicate.
+    /// discriminant space on each target; alias rather than duplicate.
     /// Resolves to the per-OS `SystemErrno` via the glob re-export above.
     /// Variant names are prefixed (`EPERM`, `ENOENT`) — callers spell `E::EPERM`.
     pub type E = crate::SystemErrno;
@@ -229,6 +228,7 @@ pub mod posix {
 
     /// Read the thread-local libc errno.
     /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
+    #[cfg(not(windows))]
     pub use bun_core::ffi::errno;
 }
 
@@ -260,18 +260,7 @@ pub fn last_error() -> E {
 /// discriminant. `0` is `SUCCESS`; an unmapped value is `EUNKNOWN`.
 #[inline]
 pub fn e_from_negated(errno: core::ffi::c_int) -> E {
-    let n = errno.wrapping_neg();
-    #[cfg(windows)]
-    {
-        u16::try_from(n)
-            .ok()
-            .and_then(E::try_from_raw)
-            .unwrap_or(E::EUNKNOWN)
-    }
-    #[cfg(not(windows))]
-    {
-        SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::EUNKNOWN)
-    }
+    u16::try_from(errno.unsigned_abs()).map_or(E::EUNKNOWN, E::from_raw)
 }
 
 impl SystemErrno {
@@ -295,6 +284,14 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 }
 
 impl SystemErrno {
+    /// `code` is the system's own number, as uSockets reports it: an errno, or on Windows a Win32 or Winsock error, which `init(i64)` would take for an errno.
+    pub fn from_os_code(code: core::ffi::c_int) -> Option<SystemErrno> {
+        #[cfg(windows)]
+        return SystemErrno::init(code.unsigned_abs());
+        #[cfg(not(windows))]
+        return SystemErrno::init(i64::from(code));
+    }
+
     /// `None` if `err` is not an OS error or its code has no `SystemErrno`.
     pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
         // A Win32 code there, which the `u32` entry point maps (`i64` would take it for an errno).
@@ -342,35 +339,20 @@ impl bun_core::output::ErrName for SystemErrno {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Platform errno integer → its `SystemErrno` tag name.
-/// `None` for `0` (SUCCESS), out-of-range, or (POSIX) non-positive input —
+/// `None` for `0` (SUCCESS), out-of-range, or non-positive input —
 /// the contract bun_core's `coreutils_error_map` relies on.
 #[inline]
 fn system_errno_name(errno: i32) -> Option<&'static str> {
-    #[cfg(not(windows))]
-    {
-        if errno <= 0 {
-            return None;
-        }
-        SystemErrno::init(i64::from(errno)).map(<&'static str>::from)
+    if errno <= 0 {
+        return None;
     }
-    #[cfg(windows)]
-    {
-        // Windows libuv errnos arrive negated; abs-normalise before the
-        // lookup. `from_repr` (strum::FromRepr)
-        // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
-        let n = errno.unsigned_abs();
-        if n == 0 {
-            return None;
-        }
-        u16::try_from(n)
-            .ok()
-            .and_then(SystemErrno::from_repr)
-            .map(<&'static str>::from)
-    }
+    u16::try_from(errno)
+        .ok()
+        .and_then(SystemErrno::from_repr)
+        .map(<&'static str>::from)
 }
 
-/// Length of the dense `0..MAX` prefix of `SystemErrno` (on Windows, the
-/// dense head before the sparse UV_* range). Exposed so bun_core can pre-seed its
+/// Length of `SystemErrno`. Exposed so bun_core can pre-seed its
 /// interned `ERRNO_MAP` without a second hand-written per-OS length table.
 #[inline]
 const fn system_errno_max_dense() -> u32 {
@@ -454,7 +436,6 @@ mod errno_name_tests {
             );
         }
         // One past the dense end → None.
-        #[cfg(not(windows))]
         assert_eq!(system_errno_name(max as i32), None);
 
         // Spot-check the last entry on each platform.
@@ -466,12 +447,6 @@ mod errno_name_tests {
         #[cfg(windows)]
         {
             assert_eq!(system_errno_name(137), Some("EFTYPE"));
-            // Sparse UV_* range round-trips.
-            assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
-            assert_eq!(system_errno_name(-4092), Some("UV_EACCES"));
-            assert_eq!(system_errno_name(-4095), Some("UV_EOF"));
-            assert_eq!(system_errno_name(-3008), Some("UV_EAI_NONAME"));
-            assert_eq!(system_errno_name(-5000), None);
         }
         #[cfg(target_os = "macos")]
         {
@@ -542,16 +517,6 @@ mod errno_name_tests {
             assert_eq!(win32_errno_name(2), None);
             assert_eq!(win32_errno_name(u32::MAX), None);
         }
-    }
-
-    /// Matters on Windows, where `E` is a separate enum with unprefixed variant names.
-    #[test]
-    fn e_spells_like_system_errno() {
-        assert_eq!(<&'static str>::from(E::ENOENT), "ENOENT");
-        assert_eq!(<&'static str>::from(E::E2BIG), "E2BIG");
-        assert_eq!(<&'static str>::from(E::SUCCESS), "SUCCESS");
-        #[cfg(windows)]
-        assert_eq!(<&'static str>::from(E::UV_ENOENT), "UV_ENOENT");
     }
 
     #[test]

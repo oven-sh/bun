@@ -25,7 +25,7 @@
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
 #if OS(WINDOWS)
-#include <uv.h>
+#include <windows.h>
 #else
 #include <sys/resource.h>
 #if defined(__APPLE__)
@@ -910,10 +910,11 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
         double user = 0;
         double sys = 0;
 #if OS(WINDOWS)
-        uv_rusage_t ru;
-        if (uv_getrusage_thread(&ru) == 0) {
-            user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
-            sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
+        FILETIME creationTime, exitTime, kernelTime, userTime;
+        if (GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime, &userTime)) {
+            // A FILETIME counts units of 100 ns.
+            user = static_cast<double>((static_cast<uint64_t>(userTime.dwHighDateTime) << 32 | userTime.dwLowDateTime) / 10);
+            sys = static_cast<double>((static_cast<uint64_t>(kernelTime.dwHighDateTime) << 32 | kernelTime.dwLowDateTime) / 10);
         }
 #elif defined(__APPLE__)
         // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process

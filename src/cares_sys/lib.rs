@@ -10,7 +10,9 @@ pub mod winsock {
     use core::ffi::c_int;
     pub(crate) type socklen_t = c_int; // ws2tcpip.h: `typedef int socklen_t;`
     // Same nominal type as `bun_sys::posix::sockaddr*`.
-    pub(crate) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+    pub(crate) use bun_windows_sys::ws2_32::{
+        sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
+    };
 }
 
 /// `c_ares` and `c_ares_draft` resolve to the same module.

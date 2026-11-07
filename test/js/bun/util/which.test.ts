@@ -185,6 +185,32 @@ if (isWindows) {
     });
   });
 
+  test("a directory of PATH can be in quotes, as for cmd.exe and Node.js", () => {
+    using dir = tempDir("which-quoted", { "semi;colon/first.exe": "", "two words/second.exe": "" });
+    const [semicolon, words] = [join(String(dir), "semi;colon"), join(String(dir), "two words")];
+    const first = join(semicolon, "first.exe");
+    const second = join(words, "second.exe");
+    expect({
+      quoted: which("first", { PATH: `"${semicolon}"` }),
+      after_a_quoted_one: which("second", { PATH: `"${semicolon}";${words}` }),
+      both_quoted: which("second", { PATH: `"${semicolon}";"${words}"` }),
+      separator_inside: which("second", { PATH: `"${words}\\"` }),
+      no_closing_quote: which("second", { PATH: `"${words}` }),
+      only_a_closing_quote: which("second", { PATH: `${words}"` }),
+      without_quotes_it_is_two: which("first", { PATH: semicolon }),
+      only_quotes: which("first", { PATH: `"";";";"` }),
+    }).toEqual({
+      quoted: first,
+      after_a_quoted_one: second,
+      both_quoted: second,
+      separator_inside: second,
+      no_closing_quote: second,
+      only_a_closing_quote: second,
+      without_quotes_it_is_two: null,
+      only_quotes: null,
+    });
+  });
+
   // Non-name-surrogate reparse tags (APPEXECLINK) must be treated as existing;
   // only name surrogates (symlinks, mount points) are followed. bun:ffi is
   // unavailable on Windows arm64.

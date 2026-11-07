@@ -578,8 +578,6 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             cwd: Box::<[u8]>::from(cwd),
             envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
             ..Default::default()
         })
     }
@@ -703,15 +701,4 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     let mut v = Vec::new();
     v.write_fmt(args).expect("unreachable");
     v
-}
-
-#[cfg(windows)]
-#[inline]
-fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
-    crate::api::bun::process::WindowsOptions {
-        loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-            None, None,
-        )),
-        ..Default::default()
-    }
 }

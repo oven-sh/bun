@@ -520,7 +520,7 @@ impl Interpreter {
                 bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
             }
         } else {
-            shell_dup(Fd::stdin())
+            bun_sys::dup(Fd::stdin())
         };
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
@@ -1129,7 +1129,7 @@ impl Interpreter {
         let stdout_fd = if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
-            shell_dup(Fd::stdout())?
+            bun_sys::dup(Fd::stdout())?
         };
 
         // ── dup stderr (errdefer closes stdout on failure) ────────────────
@@ -1137,7 +1137,7 @@ impl Interpreter {
         let stderr_fd_res = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()
         } else {
-            shell_dup(Fd::stderr())
+            bun_sys::dup(Fd::stderr())
         };
         let stderr_fd = match stderr_fd_res {
             Ok(fd) => fd,
@@ -1560,15 +1560,12 @@ impl Drop for Interpreter {
         );
         match self.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // `Node` has no `Drop`. Slots stay for the env walk below. Windows leaks them, see `abort_after_failed_start`.
-                #[cfg(not(windows))]
-                {
-                    let node_count = self.nodes.get().len();
-                    for i in 0..node_count {
-                        let id = NodeId(i as u32);
-                        if matches!(self.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
-                            Cmd::deinit_from_finalizer(self, id);
-                        }
+                // `Node` has no `Drop`. Slots stay for the env walk below.
+                let node_count = self.nodes.get().len();
+                for i in 0..node_count {
+                    let id = NodeId(i as u32);
+                    if matches!(self.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
+                        Cmd::deinit_from_finalizer(self, id);
                     }
                 }
                 // A node owns its `base.shell` iff it differs from its parent's: `dupe_for_subshell` made it.
@@ -2085,56 +2082,21 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 /// Note: takes a pre-cached `mode` from `event_loop.stdout().data
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
-/// (non-pollable → synchronous write path), matching Windows behavior.
+/// (non-pollable → synchronous write path).
 fn is_pollable(fd: Fd) -> bool {
-    #[cfg(windows)]
-    {
-        let _ = fd;
-        false
-    }
-    #[cfg(unix)]
-    {
-        let mode = match bun_sys::fstat(fd) {
-            Ok(st) => st.st_mode,
-            Err(_) => return false,
-        };
-        let fmt = mode & libc::S_IFMT;
-        #[cfg(target_os = "macos")]
-        {
-            // macOS allows polling regular files, but our IOWriter has a
-            // better dedicated path for them — exclude S_ISREG explicitly.
-            if fmt == libc::S_IFREG {
-                return false;
-            }
-        }
-        fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK || bun_sys::isatty(fd)
-    }
+    let Ok(st) = bun_sys::fstat(fd) else {
+        return false;
+    };
+    // A write to a Windows console is over when it returns.
+    is_pollable_from_mode(st.st_mode as bun_sys::Mode) || (cfg!(unix) && bun_sys::isatty(fd))
 }
 
 /// Same test as [`is_pollable`] minus the `isatty()` check — used when the
 /// caller already has a cached `st_mode` (e.g. from `Builtin` stdio setup) and
 /// no fd is at hand.
 pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
-    #[cfg(windows)]
-    {
-        let _ = mode;
-        false
-    }
-    #[cfg(unix)]
-    {
-        // `libc::S_IFMT` etc. are mode_t (u16 on Darwin/FreeBSD, u32 on Linux);
-        // widen so the `mode: u32` arg compares uniformly.
-        let fmt = mode & libc::S_IFMT as u32;
-        #[cfg(target_os = "macos")]
-        {
-            // macOS allows polling regular files, but our IOWriter has a
-            // better dedicated path for them — exclude S_ISREG explicitly.
-            if fmt == libc::S_IFREG as u32 {
-                return false;
-            }
-        }
-        fmt == libc::S_IFIFO as u32 || fmt == libc::S_IFSOCK as u32
-    }
+    // macOS allows polling regular files, but our IOWriter has a better dedicated path for them.
+    bun_sys::S::ISFIFO(mode) || bun_sys::S::ISSOCK(mode)
 }
 
 /// Tolerates EBADF (already-closed) so cleanup paths that may double-close
@@ -2142,23 +2104,6 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
 pub(crate) fn closefd(fd: Fd) {
     use bun_sys::FdExt;
     let _ = fd.close_allowing_bad_file_descriptor(None);
-}
-
-/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
-/// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
-/// instead of a raw NT handle.
-pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::dup(fd)
-    }
 }
 
 /// Joins `parts` into an owned, normalized path. Fails with `ENAMETOOLONG` if the result is
@@ -2277,9 +2222,8 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
 
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
-/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
-/// `makeLibUVOwnedForSyscall`; for file opens, resolve via `shell_get_path`
-/// then `bun_sys::open`.
+/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)`; for file
+/// opens, resolve via `shell_get_path` then `bun_sys::open`.
 pub(crate) fn shell_openat(
     dir: Fd,
     path: &bun_core::ZStr,
@@ -2288,42 +2232,25 @@ pub(crate) fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
+        let mut buf = bun_paths::path_buffer_pool::get();
         if flags & bun_sys::O::DIRECTORY != 0 {
-            if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
-                return bun_sys::open_dir_at_windows_a(
-                    dir,
-                    p.as_bytes(),
-                    bun_sys::WindowsOpenDirOptions {
-                        iterable: true,
-                        no_follow: flags & bun_sys::O::NOFOLLOW != 0,
-                        ..Default::default()
-                    },
-                )
-                .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
-            }
+            let p = if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
+                shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?
+            } else {
+                path
+            };
             return bun_sys::open_dir_at_windows_a(
                 dir,
-                path.as_bytes(),
+                p.as_bytes(),
                 bun_sys::WindowsOpenDirOptions {
                     iterable: true,
                     no_follow: flags & bun_sys::O::NOFOLLOW != 0,
                     ..Default::default()
                 },
             )
-            .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .map_err(|e| e.with_path(path.as_bytes()));
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
-        // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
-        // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]

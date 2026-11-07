@@ -105,7 +105,7 @@ pub(crate) fn send_helper_primary<'a>(
             if raw_fd < 0 {
                 return Ok(None);
             }
-            bun_sys::Fd::from_uv(raw_fd)
+            bun_sys::Fd::from_crt(raw_fd)
         };
         #[cfg(windows)]
         let native_fd = {
@@ -116,27 +116,16 @@ pub(crate) fn send_helper_primary<'a>(
             bun_sys::Fd::from_system(raw as u64 as usize as *mut core::ffi::c_void)
         };
         message.put(global, b"$hasHandle", JSValue::TRUE);
-        #[cfg(windows)]
-        {
-            let peer_pid = subprocess.pid() as u32;
-            let Some(hex) = crate::ipc_host::attach_windows_socket_payload(
-                global, message, native_fd, peer_pid,
-            )?
-            else {
-                return Ok(None);
-            };
-            let mut h = crate::ipc::Handle::init(native_fd, handle);
-            h.win_export_hex = Some(hex);
-            h.peer_pid = peer_pid;
-            native_handle = Some(h);
-        }
-        #[cfg(not(windows))]
-        {
-            native_handle = match crate::ipc::Handle::init_dup(native_fd, handle, false) {
-                Ok(h) => Some(h),
-                Err(_) => return Ok(None),
-            };
-        }
+        native_handle = match crate::ipc::Handle::new(
+            native_fd,
+            handle,
+            crate::ipc::HandleKind::Server,
+            false,
+            subprocess.pid() as u32,
+        ) {
+            Ok(h) => Some(h),
+            Err(_) => return Ok(None),
+        };
     }
     let this_seq = ipc_data.internal_msg_queue.with_mut(|q| {
         let seq = q.seq;
@@ -371,8 +360,9 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
         }
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
-            let uv_err = bun_libuv_sys::uv_translate_sys_error(err);
-            return Ok(BindResult::Errno(if uv_err != 0 { uv_err } else { -4094 }));
+            return Ok(BindResult::Errno(
+                crate::node::node_util_binding::errno_from_win32_error(err as u32),
+            ));
         }
 
         return Ok(BindResult::Handle(BoundHandle {

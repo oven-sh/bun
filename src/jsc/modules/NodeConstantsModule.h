@@ -50,6 +50,7 @@
 #if !defined(S_IFIFO) && defined(_S_IFIFO)
 #define S_IFIFO _S_IFIFO
 #endif // S_IFIFO
+#include <uv.h> // F_OK R_OK W_OK X_OK S_IFLNK SIGHUP SIGKILL SIGQUIT SIGWINCH
 #else
 #include <dlfcn.h>
 #endif

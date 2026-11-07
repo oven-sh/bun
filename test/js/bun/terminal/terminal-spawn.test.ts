@@ -2,6 +2,7 @@ import { dlopen, FFIType, type Library } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
+import { join } from "node:path";
 
 // Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
 // on POSIX-only behaviour (termios echo, SIGWINCH, cat/echo binaries). The
@@ -520,37 +521,33 @@ describe("Bun.Terminal subprocess integration", () => {
 
   // Regression test for a Windows-only use-after-free: cancelling a stdin
   // stream while a cooked-mode console read was parked used to free the
-  // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
-  // block a worker thread in ReadConsoleW and convert the result into the
-  // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
-  // injecting a VK_RETURN, so the worker still wrote "\r\n" through the
-  // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
-  // block to next (a plausible mechanism for production reports of full-GC
-  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from the
-  // handle-owned uv::Tty::read_scratch. The child adopts the
-  // previously-freed size class with ArrayBuffer probes and reports any
-  // mutation.
+  // reader's buffer immediately (finish() shrink / Drop). A line read blocks
+  // a worker thread in ReadConsoleW, and that thread still wrote "\r\n"
+  // through the stale pointer when it was cancelled, corrupting whatever
+  // mimalloc handed the freed 8 KiB block to next (a plausible mechanism for
+  // production reports of full-GC crashes on clobbered ArrayBuffers). The
+  // thread has a buffer of its own now. The child adopts the previously-freed
+  // size class with ArrayBuffer probes and reports any mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
     using dir = tempDir("conpty-stdin-read-cancel", {
       "child-fixture.ts": `
+        import { existsSync } from "node:fs";
         const reader = Bun.stdin.stream().getReader();
         // Warm-up round-trip: arm a cooked-mode console line read and await
         // the line the parent writes once it sees CHILD-READY. Resolving
-        // proves the whole line-read machinery (libuv worker thread
-        // included) works end to end before cancellation is tested.
+        // proves the whole line-read machinery (worker thread included)
+        // works end to end before cancellation is tested.
         const warmup = reader.read();
         console.log("CHILD-READY");
         await warmup;
-        // Arm the read under test; no more input arrives, so the libuv
-        // worker parks in ReadConsoleW holding the read buffer (pre-fix:
-        // the reader's spare capacity; post-fix: the tty-owned scratch).
+        // Arm the read under test. The worker calls ReadConsoleW at the first
+        // key and parks there, holding the read buffer (pre-fix: the reader's
+        // spare capacity; post-fix: its own), until the line is entered. The
+        // parent types part of a line and makes this file once it sees the
+        // echo, which only a ReadConsoleW that is under way produces.
         reader.read().catch(() => {});
-        // The park itself is unobservable from JS; there is no condition to
-        // await. With the machinery proven warm above, a short delay makes
-        // it overwhelmingly likely the worker is inside ReadConsoleW. If it
-        // is not yet, cancellation traps the read before any write and the
-        // run is vacuous rather than wrong.
-        await Bun.sleep(150);
+        console.log("CHILD-ARMED");
+        while (!existsSync("echoed")) await Bun.sleep(5);
         await reader.cancel();
         // Immediately adopt the 8 KiB block the buggy teardown just freed;
         // mimalloc serves freshly freed blocks of a size class first.
@@ -578,6 +575,8 @@ describe("Bun.Terminal subprocess integration", () => {
     });
 
     const ready = Promise.withResolvers<void>();
+    const armed = Promise.withResolvers<void>();
+    const echoed = Promise.withResolvers<void>();
     const probeReported = Promise.withResolvers<void>();
     const decoder = new TextDecoder();
     let output = "";
@@ -585,6 +584,8 @@ describe("Bun.Terminal subprocess integration", () => {
       data(_, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes("CHILD-READY")) ready.resolve();
+        if (output.includes("CHILD-ARMED")) armed.resolve();
+        if (output.includes("half a line")) echoed.resolve();
         if (output.includes("PROBE-")) probeReported.resolve();
       },
     });
@@ -596,10 +597,18 @@ describe("Bun.Terminal subprocess integration", () => {
       terminal,
     });
     // Fail fast with the child's output if it dies before the handshake.
-    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
+    proc.exited.then(code => {
+      for (const step of [ready, armed, echoed]) {
+        step.reject(new Error(`child exited before handshake: ${code}\n${output}`));
+      }
+    });
 
     await ready.promise;
     terminal.write("warmup\r");
+    await armed.promise;
+    terminal.write("half a line");
+    await echoed.promise;
+    fs.writeFileSync(join(String(dir), "echoed"), "");
 
     const exitCode = await proc.exited;
     // The exit IOCP and the final ConPTY pipe-data IOCP are independent, so
@@ -611,5 +620,167 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(output).toContain("PROBE-CLEAN");
     expect(output).not.toContain("PROBE-CORRUPTED");
     expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent.if(isWindows)("console input", () => {
+    const say = `const say = (what, text) => console.log("<<" + what + (text === undefined ? "" : " " + JSON.stringify(String(text))) + ">>");`;
+    const readSync = `(b => b.toString("utf8", 0, require("fs").readSync(0, b)))(Buffer.alloc(64))`;
+    const inChild = (script: string) =>
+      `require("child_process").spawnSync(process.execPath, ["-e", ${JSON.stringify(say + script)}], { stdio: "inherit" })`;
+
+    /**
+     * Runs `script` in a console of its own. It, and its children, report with `say()`. Each step waits for a report
+     * and then types. The script must not exit: it is killed after the last step. Returns the reports.
+     */
+    async function inConsole(script: string, steps: [report: string, typed: string][]) {
+      const decoder = new TextDecoder();
+      let output = "";
+      let changed = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          changed.resolve();
+          changed = Promise.withResolvers();
+        },
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", say + script], env: bunEnv, terminal });
+      const exited = proc.exited.then(code => {
+        throw new Error(`exited with ${code}:\n${output}`);
+      });
+      for (const [report, typed] of steps) {
+        while (!output.includes(`<<${report}>>`)) await Promise.race([changed.promise, exited]);
+        terminal.write(typed);
+      }
+      exited.catch(() => {});
+      return Array.from(output.matchAll(/<<(.*?)>>/g), match => match[1]);
+    }
+
+    // Waiting for a line takes none: whoever was handed one can read the next in a call of their own, or leave the
+    // console to a child.
+    describe.each([
+      ["fs.readSync(0)", `say("taken", ${readSync})`, "two\r", `taken "two\\r\\n"`],
+      ["a child that reads a line", inChild(`say("taken", ${readSync})`), "two\r", `taken "two\\r\\n"`],
+    ])("the line after the one that was delivered goes to %s", (_, take, typed, taken) => {
+      test.each([
+        [
+          "a 'data' listener",
+          `let lines = 0;
+           process.stdin.on("data", line => {
+             say("delivered", line);
+             if (++lines === 1) ${take};
+           });`,
+        ],
+        [
+          "Bun.stdin.stream()",
+          `let lines = 0;
+           (async () => {
+             for await (const line of Bun.stdin.stream()) {
+               say("delivered", Buffer.from(line));
+               if (++lines === 1) ${take};
+             }
+           })();`,
+        ],
+      ])("from %s", async (_, script) => {
+        expect(
+          await inConsole(script + `say("ready");`, [
+            ["ready", "one\r"],
+            [`delivered "one\\r\\n"`, typed],
+            [taken, "three\r"],
+            [`delivered "three\\r\\n"`, ""],
+          ]),
+        ).toEqual(["ready", `delivered "one\\r\\n"`, taken, `delivered "three\\r\\n"`]);
+      });
+    });
+
+    test("a child that is started from a 'data' listener gets the keys in raw mode", async () => {
+      const child = inChild(`
+        process.stdin.setRawMode(true);
+        process.stdin.once("data", key => {
+          say("key", key);
+          process.exit(0);
+        });
+        say("raw");`);
+      expect(
+        await inConsole(
+          `let lines = 0;
+           process.stdin.on("data", line => {
+             say("delivered", line);
+             if (++lines === 1) ${child};
+           });
+           say("ready");`,
+          [
+            ["ready", "one\r"],
+            ["raw", "x"],
+            [`key "x"`, "three\r"],
+            [`delivered "three\\r\\n"`, ""],
+          ],
+        ),
+      ).toEqual(["ready", `delivered "one\\r\\n"`, "raw", `key "x"`, `delivered "three\\r\\n"`]);
+    });
+
+    test.each([
+      ["its name", `Bun.file("CONIN$")`],
+      ["a descriptor", `Bun.file(require("fs").openSync("CONIN$", "r"))`],
+    ])("the event loop runs while a console opened by %s is read", async (_, file) => {
+      expect(
+        await inConsole(
+          `const read = ${file}.stream().getReader().read();
+           setImmediate(() => say("running"));
+           read.then(({ value }) => say("line", Buffer.from(value)));
+           setInterval(() => {}, 1 << 30);`,
+          [
+            ["running", "hello\r"],
+            [`line "hello\\r\\n"`, ""],
+          ],
+        ),
+      ).toEqual(["running", `line "hello\\r\\n"`]);
+    });
+
+    test("Ctrl+Z at the start of a line is the end of the input, and anywhere else it is a character", async () => {
+      expect(
+        await inConsole(
+          `process.stdin.on("data", line => say("delivered", line)).on("end", () => say("end"));
+           setInterval(() => {}, 1 << 30);
+           say("ready");`,
+          [
+            ["ready", "a\x1a\r"],
+            [`delivered "a\\u001a\\r\\n"`, "\x1a\r"],
+            ["end", ""],
+          ],
+        ),
+      ).toEqual(["ready", `delivered "a\\u001a\\r\\n"`, "end"]);
+    });
+
+    // Children do as their parent does, and a process that was started detached ignores Ctrl+C.
+    test.each([
+      ["ends the child", ``, 0xc000013a],
+      ["is a SIGINT for the child", `process.on("SIGINT", () => process.exit(7));`, 7],
+    ])("Ctrl+C typed into the terminal of a process that ignores it %s", async (_, listen, exitCode) => {
+      const child = `${listen} setInterval(() => {}, 1 << 30); console.log("ready");`;
+      const host = `
+        const { dlopen, read } = require("bun:ffi");
+        const { symbols: kernel32 } = dlopen("kernel32.dll", {
+          SetConsoleCtrlHandler: { args: ["ptr", "i32"], returns: "i32" },
+        });
+        const { symbols: ntdll } = dlopen("ntdll.dll", { RtlGetCurrentPeb: { args: [], returns: "ptr" } });
+        kernel32.SetConsoleCtrlHandler(null, 1);
+        let output = "";
+        const terminal = new Bun.Terminal({
+          data(terminal, chunk) {
+            if (output.includes("ready")) return;
+            output += Buffer.from(chunk).toString("latin1");
+            if (output.includes("ready")) terminal.write("\\x03");
+          },
+        });
+        const proc = Bun.spawn({ cmd: [process.execPath, "-e", ${JSON.stringify(child)}], terminal });
+        const ProcessParameters = 0x20, ConsoleFlags = 0x18;
+        const stillIgnores = (read.u32(read.ptr(ntdll.RtlGetCurrentPeb(), ProcessParameters), ConsoleFlags) & 1) === 1;
+        console.log(JSON.stringify({ exitCode: await proc.exited, stillIgnores }));
+        terminal.close();
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", host], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+      expect(JSON.parse(await proc.stdout.text())).toEqual({ exitCode, stillIgnores: true });
+      expect(await proc.exited).toBe(0);
+    });
   });
 });

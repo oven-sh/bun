@@ -45,9 +45,9 @@ use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::O;
 
-use crate::posix_event_loop::EventLoopCtx;
+use crate::file_poll::EventLoopCtx;
 #[cfg(target_os = "macos")]
-use crate::posix_event_loop::{FilePoll, Owner, poll_tag};
+use crate::file_poll::{FilePoll, Owner, poll_tag};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.

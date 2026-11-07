@@ -10,6 +10,8 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
+use bun_core::Fd;
+
 use crate::{
     ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, SocketKind, SslCtx,
     us_bun_verify_error_t, us_socket_t,
@@ -274,15 +276,28 @@ impl SocketGroup {
         }
     }
 
+    /// On Windows a handle is a socket, or with `ipc` the pipe of the channel.
     pub fn from_fd(
         &mut self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         socket_ext_size: c_int,
-        fd: LIBUS_SOCKET_DESCRIPTOR,
+        fd: Fd,
         options: c_int,
         ipc: bool,
     ) -> *mut us_socket_t {
+        #[cfg(windows)]
+        let (descriptor, options) = match fd.decode_windows() {
+            bun_core::DecodeWindows::Crt(descriptor) => (
+                descriptor as LIBUS_SOCKET_DESCRIPTOR,
+                options | crate::LIBUS_SOCKET_CRT_DESCRIPTOR,
+            ),
+            bun_core::DecodeWindows::Windows(handle) => {
+                (handle as LIBUS_SOCKET_DESCRIPTOR, options)
+            }
+        };
+        #[cfg(not(windows))]
+        let descriptor = fd.native();
         // SAFETY: forwarding to C.
         unsafe {
             us_socket_from_fd(
@@ -290,7 +305,7 @@ impl SocketGroup {
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 socket_ext_size,
-                fd,
+                descriptor,
                 options,
                 ipc as c_int,
             )

@@ -1,6 +1,5 @@
 //! Raw Win32 extern fn declarations + tier-0 Win32 typedefs.
-//! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf: it depends on nothing above
-//! `libuv_sys`.
+//! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf.
 //!
 //! `#[link(name = "...")]` on every `extern` block is wrapped in
 //! `#[cfg_attr(windows, ...)]`. This crate is depended on unconditionally (not
@@ -22,7 +21,6 @@ pub type DWORD = c_ulong;
 type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
-pub type LONG = c_long;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
@@ -78,11 +76,7 @@ pub struct FILETIME {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Win32 POD structs shared by `bun_libuv_sys` (uv/win.h embeds) and
-// `bun_sys::windows`. Single source of truth.
-// All derive Clone+Copy: libuv embeds them in `uv_req_s`/`uv_tty_s`/
-// `uv_fs_s` which themselves derive Copy, so non-Copy here would break
-// the derive chain.
+// Win32 POD structs. Single source of truth.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `OVERLAPPED` (`minwinbase.h`) — 32 bytes / align 8 on x64.
@@ -94,19 +88,6 @@ pub struct OVERLAPPED {
     pub Offset: DWORD,
     pub OffsetHigh: DWORD,
     pub hEvent: HANDLE,
-}
-
-/// `RTL_CRITICAL_SECTION` (`winnt.h`) — 40 bytes / align 8 on x64.
-/// libuv aliases this as `uv_mutex_t`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CRITICAL_SECTION {
-    pub DebugInfo: *mut c_void,
-    pub LockCount: LONG,
-    pub RecursionCount: LONG,
-    pub OwningThread: HANDLE,
-    pub LockSemaphore: HANDLE,
-    pub SpinCount: ULONG_PTR,
 }
 
 /// `WIN32_FIND_DATAW` (`minwinbase.h`) — 592 bytes / align 4.
@@ -125,73 +106,14 @@ pub struct WIN32_FIND_DATAW {
     pub cAlternateFileName: [WCHAR; 14],
 }
 
-// ── Console input records (`wincon.h`) ────────────────────────────────────
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union KEY_EVENT_RECORD_uChar {
-    pub UnicodeChar: WCHAR,
-    pub AsciiChar: CHAR,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct KEY_EVENT_RECORD {
-    pub bKeyDown: BOOL,
-    pub wRepeatCount: WORD,
-    pub wVirtualKeyCode: WORD,
-    pub wVirtualScanCode: WORD,
-    pub uChar: KEY_EVENT_RECORD_uChar,
-    pub dwControlKeyState: DWORD,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MOUSE_EVENT_RECORD {
-    pub dwMousePosition: COORD,
-    pub dwButtonState: DWORD,
-    pub dwControlKeyState: DWORD,
-    pub dwEventFlags: DWORD,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WINDOW_BUFFER_SIZE_EVENT {
-    pub dwSize: COORD,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MENU_EVENT_RECORD {
-    pub dwCommandId: UINT,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct FOCUS_EVENT_RECORD {
-    pub bSetFocus: BOOL,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union INPUT_RECORD_Event {
-    pub KeyEvent: KEY_EVENT_RECORD,
-    pub MouseEvent: MOUSE_EVENT_RECORD,
-    pub WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_EVENT,
-    pub MenuEvent: MENU_EVENT_RECORD,
-    pub FocusEvent: FOCUS_EVENT_RECORD,
-}
-/// `INPUT_RECORD` (`wincon.h`) — 20 bytes / align 4.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct INPUT_RECORD {
-    pub EventType: WORD,
-    pub Event: INPUT_RECORD_Event,
-}
-
-// Layout pins: a typo in any of the above is a silent ABI break across the
-// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
+// Layout pins: a typo in any of the above is a silent ABI break;
+// assert the authoritative Windows-x64 sizes. Gated on
 // `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
 // under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
 #[cfg(all(windows, target_pointer_width = "64"))]
 const _: () = {
     assert!(core::mem::size_of::<OVERLAPPED>() == 32);
-    assert!(core::mem::size_of::<CRITICAL_SECTION>() == 40);
     assert!(core::mem::size_of::<WIN32_FIND_DATAW>() == 592);
-    assert!(core::mem::size_of::<INPUT_RECORD>() == 20);
 };
 
 #[repr(C)]
@@ -296,6 +218,7 @@ pub const FILE_OVERWRITE_IF: ULONG = 5;
 
 // `NtCreateFile` CreateOptions (`ntifs.h`).
 pub const FILE_DIRECTORY_FILE: ULONG = 0x0000_0001;
+pub const FILE_SYNCHRONOUS_IO_ALERT: ULONG = 0x0000_0010;
 pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
 pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
 pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
@@ -315,13 +238,14 @@ pub const FILE_APPEND_DATA: ACCESS_MASK = 0x0004;
 pub const FILE_READ_EA: ACCESS_MASK = 0x0008;
 pub const FILE_TRAVERSE: ACCESS_MASK = 0x0020;
 pub const FILE_READ_ATTRIBUTES: ACCESS_MASK = 0x0080;
+pub const FILE_GENERIC_READ: ACCESS_MASK = 0x0012_0089;
+pub const FILE_GENERIC_WRITE: ACCESS_MASK = 0x0012_0116;
 
 // `CreateFileW` dwCreationDisposition (`winbase.h`).
 pub const OPEN_EXISTING: DWORD = 3;
 
 // `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
-pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 
 // Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
 // point names another filesystem entity (symlink, mount point). Non-surrogate
@@ -330,13 +254,6 @@ pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
     (tag & 0x2000_0000) != 0
 }
-
-// `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
-pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
-pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
-pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
-pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
-pub const PIPE_WAIT: DWORD = 0x0000_0000;
 
 /// `CreateSymbolicLinkW` dwFlags (`winbase.h`).
 pub const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
@@ -377,10 +294,15 @@ pub struct FILE_DIRECTORY_INFORMATION {
 pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
+    pub const FileBasicInformation: Self = Self(4);
+    pub const FileStandardInformation: Self = Self(5);
     pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
+    pub const FileModeInformation: Self = Self(16);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FilePipeInformation: Self = Self(23);
+    pub const FileIdFullDirectoryInformation: Self = Self(38);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 
@@ -393,6 +315,7 @@ pub struct FS_INFORMATION_CLASS(pub u32);
 impl FS_INFORMATION_CLASS {
     pub const FileFsVolumeInformation: Self = Self(1);
     pub const FileFsDeviceInformation: Self = Self(4);
+    pub const FileFsFullSizeInformation: Self = Self(7);
 }
 
 /// `FILE_STANDARD_INFORMATION` (`wdm.h`).
@@ -800,10 +723,6 @@ pub mod user32 {}
 /// `advapi32` namespace (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 
-// `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
-// module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
-// must not depend on `bun_libuv_sys` (would invert the tier ordering).
-
 // ──────────────────────────────────────────────────────────────────────────
 // kernel32 namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
@@ -883,7 +802,8 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
-        pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
+        /// A bad handle is reported as an error.
+        pub safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
         /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
@@ -908,6 +828,26 @@ pub mod kernel32 {
             lpStartupInfo: *mut STARTUPINFOW,
             lpProcessInformation: *mut PROCESS_INFORMATION,
         ) -> BOOL;
+        pub fn GetStartupInfoW(lpStartupInfo: *mut STARTUPINFOW);
+        /// A bad handle is reported as an error.
+        pub safe fn TerminateProcess(hProcess: HANDLE, uExitCode: UINT) -> BOOL;
+        /// A bad handle is reported as an error.
+        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
+        pub fn CreateEventW(
+            lpEventAttributes: *mut SECURITY_ATTRIBUTES,
+            bManualReset: BOOL,
+            bInitialState: BOOL,
+            lpName: LPCWSTR,
+        ) -> HANDLE;
+        /// A bad handle is reported as an error.
+        pub safe fn SetEvent(hEvent: HANDLE) -> BOOL;
+        pub fn WaitForMultipleObjects(
+            nCount: DWORD,
+            lpHandles: *const HANDLE,
+            bWaitAll: BOOL,
+            dwMilliseconds: DWORD,
+        ) -> DWORD;
+        pub safe fn GetTickCount64() -> u64;
         /// `SetConsoleCtrlHandler` — install/uninstall a console ctrl handler.
         /// No pointer preconditions: the handler is an `Option<fn>` (null-safe)
         /// and `Add` is a by-value BOOL.
@@ -944,17 +884,6 @@ pub mod kernel32 {
         /// `ExitThread` (`processthreadsapi.h`). No preconditions; terminates
         /// the calling thread.
         pub safe fn ExitThread(dwExitCode: DWORD) -> !;
-        /// `CreateNamedPipeW` (`winbase.h`).
-        pub fn CreateNamedPipeW(
-            lpName: LPCWSTR,
-            dwOpenMode: DWORD,
-            dwPipeMode: DWORD,
-            nMaxInstances: DWORD,
-            nOutBufferSize: DWORD,
-            nInBufferSize: DWORD,
-            nDefaultTimeOut: DWORD,
-            lpSecurityAttributes: *mut c_void,
-        ) -> HANDLE;
         /// `AddVectoredExceptionHandler` (`errhandlingapi.h`).
         pub fn AddVectoredExceptionHandler(
             First: u32,
@@ -984,6 +913,8 @@ pub mod kernel32 {
 pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
+pub const WAIT_OBJECT_0: DWORD = 0;
+pub const WAIT_TIMEOUT: DWORD = 258;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
@@ -1028,6 +959,7 @@ impl NTSTATUS {
     pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
     /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
+    pub const PENDING: NTSTATUS = NTSTATUS(0x0000_0103);
 
     #[inline]
     pub const fn from_raw(raw: u32) -> Self {
@@ -1065,7 +997,7 @@ pub mod ws2_32 {
     pub const IPPROTO_TCP: c_int = 6;
     pub const IPPROTO_UDP: c_int = 17;
 
-    /// `ADDRINFOA` (`ws2def.h`). Field names match POSIX `addrinfo` so
+    /// `ADDRINFOW` (`ws2def.h`). Field names match POSIX `addrinfo` so
     /// cross-platform `bun_dns` code can dot-access without cfg arms.
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -1075,20 +1007,26 @@ pub mod ws2_32 {
         pub ai_socktype: c_int,
         pub ai_protocol: c_int,
         pub ai_addrlen: usize, // size_t
-        pub ai_canonname: *mut c_char,
+        pub ai_canonname: *mut u16,
         pub ai_addr: *mut sockaddr,
         pub ai_next: *mut addrinfo,
     }
 
+    unsafe extern "C" {
+        /// uSockets (bsd.c) starts Winsock on first use: call this before a Winsock call that does not go through uSockets.
+        #[link_name = "bsd_winsock_ensure"]
+        pub safe fn ensure_started();
+    }
+
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
-        pub fn getaddrinfo(
-            node: *const c_char,
-            service: *const c_char,
+        pub fn GetAddrInfoW(
+            node: *const u16,
+            service: *const u16,
             hints: *const addrinfo,
             res: *mut *mut addrinfo,
         ) -> c_int;
-        pub fn freeaddrinfo(ai: *mut addrinfo);
+        pub fn FreeAddrInfoW(ai: *mut addrinfo);
     }
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
@@ -1187,6 +1125,7 @@ impl Win32Error {
     pub const INVALID_DRIVE: Win32Error = Win32Error(15);
     pub const NOT_SAME_DEVICE: Win32Error = Win32Error(17);
     pub const WRITE_PROTECT: Win32Error = Win32Error(19);
+    pub const NOT_READY: Win32Error = Win32Error(21);
     pub const CRC: Win32Error = Win32Error(23);
     pub const GEN_FAILURE: Win32Error = Win32Error(31);
     pub const SHARING_VIOLATION: Win32Error = Win32Error(32);
@@ -1195,6 +1134,7 @@ impl Win32Error {
     pub const HANDLE_DISK_FULL: Win32Error = Win32Error(39);
     pub const NOT_SUPPORTED: Win32Error = Win32Error(50);
     pub const NETNAME_DELETED: Win32Error = Win32Error(64);
+    pub const BAD_NET_NAME: Win32Error = Win32Error(67);
     pub const FILE_EXISTS: Win32Error = Win32Error(80);
     pub const CANNOT_MAKE: Win32Error = Win32Error(82);
     pub const INVALID_PARAMETER: Win32Error = Win32Error(87);
@@ -1224,6 +1164,7 @@ impl Win32Error {
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
+    pub const IO_PENDING: Win32Error = Win32Error(997);
     pub const NOACCESS: Win32Error = Win32Error(998);
     pub const INVALID_FLAGS: Win32Error = Win32Error(1004);
     pub const END_OF_MEDIA: Win32Error = Win32Error(1100);
@@ -1238,6 +1179,7 @@ impl Win32Error {
     pub const EOM_OVERFLOW: Win32Error = Win32Error(1129);
     pub const DEVICE_REQUIRES_CLEANING: Win32Error = Win32Error(1165);
     pub const DEVICE_DOOR_OPEN: Win32Error = Win32Error(1166);
+    pub const NOT_FOUND: Win32Error = Win32Error(1168);
     pub const CONNECTION_REFUSED: Win32Error = Win32Error(1225);
     pub const ADDRESS_ALREADY_ASSOCIATED: Win32Error = Win32Error(1227);
     pub const NETWORK_UNREACHABLE: Win32Error = Win32Error(1231);
@@ -1253,6 +1195,7 @@ impl Win32Error {
     pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
+    pub const NOT_A_REPARSE_POINT: Win32Error = Win32Error(4390);
     pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     // — WSA pseudo-variants —
@@ -1412,6 +1355,9 @@ unsafe extern "system" {
         TokenInformationLength: DWORD,
         ReturnLength: *mut DWORD,
     ) -> BOOL;
+
+    #[link_name = "SystemFunction036"]
+    pub fn RtlGenRandom(RandomBuffer: *mut c_void, RandomBufferLength: ULONG) -> BOOLEAN;
 }
 
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
@@ -1607,8 +1553,9 @@ pub struct CURDIR {
 pub struct RTL_USER_PROCESS_PARAMETERS {
     // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.
     _reserved1: [u8; 16],
-    // {ConsoleHandle, ConsoleFlags+pad} — 2 × pointer-size.
-    _reserved2: [*mut c_void; 2],
+    _console_handle: HANDLE,
+    /// Bit 0: Ctrl+C is ignored (`SetConsoleCtrlHandler(NULL, TRUE)`, `CREATE_NEW_PROCESS_GROUP`). Children inherit it.
+    pub ConsoleFlags: ULONG,
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
@@ -1832,14 +1779,13 @@ unsafe extern "system" {
         lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
     ) -> BOOL;
 
-    pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
-
-    pub fn GetProcessTimes(
+    /// A bad handle is reported as an error.
+    pub safe fn GetProcessTimes(
         in_hProcess: HANDLE,
-        out_lpCreationTime: *mut FILETIME,
-        out_lpExitTime: *mut FILETIME,
-        out_lpKernelTime: *mut FILETIME,
-        out_lpUserTime: *mut FILETIME,
+        out_lpCreationTime: &mut FILETIME,
+        out_lpExitTime: &mut FILETIME,
+        out_lpKernelTime: &mut FILETIME,
+        out_lpUserTime: &mut FILETIME,
     ) -> BOOL;
 
     /// `RegisterWaitForSingleObject` (`winbase.h`). Queues `Callback` to the

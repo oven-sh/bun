@@ -18,7 +18,21 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  read,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  write,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -709,6 +723,34 @@ describe("spawn unref and kill should not hang", () => {
     await proc.exited;
     expect().pass();
   });
+
+  // The child's read is large enough for a write to be over when it returns, and the write is too large for one call.
+  it("should not hang after unref if a large write to stdin was taken at once", async () => {
+    const child = `
+      const fs = require("fs");
+      const buffer = Buffer.alloc(4 << 20);
+      fs.writeSync(1, "ready");
+      while (fs.readSync(0, buffer)) {}
+    `;
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      await reader.read();
+      await reader.cancel();
+      child.stdin.write(Buffer.alloc((1 << 20) + 10000));
+      await child.stdin.flush();
+      child.unref();
+      console.log("nothing left to do");
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", parent], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "nothing left to do\n", exitCode: 0 });
+  });
 });
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
@@ -814,7 +856,7 @@ describe("should not hang", () => {
 // poll is unregistered until the next pull, so it could not even observe the
 // child going away. Node: readStop() at the highWaterMark leaves the handle
 // inactive, and a pending read keeps it active.
-describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifetime", () => {
+describe("stdout reader of an unref'd child and process lifetime", () => {
   async function run(script: string) {
     await using proc = spawn({
       cmd: [bunExe(), "-e", script],
@@ -936,10 +978,88 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
   });
 });
 
+// The read end of a child's stdin outlives the child in a process that inherited it, and that one never reads.
+describe.concurrent("what is left to write to the stdin of a child that exited does not keep the process alive", () => {
+  const fixture = `
+    const [role, how] = process.argv.slice(2);
+    const child = [process.execPath, __filename, "child"];
+    // More than a pipe holds: on macOS that is 512 KiB on either side.
+    const payload = Buffer.alloc(4 * 1024 * 1024, "a");
+    if (role === "grandchild") {
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.env.PORT),
+        socket: {
+          data() {},
+          close() {
+            process.exit(0);
+          },
+        },
+      });
+    } else if (role === "child") {
+      Bun.spawn({
+        cmd: [process.execPath, __filename, "grandchild"],
+        stdio: ["inherit", "ignore", "ignore"],
+        detached: true,
+      }).unref();
+    } else if (how === "a write() on the sink") {
+      const proc = Bun.spawn({ cmd: child, stdio: ["pipe", "ignore", "inherit"] });
+      const written = Promise.resolve(proc.stdin.write(payload)).then(
+        () => "written",
+        error => error.code,
+      );
+      await proc.exited;
+      console.log(await written);
+    } else if (how === "a buffer") {
+      await Bun.spawn({ cmd: child, stdio: [payload, "ignore", "inherit"] }).exited;
+      console.log("exited");
+    } else if (how === "a buffer for spawnSync") {
+      Bun.spawnSync({ cmd: child, stdio: [payload, "ignore", "inherit"] });
+      console.log("exited");
+    } else {
+      const proc = require("node:child_process").spawn(child[0], child.slice(1), { stdio: ["pipe", "ignore", "inherit"] });
+      proc.stdin.on("error", () => {});
+      proc.stdin.write(payload, error => console.log(error.code));
+    }
+  `;
+
+  it.each([
+    ["a write() on the sink", "EPIPE\n"],
+    ["a buffer", "exited\n"],
+    ["a buffer for spawnSync", "exited\n"],
+    ["a write() on the stream of node:child_process", "EPIPE\n"],
+  ])("%s", async (how, expected) => {
+    using dir = tempDir("spawn-stdin-outlives-child", { "fixture.js": fixture });
+    const grandchild = Promise.withResolvers<Bun.Socket>();
+    let grandchildLeft = false;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: grandchild.resolve,
+        data() {},
+        close() {
+          grandchildLeft = true;
+        },
+      },
+    });
+    await using parent = spawn({
+      cmd: [bunExe(), "fixture.js", "parent", how],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined, PORT: String(server.port) },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([parent.stdout.text(), parent.exited]);
+    const socket = await grandchild.promise;
+    expect({ stdout, exitCode, grandchildLeft }).toEqual({ stdout: expected, exitCode: 0, grandchildLeft: false });
+    socket.end();
+  });
+});
+
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
-  // body and never dequeue the IOCP exit packet, so these children busy-spun
-  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  // Windows: with only an unref'd process left, the loop used to skip its turn
+  // and never dequeue the IOCP exit packet, so these children busy-spun forever.
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -1059,7 +1179,7 @@ describe("close handling", () => {
     }
   }
 
-  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
+  it("does not close caller-owned fds passed as extra stdio", async () => {
     const fd = openSync(import.meta.path, "r");
     try {
       await (async function () {
@@ -1095,7 +1215,7 @@ describe("close handling", () => {
     }
   });
 
-  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+  it("stdio[N] for non-fd extra slots is null", async () => {
     const fd = openSync(import.meta.path, "r");
     try {
       await using proc = spawn({
@@ -1143,7 +1263,7 @@ describe("close handling", () => {
   describe("stdio[N>=3] blob-like inputs", () => {
     const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
 
-    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+    it("Bun.file(path) at index >= 3 is readable in the child", async () => {
       const file = join(tmp, "stdio-extra-bunfile.txt");
       writeFileSync(file, "from-bun-file");
       await using proc = spawn({
@@ -1155,7 +1275,7 @@ describe("close handling", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
     });
 
-    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+    it("Bun.file(fd) at index >= 3 is readable in the child", async () => {
       const file = join(tmp, "stdio-extra-bunfile-fd.txt");
       writeFileSync(file, "from-bun-file-fd");
       const fd = openSync(file, "r");
@@ -1172,7 +1292,7 @@ describe("close handling", () => {
       }
     });
 
-    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+    it("empty Blob at index >= 3 is treated as ignore", async () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
         env: bunEnv,
@@ -1239,33 +1359,30 @@ describe("close handling", () => {
       ).toThrow("'socket-fd' cannot be used with spawnSync");
     });
 
-    it.skipIf(isWindows)(
-      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
-      async () => {
-        await using proc = spawn({
-          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
-          env: bunEnv,
-          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
-        });
-        const fd = proc.stdio[3];
-        expect(typeof fd).toBe("number");
-        try {
-          await proc.exited;
-          // fd is UnownedFd: still open and readable here (process exit does
-          // not touch stdio_pipes), and finalize_streams on later GC will skip
-          // this slot. The caller owns the close.
-          const buf = Buffer.alloc(64);
-          const n = readSync(fd as number, buf);
-          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
-        } finally {
-          // Caller is responsible for closing it.
-          closeSync(fd as number);
-        }
-        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
-      },
-    );
+    it("'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+      });
+      const fd = proc.stdio[3];
+      expect(typeof fd).toBe("number");
+      try {
+        await proc.exited;
+        // fd is UnownedFd: still open and readable here (process exit does
+        // not touch stdio_pipes), and finalize_streams on later GC will skip
+        // this slot. The caller owns the close.
+        const buf = Buffer.alloc(64);
+        const n = readSync(fd as number, buf);
+        expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+      } finally {
+        // Caller is responsible for closing it.
+        closeSync(fd as number);
+      }
+      expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    });
 
-    it.skipIf(isWindows)("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
+    it("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
       // Once .stdio exposes the raw fd number, JS owns it; the Subprocess
       // finalizer must not close that number again at GC time (the kernel may
       // have recycled it). Run in a child so a debug abort shows as exit != 0.
@@ -1274,7 +1391,7 @@ describe("close handling", () => {
         let hits = 0;
         for (let i = 0; i < 4; i++) {
           let p = Bun.spawn({
-            cmd: ["/bin/sh", "-c", "printf hi >&3"],
+            cmd: [process.execPath, "-e", "require('fs').writeSync(3, 'hi')"],
             stdio: ["ignore", "ignore", "ignore", "pipe"],
           });
           await p.exited;
@@ -1304,82 +1421,89 @@ describe("close handling", () => {
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
 
-    it.if(isWindows)("'pipe' at index >= 3: the handle .stdio exposes is not closed again at GC", async () => {
-      // On Windows .stdio[3] is a HANDLE value. net.connect({fd}) adopts it
-      // and closes it with the socket. The getter used to expose the handle
-      // of its own uv_pipe_t and close that handle again when the Subprocess
-      // was GC'd. Windows reuses a closed handle value at once, so the second
-      // close destroyed whatever owned the value by then (a worker thread's
-      // handle, in the crash reports). Here the new owner is an event we put
-      // into the value on purpose: it stays signaled unless something closes
-      // it out from under us.
-      const fixture = /* js */ `
-        import { dlopen } from "bun:ffi";
-        import { connect } from "node:net";
-        const k32 = dlopen("kernel32.dll", {
-          CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "ptr" },
-          SetHandleInformation: { args: ["ptr", "u32", "u32"], returns: "i32" },
-          WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
-          CloseHandle: { args: ["ptr"], returns: "i32" },
-        }).symbols;
-        const WAIT_OBJECT_0 = 0;
-        const isOpen = handle => k32.SetHandleInformation(handle, 0, 0) !== 0;
-
-        // Returns the handle value .stdio[3] exposed, now occupied by our
-        // event, or null when something else took the value first. The
-        // Subprocess is unreachable once this returns.
-        async function spawnReadAndReoccupy() {
-          const proc = Bun.spawn({
-            cmd: [process.execPath, "-e", "require('fs').writeSync(3, 'hi')"],
-            stdio: ["ignore", "ignore", "ignore", "pipe"],
-          });
-          const handle = proc.stdio[3];
-          if (typeof handle !== "number") throw new Error("stdio[3] is " + String(handle));
-          if (proc.stdio[3] !== handle) throw new Error("stdio[3] changed between reads");
-          const socket = connect({ fd: handle });
-          let data = "";
-          socket.on("data", chunk => (data += chunk));
-          // EOF when the child exits; the socket closes the handle.
-          await new Promise(resolve => socket.once("close", resolve));
-          await proc.exited;
-          if (data !== "hi") throw new Error("read " + JSON.stringify(data) + " through stdio[3]");
-          if (isOpen(handle)) return null;
-
-          // Allocate until the kernel gives the value back to us.
-          const misses = [];
-          let occupied = false;
-          for (let i = 0; i < 4096 && !occupied && !isOpen(handle); i++) {
-            const event = Number(k32.CreateEventW(null, 1, 1, null));
-            if (event === handle) occupied = true;
-            else misses.push(event);
-          }
-          for (const event of misses) k32.CloseHandle(event);
-          return occupied ? handle : null;
-        }
-
-        const events = [];
-        for (let i = 0; i < 3; i++) {
-          const handle = await spawnReadAndReoccupy();
-          if (handle !== null) events.push(handle);
-        }
-        for (let i = 0; i < 8; i++) {
-          Bun.gc(true);
-          await Bun.sleep(0);
-        }
-        const closedAgain = events.filter(event => k32.WaitForSingleObject(event, 0) !== WAIT_OBJECT_0);
-        for (const event of events) k32.CloseHandle(event);
-        if (closedAgain.length) {
-          throw new Error("the Subprocess finalizer closed " + closedAgain.length + "/" + events.length + " handle values it had handed out");
-        }
-        console.log("PASS");
-      `;
-      await using proc = spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+    // A socket there is a handle without a number, and a number made for it would own the handle as well.
+    it.if(isWindows)("a socket at index >= 3 has no number in .stdio and stays the caller's", async () => {
+      const name = `\\\\.\\pipe\\bun-test-spawn-stdio-socket-${process.pid}`;
+      const received = Promise.withResolvers<string>();
+      let text = "";
+      using server = Bun.listen({
+        unix: name,
+        socket: {
+          data(_, chunk) {
+            text += chunk;
+            if (text.endsWith("parent")) received.resolve(text);
+          },
+        },
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+      const socket = await Bun.connect({ unix: name, socket: { data() {} } });
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'child,')"],
+          env: bunEnv,
+          stdio: ["ignore", "inherit", "inherit", socket as any],
+        });
+        expect(proc.stdio).toEqual([null, null, null, null]);
+        expect(await proc.exited).toBe(0);
+        socket.write("parent");
+        expect(await received.promise).toBe("child,parent");
+      } finally {
+        socket.end();
+      }
+    });
+
+    // Both ends are handles for overlapped I/O there: a call returns at once, with the operation under way.
+    describe.if(isWindows)("'pipe' at index >= 3: fs calls on either end return when they are done", () => {
+      it.each([null, 0])("fs.read() at position %p, with a write that ends before it", async position => {
+        const answers = `
+          const fs = require("fs");
+          const buf = Buffer.alloc(64);
+          for (let n; (n = fs.readSync(3, buf)) > 0; ) fs.writeSync(3, "got " + buf.toString("utf8", 0, n));
+        `;
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", answers],
+          env: bunEnv,
+          stdio: ["ignore", "inherit", "inherit", "pipe"],
+        });
+        const fd = proc.stdio[3] as number;
+        try {
+          const buf = Buffer.alloc(64);
+          const { promise, resolve, reject } = Promise.withResolvers<number>();
+          read(fd, buf, 0, buf.length, position, (err, n) => (err ? reject(err) : resolve(n)));
+          expect(writeSync(fd, "ping")).toBe(4);
+          expect(buf.toString("utf8", 0, await promise)).toBe("got ping");
+        } finally {
+          closeSync(fd);
+        }
+        expect(await proc.exited).toBe(0);
+      });
+
+      it("fs.write() of more than the pipe holds, with a read that ends before it", async () => {
+        const size = 1024 * 1024;
+        // What it reads first shows that the write is under way.
+        const drains = `
+          const fs = require("fs");
+          const buf = Buffer.alloc(65536);
+          let total = fs.readSync(3, buf);
+          fs.writeSync(3, "x");
+          while (total < ${size}) total += fs.readSync(3, buf);
+          console.log(total);
+        `;
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", drains],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit", "pipe"],
+        });
+        const fd = proc.stdio[3] as number;
+        try {
+          const got = Promise.withResolvers<number>();
+          const written = Promise.withResolvers<number>();
+          read(fd, Buffer.alloc(16), (err, n) => (err ? got.reject(err) : got.resolve(n)));
+          write(fd, Buffer.alloc(size, "a"), (err, n) => (err ? written.reject(err) : written.resolve(n)));
+          expect(await Promise.all([got.promise, written.promise, proc.stdout.text()])).toEqual([1, size, size + "\n"]);
+        } finally {
+          closeSync(fd);
+        }
+      });
     });
   });
 });
@@ -1685,8 +1809,214 @@ it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path le
   expect(exitCode).toBe(0);
 });
 
+it.if(isWindows)("a cwd too long for CreateProcessW works the same with and without the \\\\?\\ prefix", () => {
+  using dir = tempDir("spawn-long-cwd", {});
+  let cwd = String(dir);
+  while (cwd.length < 300) cwd = join(cwd, Buffer.alloc(40, "d").toString());
+  mkdirSync(cwd, { recursive: true });
+  writeFileSync(join(cwd, "marker.txt"), "found");
+  const run = (cwd: string) => {
+    try {
+      const script = `process.stdout.write(require("fs").readFileSync("marker.txt"))`;
+      return spawnSync({ cmd: [bunExe(), "-e", script], cwd, env: bunEnv }).stdout.toString();
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code;
+    }
+  };
+  // It goes by its 8.3 names. A volume can be without them, and then there is no way.
+  const plain = run(cwd);
+  expect(plain).toBeOneOf(["found", "ENOENT"]);
+  expect(run("\\\\?\\" + cwd)).toBe(plain);
+});
+
+it.if(isWindows)("Bun.file() as stdio takes the paths that fs.openSync() takes", async () => {
+  using dir = tempDir("spawn-stdio-path", {});
+  const fixture = `
+    const fs = require("fs");
+    const echo = stdout => Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('hi')"], stdout }).exitCode;
+    const exitCodes = [
+      echo(Bun.file(process.cwd().slice(2) + "\\\\backslash.txt")),
+      echo(Bun.file(process.cwd().slice(2).replaceAll("\\\\", "/") + "/slash.txt")),
+      echo(Bun.file("nul")),
+    ];
+    const read = Bun.spawnSync({
+      cmd: [process.execPath, "-e", "console.log(require('fs').readFileSync(0).length)"],
+      stdin: Bun.file("NUL"),
+    });
+    const files = Object.fromEntries(fs.readdirSync(".").map(name => [name, fs.readFileSync(name, "utf8")]));
+    console.log(JSON.stringify({ exitCodes, files, read: read.stdout.toString() }));
+  `;
+  // Its current drive is the one that the directory is on.
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    cwd: String(dir),
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    exitCodes: [0, 0, 0],
+    files: { "backslash.txt": "hi\n", "slash.txt": "hi\n" },
+    read: "0\n",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.if(isWindows)("a child gets this process's USERDOMAIN when its env has none, an empty one too", async () => {
+  const fixture = `
+    const env = { ...process.env };
+    delete env.USERDOMAIN;
+    const script = "console.log(JSON.stringify(process.env.USERDOMAIN))";
+    process.stdout.write(Bun.spawnSync({ cmd: [process.execPath, "-e", script], env }).stdout);
+  `;
+  const run = async (USERDOMAIN: string) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, USERDOMAIN },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    return await proc.stdout.text();
+  };
+  expect(await Promise.all([run("somewhere"), run("")])).toEqual(['"somewhere"\n', '""\n']);
+});
+
+// `{ ...process.env, PATH }` has two of them when the variable is spelled `Path`.
+it.if(isWindows)("of the names in env that differ in case only, the last one counts", async () => {
+  using dir = tempDir("spawn-env-case", { "first/.keep": "", "last/.keep": "" });
+  const system32 = join(process.env.SystemRoot!, "System32");
+  copyFileSync(join(system32, "hostname.exe"), join(String(dir), "first", "tool.exe"));
+  copyFileSync(join(system32, "whoami.exe"), join(String(dir), "last", "tool.exe"));
+
+  const names = { Foo: "1", FOO: "2", bar: "only", BAZ: "1", baz: "2", Baz: "3" };
+  const script = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => /^(foo|bar|baz)$/i.test(name))))`;
+  const run = async (cmd: string[], env: Record<string, string | undefined>) => {
+    await using proc = spawn({ cmd, env, stdio: ["ignore", "pipe", "inherit"] });
+    return (await proc.stdout.text()).trim();
+  };
+  const { SystemRoot } = process.env;
+  const [inBun, inCmd, lastIsUpper, lastIsMixed] = await Promise.all([
+    run([bunExe(), "-e", script], { ...bunEnv, ...names }),
+    run([join(system32, "cmd.exe"), "/d", "/s", "/c", "echo %foo% %bar% %baz%"], { SystemRoot, ...names }),
+    run(["tool"], { SystemRoot, Path: join(String(dir), "first"), PATH: join(String(dir), "last") }),
+    run(["tool"], { SystemRoot, PATH: join(String(dir), "first"), Path: join(String(dir), "last") }),
+  ]);
+  expect({
+    inBun: Object.fromEntries(JSON.parse(inBun)),
+    inCmd,
+    lastIsUpper: lastIsUpper.includes("\\") ? "last" : "first",
+    lastIsMixed: lastIsMixed.includes("\\") ? "last" : "first",
+  }).toEqual({
+    inBun: { FOO: "2", bar: "only", Baz: "3" },
+    inCmd: "2 only 3",
+    lastIsUpper: "last",
+    lastIsMixed: "last",
+  });
+});
+
+// Two programs of Windows under other names: what is printed tells which file ran. The rules are those of Node.js.
+describe.concurrent.if(isWindows)("the file that a command names", () => {
+  const fixture = `
+    const { copyFileSync, mkdirSync } = require("node:fs");
+    const { join } = require("node:path");
+    const system32 = join(process.env.SystemRoot, "System32");
+    const [hostname, whoami] = [join(system32, "hostname.exe"), join(system32, "whoami.exe")];
+    mkdirSync("sub");
+    mkdirSync("directory.exe");
+    for (const [from, to] of [
+      [hostname, "both.com"],
+      [whoami, "both.exe"],
+      [hostname, "sub/tool.exe"],
+      [hostname, "dotted.v1.exe"],
+      [hostname, "exact.exe"],
+      [whoami, "exact.exe.exe"],
+      [hostname, "noext"],
+      [hostname, "here.exe"],
+    ]) {
+      copyFileSync(from, to);
+    }
+    const cwd = process.cwd().replaceAll("\\\\", "/");
+    const ran = {};
+    for (const [file, PATH] of [
+      ["./both", system32],
+      ["sub/tool", system32],
+      ["./sub/../both", system32],
+      ["./dotted.v1", system32],
+      ["./exact.exe", system32],
+      ["./noext", system32],
+      ["./directory.exe", system32],
+      [cwd + "/sub/tool", system32],
+      [cwd.slice(2) + "/sub/tool", system32],
+      [cwd.slice(0, 2) + "sub/tool", system32],
+      ["here", ""],
+    ]) {
+      const name = file.replace(cwd, "<cwd>").replace(cwd.slice(2), "<cwd without its drive>").replace(cwd.slice(0, 2), "<drive>");
+      try {
+        const { stdout } = Bun.spawnSync({ cmd: [file], env: { SystemRoot: process.env.SystemRoot, PATH } });
+        ran[name] = stdout.includes("\\\\") ? "whoami" : "hostname";
+      } catch (error) {
+        ran[name] = error.code;
+      }
+    }
+    console.log(JSON.stringify(ran));
+  `;
+  it.each([
+    ["is looked for in the current directory", undefined, "hostname"],
+    ["is not looked for in the current directory with NoDefaultCurrentDirectoryInExePath", "1", "ENOENT"],
+  ])("%s", async (_, NoDefaultCurrentDirectoryInExePath, here) => {
+    using dir = tempDir("spawn-search", {});
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NoDefaultCurrentDirectoryInExePath },
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    expect(await proc.stdout.json()).toEqual({
+      "./both": "hostname",
+      "sub/tool": "hostname",
+      "./sub/../both": "hostname",
+      "./dotted.v1": "hostname",
+      "./exact.exe": "hostname",
+      "./noext": "ENOENT",
+      "./directory.exe": "ENOENT",
+      "<cwd>/sub/tool": "hostname",
+      "<cwd without its drive>/sub/tool": "hostname",
+      "<drive>sub/tool": "hostname",
+      here,
+    });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
+// A Windows exit code has 32 bits: 256 is not success, 3010 asks for a restart, 0xC0000005 is an access violation.
+it.concurrent.if(isWindows).each([255, 256, 259, 3010, 0xc0000005, 0xffffffff])(
+  "exit code %d arrives whole",
+  async code => {
+    const options = {
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:ffi").dlopen("kernel32.dll", { ExitProcess: { args: ["u32"], returns: "void" } }).symbols.ExitProcess(${code})`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "inherit"],
+    } as const;
+    const { promise: onExit, resolve } = Promise.withResolvers<number | null>();
+    await using proc = spawn({ ...options, onExit: (_, exitCode) => resolve(exitCode) });
+    const exited = await proc.exited;
+    const sync = spawnSync(options);
+    expect({
+      exited,
+      exitCode: proc.exitCode,
+      exitedAgain: await proc.exited,
+      onExit: await onExit,
+      sync: [sync.exitCode, sync.success],
+    }).toEqual({ exited: code, exitCode: code, exitedAgain: code, onExit: code, sync: [code, false] });
+  },
+);
+
 describe("onDisconnect", () => {
-  it.todoIf(isWindows)("ipc delivers message", async () => {
+  it("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
 
     let ipcMessage: unknown;
@@ -1713,7 +2043,7 @@ describe("onDisconnect", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  it.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
+  it("onDisconnect callback is called when IPC disconnects", async () => {
     const disc = Promise.withResolvers<void>();
 
     let disconnectCalled = false;
@@ -1824,7 +2154,7 @@ describe("option combinations", () => {
     await proc.exited;
   });
 
-  it.todoIf(isWindows)("onDisconnect + ipc + serialization works together", async () => {
+  it("onDisconnect + ipc + serialization works together", async () => {
     let messageReceived = false;
     let disconnectCalled = false;
 

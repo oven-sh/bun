@@ -300,6 +300,11 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// Changes are recorded from the first read on. `self` does not move after this.
+    pub(crate) fn start(&mut self) -> bun_sys::Result<()> {
+        self.watcher.prepare()
+    }
+
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {

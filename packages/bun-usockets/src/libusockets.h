@@ -166,12 +166,19 @@ enum {
      * for connects, and ignored for TLS sockets: the handshake needs the reads, the owner pauses
      * those sockets itself. */
     LIBUS_SOCKET_OPEN_PAUSED = 256,
+    /* Windows: what us_socket_from_fd adopts is an end of a pipe that was opened for overlapped I/O and that
+     * nothing else reads or writes. */
+    LIBUS_SOCKET_OWN_PIPE = 1024,
+    /* Windows: what us_socket_from_fd adopts is a descriptor of the C runtime. Those never hold sockets: it is an
+     * end of a pipe that somebody else made. Whether it was opened for overlapped I/O is looked up, which on a
+     * handle that was not waits for the call in progress on it, if there is one. The three for standard I/O stay
+     * open when the socket is closed. */
+    LIBUS_SOCKET_CRT_DESCRIPTOR = 2048,
 };
 
 /* Library types publicly available */
 struct us_socket_t;
 struct us_connecting_socket_t;
-struct us_timer_t;
 struct us_socket_group_t;
 struct us_socket_vtable_t;
 struct us_listen_socket_t;
@@ -244,28 +251,6 @@ void *us_udp_socket_user(struct us_udp_socket_t *s);
 
 /* Binds the UDP socket to an interface and port */
 int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned int port);
-
-/* Public interfaces for timers. libuv (Windows) only — epoll/kqueue schedules
- * on bun.JSC.EventLoopTimer, no file descriptor or syscall. */
-#ifdef _WIN32
-
-/* Create a new high precision, low performance timer. May fail and return null */
-struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough, unsigned int ext_size);
-
-/* Returns user data extension for this timer */
-void *us_timer_ext(struct us_timer_t *timer);
-
-/* */
-void us_timer_close(struct us_timer_t *timer, int fallthrough);
-
-/* Arm a timer with a delay from now and eventually a repeat delay.
- * Specify 0 as repeat delay to disable repeating. Specify both 0 to disarm. */
-void us_timer_set(struct us_timer_t *timer, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms);
-
-/* Returns the loop for this timer */
-struct us_loop_t *us_timer_loop(struct us_timer_t *t);
-
-#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Socket groups & dispatch
@@ -383,6 +368,9 @@ struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
  * by the plain-TCP layer before the socket was adopted into TLS) through the
  * same decrypt path as bytes arriving from the kernel. */
 struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int length) __attribute__((nonnull(1)));
+/* What the owner of the plain socket had accepted and not sent when it called adopt_tls. It leaves as it is, ahead of
+ * everything the TLS layer sends. */
+void us_socket_tls_send_ahead(us_socket_r s, const char *data, int length) nonnull_fn_decl;
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
@@ -589,7 +577,7 @@ void *us_socket_session_sink(us_socket_r s);
 /* Public interfaces for loops */
 
 /* Returns a new event loop with user data extension */
-struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(us_loop_r loop),
+struct us_loop_t *us_create_loop(void (*wakeup_cb)(us_loop_r loop),
     void (*pre_cb)(us_loop_r loop), void (*post_cb)(us_loop_r loop), unsigned int ext_size);
 
 /* Frees the loop immediately */
@@ -598,16 +586,9 @@ void us_loop_free(us_loop_r loop) nonnull_fn_decl;
 /* Returns the loop user data extension */
 void *us_loop_ext(us_loop_r loop) nonnull_fn_decl;
 
-/* Blocks the calling thread and drives the event loop until no more non-fallthrough polls are scheduled */
-void us_loop_run(us_loop_r loop) nonnull_fn_decl;
-
-
 /* Signals the loop from any thread to wake up and execute its wakeup handler from the loop's own running thread.
  * This is the only fully thread-safe function and serves as the basis for thread safety */
 void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;
-
-/* Hook up timers in existing loop */
-void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
 
 /* Public interfaces for polls */
 
@@ -645,7 +626,9 @@ struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int old_e
 void *us_socket_get_native_handle(us_socket_r s) nonnull_fn_decl;
 
 /* Plaintext write (TLS-encrypts if `s->ssl`). Returns bytes accepted; on
- * partial write the next on_writable will fire. */
+ * partial write the next on_writable will fire. A pipe on Windows already has
+ * up to 1 MiB of the rest on its way then, so the next write has to start with
+ * the rest, as a retry of SSL_write has to. The socket fails if it does not. */
 int us_socket_write(us_socket_r s, const char *nonnull_arg data, int length) nonnull_fn_decl;
 int us_socket_write2(us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
 /* Bypass TLS — write raw bytes to the fd even if `s->ssl` is set. */
@@ -670,6 +653,10 @@ int us_socket_raw_write(us_socket_r s, const char *data, int length);
  * write instead of retrying forever. A TLS socket reports the failed send of
  * its ciphertext, or EPROTO for a failed SSL_write, once its handshake was reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
+/* 1 for an end of a named pipe and for a pipe server, which only Windows has. */
+int us_socket_is_pipe(us_socket_r s) nonnull_fn_decl;
+/* The descriptor that came with LIBUS_SOCKET_CRT_DESCRIPTOR, if closing the socket closes it. Otherwise -1. Windows only. */
+int us_socket_get_crt_descriptor(us_socket_r s) nonnull_fn_decl;
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
 void us_socket_long_timeout(us_socket_r s, unsigned int minutes) nonnull_fn_decl;
@@ -751,14 +738,11 @@ int us_socket_get_error(us_socket_r s);
 /* A writable event's write made zero progress: does that prove the peer is
  * gone? On epoll/kqueue a writable event implies real send-buffer space, so
  * no progress means the send itself failed (EPIPE/ECONNRESET folded to 0) and
- * the answer is always yes. The libuv backend's completion model can deliver
- * a writable completion for space the same loop iteration already refilled,
+ * the answer is always yes. On Windows a writable event is a packet that was
+ * queued earlier, possibly for space the same loop iteration already refilled,
  * making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
-
-void us_socket_ref(us_socket_r s);
-void us_socket_unref(us_socket_r s);
 
 void us_socket_nodelay(us_socket_r s, int enabled);
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
@@ -774,9 +758,9 @@ void us_socket_pause(us_socket_r s);
 #endif
 
 /* Decide what eventing system to use by default */
-#if !defined(LIBUS_USE_EPOLL) && !defined(LIBUS_USE_LIBUV) && !defined(LIBUS_USE_GCD) && !defined(LIBUS_USE_KQUEUE) && !defined(LIBUS_USE_ASIO)
+#if !defined(LIBUS_USE_EPOLL) && !defined(LIBUS_USE_IOCP) && !defined(LIBUS_USE_KQUEUE)
 #if defined(_WIN32)
-#define LIBUS_USE_LIBUV
+#define LIBUS_USE_IOCP
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #define LIBUS_USE_KQUEUE
 #else

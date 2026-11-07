@@ -3,12 +3,6 @@
 //!
 //! Most I/O happens on the main thread.
 
-// ════════════════════════════════════════════════════════════════════════════
-// Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
-// openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
-// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only).
-// ════════════════════════════════════════════════════════════════════════════
-
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
 
@@ -29,16 +23,9 @@ pub use error::Error;
 // pair) and the seam is type-checked.
 
 #[cfg(windows)]
-pub mod windows_event_loop;
-
-// `posix_event_loop` also defines the *shared* event-loop scaffolding
-// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,
-// `OpaqueCallback`); `windows_event_loop` re-uses those types and only
-// overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
-// specific bits inside (kqueue/epoll wakers, fd polling) are individually
-// `#[cfg(unix)]`-gated so the module still compiles on Windows.
+pub mod console;
+pub mod file_poll;
 mod keep_alive;
-pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
@@ -64,7 +51,7 @@ pub mod parent_death_watchdog {
 
     use bun_sys::windows;
 
-    use crate::posix_event_loop::EventLoopCtx;
+    use crate::file_poll::EventLoopCtx;
 
     pub(crate) const EXIT_CODE: u8 = 128 + 1;
 
@@ -117,8 +104,8 @@ pub mod parent_death_watchdog {
     static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
 
     /// Self-assign to a kill-on-close Job Object without `SILENT_BREAKAWAY_OK`,
-    /// so membership is inherited by every descendant (unlike libuv's spawn
-    /// Job). Idempotent; handle leaked for process lifetime. Used by
+    /// so membership is inherited by every descendant (unlike the job that
+    /// `bun_spawn_sys` puts children in). Idempotent; handle leaked for process lifetime. Used by
     /// `--no-orphans` and unconditionally by `bun --filter`/`--parallel`.
     #[cold]
     #[inline(never)]
@@ -156,7 +143,7 @@ pub mod parent_death_watchdog {
     /// Job Object half already covers descendants.
     unsafe fn arm_parent_watch() {
         const ERROR_INVALID_PARAMETER: u32 = 87;
-        let ppid = getppid();
+        let ppid = windows::parent_pid();
         if ppid == 0 {
             return;
         }
@@ -204,28 +191,6 @@ pub mod parent_death_watchdog {
         }
     }
 
-    /// `InheritedFromUniqueProcessId` via direct ntdll call. Not
-    /// `uv_os_getppid`: libuv loads `NtQueryInformationProcess` lazily in
-    /// `uv__winapi_init`, and `enable()` runs from `main()` before that.
-    fn getppid() -> u32 {
-        // SAFETY: out-param is a valid `PROCESS_BASIC_INFORMATION`; the pseudo
-        // handle needs no access rights.
-        unsafe {
-            let mut pbi: windows::PROCESS_BASIC_INFORMATION = bun_core::ffi::zeroed_unchecked();
-            let rc = windows::ntdll::NtQueryInformationProcess(
-                windows::GetCurrentProcess(),
-                windows::ProcessBasicInformation,
-                core::ptr::from_mut(&mut pbi).cast(),
-                core::mem::size_of::<windows::PROCESS_BASIC_INFORMATION>() as u32,
-                core::ptr::null_mut(),
-            );
-            if !windows::NT_SUCCESS(rc) {
-                return 0;
-            }
-            pbi.InheritedFromUniqueProcessId as u32
-        }
-    }
-
     fn is_original_parent(parent: windows::HANDLE) -> bool {
         let Some(parent_created) = creation_time(parent) else {
             return false;
@@ -237,22 +202,12 @@ pub mod parent_death_watchdog {
     }
 
     fn creation_time(h: windows::HANDLE) -> Option<u64> {
-        let mut t: [windows::FILETIME; 4] = bun_core::ffi::zeroed();
-        // SAFETY: `h` is either the pseudo-handle or a handle we opened; out
-        // params are valid `FILETIME` slots.
-        if unsafe {
-            windows::GetProcessTimes(
-                h,
-                &raw mut t[0],
-                &raw mut t[1],
-                &raw mut t[2],
-                &raw mut t[3],
-            )
-        } == 0
-        {
+        let [mut created, mut exited, mut kernel, mut user]: [windows::FILETIME; 4] =
+            bun_core::ffi::zeroed();
+        if windows::GetProcessTimes(h, &mut created, &mut exited, &mut kernel, &mut user) == 0 {
             return None;
         }
-        Some((u64::from(t[0].dwHighDateTime) << 32) | u64::from(t[0].dwLowDateTime))
+        Some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
     }
 
     /// Thread-pool callback: the parent's process object signaled. Matches the
@@ -269,48 +224,15 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
-#[cfg(not(windows))]
-pub use posix_event_loop::{FilePoll, Loop};
-#[cfg(windows)]
-pub use windows_event_loop::{FilePoll, Loop};
+pub use file_poll::{FilePoll, Loop};
 
-/// Project a `*mut bun_uws_sys::Loop` (the uws wrapper — `PosixLoop` /
-/// `WindowsLoop`) to the platform-native [`Loop`] (`us_loop_t*` on POSIX,
-/// `uv_loop_t*` on Windows).
-///
-/// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
-/// this is the identity. On Windows the wrapper stores the libuv loop in its
-/// `uv_loop` field — set once in C at `us_create_loop` and immutable
-/// thereafter — which we project here so callers needn't open an `unsafe`
-/// block per site just to read a set-once field.
-#[inline]
-pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
-    #[cfg(not(windows))]
-    {
-        uws
-    }
-    #[cfg(windows)]
-    // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`;
-    // `uv_loop` is initialised in C before any Rust caller can observe the
-    // handle and is never mutated.
-    {
-        unsafe { (*uws).uv_loop() }
-    }
-}
-
-pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
+pub use file_poll::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
 // At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
 // macro emits (and the impl-macro reads back) actually resolve from impl
-// crates. `Store`/`FilePoll` here are the *platform* re-exports above.
-//
-// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
-// wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
-// re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
-// `uv_loop_t` whereas the impl bodies
-// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
+// crates.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
@@ -343,7 +265,7 @@ impl EventLoopCtx {
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
     /// hive buffer) is live. Every in-crate caller is a leaf op that decays
     /// any conflicting `&mut FilePoll` to a raw slot pointer first
-    /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
+    /// (`deinit_possibly_defer`) or holds none (that is
     /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
     fn file_polls_mut(&self) -> &'static mut Store {
@@ -364,14 +286,8 @@ impl EventLoopCtx {
         self.platform_event_loop().ref_();
     }
     #[inline]
-    #[cfg(not(windows))]
     pub(crate) fn loop_unref(&self) {
         self.platform_event_loop().unref();
-    }
-    #[inline]
-    #[cfg(windows)]
-    pub(crate) fn loop_dec(&self) {
-        self.platform_event_loop().dec();
     }
     #[inline]
     pub(crate) fn loop_add_active(&self, n: u32) {
@@ -381,7 +297,6 @@ impl EventLoopCtx {
     pub(crate) fn loop_sub_active(&self, n: u32) {
         self.platform_event_loop().sub_active(n);
     }
-    #[cfg(not(windows))]
     #[inline]
     pub(crate) fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
         self.file_polls_mut().get_init(value)
@@ -389,7 +304,6 @@ impl EventLoopCtx {
 
     /// What a `FilePoll` keeps of the ctx it was made with; [`get_vm_ctx`] gives that ctx back.
     #[inline]
-    #[cfg(not(windows))]
     pub(crate) fn allocator_type(&self) -> AllocatorType {
         match self.kind {
             EventLoopCtxKind::Js => AllocatorType::Js,
@@ -401,35 +315,17 @@ impl EventLoopCtx {
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
         self.platform_event_loop_ptr()
     }
-    /// Platform-native loop pointer (`us_loop_t*` / `uv_loop_t*`); see
-    /// [`uws_to_native`].
-    #[inline]
-    pub fn native_loop(&self) -> *mut Loop {
-        uws_to_native(self.platform_event_loop_ptr())
-    }
 }
-#[cfg(not(windows))]
-pub use posix_event_loop::Store;
-#[cfg(windows)]
-pub use windows_event_loop::Store;
+pub use file_poll::Store;
 
-/// Mirrors posix_event_loop::Flags.
-pub use posix_event_loop::Flags as PollFlag;
+pub use file_poll::Flags as PollFlag;
 /// Mirrors poll kind enum used by process.rs.
-pub use posix_event_loop::Flags as PollKind;
-
-/// `file_poll` module — real one lives in {posix,windows}_event_loop.rs.
-pub mod file_poll {
-    pub use super::Store;
-    pub use super::posix_event_loop::{Flags, FlagsSet};
-}
+pub use file_poll::Flags as PollKind;
 
 // ── bun_io original submodules ──────────────────────────────────────────────
 
 #[path = "heap.rs"]
 pub mod heap;
-// `source.rs` is Windows-only (libuv pipe/tty/file wrappers). On POSIX the
-// `Source` type is never constructed; callers are themselves `#[cfg(windows)]`.
 #[path = "MaxBuf.rs"]
 pub mod max_buf;
 #[path = "openForWriting.rs"]
@@ -442,9 +338,6 @@ pub mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
 pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
-#[cfg(windows)]
-#[path = "source.rs"]
-pub mod source;
 #[path = "write.rs"]
 pub mod write;
 
@@ -481,7 +374,6 @@ bun_dispatch::link_interface! {
         fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
         fn on_reader_done();
         fn on_reader_error(err: bun_sys::Error);
-        fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
         fn ref_();
         fn deref();
@@ -503,7 +395,6 @@ bun_dispatch::link_interface! {
 ///     on_read_chunk    = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
 ///     on_reader_done   = |this| (*this).on_reader_done();
 ///     on_reader_error  = |this, err| (*this).on_reader_error(err);
-///     loop_            = |this| (*this).loop_();
 ///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
 /// }
 /// ```
@@ -573,7 +464,6 @@ macro_rules! __impl_buffered_reader_parent_body {
         $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
         on_reader_done = |$rd_this:ident| $rd:expr;
         on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
-        loop_ = |$l_this:ident| $lp:expr;
         event_loop = |$e_this:ident| $ev:expr;
         $( ref_ = |$rf_this:ident| $rf:expr; )?
         $( deref = |$dr_this:ident| $dr:expr; )?
@@ -602,10 +492,6 @@ macro_rules! __impl_buffered_reader_parent_body {
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
                 unsafe { $crate::__buffered_reader_callback!($feature $re) }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
-                unsafe { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
@@ -646,8 +532,6 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_done(this),
                 on_reader_error(err) =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_error(this, err),
-                loop_ptr() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
                 ref_() =>
@@ -659,13 +543,8 @@ macro_rules! buffered_reader_parent_link {
     };
 }
 pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
-#[cfg(windows)]
-pub use source::Source;
 
-// Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
-// (`Option<Source>`) typecheck.
-
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+pub use pipe_reader::{BufferedReader, BufferedReaderParent, ReaderFlags};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
@@ -769,7 +648,7 @@ type EventType = KEvent;
 // The bare-kqueue/epoll request loop that backs
 // `Bun.file(path).text()` / `Bun.write()` & friends (and nothing else; see the
 // crate doc above). NOT the main event loop. Renamed from `Loop` so this
-// crate's `Loop` (= `posix_event_loop::Loop` = the uws `us_loop_t` everyone
+// crate's `Loop` (= `file_poll::Loop` = the uws `us_loop_t` everyone
 // actually means by "the loop") keeps its short name. Only one external caller
 // (`bun_runtime::webcore::Blob`).
 
@@ -1010,15 +889,6 @@ impl IoRequestLoop {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
             self.tick_kqueue();
-        }
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        {
-            panic!("TODO on this platform");
         }
     }
 
@@ -1332,45 +1202,6 @@ macro_rules! intrusive_io_request {
         // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
         unsafe impl $crate::IntrusiveIoRequest for $ty {
             const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
-/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
-/// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
-///
-/// Implement via [`intrusive_uv_fs!`].
-///
-/// # Safety
-/// `UV_FS_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request field>)`.
-#[cfg(windows)]
-pub unsafe trait IntrusiveUvFs: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const UV_FS_OFFSET: usize;
-
-    /// Recover `*mut Self` from the `*mut uv::fs_t` libuv passes back.
-    ///
-    /// # Safety
-    /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// live `Self` allocation, and the pointer's provenance must cover the
-    /// whole allocation.
-    #[inline(always)]
-    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
-    }
-}
-
-/// Implements [`IntrusiveUvFs`] for a struct that embeds an intrusive
-/// `io_request: uv::fs_t` field.
-#[cfg(windows)]
-#[macro_export]
-macro_rules! intrusive_uv_fs {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `UV_FS_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveUvFs for $ty {
-            const UV_FS_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
         }
     };
 }
@@ -1824,9 +1655,7 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-#[cfg(not(windows))]
-use crate::posix_event_loop::OneShotFlag;
-use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet};
+use crate::file_poll::{Flags as PollFlags, FlagsSet as PollFlagsSet, OneShotFlag};
 
 pub type EventLoopHandle = EventLoopCtx;
 
@@ -1850,9 +1679,14 @@ pub struct FilePollRef(pub(crate) core::ptr::NonNull<FilePoll>);
 
 impl FilePollRef {
     #[inline]
-    pub(crate) fn init(ev: EventLoopHandle, fd: Fd, owner: Owner) -> FilePollRef {
+    pub(crate) fn init(
+        ev: EventLoopHandle,
+        fd: Fd,
+        flags: PollFlagsSet,
+        owner: Owner,
+    ) -> FilePollRef {
         FilePollRef(
-            core::ptr::NonNull::new(FilePoll::init(ev, fd, PollFlagsSet::empty(), owner))
+            core::ptr::NonNull::new(FilePoll::init(ev, fd, flags, owner))
                 .expect("FilePoll::init returns a fresh hive slot"),
         )
     }
@@ -1896,19 +1730,7 @@ impl FilePollRef {
     }
     #[inline]
     pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
-        let loop_ = Self::uws_loop(loop_);
-        #[cfg(not(windows))]
-        {
-            self.inner().unregister(loop_, force)
-        }
-        #[cfg(windows)]
-        {
-            let _ = force;
-            // The windows `FilePoll::unregister` always returns true — the
-            // bool is vestigial, so there is no error path to surface here.
-            let _ = self.inner().unregister(loop_);
-            Ok(())
-        }
+        self.inner().unregister(Self::uws_loop(loop_), force)
     }
     #[inline]
     pub(crate) fn register_with_fd(
@@ -1921,16 +1743,8 @@ impl FilePollRef {
             FilePollKind::Readable => PollFlags::Readable,
             FilePollKind::Writable => PollFlags::Writable,
         };
-        #[cfg(not(windows))]
-        {
-            self.inner()
-                .register_with_fd(Self::uws_loop(loop_), flag, OneShotFlag::Dispatch, fd)
-        }
-        #[cfg(windows)]
-        {
-            let _ = (loop_, flag, fd);
-            unreachable!("FilePoll fd registration is POSIX-only");
-        }
+        self.inner()
+            .register_with_fd(Self::uws_loop(loop_), flag, OneShotFlag::Dispatch, fd)
     }
     #[inline]
     pub(crate) fn has_flag(self, f: FilePollFlag) -> bool {
@@ -1942,14 +1756,28 @@ impl FilePollRef {
     }
     #[inline]
     pub(crate) fn file_type(self) -> crate::pipes::FileType {
-        #[cfg(not(windows))]
-        {
-            self.inner().file_type()
-        }
-        #[cfg(windows)]
-        {
-            crate::pipes::FileType::File
-        }
+        self.inner().file_type()
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub(crate) fn read(self, buf: &mut [u8]) -> sys::Result<usize> {
+        self.inner().read(buf)
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub(crate) fn write(self, buf: &[u8]) -> sys::Result<usize> {
+        self.inner().write(buf)
+    }
+    /// For a writer that drops bytes it was told would block. See `us_internal_pipe_disown_write`.
+    #[cfg(windows)]
+    #[inline]
+    pub fn disown_write(self) {
+        self.inner().disown_write()
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub(crate) fn close_fd_on_deinit(self) -> bool {
+        self.inner().close_fd_on_deinit()
     }
     #[inline]
     pub fn is_registered(self) -> bool {
@@ -1984,7 +1812,8 @@ impl FilePollRef {
 /// Moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.
 pub enum PathOrFileDescriptor<'a> {
-    Path(&'a [u8]),
+    /// Relative to the current directory.
+    Path(&'a bun_core::ZStr),
     Fd(Fd),
 }
 
@@ -2155,100 +1984,75 @@ pub mod waker {
         }
     }
 
-    // ── Windows (uws WindowsLoop wakeup) ──────────────────────────────────────
+    // ── Windows (event) ───────────────────────────────────────────────────────
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
-        /// outlives holder) holds trivially: the loop is never freed. `None`
-        /// only between [`placeholder`] and [`init`]; every dispatch path
-        /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
-        /// raw null anyway.
-        ///
-        /// [`placeholder`]: Self::placeholder
-        /// [`init`]: Self::init
-        pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
+        event: bun_sys::windows::HANDLE,
     }
+
+    // SAFETY: an event handle may be waited on and set from any thread.
+    #[cfg(windows)]
+    unsafe impl Send for WindowsWaker {}
+    // SAFETY: as above.
+    #[cfg(windows)]
+    unsafe impl Sync for WindowsWaker {}
 
     #[cfg(windows)]
     impl WindowsWaker {
         /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `loop_` is `None` and must never be
-        /// dereferenced — overwrite via `ptr::write` before first
-        /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
-        /// `KEventWaker::placeholder` so cross-platform call sites don't fall
-        /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
+        /// its real waker is created). Never wait or wake through it.
         pub const fn placeholder() -> Self {
-            Self { loop_: None }
+            Self {
+                event: core::ptr::null_mut(),
+            }
         }
 
         pub fn init() -> crate::error::Result<Self> {
-            Ok(Self {
-                loop_: Some(bun_ptr::BackRef::from(
-                    core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
-                        .expect("WindowsLoop::get() singleton"),
-                )),
-            })
-        }
-
-        /// Unwrap the back-reference. Panics on a `placeholder()` waker, which
-        /// is the same precondition the previous raw-pointer deref carried
-        /// (just loud instead of UB).
-        #[inline]
-        fn loop_ref(&self) -> bun_ptr::BackRef<bun_uws_sys::WindowsLoop> {
-            self.loop_.expect("WindowsWaker used before init()")
+            use bun_sys::windows::Win32ErrorExt as _;
+            // SAFETY: no name and no security attributes; auto-reset, not signaled.
+            let event = unsafe {
+                bun_sys::windows::kernel32::CreateEventW(
+                    core::ptr::null_mut(),
+                    0,
+                    0,
+                    core::ptr::null(),
+                )
+            };
+            if event.is_null() {
+                return Err(crate::Error::Sys(
+                    bun_sys::windows::Win32Error::get().to_system_errno(),
+                ));
+            }
+            Ok(Self { event })
         }
 
         pub fn wait(&self) {
-            self.loop_ref().run();
+            bun_sys::windows::kernel32::WaitForSingleObject(self.event, bun_sys::windows::INFINITE);
         }
 
         pub fn wake(&self) {
-            // The cross-thread wake path: `WindowsLoop` is `!Sync`, so pass the raw
-            // pointer to the thread-safe C wake (`uv_async_send`).
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
-            // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr()) };
-        }
-
-        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
-        ///
-        /// `loop_` is the process-global singleton from `WindowsLoop::get()`
-        /// (set in [`init`]), so the returned pointer has process lifetime —
-        /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
-        /// block at the call site.
-        #[inline]
-        pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // `BackRef` deref is safe (process-lifetime singleton).
-            self.loop_ref().uv_loop()
+            bun_sys::windows::kernel32::SetEvent(self.event);
         }
     }
 }
 
 // ─── Closer (moved from bun_io) ─────────────────────────────────────────────
 //
-// Schedules an async fd close on the
-// thread pool (POSIX) or via uv_fs_close (Windows). io (T2) owns it so
+// Schedules an async fd close on the thread pool. io (T2) owns it so
 // `pipes::PollOrFd::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
     use bun_sys::Fd;
-
-    // ── POSIX ────────────────────────────────────────────────────────────────
-
-    #[cfg(not(windows))]
     use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-    #[cfg(not(windows))]
     #[repr(C)]
     pub struct Closer {
         pub(crate) fd: Fd,
         task: WorkPoolTask,
     }
 
-    #[cfg(not(windows))]
     bun_threading::intrusive_work_task!(Closer, task);
-    #[cfg(not(windows))]
     impl bun_threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
@@ -2256,10 +2060,8 @@ pub mod closer {
         }
     }
 
-    #[cfg(not(windows))]
     impl Closer {
-        /// `_compat`: for signature compatibility with the Windows version.
-        pub fn close(fd: Fd, _compat: ()) {
+        pub fn close(fd: Fd) {
             debug_assert!(fd.is_valid());
             WorkPool::schedule_owned(Box::new(Closer {
                 fd,
@@ -2268,72 +2070,6 @@ pub mod closer {
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
                 },
             }));
-        }
-    }
-
-    // ── Windows ──────────────────────────────────────────────────────────────
-
-    #[cfg(windows)]
-    use crate::IntrusiveUvFs as _;
-    #[cfg(windows)]
-    use bun_sys::ReturnCodeExt as _;
-    #[cfg(windows)]
-    use bun_sys::windows::libuv as uv;
-    #[cfg(windows)]
-    use core::ffi::c_void;
-
-    #[cfg(windows)]
-    #[repr(C)]
-    pub struct Closer {
-        io_request: uv::fs_t,
-    }
-    #[cfg(windows)]
-    crate::intrusive_uv_fs!(Closer, io_request);
-
-    #[cfg(windows)]
-    impl Closer {
-        pub fn close(fd: Fd, loop_: *mut uv::Loop) {
-            let io_request: uv::fs_t = bun_core::ffi::zeroed();
-            let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
-            // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
-            // SAFETY: closer is a freshly-boxed valid pointer.
-            unsafe {
-                (*closer).io_request.data = closer.cast::<c_void>();
-                if let Some(err) = uv::uv_fs_close(
-                    loop_,
-                    &mut (*closer).io_request,
-                    fd.uv(),
-                    Some(Self::on_close),
-                )
-                .errno()
-                {
-                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
-                    drop(bun_core::heap::take(closer));
-                }
-            }
-        }
-
-        extern "C" fn on_close(req: *mut uv::fs_t) {
-            // SAFETY: req points to Closer.io_request (set in `close` above).
-            let closer: *mut Closer = unsafe { Closer::from_uv_fs(req) };
-            // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
-            unsafe {
-                debug_assert!(closer == (*req).data.cast::<Closer>());
-                bun_sys::syslog!(
-                    "uv_fs_close({}) = {}",
-                    // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                    Fd::from_uv((*req).file_fd()),
-                    (*req).result
-                );
-
-                #[cfg(debug_assertions)]
-                if let Some(err) = (*closer).io_request.result.errno() {
-                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
-                }
-
-                (*req).deinit();
-                drop(bun_core::heap::take(closer));
-            }
         }
     }
 }

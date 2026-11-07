@@ -15,7 +15,7 @@ use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, 
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_io::posix_event_loop::get_vm_ctx;
+use bun_io::file_poll::get_vm_ctx;
 use bun_io::{AllocatorType, KeepAlive};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;

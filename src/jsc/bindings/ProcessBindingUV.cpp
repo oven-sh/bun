@@ -124,6 +124,15 @@ static constexpr UVErrnoEntry uvErrnoEntries[] = {
 #undef UV_ERRNO_ENTRY
 };
 
+String errorMessage(int err)
+{
+    for (auto& entry : uvErrnoEntries) {
+        if (err == entry.value)
+            return entry.description;
+    }
+    return makeString("Unknown system error "_s, err);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

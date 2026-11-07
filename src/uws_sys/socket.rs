@@ -1,5 +1,5 @@
 //! High-level socket wrapper over `us_socket_t` / `ConnectingSocket` /
-//! `UpgradedDuplex` / `WindowsNamedPipe`.
+//! `UpgradedDuplex`.
 //!
 //! THIS IS THE ONE CANONICAL IMPLEMENTATION. `bun_uws`
 //! re-exports everything here; do NOT add a parallel `InternalSocket` /
@@ -7,9 +7,8 @@
 //! that grew full bodies there has been deleted.
 //!
 //! Shape: `InternalSocket` is a `Copy` tagged raw pointer (passed by value
-//! through the entire HTTP-client state machine), all
-//! `NewSocketHandler` methods take `&self`, and the `#[cfg(windows)]` Pipe
-//! split is owned exactly once by the `on_socket!` macro below.
+//! through the entire HTTP-client state machine), and all
+//! `NewSocketHandler` methods take `&self`.
 
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
@@ -17,12 +16,9 @@ use core::ptr::NonNull;
 
 use bun_core::{Fd, ZStr};
 
-#[cfg(windows)]
-use crate::WindowsNamedPipe;
 use crate::{
-    CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
-    us_bun_verify_error_t, us_socket_t,
+    CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN, QueuedInput,
+    SocketGroup, SocketKind, SslCtx, UpgradedDuplex, us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -48,8 +44,8 @@ impl CloseCode {
 
 /// State of a single connection. `Copy` — passed by value
 /// through the entire HTTP-client / Bun.Socket state machines, so the handle
-/// is a trivially-copyable tagged pointer. The `UpgradedDuplex` / `Pipe`
-/// payloads are raw `*mut` (NOT `&mut`): they are stored in long-lived
+/// is a trivially-copyable tagged pointer. The `UpgradedDuplex`
+/// payload is a raw `*mut` (NOT `&mut`): it is stored in long-lived
 /// `Cell<NewSocketHandler>` fields and re-borrowed per call via the opaque
 /// deref helpers below.
 #[derive(Copy, Clone)]
@@ -58,8 +54,6 @@ pub enum InternalSocket {
     Connecting(*mut ConnectingSocket),
     Detached,
     UpgradedDuplex(*mut UpgradedDuplex),
-    #[cfg(windows)]
-    Pipe(*mut WindowsNamedPipe),
 }
 
 // Variant + pointer-identity equality.
@@ -72,8 +66,6 @@ impl PartialEq for InternalSocket {
             (InternalSocket::UpgradedDuplex(a), InternalSocket::UpgradedDuplex(b)) => {
                 core::ptr::eq(a, b)
             }
-            #[cfg(windows)]
-            (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
             _ => false,
         }
     }
@@ -92,21 +84,14 @@ impl InternalSocket {
     pub fn is_detached(&self) -> bool {
         matches!(self, InternalSocket::Detached)
     }
-    #[inline]
-    pub(crate) fn is_named_pipe(&self) -> bool {
-        #[cfg(windows)]
-        return matches!(self, InternalSocket::Pipe(_));
-        #[cfg(not(windows))]
-        return false;
-    }
 }
 
 // ── Safe deref helpers for `InternalSocket` payloads ────────────────────────
-// All four payload types are `#[repr(C)] UnsafeCell<[u8; 0]>` opaque ZSTs
+// All three payload types are `#[repr(C)] UnsafeCell<[u8; 0]>` opaque ZSTs
 // (`opaque_ffi!` / `opaque_extern!`): zero-sized, align-1, no `noalias` /
 // `readonly`. Materializing `&mut T` from `*mut T` therefore has exactly one
 // validity requirement — non-null — which uSockets guarantees for every
-// pointer it stores in `Connected` / `Connecting` / `UpgradedDuplex` / `Pipe`.
+// pointer it stores in `Connected` / `Connecting` / `UpgradedDuplex`.
 // Centralizing the deref keeps the proof local instead of repeating
 // `unsafe { &mut *s }` at ~50 match arms.
 
@@ -125,43 +110,31 @@ fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
 fn duplex<'a>(p: *mut UpgradedDuplex) -> &'a mut UpgradedDuplex {
     bun_opaque::opaque_deref_mut(p)
 }
-/// Reborrow the `InternalSocket::Pipe` payload (Windows only).
-#[cfg(windows)]
-#[inline(always)]
-fn pipe<'a>(p: *mut WindowsNamedPipe) -> &'a mut WindowsNamedPipe {
-    bun_opaque::opaque_deref_mut(p)
-}
 
-/// Five-arm `match self.socket` with the `#[cfg(windows)]` Pipe split owned
-/// exactly once. Each arm binds the deref'd opaque (`$s` / `$c` / `$d` / `$p`)
-/// so method bodies are one-liners and the per-arm `#[cfg]` noise lives here.
+/// Four-arm `match self.socket`. Each arm binds the deref'd opaque (`$s` / `$c` / `$d`)
+/// so method bodies are one-liners.
 ///
-/// Arms not supplied default to: `connecting`/`detached` → `$det` expr;
-/// `pipe` → `$det` on non-Windows (no payload), supplied body on Windows.
+/// Arms not supplied default to: `connecting`/`detached` → `$det` expr.
 macro_rules! on_socket {
     (
         $sock:expr;
         connected $s:ident => $conn:expr,
         connecting $c:ident => $cing:expr,
         detached => $det:expr,
-        duplex $d:ident => $dup:expr,
-        pipe $p:ident => $pip:expr $(,)?
+        duplex $d:ident => $dup:expr $(,)?
     ) => {
         match $sock {
             InternalSocket::Connected(__s) => { let $s = sock(__s); $conn }
             InternalSocket::Connecting(__c) => { let $c = conn(__c); $cing }
             InternalSocket::Detached => $det,
             InternalSocket::UpgradedDuplex(__d) => { let $d = duplex(__d); $dup }
-            #[cfg(windows)]
-            InternalSocket::Pipe(__p) => { let $p = pipe(__p); $pip }
         }
     };
-    // Short form: connecting/detached/pipe-absent collapse to one default.
+    // Short form: connecting/detached collapse to one default.
     (
         $sock:expr;
         connected $s:ident => $conn:expr,
         duplex $d:ident => $dup:expr,
-        pipe $p:ident => $pip:expr,
         else => $det:expr $(,)?
     ) => {
         on_socket!($sock;
@@ -169,7 +142,6 @@ macro_rules! on_socket {
             connecting _c => { let _ = _c; $det },
             detached => $det,
             duplex $d => $dup,
-            pipe $p => $pip,
         )
     };
 }
@@ -239,10 +211,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn is_detached(&self) -> bool {
         self.socket.is_detached()
     }
-    #[inline]
-    pub fn is_named_pipe(&self) -> bool {
-        self.socket.is_named_pipe()
-    }
 
     // ── state queries ───────────────────────────────────────────────────────
 
@@ -252,7 +220,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
             duplex d => (d.encode_and_write(data), 0),
-            pipe p => (p.encode_and_write(data), 0),
             else => (0, 0),
         )
     }
@@ -263,7 +230,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting c => c.is_closed(),
             detached => true,
             duplex d => d.is_closed(),
-            pipe p => p.is_closed(),
         )
     }
 
@@ -273,7 +239,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting c => c.is_shutdown(),
             detached => true,
             duplex d => d.is_shutdown(),
-            pipe p => p.is_shutdown(),
         )
     }
 
@@ -281,7 +246,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.is_established(),
             duplex d => d.is_established(),
-            pipe p => p.is_established(),
             else => false,
         )
     }
@@ -297,7 +261,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.ssl_send_rejected(),
             duplex _d => false,
-            pipe _p => false,
             else => false,
         )
     }
@@ -308,7 +271,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.queued_input(),
             duplex _d => QueuedInput::None,
-            pipe _p => QueuedInput::None,
             else => QueuedInput::None,
         )
     }
@@ -317,7 +279,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.get_verify_error(),
             duplex d => d.ssl_error(),
-            pipe p => p.ssl_error(),
             else => us_bun_verify_error_t::default(),
         )
     }
@@ -328,7 +289,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting c => c.get_error(),
             detached => 0,
             duplex d => d.ssl_error().error_no,
-            pipe p => p.ssl_error().error_no,
         )
     }
 
@@ -351,7 +311,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting c => c.close(),
             detached => {},
             duplex d => d.close(),
-            pipe p => p.close(),
         )
     }
 
@@ -371,7 +330,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting _c => {},
             detached => {},
             duplex d => d.abandon_js_side(),
-            pipe _p => {},
         )
     }
 
@@ -381,7 +339,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting c => c.shutdown(),
             detached => {},
             duplex d => d.shutdown(),
-            pipe p => p.shutdown(),
         )
     }
 
@@ -391,7 +348,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting c => c.shutdown_read(),
             detached => {},
             duplex d => d.shutdown_read(),
-            pipe p => p.shutdown_read(),
         )
     }
 
@@ -401,13 +357,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.write(data),
             duplex d => d.encode_and_write(data),
-            pipe p => p.encode_and_write(data),
             else => 0,
         )
     }
 
     /// Write `data` and pass `file_descriptor` over the socket via SCM_RIGHTS.
-    /// POSIX-only — Windows IPC fd passing goes through libuv pipes instead.
+    /// POSIX-only.
     ///
     /// LAYERING: takes the raw POSIX fd (`c_int`) rather than `bun_sys::Fd` —
     /// `bun_uws_sys` sits below `bun_sys`; callers extract `.native()` at the
@@ -425,7 +380,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
-    /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
+    /// transports without an fd (duplex). Plain-TCP callers only — raw
     /// writes bypass TLS framing.
     pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
         on_socket!(self.socket;
@@ -441,17 +396,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                 }
                 total
             },
-            pipe p => {
-                let mut total: i32 = 0;
-                for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
-                    let w = p.raw_write(slice);
-                    if w > 0 { total += w; }
-                    if w < slice.len() as i32 { break; }
-                }
-                total
-            },
             else => 0,
         )
     }
@@ -461,7 +405,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.raw_write(data),
             duplex d => d.raw_write(data),
-            pipe p => p.raw_write(data),
             else => 0,
         )
     }
@@ -470,7 +413,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         on_socket!(self.socket;
             connected s => s.flush(),
             duplex d => d.flush(),
-            pipe p => p.flush(),
             else => {},
         )
     }
@@ -496,7 +438,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             },
             detached => {},
             duplex d => d.set_timeout(seconds),
-            pipe p => p.set_timeout(seconds),
         )
     }
 
@@ -511,7 +452,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting _c => false,
             detached => true,
             duplex d => d.pause_stream(),
-            pipe p => p.pause_stream(),
         )
     }
 
@@ -521,13 +461,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connecting _c => false,
             detached => true,
             duplex d => d.resume_stream(),
-            pipe p => p.resume_stream(),
         )
     }
 
     pub fn set_no_delay(&self, enabled: bool) -> bool {
         match self.socket {
-            InternalSocket::Connected(s) => {
+            InternalSocket::Connected(s) if !sock(s).is_pipe() => {
                 sock(s).set_nodelay(enabled);
                 true
             }
@@ -584,8 +523,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).set_inline_reject(),
             InternalSocket::UpgradedDuplex(d) => duplex(d).set_inline_reject(),
-            #[cfg(windows)]
-            InternalSocket::Pipe(p) => pipe(p).set_inline_reject(),
             _ => {}
         }
     }
@@ -608,8 +545,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         match self.socket {
             InternalSocket::UpgradedDuplex(d) => duplex(d).latest_session(),
-            #[cfg(windows)]
-            InternalSocket::Pipe(p) => pipe(p).latest_session(),
             _ => core::ptr::null_mut(),
         }
     }
@@ -647,10 +582,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             }
             InternalSocket::UpgradedDuplex(s) if IS_SSL => duplex(s).ssl().map(|p| p.cast()),
             InternalSocket::UpgradedDuplex(_) => None,
-            #[cfg(windows)]
-            InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
-            #[cfg(windows)]
-            InternalSocket::Pipe(_) => None,
             InternalSocket::Detached => None,
         }
     }
@@ -686,6 +617,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// An end of a Windows named pipe.
+    pub fn is_pipe(&self) -> bool {
+        matches!(self.socket, InternalSocket::Connected(s) if sock(s).is_pipe())
+    }
+
+    /// The TLS layer has reported bytes as written that the kernel did not take.
+    pub fn tls_has_unsent(&self) -> bool {
+        matches!(self.socket, InternalSocket::Connected(s) if sock(s).tls_has_unsent())
+    }
+
     /// Underlying fd. Same fd regardless of TLS — read directly off the poll.
     #[inline]
     pub fn fd(&self) -> Fd {
@@ -693,6 +634,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connected(s) => sock(s).get_fd(),
             _ => Fd::INVALID,
         }
+    }
+
+    /// [`Self::fd`] for JavaScript, which would take a pipe's handle for a C runtime descriptor on Windows. A network socket's is what node:cluster passes around.
+    pub fn fd_for_js(&self) -> Fd {
+        #[cfg(windows)]
+        if let InternalSocket::Connected(s) = self.socket
+            && sock(s).is_pipe()
+        {
+            return sock(s).crt_descriptor();
+        }
+        self.fd()
     }
 
     pub fn local_port(&self) -> Option<u16> {
@@ -770,14 +722,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // (8 bytes, null-niche optimized), so size and write must match that
         // layout — NOT `Option<*mut This>` (16 bytes).
         let ext_size = size_of::<Option<NonNull<This>>>() as c_int;
-        let raw = g.from_fd(
-            k,
-            None,
-            ext_size,
-            handle.native() as LIBUS_SOCKET_DESCRIPTOR,
-            0,
-            is_ipc,
-        );
+        let raw = g.from_fd(k, None, ext_size, handle, 0, is_ipc);
         if raw.is_null() {
             return None;
         }

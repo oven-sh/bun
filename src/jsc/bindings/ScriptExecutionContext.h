@@ -182,8 +182,6 @@ public:
     Bun::SharedEnvStore* sharedEnvStore() const { return m_sharedEnvStore.get(); }
     void setSharedEnvStore(Bun::SharedEnvStore& store) { m_sharedEnvStore = &store; }
 
-    static ScriptExecutionContext* getMainThreadScriptExecutionContext();
-
 private:
     std::atomic<bool> m_isTerminating { false };
     RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;

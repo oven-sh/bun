@@ -448,9 +448,9 @@ pub mod vec {
         unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len()) }
     }
 
-    /// `reserve(n)` then [`spare_bytes_mut`] — the libuv `uv_alloc_cb` shape
-    /// (and the dominant call pattern at every C-ABI fill site that wants "at
-    /// least `n` bytes of headroom"). Prefer this over `fill_spare` when the
+    /// `reserve(n)` then [`spare_bytes_mut`] — the dominant call pattern at
+    /// every C-ABI fill site that wants "at least `n` bytes of headroom".
+    /// Prefer this over `fill_spare` when the
     /// commit must happen on a separate control-flow arm from the obtain
     /// (e.g. across an `await`, or after an error-early-return).
     ///
@@ -682,7 +682,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
-/// a C library (c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// a C library (c-ares, uWS, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
@@ -2602,7 +2602,7 @@ pub mod ffi {
     pub use bun_pod::{Zeroable, zeroed};
 
     /// Unchecked all-bits-zero — escape hatch for types not yet proven
-    /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
+    /// [`Zeroable`] (bindgen structs in `_sys` crates that
     /// don't depend on `bun_core`, generic `T` where the bound can't be
     /// threaded). Prefer [`zeroed`] + `impl_zeroable!` whenever the
     /// type is reachable.

@@ -676,7 +676,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// through, async dispose, etc.) gets to run, and on macOS — where there's no
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
-/// `uv.Pipe` over the inherited duplex named-pipe on Windows.
+/// over the inherited duplex pipe on Windows.
 pub(crate) struct PendingFile {
     idx: u32,
     /// What the files before this one have left in `process.exitCode`, in whichever worker they ran.
@@ -806,7 +806,7 @@ struct WorkerLoop<'a> {
 
 impl<'a> WorkerLoop<'a> {
     fn begin(&mut self, vm: &mut VirtualMachine) {
-        if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
+        if !Channel::adopt(&raw mut self.cmds.channel, Fd::from_crt(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }

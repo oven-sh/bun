@@ -34,9 +34,10 @@
 #endif
 #endif
 #else
-#include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <crtdbg.h>
+#include <fcntl.h>
 #include <atomic>
 #include <new>
 #include <wtf/Threading.h>
@@ -60,34 +61,23 @@ extern "C" [[noreturn]] void bun_abort_missing_simd()
     exit(134);
 }
 
+#if !OS(WINDOWS)
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
 extern "C" int32_t get_process_priority(int32_t pid)
 {
-#if OS(WINDOWS)
-    int priority = 0;
-    if (uv_os_getpriority(pid, &priority))
-        return std::numeric_limits<int32_t>::max();
-    return priority;
-#else
     errno = 0;
     int priority = getpriority(PRIO_PROCESS, pid);
     if (priority == -1 && errno != 0)
         return std::numeric_limits<int32_t>::max();
     return priority;
-#endif // OS(WINDOWS)
 }
 
 extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 {
-#if OS(WINDOWS)
-    return uv_os_setpriority(pid, priority);
-#else
     return setpriority(PRIO_PROCESS, pid, priority);
-#endif // OS(WINDOWS)
 }
 
-#if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC) && !OS(LINUX)
@@ -311,7 +301,7 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 #define SYS_SECCOMP 1
 #endif
 
-extern "C" void Bun__onPosixSignal(int signalNumber);
+extern "C" void Bun__onSignal(int signalNumber);
 
 static std::atomic<bool> forwardSIGSYSToJS { false };
 
@@ -331,7 +321,7 @@ static void onSIGSYS(int sig, siginfo_t* info, void* context)
 
     // Otherwise it was sent with kill(2).
     if (forwardSIGSYSToJS.load(std::memory_order_relaxed)) {
-        Bun__onPosixSignal(sig);
+        Bun__onSignal(sig);
         return;
     }
     signal(sig, SIG_DFL);
@@ -969,21 +959,53 @@ extern "C" void onExitSignal(int sig)
 #endif
 
 #if OS(WINDOWS)
+#ifdef _DEBUG
+static thread_local bool crtAssertsAreDisabled = false;
+
+static int crtReportHook(int reportType, char*, int* returnValue)
+{
+    if (reportType != _CRT_ASSERT || !crtAssertsAreDisabled)
+        return FALSE;
+    if (returnValue)
+        *returnValue = 0;
+    return TRUE;
+}
+
+struct DisableCRTAsserts {
+    DisableCRTAsserts() { crtAssertsAreDisabled = true; }
+    ~DisableCRTAsserts() { crtAssertsAreDisabled = false; }
+};
+#else
+struct DisableCRTAsserts {};
+#endif
+
+extern "C" void* Bun__getOSFHandle(int fd)
+{
+    [[maybe_unused]] DisableCRTAsserts disable;
+    return reinterpret_cast<void*>(_get_osfhandle(fd));
+}
+
+extern "C" int Bun__openOSFHandle(void* handle)
+{
+    return _open_osfhandle(reinterpret_cast<intptr_t>(handle), 0);
+}
+
+extern "C" int Bun__closeOSFHandle(int fd)
+{
+    [[maybe_unused]] DisableCRTAsserts disable;
+    return _close(fd);
+}
+
 extern "C" void Bun__restoreWindowsStdio();
 BOOL WINAPI Ctrlhandler(DWORD signal)
 {
 
-    if (signal == CTRL_C_EVENT) {
+    if (signal == CTRL_C_EVENT || signal == CTRL_BREAK_EVENT) {
         Bun__restoreWindowsStdio();
         SetConsoleCtrlHandler(Ctrlhandler, FALSE);
     }
 
     return FALSE;
-}
-
-extern "C" void Bun__setCTRLHandler(BOOL add)
-{
-    SetConsoleCtrlHandler(Ctrlhandler, add);
 }
 
 // Held, never released, across ExitProcess: a WTF suspender it kills between
@@ -1099,30 +1121,38 @@ extern "C" void bun_initialize_process()
         sigaction(SIGINT, &sa, nullptr);
     }
 #elif OS(WINDOWS)
+    // No dialog boxes: a drive without a disk or a crash is an error code or an exit code. Children inherit this.
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    // JavaScript can pass any integer as a file descriptor. The default handler ends the process.
+    _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {});
+#ifdef _DEBUG
+    _CrtSetReportHook(crtReportHook);
+#endif
+
     for (int fd = 0; fd <= 2; ++fd) {
-        auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
+        auto handle = reinterpret_cast<HANDLE>(Bun__getOSFHandle(fd));
         if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) == FILE_TYPE_UNKNOWN) {
             // Ignore _close result. If it fails or not depends on used Windows
             // version. We will just check _open result.
-            _close(fd);
+            Bun__closeOSFHandle(fd);
             bun_is_stdio_null[fd] = 1;
             if (fd != _open("nul", O_RDWR)) {
                 RELEASE_ASSERT_NOT_REACHED();
             } else {
                 switch (fd) {
                 case 0: {
-                    SetStdHandle(STD_INPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == uv_get_osfhandle(fd));
+                    SetStdHandle(STD_INPUT_HANDLE, Bun__getOSFHandle(fd));
+                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == Bun__getOSFHandle(fd));
                     break;
                 }
                 case 1: {
-                    SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
+                    SetStdHandle(STD_OUTPUT_HANDLE, Bun__getOSFHandle(fd));
+                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == Bun__getOSFHandle(fd));
                     break;
                 }
                 case 2: {
-                    SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
+                    SetStdHandle(STD_ERROR_HANDLE, Bun__getOSFHandle(fd));
+                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == Bun__getOSFHandle(fd));
                     break;
                 }
                 default: {
@@ -1134,7 +1164,7 @@ extern "C" void bun_initialize_process()
     }
 
     // add ctrl+c handler on windows
-    Bun__setCTRLHandler(1);
+    SetConsoleCtrlHandler(Ctrlhandler, TRUE);
 #endif
 
 #if OS(DARWIN)
@@ -1149,13 +1179,7 @@ extern "C" void bun_initialize_process()
 #endif
 }
 
-#if OS(WINDOWS)
-extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
-{
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-#else
+#if !OS(WINDOWS)
 
 static bool can_open_as_nonblocking_tty(int32_t fd)
 {

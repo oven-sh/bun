@@ -429,8 +429,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_libuv_sys",
  "bun_opaque",
+ "bun_windows_sys",
  "libc",
  "strum",
 ]
@@ -628,7 +628,6 @@ name = "bun_errno"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_libuv_sys",
  "bun_windows_sys",
  "enum-map",
  "strum",
@@ -926,7 +925,6 @@ name = "bun_io"
 version = "0.0.0"
 dependencies = [
  "bitflags",
- "bstr",
  "bun_collections",
  "bun_core",
  "bun_dispatch",
@@ -1085,16 +1083,6 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_opaque",
-]
-
-[[package]]
-name = "bun_libuv_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
- "bun_windows_sys",
- "bun_wyhash",
- "strum",
 ]
 
 [[package]]
@@ -1407,7 +1395,6 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_errno",
- "bun_event_loop",
  "bun_paths",
  "bun_spawn",
  "bun_sys",
@@ -1640,7 +1627,6 @@ dependencies = [
  "bun_js_printer",
  "bun_jsc",
  "bun_libdeflate_sys",
- "bun_libuv_sys",
  "bun_lint",
  "bun_lint_driver",
  "bun_lsquic_sys",
@@ -1673,6 +1659,7 @@ dependencies = [
  "bun_sourcemap",
  "bun_sourcemap_jsc",
  "bun_spawn",
+ "bun_spawn_sys",
  "bun_sql_jsc",
  "bun_standalone_graph",
  "bun_sys",
@@ -1912,13 +1899,11 @@ name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_analytics",
  "bun_core",
  "bun_dispatch",
  "bun_errno",
  "bun_event_loop",
  "bun_io",
- "bun_opaque",
  "bun_output",
  "bun_ptr",
  "bun_spawn_sys",
@@ -1936,7 +1921,6 @@ dependencies = [
  "bstr",
  "bun_analytics",
  "bun_core",
- "bun_libuv_sys",
  "bun_sys",
  "bun_windows_sys",
  "enumset",
@@ -2035,7 +2019,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
- "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_windows_sys",
@@ -2163,7 +2146,6 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_http_types",
- "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",

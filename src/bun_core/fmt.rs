@@ -1253,15 +1253,19 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // The name of a Windows pipe cannot be an authority. Without the slashes it is the path of the URL.
+        let is_pipe_name = self.proto == URLProto::Unix
+            && self.hostname.is_some_and(|name| name.starts_with(b"\\"));
         write!(
             f,
-            "{}://",
+            "{}:{}",
             match self.proto {
                 URLProto::Http => "http",
                 URLProto::Https => "https",
                 URLProto::Unix => "unix",
                 URLProto::Abstract => "abstract",
-            }
+            },
+            if is_pipe_name { "" } else { "//" }
         )?;
 
         if let Some(hostname) = self.hostname {

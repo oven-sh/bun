@@ -114,7 +114,6 @@ if (process.platform === "win32") {
     "userenv.dll",
     "winmm.dll",
     "ws2_32.dll",
-    "wsock32.dll",
   ]);
 
   // vcruntime140_1.dll (__CxxFrameHandler4 only) is tolerated IF delay-loaded

@@ -1,10 +1,7 @@
 //! StatFS and BigIntStatFS classes from node:fs
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-// On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value
-// `sys_uv::statfs` returns / `uv_fs_statfs` writes into `req.ptr`). Field
-// names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
-// but `init` widens each field with `as i64` so either shape works.
+// The field names match on every platform; `init` widens each field with `as i64`.
 #[cfg(unix)]
 pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]

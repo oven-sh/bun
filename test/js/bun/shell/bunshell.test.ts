@@ -98,6 +98,11 @@ describe("bunshell", () => {
             .runAsTest(cmdstr)
         : "",
     );
+
+    // A Windows process exits with 32 bits.
+    test.skipIf(!isWindows).each([256, 512, 0x80000000])("%d is a failure", async code => {
+      await TestBuilder.command`cmd /c exit ${code} && echo success`.exitCode(1).stdout("").run();
+    });
   });
 
   describe("concurrency", () => {
@@ -1741,6 +1746,38 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo hi | ${BUN} -e 'process.exit(69)'`.exitCode(69).stdout("").runAsTest("last exit code 3");
 
+    TestBuilder.command`X=echo; Y=cat; $X hi | $Y | cat`.stdout("hi\n").runAsTest("builtins named by variables");
+    TestBuilder.command`${"echo"} hi | cat | ${"cat"}`.stdout("hi\n").runAsTest("builtins named by interpolation");
+    TestBuilder.command`(echo hi; echo there) | cat | (cat)`.stdout("hi\nthere\n").runAsTest("subshells and a builtin");
+
+    const echoStdin = `${$.escape(BUN)} -e 'process.stdin.pipe(process.stdout)'`;
+    for (const pipeline of [
+      "cat big.txt | cat | cat",
+      "Y=cat; cat big.txt | $Y | cat",
+      `cat big.txt | ${echoStdin} | cat`,
+      `${echoStdin} < big.txt | cat | ${echoStdin}`,
+      "(cat big.txt) | cat | (cat)",
+    ]) {
+      const big = Buffer.alloc(3_000_000, "0123456789abcde\n").toString();
+      TestBuilder.command`${{ raw: pipeline }}`
+        .file("big.txt", big)
+        .stdout(stdout => expect(stdout === big).toBe(true))
+        .runAsTest(`more than a pipe holds: ${pipeline.replaceAll(echoStdin, "bun")}`);
+    }
+
+    test.skipIf(!isWindows).each([
+      ["empty.exe", "", "Inappropriate file type or format"],
+      ["text.exe", "this is not an executable", "unknown error"],
+    ])("a command that Windows refuses to start is named with the reason: %s", async (name, content, reason) => {
+      using dir = tempDir("shell-refused", { [name]: content });
+      const { stdout, stderr, exitCode } = await $`./${name} argument`.cwd(String(dir)).nothrow().quiet();
+      expect({ stdout: `${stdout}`, stderr: `${stderr}`, exitCode }).toEqual({
+        stdout: "",
+        stderr: `bun: ${reason}: ./${name}\n`,
+        exitCode: 1,
+      });
+    });
+
     describe("pipeline stack behavior", () => {
       // Test deep pipeline chains to stress the stack implementation
       TestBuilder.command`echo 1 | echo 2 | echo 3 | echo 4 | echo 5 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
@@ -1990,6 +2027,28 @@ describe("deno_task", () => {
       .stderr("Stdout\nStderr\n")
       .quiet()
       .runAsTest("redirect stdout to stderr quiet");
+
+    // As after dup2(), each of the two is the child's to close.
+    describe.if(isWindows)(
+      "a child that closes a descriptor can still write to the one that was redirected to it",
+      () => {
+        const closes = (closed: number, other: number) => `
+        const { GetStdHandle, CloseHandle } = require("bun:ffi").dlopen("kernel32.dll", {
+          GetStdHandle: { args: ["i32"], returns: "ptr" },
+          CloseHandle: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        require("fs").writeSync(${closed}, "first\\n");
+        CloseHandle(GetStdHandle(${-10 - closed}));
+        require("fs").writeSync(${other}, "second\\n");
+      `;
+        TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${closes(1, 2)} 2>&1`
+          .stdout("first\nsecond\n")
+          .runAsTest("2>&1");
+        TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${closes(2, 1)} 1>&2`
+          .stderr("first\nsecond\n")
+          .runAsTest("1>&2");
+      },
+    );
 
     TestBuilder.command`echo hi > /dev/null`.quiet().runAsTest("redirect /dev/null");
 

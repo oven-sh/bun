@@ -16,19 +16,16 @@ use bun_jsc::{
     JsResult, SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
-#[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
 use bun_sys::{self as sys, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
-#[cfg(unix)]
 use crate::api::bun_process::ExtraPipe;
-#[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, CStrPtr, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
-use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_spawn::stdio::Stdio;
 use crate::api::bun_subprocess::{
     self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
 };
@@ -61,12 +58,7 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner
 
 bun_output::declare_scope!(Subprocess, hidden);
 
-// Stdio is platform-dependent: process.rs defines `PosixStdio` / `WindowsStdio`
-// as siblings; alias the active one here so the body stays platform-neutral.
-#[cfg(not(windows))]
-type SpawnOptionsStdio = spawn::PosixStdio;
-#[cfg(windows)]
-type SpawnOptionsStdio = spawn::WindowsStdio;
+type SpawnOptionsStdio = spawn::Stdio;
 
 // Reading the symbol address has no precondition (the value itself is a
 // rodata `const char*`); kept `safe` to match the identical declaration in
@@ -112,7 +104,7 @@ fn get_argv0(
 
     // This mimicks libuv's behavior, which mimicks execvpe
     // Only resolve from $PATH when the command is not an absolute path.
-    // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
+    // The spawn never appends .cmd/.bat, so a `\` path without one is still completed here.
     let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
         || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
     let path_to_use: &[u8] = if names_a_file {
@@ -196,7 +188,7 @@ fn get_argv(
 
     // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
     // re-tokenizes the command line with shell metacharacter rules
-    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
+    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). MSVCRT-style
     // quoting cannot make that safe, so reject arguments that cmd.exe would
     // reinterpret.
     let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
@@ -399,7 +391,6 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
-    #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
@@ -415,6 +406,8 @@ fn spawn_maybe_sync(
     let mut windows_hide: bool = false;
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
+    #[cfg(windows)]
+    let mut windows_overlapped_stdio = [false; 3];
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
     let mut terminal_info = SpawnedTerminal::default();
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
@@ -615,13 +608,21 @@ fn spawn_maybe_sync(
                 &mut cstr_storage,
             )?;
 
+            let mut extract_standard = |i: usize, value: JSValue| -> JsResult<()> {
+                #[cfg(windows)]
+                {
+                    windows_overlapped_stdio[i] = Stdio::is_overlapped(cx, value)?;
+                }
+                Stdio::extract(&mut stdio[i], cx, i as i32, value, is_sync)
+            };
+
             if let Some(stdio_val) = args.get(cx.global(), "stdio")? {
                 if !stdio_val.is_empty_or_undefined_or_null() {
                     if stdio_val.js_type().is_array() {
                         let mut stdio_iter = stdio_val.array_iterator(cx.global())?;
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)?;
+                            extract_standard(i as usize, value)?;
                             if i == 2 {
                                 break;
                             }
@@ -635,17 +636,10 @@ fn spawn_maybe_sync(
                             let mut new_item: Stdio = Stdio::Ignore;
                             Stdio::extract(&mut new_item, cx, i, value, is_sync)?;
 
-                            let opt = match new_item.as_spawn_option(i) {
-                                stdio::ResultT::Result(opt) => opt,
-                                stdio::ResultT::Err(e) => {
-                                    return Err(e.throw_js(cx.global()));
-                                }
-                            };
-                            #[cfg(not(windows))]
-                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
-                            #[cfg(windows)]
-                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
-                            if is_ipc {
+                            let opt = new_item
+                                .as_spawn_option(i)
+                                .map_err(|e| e.throw_js(cx.global()))?;
+                            if matches!(opt, SpawnOptionsStdio::Ipc) {
                                 ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                             }
                             extra_fds.push(opt);
@@ -659,15 +653,15 @@ fn spawn_maybe_sync(
                 }
             } else {
                 if let Some(value) = args.get(cx.global(), "stdin")? {
-                    Stdio::extract(&mut stdio[0], cx, 0, value, is_sync)?;
+                    extract_standard(0, value)?;
                 }
 
                 if let Some(value) = args.get(cx.global(), "stderr")? {
-                    Stdio::extract(&mut stdio[2], cx, 2, value, is_sync)?;
+                    extract_standard(2, value)?;
                 }
 
                 if let Some(value) = args.get(cx.global(), "stdout")? {
-                    Stdio::extract(&mut stdio[1], cx, 1, value, is_sync)?;
+                    extract_standard(1, value)?;
                 }
             }
 
@@ -891,7 +885,6 @@ fn spawn_maybe_sync(
                     #[cfg(not(unix))]
                     {
                         // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
-                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
                         stdio[0] = Stdio::Ignore;
                         stdio[1] = Stdio::Ignore;
                         stdio[2] = Stdio::Ignore;
@@ -976,14 +969,11 @@ fn spawn_maybe_sync(
                     ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                     let mut ipc_extra_fd_default = Stdio::Ipc;
                     let fd: i32 = ipc_channel + 3;
-                    match ipc_extra_fd_default.as_spawn_option(fd) {
-                        stdio::ResultT::Result(opt) => {
-                            extra_fds.push(opt);
-                        }
-                        stdio::ResultT::Err(e) => {
-                            return Err(e.throw_js(cx.global()));
-                        }
-                    }
+                    extra_fds.push(
+                        ipc_extra_fd_default
+                            .as_spawn_option(fd)
+                            .map_err(|e| e.throw_js(cx.global()))?,
+                    );
                     break 'brk fd;
                 } else {
                     break 'brk ipc_channel + 3;
@@ -1060,11 +1050,6 @@ fn spawn_maybe_sync(
                 .rare_data()
                 .spawn_sync_event_loop(&mut *jsc_vm_ptr)
         }) else {
-            // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
-            #[cfg(windows)]
-            for e in &mut extra_fds {
-                e.deinit();
-            }
             return Err(throw_spawn_sync_loop_init_failed(cx.global()));
         };
         Some(sync_loop.prepare(jsc_vm_ptr.cast()))
@@ -1091,7 +1076,7 @@ fn spawn_maybe_sync(
         None => None,
     };
 
-    let mut spawn_options = SpawnOptions {
+    let spawn_options = SpawnOptions {
         // Empty means "inherit the parent's working directory". Only chdir
         // when the user asked for it: the stored cwd path string can be stale
         // if the directory was renamed out from under the process (#33819).
@@ -1103,26 +1088,22 @@ fn spawn_maybe_sync(
         detached,
         uid,
         gid,
-        stdin: match stdio[0].as_spawn_option(0) {
-            stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => return Err(e.throw_js(cx.global())),
-        },
-        stdout: match stdio[1].as_spawn_option(1) {
-            stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => return Err(e.throw_js(cx.global())),
-        },
-        stderr: match stdio[2].as_spawn_option(2) {
-            stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => return Err(e.throw_js(cx.global())),
-        },
+        stdin: stdio[0]
+            .as_spawn_option(0)
+            .map_err(|e| e.throw_js(cx.global()))?,
+        stdout: stdio[1]
+            .as_spawn_option(1)
+            .map_err(|e| e.throw_js(cx.global()))?,
+        stderr: stdio[2]
+            .as_spawn_option(2)
+            .map_err(|e| e.throw_js(cx.global()))?,
         extra_fds: {
             // Record which extra-stdio slots are 'socket-fd' so we can
             // downgrade them from OwnedFd to UnownedFd after all fallible
-            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // init below succeeds. spawn_process pushes OwnedFd for
             // SocketFd so every error path's finalize_streams still closes
             // the bun-created fd; the caller-owns-it contract only begins
             // once the Subprocess is returned and .stdio[i] is readable.
-            #[cfg(not(windows))]
             for (j, e) in extra_fds.iter().enumerate() {
                 if matches!(e, SpawnOptionsStdio::SocketFd) {
                     socket_fd_indices.push(j);
@@ -1149,7 +1130,7 @@ fn spawn_maybe_sync(
         windows: spawn::WindowsOptions {
             hide_window: windows_hide,
             verbatim_arguments: windows_verbatim_arguments,
-            loop_: loop_handle,
+            overlapped_stdio: windows_overlapped_stdio,
         },
         #[cfg(any(target_os = "linux", target_os = "android"))]
         cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
@@ -1165,12 +1146,6 @@ fn spawn_maybe_sync(
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
         {
-            // Windows: close+free the heap `uv::Pipe` handles that
-            // `as_spawn_option` allocated and `spawn_process_windows` may have
-            // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
-            // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
-            // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
-            spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
                 // string we built above (lives in `cstr_storage`).
@@ -1198,16 +1173,12 @@ fn spawn_maybe_sync(
                 .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
         }
         Err(err) => {
-            // See EMFILE arm above.
-            spawn_options.deinit();
             return Err(cx
                 .global()
                 .throw_error(crate::Error::from(err), ": failed to spawn process"));
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
-                // See EMFILE arm above.
-                spawn_options.deinit();
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 if let Some(c) = &cgroup_dir
                     && err.syscall == sys::Tag::clone3
@@ -1250,7 +1221,7 @@ fn spawn_maybe_sync(
 
     // Use the isolated loop for spawnSync operations
     //
-    // Note: `PosixSpawnResult::to_process` consumes `self` but only reads
+    // Note: `SpawnResult::to_process` consumes `self` but only reads
     // `pid`/`pidfd`/`has_exited`. `stdin/stdout/stderr/extra_pipes` are still
     // needed afterward, so take those fields out first so the partial move is
     // explicit.
@@ -1260,8 +1231,7 @@ fn spawn_maybe_sync(
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     let process = spawned.to_process(loop_handle);
 
-    #[cfg(unix)]
-    let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
+    let ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
         spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
     } else {
         Fd::INVALID
@@ -1271,7 +1241,7 @@ fn spawn_maybe_sync(
     //
     // Note: build
     // the struct once with its final field values, then fill in the
-    // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
+    // address-dependent fields (maxbufs) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(cx.global()),
         process,
@@ -1322,8 +1292,6 @@ fn spawn_maybe_sync(
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
-    #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
@@ -1341,17 +1309,6 @@ fn spawn_maybe_sync(
         let mut mb = None;
         MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stdout_maxbuf.set(mb);
-    }
-
-    #[cfg(windows)]
-    if !is_sync {
-        if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess.ipc_data.set(Some(IPC::SendQueue::new(
-                ipc_mode,
-                subprocess_ipc_owner(subprocess_ptr),
-                IPC::SocketUnion::Uninitialized,
-            )));
-        }
     }
 
     let mut promise_for_stream: JSValue = JSValue::ZERO;
@@ -1373,45 +1330,20 @@ fn spawn_maybe_sync(
             // run. `finalizeStreams()` here only closes `stdio_pipes` and the
             // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
             // no-op.
-            #[cfg(unix)]
-            {
-                if let Some(fd) = spawned_stdout {
-                    if !stdio[1].borrows_caller_fd() {
-                        fd.close();
-                    }
-                }
-                if let Some(fd) = spawned_stderr {
-                    if !stdio[2].borrows_caller_fd() {
-                        fd.close();
-                    }
+            if let Some(fd) = spawned_stdout {
+                if !stdio[1].borrows_caller_fd() {
+                    fd.close();
                 }
             }
-            #[cfg(not(unix))]
-            {
-                use bun_libuv_sys::UvHandle as _;
-                for r in [spawned_stdout, spawned_stderr] {
-                    match r {
-                        spawn::WindowsStdioResult::Buffer(pipe) => {
-                            // `uv_close` is async — libuv keeps the raw handle pointer
-                            // until the next loop tick and then calls `on_pipe_close`,
-                            // which reclaims the allocation via `heap::take`. Leak the
-                            // Box so it outlives this scope; dropping it here would be
-                            // a use-after-free + double-free when the callback fires.
-                            Box::leak(pipe).close(Subprocess::on_pipe_close)
-                        }
-                        spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
-                        spawn::WindowsStdioResult::UnownedFd(_)
-                        | spawn::WindowsStdioResult::Unavailable => {}
-                    }
+            if let Some(fd) = spawned_stderr {
+                if !stdio[2].borrows_caller_fd() {
+                    fd.close();
                 }
             }
             subprocess.finalize_streams();
-            #[cfg(unix)]
             let _ = subprocess
                 .process_mut()
                 .kill_and_reap(&mut bun_core::ffi::zeroed::<Rusage>());
-            #[cfg(windows)]
-            let _ = subprocess.try_kill(SignalCode::SIGKILL);
             subprocess.process_mut().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
@@ -1453,12 +1385,9 @@ fn spawn_maybe_sync(
     // Existing terminals keep slave_fd for reuse.
     if let Some(info) = terminal_info.0.take() {
         terminal_js_value = info.js_value;
-        #[cfg(unix)]
         info.terminal.mark_inline_spawned();
         #[cfg(windows)]
         {
-            // ConPTY has no slave fd; this just marks inline_spawned.
-            info.terminal.close_slave_fd();
             // Release the ConDrv \Reference handle now that the child holds a
             // copy: conhost then exits on its own once the child disconnects
             // and the reader observes EOF without us having to tear ConPTY
@@ -1483,89 +1412,38 @@ fn spawn_maybe_sync(
         )
     });
 
-    // Note: Option (rather than an uninitialized value) since `IPC::Socket`
-    // is a tagged union (zeroed enum is UB) and it is only read on the
-    // assigned path.
-    #[cfg(unix)]
-    let mut posix_ipc_info: Option<IPC::Socket> = None;
-    #[cfg(unix)]
-    if !is_sync {
-        if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
-            let vm = unsafe { &mut *jsc_vm_ptr };
-            let loop_ = vm.uws_loop();
-            let raw_socket = vm.rare_data().spawn_ipc_group(loop_).from_fd(
-                bun_uws::SocketKind::SpawnIpc,
-                None,
-                core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
-                posix_ipc_fd.native(),
-                0,
-                true,
-            );
-            if !raw_socket.is_null() {
-                let socket = raw_socket;
-                subprocess.ipc_data.set(Some(IPC::SendQueue::new(
-                    mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
-                posix_ipc_info = Some(IPC::Socket::from(socket));
-            }
-        }
-    }
-
-    if let Some(ipc_data) = subprocess.ipc() {
-        #[cfg(unix)]
-        {
-            if let Some(posix_ipc_info) = posix_ipc_info {
-                if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
-                    // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
-                    // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = ipc_data.as_ctx_ptr() };
-                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
-                }
+    if !is_sync && let Some(mode) = maybe_ipc_mode {
+        // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
+        let vm = unsafe { &mut *jsc_vm_ptr };
+        let loop_ = vm.uws_loop();
+        let raw_socket = vm.rare_data().spawn_ipc_group(loop_).from_fd(
+            bun_uws::SocketKind::SpawnIpc,
+            None,
+            core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
+            ipc_fd,
+            0,
+            true,
+        );
+        if !raw_socket.is_null() {
+            subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+                mode,
+                subprocess_ipc_owner(subprocess_ptr),
+                IPC::SocketUnion::Uninitialized,
+            )));
+            let ipc_data = subprocess.ipc().expect("set above");
+            let ipc_socket = IPC::Socket::from(raw_socket);
+            if let Some(ctx) = ipc_socket.ext::<*mut IPC::SendQueue>() {
+                // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
+                // it stays valid for the socket's lifetime.
+                unsafe { *ctx = ipc_data.as_ctx_ptr() };
+                ipc_data.socket.set(IPC::SocketUnion::Open(ipc_socket));
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
             subprocess.stdio_pipes.with_mut(|v| {
                 v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
             });
+            ipc_data.write_version_packet(cx.global());
         }
-        #[cfg(not(unix))]
-        {
-            let idx = usize::try_from(ipc_channel).expect("int cast");
-            // The IPC channel is always a `buffer` pipe on Windows.
-            // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
-            // neutralize the slot up front so `finalizeStreams` can't
-            // double-close it (the Box would otherwise drop on reassignment).
-            let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
-                match core::mem::take(&mut pipes[idx]) {
-                    spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
-                    other => {
-                        // Restore the slot before panicking so the
-                        // `Subprocess` finalizer still sees the original
-                        // variant. Use
-                        // `unreachable!` (NOT `debug_assert!` — that would
-                        // compile out in release and feed null to
-                        // `windows_configure_server`, which immediately
-                        // dereferences it).
-                        pipes[idx] = other;
-                        unreachable!("IPC channel stdio is not a buffer pipe");
-                    }
-                }
-            });
-            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
-            // for the pipe's lifetime, so it must be the allocation root
-            // (write provenance), never one re-derived from `&SendQueue`.
-            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
-                let err_js = err.to_js(cx.global());
-                subprocess.deref();
-                return Err(cx.global().throw_value(err_js));
-            }
-        }
-        ipc_data.write_version_packet(cx.global());
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
@@ -1695,7 +1573,6 @@ fn spawn_maybe_sync(
     };
     if let Some(err) = &setup_err {
         // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
-        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
         // No wrapper finalizes a sync Subprocess, and only this call can reap its child: it is killed once
         // it is watched, and the error is thrown after the wait below has released everything.
@@ -1715,15 +1592,11 @@ fn spawn_maybe_sync(
     // after populating stdio_pipes; on those paths the caller never receives
     // the Subprocess, so the OwnedFd slot must remain for finalize_streams to
     // close.
-    #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
-                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
-                    let ExtraPipe::OwnedFd(fd) = *slot else {
-                        unreachable!()
-                    };
-                    *slot = ExtraPipe::UnownedFd(fd);
+                if let Some(slot) = pipes.get_mut(*j) {
+                    slot.release_to_caller();
                 }
             }
         });
@@ -1894,7 +1767,7 @@ fn spawn_maybe_sync(
 
                     if did_user_timeout {
                         did_timeout = true;
-                        let _ = subprocess.try_kill(subprocess.kill_signal);
+                        let _ = subprocess.must_kill(subprocess.kill_signal);
                     }
 
                     // Support bun:test timeouts AND spawnSync() timeout.
@@ -1917,7 +1790,7 @@ fn spawn_maybe_sync(
                                 .execution
                                 .kill_dangling_processes_on_timeout(cx.global());
                         }
-                        let _ = subprocess.try_kill(subprocess.kill_signal);
+                        let _ = subprocess.must_kill(subprocess.kill_signal);
                     }
                 }
             }
@@ -2035,7 +1908,7 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         errno: -UV_E::MFILE,
         path: BunString::EMPTY,
         #[cfg(windows)]
-        syscall: BunString::static_("uv_loop_init"),
+        syscall: BunString::static_("CreateIoCompletionPort"),
         #[cfg(any(target_os = "linux", target_os = "android"))]
         syscall: BunString::static_("epoll_create1"),
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -2131,7 +2004,7 @@ fn append_envp_from_js(
 
         // Windows environment variable names are case-insensitive: an env
         // object carrying `Path` (the usual casing there) must still drive
-        // the executable lookup, like libuv's spawn does.
+        // the executable lookup, as in Node.
         let line_bytes = line.as_bytes();
         let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {

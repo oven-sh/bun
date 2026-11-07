@@ -41,9 +41,9 @@ typedef SSIZE_T ssize_t;
 #include <sys/types.h>
 #endif
 
-#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 #define LIBUS_MAX_READY_POLLS 1024
 
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
                                                  struct us_poll_t *old_poll,
                                                  struct us_poll_t *new_poll,
@@ -59,8 +59,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #include "internal/eventing/epoll_kqueue.h"
 #endif
 
-#ifdef LIBUS_USE_LIBUV
-#include "internal/eventing/libuv.h"
+#ifdef LIBUS_USE_IOCP
+#include "internal/eventing/iocp.h"
 #endif
 
 #ifndef LIKELY
@@ -83,6 +83,7 @@ void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 /* With AddressSanitizer us_malloc and us_calloc are the C library's. Below bsd.h,
  * which defines _GNU_SOURCE for the system headers. */
 #include <stdlib.h>
+#include <time.h>
 
 /* mimalloc returns NULL when the system has no more memory or address space to
  * give. These never do: use them where the caller can't report a failure. */
@@ -106,15 +107,22 @@ static inline void *us_xcalloc(size_t count, size_t size) {
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
+#define LIBUS_SET_ERR(error) WSASetLastError(error)
 #define LIBUS_ECONNRESET WSAECONNRESET
+#define LIBUS_ECONNREFUSED WSAECONNREFUSED
 /* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
 #define LIBUS_ECANCELED WSAEINTR
+/* Winsock has none. This is the number of node:os constants and util.getSystemErrorName on Windows. */
+#define LIBUS_EPROTO 4046
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
+#define LIBUS_SET_ERR(error) (errno = (error))
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECONNREFUSED ECONNREFUSED
 #define LIBUS_ECANCELED ECANCELED
+#define LIBUS_EPROTO EPROTO
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */
@@ -125,6 +133,8 @@ enum {
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
   POLL_TYPE_UDP = 4,
+  /* Windows: the us_poll_t inside a FilePoll (src/io). Elsewhere those are told apart by a pointer tag. */
+  POLL_TYPE_FILE_POLL = 5,
 
   /* Two last bits */
   POLL_TYPE_POLLING_OUT = 8,
@@ -205,13 +215,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-#ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
 uint64_t us_internal_monotonic_ns(void);
-long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
-#endif
+/* The timeout for the loop's wait: the caller's (NULL to wait for ever), cut short by what the
+ * loop itself has to wake up for. Returns `timeout` or `storage`. */
+const struct timespec *us_internal_loop_bound_timeout(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage);
+struct us_internal_wait_t {
+    int released_heap_access;
+    int handed_off;
+};
+/* Around a wait that really parks the thread. Nothing may allocate or touch the JS heap in between. */
+void us_internal_loop_before_wait(struct us_loop_t *loop, uint64_t now_ns, struct us_internal_wait_t *state);
+void us_internal_loop_after_wait(struct us_loop_t *loop, const struct us_internal_wait_t *state);
 void us_internal_free_closed_sockets(us_loop_r loop);
 /* Defers closing `s` with `code` to us_internal_loop_post. */
 void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code);
@@ -252,13 +269,21 @@ void us_internal_async_set(struct us_internal_async *a,
 void us_internal_async_wakeup(struct us_internal_async *a);
 
 /* Eventing related */
-size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
-/* Closes a stopped poll's descriptor. On epoll/kqueue this is bsd_close_socket.
- * On libuv the descriptor must outlive the handle's uv_close, which can be
- * deferred (see us_poll_stop in eventing/libuv.c). */
+/* Closes a stopped poll's descriptor. For a socket this is bsd_close_socket. */
 void us_internal_poll_close_fd(struct us_poll_t *p);
+
+/* On Windows a us_socket_t can be an end of a named pipe, and a us_listen_socket_t a pipe server
+ * (eventing/iocp_pipe.c). None of the bsd_* calls apply to those: Winsock asks its providers about a handle it does
+ * not know, and on a synchronous handle that question waits for the read that is in progress. */
+static inline int us_internal_poll_is_pipe(struct us_poll_t *p) {
+#ifdef LIBUS_USE_IOCP
+    return p->state.kind != LIBUS_POLL_KIND_SOCKET;
+#else
+    return 0;
+#endif
+}
 
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
@@ -428,9 +453,7 @@ struct us_socket_t {
   struct us_connecting_socket_t *connect_state;
 };
 
-#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
-#endif
 
 /* Whether a raw write can send: the fd is open and no FIN went out. */
 static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
@@ -502,32 +525,16 @@ struct us_udp_socket_t {
     struct us_udp_socket_t *next;
 };
 
-#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
 /* Internal callback types are polls just like sockets */
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
   struct us_loop_t *loop;
-  int cb_expects_the_loop;
-  int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
   mach_port_t port;
   void *machport_buf;
-};
-
-#else
-
-struct us_internal_callback_t {
-  alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
-  struct us_loop_t *loop;
-  int cb_expects_the_loop;
-  int leave_poll_ready;
-  void (*cb)(struct us_internal_callback_t *cb);
-#ifdef LIBUS_USE_LIBUV
-  unsigned has_added_timer_to_event_loop;
 #endif
 };
-
-#endif
 
 /* Listen sockets are sockets, with their own embedded group for the listener
  * itself (for the accept-readable poll) plus the accepted-socket parameters

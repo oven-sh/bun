@@ -1,10 +1,9 @@
-//! Implements the event loop part of libuv's API for N-API addons on POSIX:
+//! Implements the event loop part of libuv's API for N-API addons:
 //! `uv_default_loop`, the `uv_async_t`, `uv_idle_t`, `uv_prepare_t`, `uv_check_t`
-//! and `uv_timer_t` handles, `uv_queue_work`, and the `uv_handle_t` functions.
-//! Every other `uv_*` symbol is a crash stub (uv-posix-stubs.c) or a header-only
-//! polyfill (uv-posix-polyfills.c). Bun doesn't run a libuv loop on POSIX, so
-//! these functions run on the VM's event loop. They follow libuv's ABI and
-//! threading rules:
+//! and `uv_timer_t` handles, `uv_queue_work`, the `uv_handle_t` functions, and `uv_cwd`.
+//! Every other `uv_*` symbol is a crash stub (uv-stubs.c) or a header-only
+//! polyfill (uv-polyfills.c). Bun doesn't run a libuv loop, so these functions
+//! run on the VM's event loop. They follow libuv's ABI and threading rules:
 //!
 //! - The addon allocates each handle or request and reads `data`, `loop` and
 //!   `type` from it ([`UvHandle`], [`UvReq`]). Bun owns the fields after those.
@@ -12,8 +11,8 @@
 //!   until its `close_cb` has run, and a request until its `after_work_cb` has run.
 //! - A `uv_loop_t*` points to a [`UvLoop`]. Each VM has one. Only its `data` word is ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
-//!   dispatch task per loop through the VM's [`VmHandle`], where libuv writes to an
-//!   eventfd. The task walks the loop's handles on the JS thread like `uv__async_io`.
+//!   dispatch task per loop through the VM's [`VmHandle`], where libuv wakes its
+//!   poll. The task walks the loop's handles on the JS thread like `uv__async_io`.
 //! - `auto_tick` (jsc_hooks.rs) runs idle and prepare handles before it polls and
 //!   check handles after. It doesn't block while an idle handle is started.
 //! - A timer is an [`EventLoopTimer`] in the VM's timer heap. It's too big for the
@@ -23,7 +22,7 @@
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 
@@ -78,10 +77,10 @@ impl Drop for CallbackScope<'_> {
     }
 }
 
-// `UV_E*` on posix is `-errno` (uv/errno.h).
-const UV_EINVAL: c_int = -libc::EINVAL;
-const UV_EBUSY: c_int = -libc::EBUSY;
-const UV_ECANCELED: c_int = -libc::ECANCELED;
+const UV_EINVAL: c_int = -bun_sys::UV_E::INVAL;
+const UV_EBUSY: c_int = -bun_sys::UV_E::BUSY;
+const UV_ECANCELED: c_int = -bun_sys::UV_E::CANCELED;
+const UV_ENOBUFS: c_int = -bun_sys::UV_E::NOBUFS;
 
 // Indexes into uv.h's `UV_HANDLE_TYPE_MAP` and `UV_REQ_TYPE_MAP`.
 const UV_ASYNC: c_uint = 1;
@@ -95,11 +94,12 @@ const UV_WORK: c_uint = 7;
 const UV_HANDLE_CLOSING: c_uint = 0x01;
 const UV_HANDLE_CLOSED: c_uint = 0x02;
 
-// `sizeof` each struct on 64-bit unix. The addon allocates them, so Bun's versions can't be bigger.
-const UV_ASYNC_T_SIZE: usize = 128;
+// `sizeof` each struct (64-bit). The addon allocates them, so Bun's versions can't be bigger.
+const UV_ASYNC_T_SIZE: usize = if cfg!(windows) { 224 } else { 128 };
 const UV_WATCHER_T_SIZE: usize = 120;
-const UV_TIMER_T_SIZE: usize = 152;
-const UV_WORK_T_SIZE: usize = 128;
+const UV_TIMER_T_SIZE: usize = if cfg!(windows) { 160 } else { 152 };
+const UV_REQ_T_SIZE: usize = if cfg!(windows) { 112 } else { 64 };
+const UV_WORK_T_SIZE: usize = if cfg!(windows) { 176 } else { 128 };
 
 type UvAsyncCb = unsafe extern "C" fn(*mut UvAsync);
 /// `uv_idle_cb`, `uv_prepare_cb` and `uv_check_cb` all have this signature.
@@ -497,7 +497,7 @@ pub(crate) unsafe extern "C" fn Bun__VirtualMachine__uvLoop(
 // uv_handle_t / uv_async_t
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Matches `UV_HANDLE_FIELDS` + `UV_HANDLE_PRIVATE_FIELDS` (uv.h, uv/unix.h), which
+/// Matches `UV_HANDLE_FIELDS` + `UV_HANDLE_PRIVATE_FIELDS` (uv.h, uv/unix.h, uv/win.h), which
 /// every handle starts with. Addons read `data`, `loop` and `type`. The rest is private.
 #[repr(C)]
 pub(crate) struct UvHandle {
@@ -1254,11 +1254,14 @@ pub(crate) struct UvReq {
     data: *mut c_void,
     type_: c_uint,
     reserved: [*mut c_void; 6],
+    /// `UV_REQ_PRIVATE_FIELDS`, which is empty in uv/unix.h.
+    #[cfg(windows)]
+    _private: [*mut c_void; 6],
 }
 
 const _: () = assert!(core::mem::offset_of!(UvReq, data) == 0);
 const _: () = assert!(core::mem::offset_of!(UvReq, type_) == 8);
-const _: () = assert!(core::mem::size_of::<UvReq>() == 64);
+const _: () = assert!(core::mem::size_of::<UvReq>() == UV_REQ_T_SIZE);
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1284,9 +1287,9 @@ pub(crate) struct UvWork {
 }
 
 const _: () = assert!(core::mem::offset_of!(UvWork, req) == 0);
-const _: () = assert!(core::mem::offset_of!(UvWork, loop_) == 64);
-const _: () = assert!(core::mem::offset_of!(UvWork, work_cb) == 72);
-const _: () = assert!(core::mem::offset_of!(UvWork, after_work_cb) == 80);
+const _: () = assert!(core::mem::offset_of!(UvWork, loop_) == UV_REQ_T_SIZE);
+const _: () = assert!(core::mem::offset_of!(UvWork, work_cb) == UV_REQ_T_SIZE + 8);
+const _: () = assert!(core::mem::offset_of!(UvWork, after_work_cb) == UV_REQ_T_SIZE + 16);
 const _: () = assert!(core::mem::size_of::<UvWork>() <= UV_WORK_T_SIZE);
 
 /// Runs one `uv_queue_work` request as a [`Job`]. The job's off-thread state is the
@@ -1419,6 +1422,35 @@ pub(crate) unsafe extern "C" fn uv_cancel(req: *mut UvReq) -> c_int {
     }
 }
 
+/// Implements `int uv_cwd(char* buffer, size_t* size)`. SAFETY: `buffer` has `*size` writable bytes.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int {
+    // SAFETY: fn contract.
+    if buffer.is_null() || size.is_null() || unsafe { *size } == 0 {
+        return UV_EINVAL;
+    }
+    let mut path = bun_paths::path_buffer_pool::get();
+    let mut cwd = match bun_sys::getcwd(&mut path[..]) {
+        Ok(len) => &path[..len],
+        Err(err) => return err.to_system_error().errno,
+    };
+    let is_root = cwd.len() == 1 || (cfg!(windows) && cwd.len() == 3 && cwd[1] == b':');
+    if !is_root && cwd.last() == Some(&bun_paths::SEP) {
+        cwd = &cwd[..cwd.len() - 1];
+    }
+    // SAFETY: fn contract.
+    unsafe {
+        if cwd.len() >= *size {
+            *size = cwd.len() + 1;
+            return UV_ENOBUFS;
+        }
+        core::ptr::copy_nonoverlapping(cwd.as_ptr(), buffer.cast::<u8>(), cwd.len());
+        *buffer.add(cwd.len()) = 0;
+        *size = cwd.len();
+    }
+    0
+}
+
 pub(crate) fn fix_dead_code_elimination() {
     bun_core::keep_symbols!(
         uv_async_init,
@@ -1428,6 +1460,7 @@ pub(crate) fn fix_dead_code_elimination() {
         uv_check_start,
         uv_check_stop,
         uv_close,
+        uv_cwd,
         uv_default_loop,
         uv_has_ref,
         uv_idle_init,

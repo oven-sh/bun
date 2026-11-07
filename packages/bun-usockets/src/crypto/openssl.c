@@ -2219,7 +2219,7 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
   return 1;
 }
 
-/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for its close_notify: Bun.serve's default idleTimeout. */
+/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s, behind what us_socket_tls_send_ahead was given), then for its close_notify: Bun.serve's default idleTimeout. */
 #define US_SSL_CLOSE_AFTER_SPILL_TIMEOUT 10
 
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
@@ -2494,8 +2494,7 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
        * responses still flush and the app's own end() completes the
        * shutdown. With SENT_SHUTDOWN both directions are closed; fall
        * through so a deferred graceful close completes (mirrors the
-       * ZERO_RETURN path; loop.c raw-closes this case first on the
-       * epoll/kqueue backend, the libuv one reaches here). */
+       * ZERO_RETURN path). */
       return s;
     }
   }
@@ -3062,12 +3061,7 @@ int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
   if (!us_internal_socket_can_raw_write(s)) {
     return ((struct loop_ssl_data *)s->group->loop->data.ssl_data)->ssl_send_error;
   }
-  if (!s->ssl_fatal_error) return 0;
-#ifdef _WIN32
-  return -UV_EPROTO;
-#else
-  return EPROTO;
-#endif
+  return s->ssl_fatal_error ? LIBUS_EPROTO : 0;
 }
 
 void us_internal_ssl_shutdown(struct us_socket_t *s) {
@@ -3215,6 +3209,11 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
    * land in the old (TCP) owner. Caller stashes ext, sets kind, fires its own
    * onOpen, then calls us_socket_start_tls_handshake() to send ClientHello. */
   return new_s;
+}
+
+void us_socket_tls_send_ahead(struct us_socket_t *s, const char *data, int length) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  ssl_emit((struct loop_ssl_data *)s->group->loop->data.ssl_data, s, data, (unsigned int)length, 0);
 }
 
 void us_socket_start_tls_handshake(struct us_socket_t *s) {

@@ -157,9 +157,8 @@
     ]
   },
   "src/runtime/node/node_fs.rs": {
-    "WorkPool::schedule*": 4,
+    "WorkPool::schedule*": 3,
     "owned_task!": [
-      "AsyncMkdirp",
       "ReaddirSubtask"
     ],
     "unsafe impl Send": [
@@ -182,7 +181,7 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/node/path_watcher.rs": {
-    "thread spawn": 2,
+    "thread spawn": 1,
     "unsafe impl Sync": [
       "PathWatcherManager"
     ]

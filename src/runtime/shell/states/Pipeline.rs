@@ -1,5 +1,7 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
+#[cfg(windows)]
+use crate::shell::builtin::Kind as BuiltinKind;
 use crate::shell::interpreter::{
     Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
 };
@@ -38,6 +40,22 @@ pub(crate) enum PipelineState {
     Done {
         exit_code: ExitCode,
     },
+}
+
+/// A builtin's end of a pipe is for the event loop. Anything that may start a program gets one for blocking reads and writes.
+#[cfg(windows)]
+fn pipe_end_for(item: &ast::PipelineItem) -> bun_sys::windows::pipe::End {
+    let name = match item {
+        ast::PipelineItem::Cmd(cmd) => cmd.name_and_args.first(),
+        _ => None,
+    };
+    bun_sys::windows::pipe::End {
+        overlapped: matches!(
+            name,
+            Some(ast::Atom::Simple(ast::SimpleAtom::Text(name))) if BuiltinKind::from_argv0(name).is_some()
+        ),
+        inheritable: false,
+    }
 }
 
 impl Default for PipelineState {
@@ -150,15 +168,26 @@ impl Pipeline {
         }
 
         let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
+        #[cfg(windows)]
+        let mut ends = items
+            .iter()
+            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
+            .map(pipe_end_for);
+        #[cfg(windows)]
+        let mut writer = ends.next();
         for _ in 0..cmd_count - 1 {
             // On POSIX use a
             // UNIX stream socketpair via `socketpairForShell` — on macOS
             // that variant intentionally skips SO_NOSIGPIPE so the
             // subprocess writing to a closed read end is killed by SIGPIPE
             // (like a real shell) instead of seeing EPIPE and printing
-            // "Broken pipe" to stderr; on Windows use pipe().
+            // "Broken pipe" to stderr.
             #[cfg(windows)]
-            let r = bun_sys::pipe();
+            let r = {
+                let reader = ends.next();
+                let write_end = core::mem::replace(&mut writer, reader);
+                bun_sys::windows::pipe::pair(reader.unwrap(), write_end.unwrap())
+            };
             #[cfg(unix)]
             let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
             match r {
@@ -193,6 +222,8 @@ impl Pipeline {
                 } else {
                     let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
                     r.set_interp(interp);
+                    #[cfg(windows)]
+                    r.set_nonblocking(pipe_end_for(item).overlapped);
                     InKind::Fd(r)
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
@@ -204,6 +235,8 @@ impl Pipeline {
                         pipes[cmd_idx][1],
                         io_writer::Flags {
                             pollable: true,
+                            #[cfg(windows)]
+                            nonblock: pipe_end_for(item).overlapped,
                             is_socket: cfg!(unix),
                             ..Default::default()
                         },

@@ -2300,7 +2300,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 };
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
-                if let Some(r) = bun_sys::windows::getenv_w(key_w) {
+                if let Some(r) = bun_sys::windows::getenv_w(key_w).filter(|r| !r.is_empty()) {
                     // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
                     // already backs the accumulated tail, so writing there clobbers it.
                     buf_size = match T::units_mut(&mut tmp_buf[resolved_device_len..]) {

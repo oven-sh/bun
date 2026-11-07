@@ -95,9 +95,6 @@ pub const RUNTIME_TRANSPILER_CACHE: bool = true;
 /// order to isolate your bug.
 pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 
-// TODO: fix Windows-only test failures in fetch-preconnect.test.ts
-pub const IS_FETCH_PRECONNECT_SUPPORTED: bool = env::IS_POSIX;
-
 const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
 
 // Mostly exists as a way to turn it off later, if necessary.

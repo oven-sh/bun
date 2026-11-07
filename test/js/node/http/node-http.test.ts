@@ -5,7 +5,18 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleSite,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  randomPort,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -1456,6 +1467,102 @@ describe("node:http", () => {
     });
 
     await promise;
+  });
+
+  test.if(isWindows)("test named pipe server", async () => {
+    const pipe = `\\\\.\\pipe\\bun-test-http-${Math.random().toString(32).slice(2)}`;
+    await using server = createServer((req, res) => res.end("Bun " + req.url));
+    server.listen(pipe);
+    await once(server, "listening");
+    expect(server.address()).toBe(pipe);
+    const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
+    get({ socketPath: pipe, path: "/a" }, resolve).on("error", reject);
+    expect(await text(await promise)).toBe("Bun /a");
+  });
+
+  // The end of the process takes along what a named pipe has yet to pass on.
+  const responseHead = `out.writeHead(200, { "Content-Length": body.length, Connection: "close" });`;
+  const rawHead = `out.write("HTTP/1.1 200 OK\\r\\n\\r\\n");`;
+  test.if(isWindows).each([
+    ["'finish'", "request", `${responseHead} out.on("finish", exit).end(body);`],
+    ["the callback of end()", "request", `${responseHead} out.end(body, exit);`],
+    ["the callback of write()", "request", `${responseHead} out.write(body, exit);`],
+    ["the callback of write() on an upgraded socket", "upgrade", `${rawHead} out.write(body, exit);`],
+    ["the callback of write() on the socket of a CONNECT", "connect", `${rawHead} out.write(body, exit);`],
+  ] as const)("what a server sends on a named pipe is not lost by process.exit() at %s", async (_, event, respond) => {
+    const size = 300_000;
+    const pipe = `\\\\.\\pipe\\bun-test-http-${Math.random().toString(32).slice(2)}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const body = Buffer.alloc(${size}, "h");
+          const exit = () => process.exit(0);
+          const server = require("node:http").createServer();
+          server.on("${event}", (req, out) => {
+            ${respond}
+            console.log("responded");
+          });
+          server.listen(process.env.PIPE, () => console.log("listening"));
+        `,
+      ],
+      env: { ...bunEnv, PIPE: pipe },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const output = proc.stdout.getReader();
+    await output.read();
+    const client = connect(pipe);
+    client.pause();
+    client.on("error", () => {});
+    await once(client, "connect");
+    client.write(
+      {
+        request: "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        upgrade: "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n",
+        connect: "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n",
+      }[event],
+    );
+    await output.read();
+    const chunks: Buffer[] = [];
+    client.on("data", (chunk: Buffer) => chunks.push(chunk)).resume();
+    const [exitCode] = await Promise.all([proc.exited, once(client, "close")]);
+    const wire = Buffer.concat(chunks);
+    expect({ body: wire.length - wire.indexOf("\r\n\r\n") - 4, exitCode }).toEqual({ body: size, exitCode: 0 });
+  });
+
+  // What is left of a large chunk is kept by reference.
+  test("a chunk that the program changes before it is written does not lengthen the response", async () => {
+    using dir = tempDir("http-changed-chunk", {});
+    const socketPath = isWindows
+      ? `\\\\.\\pipe\\bun-test-http-${crypto.randomUUID()}`
+      : path.join(String(dir), "s.sock");
+    const size = 300_000;
+    const responded = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      const body = Buffer.alloc(size, "a");
+      res.on("error", () => {}).socket!.on("error", () => {});
+      res.writeHead(200, { "Content-Length": size, Connection: "close" });
+      res.write(body);
+      body.fill("b");
+      res.end();
+      responded.resolve();
+    });
+    try {
+      await once(server.listen(socketPath), "listening");
+      const client = connect(socketPath);
+      client.pause();
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await responded.promise;
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk: Buffer) => chunks.push(chunk)).resume();
+      await once(client, "close");
+      const wire = Buffer.concat(chunks);
+      expect(wire.length - wire.indexOf("\r\n\r\n") - 4).toBe(size);
+    } finally {
+      server.close();
+    }
   });
 
   test("should not decompress gzip, issue#4397", async () => {

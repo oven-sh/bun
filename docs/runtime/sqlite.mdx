@@ -965,6 +965,8 @@ type UpdateHook = (
 
 A library that accepts a database from several runtimes can tell them apart: `db[Symbol.for("sqlite-type")]` is `"bun:sqlite"` for a `Database` and `"node:sqlite"` for a `DatabaseSync`.
 
+To see every SQL string that a `Database` receives, override `query()`, `prepare()`, `run()` and `exec()` in a subclass. None of the four calls another. `transaction()` runs its `BEGIN`, `COMMIT`, `ROLLBACK` and savepoint statements without calling any of the four.
+
 ### Datatypes
 
 | JavaScript type | SQLite type         |

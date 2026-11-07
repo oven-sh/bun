@@ -458,9 +458,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.current_chunk_parts.clear();
     }
 
-    /// The one place that adds a file to `bundled_files`. Interns the key,
-    /// pushes the file's `EdgeLists`, and grows `stale_files` so the new index
-    /// has a bit. Returns the index and whether the file already existed.
+    /// The one place that adds a file to `bundled_files`, `edge_lists` and
+    /// `stale_files`. Returns the index and whether the file already existed.
     fn add_node(
         &mut self,
         key: &[u8],
@@ -473,9 +472,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *gop.key_ptr = Box::<[u8]>::from(key);
             self.edge_lists.push(EdgeLists::default());
             if idx >= self.stale_files.bit_length {
-                // Grow in steps of 8 usize words (8*64 bits). A file that has
-                // no bit yet is not stale. The ">512 files" fixtures in
-                // test/bake/dev/{css,hot}.test.ts are sized to this step.
+                // 512-bit steps. The ">512 files" tests in test/bake/dev depend on it.
                 const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
                 self.stale_files
                     .resize((idx + 1).div_ceil(STEP) * STEP, false)?;

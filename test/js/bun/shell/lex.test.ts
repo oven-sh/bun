@@ -860,6 +860,99 @@ describe("lex shell", () => {
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
     });
 
+    describe("Unclosed quote", () => {
+      // The message that the `$` tag throws, or undefined when the tag accepts the script.
+      const thrown = (tag: () => unknown): string | undefined => {
+        try {
+          tag();
+        } catch (e) {
+          return (e as Error).message;
+        }
+      };
+      const lexError = (script: string) => thrown(() => $`${{ raw: script }}`);
+
+      test.each([
+        ["at the end of the script", `echo "abc`],
+        ["that swallows the rest of the script", `echo "start; touch MARKER; echo done`],
+        ["with a backslash as the last byte", `echo "abc\\`],
+        ["whose closing quote is escaped", `echo "abc\\"`],
+        ["around a path that ends in a backslash", `echo "C:\\foo\\"`],
+        ["at the end of a word", `echo hi"`],
+        ["in an assignment", `FOO="a`],
+        ["in a non-ASCII script", `echo "héllo`],
+        ["that a closing backtick cuts off", 'echo `echo "hi`'],
+        ["that a closing backtick cuts off inside a quoted word", 'echo "`echo "hi`"'],
+        ["in two backtick substitutions", 'echo `echo "a` `echo b"`'],
+      ])("double quote %s", (_, script) => {
+        expect(lexError(script)).toBe("Unclosed double quote");
+      });
+
+      test.each([
+        ["at the end of the script", `echo 'abc`],
+        ["that swallows the rest of the script", `echo 'start; touch MARKER`],
+        ["with a backslash as the last byte", `echo 'a\\`],
+        ["at the end of a word", `echo hi'`],
+        ["used as an apostrophe", `echo it's done`],
+        ["after a complete command", `echo a; '`],
+        ["in a non-ASCII script", `echo 'héllo`],
+      ])("single quote %s", (_, script) => {
+        expect(lexError(script)).toBe("Unclosed single quote");
+      });
+
+      // A lexer reports its open quote only when no lexer error came before it. These scripts were
+      // refused before the quote check existed, and only the first one gets a new message.
+      test.each([
+        ["a later error follows the quote error", 'echo `echo "hi` )', "Unclosed double quote\nUnexpected ')'"],
+        ["an earlier error stands alone", 'echo ) ; echo `echo "hi`', "Unexpected ')'"],
+        ["a quote open at the end of a command substitution", `echo $(echo "hi`, "Unclosed command substitution"],
+        ["a command substitution open at the end of a quote", `echo "$(echo hi`, "Unclosed command substitution"],
+        ["a quote open at the end of a subshell", `(echo 'hi`, "Unclosed subshell"],
+        ["a single quote that makes the closing backtick literal", "echo `echo 'hi`", "Unclosed command substitution"],
+        [
+          "`|&` stops the sublexer and leaves the rest of the script unpaired",
+          `echo "$(cmd |& tr -d '"')"`,
+          "Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.",
+        ],
+      ])("with another lexer error: %s", (_, script, message) => {
+        expect(lexError(script)).toBe(message);
+      });
+
+      test("with another lexer error: a JS object reference stops the sublexer inside its quote", () => {
+        expect(thrown(() => $`echo $(echo "${new Uint8Array(1)}")`)).toBe(
+          "JS object reference not allowed in double quotes",
+        );
+      });
+
+      // A lexer error stops the parse, so the open quote is reported in place of the parser's error.
+      test.each([
+        ["a background command", 'sleep 1 & echo "done', "Unclosed double quote"],
+        ["a subshell with a redirect", "(echo a) > x; echo it's", "Unclosed single quote"],
+        ["an `if` with no `fi`", 'if true; then echo "x', "Unclosed double quote"],
+        ["a redirect with no file", 'a>"', "Unclosed double quote"],
+      ])("in place of a parser error: %s", (_, script, message) => {
+        expect(lexError(script)).toBe(message);
+      });
+
+      // Every quote below is closed, or is data and not syntax.
+      for (const [name, script, stdout] of [
+        ["a path that ends in an escaped backslash", `echo "C:\\foo\\\\"`, "C:\\foo\\\n"],
+        ["a backslash before the closing single quote", `echo 'abc\\'`, "abc\\\n"],
+        ["a quote inside a command substitution inside a quote", `echo "a $(echo "b") c"`, "a b c\n"],
+        ["a quoted paren inside a command substitution", `echo "$(echo ")")"`, ")\n"],
+        ["a closed quote inside backticks inside a quote", 'echo "`echo "hi"`"', "hi\n"],
+        ["a quote that spans a newline", `echo "a\nb"`, "a\nb\n"],
+        ["an apostrophe inside double quotes", `echo "it's"`, "it's\n"],
+        ["an escaped apostrophe", `echo it\\'s`, "it's\n"],
+        ["an apostrophe in a comment", `echo hi # it's a comment`, "hi\n"],
+      ]) {
+        TestBuilder.command`${{ raw: script }}`.quiet().stdout(stdout).runAsTest(`accepted: ${name}`);
+      }
+      TestBuilder.command`echo ${'"'} ${"it's"}`
+        .quiet()
+        .stdout(`" it's\n`)
+        .runAsTest("accepted: interpolated quotes are data");
+    });
+
     // https://github.com/oven-sh/bun/issues/33235
     TestBuilder.command`(((( |||`
       .error("Unexpected EOF\nUnclosed subshell\nUnclosed subshell\nUnclosed subshell")

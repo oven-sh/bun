@@ -1778,6 +1778,112 @@ for (const graph of ["server", "ssr"] as const) {
     },
   });
 }
+for (const graph of ["server", "ssr"] as const) {
+  devTest(`css module in the ${graph} graph composes from a stylesheet with a syntax error`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: graph === "ssr" },
+    },
+    files: {
+      "base.module.css": `.base { font-weight: 700; }}`,
+      "button.module.css": `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
+      `,
+      "page.ts": `
+        import styles from "./button.module.css";
+        export const render = () =>
+          new Response(styles.btn.split(" ").map(name => name.replace(/_.*/, "")).sort().join(","));
+      `,
+      "routes/index.ts": `
+        import { render } from "../page.ts"${graph === "ssr" ? ` with { bunBakeGraph: "ssr" }` : ""};
+        export default () => render();
+      `,
+    },
+    async test(dev) {
+      // No graph has the browser's copy of these files. Each request still gets the error of the composed file.
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("base.module.css", `.base { font-weight: 700; }`);
+      await dev.fetch("/").equals("base,btn");
+      await dev.write("base.module.css", `.base { font-weight: 700; }}`, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("base.module.css", `.base { font-weight: 700; }`);
+      await dev.fetch("/").equals("base,btn");
+    },
+  });
+}
+for (const root of ["root.css", "root.module.css"]) {
+  devTest(`stylesheet of a server file imports a stylesheet with a syntax error (${root})`, {
+    framework: minimalFramework,
+    files: {
+      "child.css": `.child { color: red; }}`,
+      [root]: `
+        @import "./child.css";
+        .root { color: red; }
+      `,
+      "routes/index.ts": `
+        import "../${root}";
+        export default function (req, meta) {
+          return Response.json(meta.styles);
+        }
+      `,
+    },
+    async test(dev) {
+      // The route finds the failure of the imported file through the stylesheet that it imports.
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("child.css", `.child { color: red; }`);
+      const styles = (await (await dev.fetch("/")).json()) as string[];
+      expect(await dev.fetch(styles[0]).text()).toContain(".child {");
+      // No failure stays behind for a later request.
+      expect((await dev.fetch("/")).status).toBe(200);
+    },
+  });
+}
+devTest("css file that imports a file that is not css does not kill old styles", {
+  files: {
+    "theme.json": `{}`,
+    "styles.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await dev.write(
+      "styles.css",
+      `
+        @import "./theme.json";
+        body {
+          color: blue;
+        }
+      `,
+      {
+        errors: [`styles.css:1:1: error: Cannot import a ".json" file into a CSS file`],
+      },
+    );
+    await c.style("body").color.expect.toBe("red");
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          color: blue;
+        }
+      `,
+    );
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
 devTest("css module class names survive an import of a file that is not css", {
   files: {
     "index.html": emptyHtmlFile({

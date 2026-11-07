@@ -92,6 +92,35 @@ fn is_plain_private_accessor(prop: &Property) -> bool {
         )
 }
 
+/// What the name of the field of an undecorated `accessor #x` has behind `#x_accessor_storage`: digits, when the file declares a `#private` name of that form.
+fn accessor_storage_suffix<'a>(
+    symbols: &[js_ast::Symbol],
+    arena: &'a bun_alloc::Arena,
+) -> &'a [u8] {
+    let mut declared_digits: Option<usize> = None;
+    for symbol in symbols {
+        if !js_ast::Symbol::is_kind_private(symbol.kind) {
+            continue;
+        }
+        let name = symbol.original_name.slice();
+        let digits = name
+            .iter()
+            .rev()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if name[..name.len() - digits].ends_with(b"_accessor_storage") {
+            declared_digits = declared_digits.max(Some(digits));
+        }
+    }
+    // One digit more than any declared name has there, so no declared name is equal.
+    let mut suffix = BumpVec::<u8>::new_in(arena);
+    if let Some(digits) = declared_digits {
+        suffix.push(b'1');
+        suffix.extend(core::iter::repeat_n(b'0', digits));
+    }
+    suffix.into_bump_slice()
+}
+
 fn is_constructor(prop: &Property) -> bool {
     prop.flags.contains(Flags::Property::IsMethod)
         && !prop.flags.contains(Flags::Property::IsStatic)
@@ -233,37 +262,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"_accessor_storage"
     }
 
-    /// What the name of the field of an undecorated `accessor #x` has behind `#x_accessor_storage`: digits, when the file declares a `#private` name of that form.
-    fn accessor_storage_suffix(&mut self) -> &'a [u8] {
-        if let Some(suffix) = self.accessor_storage_suffix {
-            return suffix;
-        }
-        let mut declared_digits: Option<usize> = None;
-        for symbol in self.symbols.iter() {
-            if !js_ast::Symbol::is_kind_private(symbol.kind) {
-                continue;
-            }
-            let name = symbol.original_name.slice();
-            let digits = name
-                .iter()
-                .rev()
-                .take_while(|byte| byte.is_ascii_digit())
-                .count();
-            if name[..name.len() - digits].ends_with(b"_accessor_storage") {
-                declared_digits = declared_digits.max(Some(digits));
-            }
-        }
-        // One digit more than any declared name has there, so no declared name is equal.
-        let mut suffix = BumpVec::<u8>::new_in(self.arena);
-        if let Some(digits) = declared_digits {
-            suffix.push(b'1');
-            suffix.extend(core::iter::repeat_n(b'0', digits));
-        }
-        let suffix: &'a [u8] = suffix.into_bump_slice();
-        self.accessor_storage_suffix = Some(suffix);
-        suffix
-    }
-
     /// `{ "name": value }["name"]`: a property of that name is what names `value`, an anonymous function or class.
     fn named_by_key(&mut self, value: Expr, name: &'a [u8]) -> Expr {
         let can_be_removed_if_unused = self.expr_can_be_removed_if_unused(&value);
@@ -305,7 +303,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let accessor_name: &'a [u8] = self.symbols[accessor.ref_.inner_index() as usize]
             .original_name
             .slice();
-        let suffix = self.accessor_storage_suffix();
+        let suffix = *self
+            .accessor_storage_suffix
+            .get_or_insert_with(|| accessor_storage_suffix(&self.symbols, self.arena));
         let storage_name = self.bump_name3(accessor_name, b"_accessor_storage", suffix);
         let storage = self.new_sym(
             if prop.flags.contains(Flags::Property::IsStatic) {

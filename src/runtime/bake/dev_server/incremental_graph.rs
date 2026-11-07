@@ -301,8 +301,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
-    /// Every index below `bundled_files.count()` has a bit. Only `add_node`
-    /// grows it.
+    /// Every file has a bit. Only `add_node` grows it.
     pub(crate) stale_files: DynamicBitSetUnmanaged,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,

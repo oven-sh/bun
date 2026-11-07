@@ -1,7 +1,7 @@
 import { bunEnv, bunExe, isWindows } from "harness";
 import { createTest } from "node-harness";
 import { ChildProcess, exec, fork, spawn } from "node:child_process";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import path from "node:path";
 import util from "node:util";
 const { beforeAll, beforeEach, afterAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } =
@@ -175,6 +175,45 @@ describe("ChildProcess.spawn", () => {
       },
       { code: "ERR_UNKNOWN_SIGNAL", name: TYPE_ERR_NAME },
     );
+  });
+});
+
+// Node gives `syscall: "spawn"` to the errno errors that spawn() throws:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L440
+// An ERR_* error from the validation of an option is not one of them, though it has an own `code` too.
+describe("errors that spawn() throws", () => {
+  function thrownBy(options) {
+    try {
+      spawn(bunExe(), ["-e", "0"], options);
+    } catch (e) {
+      return e;
+    }
+    throw new Error("spawn() did not throw");
+  }
+
+  // The errno of a bad fd is a libuv number on Windows, so that platform has a case of its own.
+  it.skipIf(isWindows)("an errno error has the syscall", () => {
+    const thrown = thrownBy({ stdio: [99999] });
+    expect({ code: thrown.code, errno: thrown.errno, syscall: thrown.syscall }).toEqual({
+      code: "EBADF",
+      errno: -constants.errno.EBADF,
+      syscall: "spawn",
+    });
+  });
+
+  it.skipIf(!isWindows)("an errno error has the syscall on Windows", () => {
+    const thrown = thrownBy({ uid: 0 });
+    expect({ code: thrown.code, errno: typeof thrown.errno, syscall: thrown.syscall }).toEqual({
+      code: "ENOTSUP",
+      errno: "number",
+      syscall: "spawn",
+    });
+  });
+
+  // Bun.spawn() refuses a negative fd inside the try of ChildProcess.spawn(), where the syscall is stamped. Node makes it a pipe, and what Node refuses too is refused before that try.
+  it("an ERR_* error that Bun.spawn() throws has no syscall", () => {
+    const thrown = thrownBy({ stdio: [-5] });
+    expect({ code: thrown.code, keys: Object.keys(thrown) }).toEqual({ code: "ERR_INVALID_ARG_TYPE", keys: ["code"] });
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync, rmSync } from "node:fs";
 
 // Errors with a Node `code` get their prototype, including `toString`, from the native
 // error table (src/jsc/bindings/ErrorCode.cpp).
@@ -21,6 +21,40 @@ describe("node error toString()", () => {
       code: "ERR_INVALID_ARG_TYPE",
       string: `TypeError [ERR_INVALID_ARG_TYPE]: ${err.message}`,
     });
+  });
+
+  // The toString of a NodeError closes over the code of its class and does not read `this.code`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L462-L464
+  test("prints the code the error was made with, whatever `code` the receiver has", () => {
+    const err = nodeError();
+    const text = `TypeError [ERR_INVALID_ARG_TYPE]: ${err.message}`;
+    err.code = "CUSTOM";
+    expect(err.toString()).toBe(text);
+    delete (err as { code?: string }).code;
+    expect(err.toString()).toBe(text);
+    expect(err.toString.call({ name: "Name", message: "message" })).toBe("Name [ERR_INVALID_ARG_TYPE]: message");
+  });
+
+  // The toString of a SystemError reads `this.code`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L386-L388
+  test("a SystemError prints the code that the receiver has", () => {
+    using dir = tempDir("error-code-system-error-toString", {});
+    let err: any;
+    try {
+      rmSync(String(dir));
+    } catch (e) {
+      err = e;
+    }
+    const text = (code: string) => `SystemError [${code}]: ${err.message}`;
+    expect({ code: err.code, string: err.toString() }).toEqual({
+      code: "ERR_FS_EISDIR",
+      string: text("ERR_FS_EISDIR"),
+    });
+    err.code = "CUSTOM";
+    expect(err.toString()).toBe(text("CUSTOM"));
+    delete err.code;
+    expect(err.toString()).toBe(text("undefined"));
+    expect(err.toString.call({ name: "Name", code: "CODE", message: "message" })).toBe("Name [CODE]: message");
   });
 
   // A call resolved through a binding that a closure captures is compiled with the scope

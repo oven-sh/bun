@@ -149,6 +149,55 @@ A function that is nested more deeply than the thread has the stack for bails ou
 Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting
 of the source asks `Environment::has_stack()`, and the pipeline asks after each pass whether one has said no.
 
+### A store through a join
+
+InferMutationAliasingRanges walks from each store, and from each call that may store, to every value that it can
+change. Those values get one memo block with it. Upstream's walk passes over an entry for a node that it has come to
+before with the same kind. But an entry does not do the same at a node as every other: only a transitive one goes on
+to what a container holds, and one that came along an edge into a join does not go on to the other values of the join.
+So the walk can pass over the one entry that would have gone on:
+
+- `const first = w[0]; const y = c ? first : w; y.n = 1;` The walk comes to `w` as a value of `y`. It then passes over
+  `w` as what `first` was read from, and does not come to what `w` holds.
+- `const p = c ? a : b; const z = d ? p : a; z.n = 1;` The walk comes to `p` along the edge from `a`. It then passes
+  over `p` as a value of `z`, and does not come to `b`.
+
+Such a value keeps a memo block of its own, and each render runs the store again on the value of the first render.
+Which operand the walk comes to first decides it: upstream is right with the operands the other way round.
+
+With `EnvironmentConfig::missed_values_are_refused` such a function is not compiled: it gets the Todo "Support a
+store through a local that is one of several values" and is left as written. The switch is on, but for `bun lint`,
+which reports what the tools report. Every function that is compiled is compiled as without the switch: upstream's
+walk is as it was, and no mark and no range changes.
+
+- After the walk of a store, `AliasingState::note_missed_values` walks from the same place once more, against the
+  edges alone: to what the place can be, to what that was read from, and for a transitive arrival to what it holds.
+  It passes over a node only where it has come to it the same way before, as local or as transitive. It notes each
+  value that the walk of the store did not come to (`Environment::missed_values`).
+- It does not go along an edge as upstream's walk does. Along an edge a walk can come back to where it was:
+  `w.push(k)` reads `push` out of `w`, and the walk of the store into `w` comes from that read back to `w` as a
+  transitive arrival. Upstream passes that over in every order, and so a `push` changes the array alone.
+- When the scopes are known, `refuse_a_store_after_the_scope_of_a_missed_value` refuses the function if such a value
+  has a scope that ends before the store. A value with no scope is not cached, and a value in the scope of the store
+  is made again whenever the store runs, so those are right as they are.
+- Only a store is judged, and only in the outermost function. The callback of `useMemo` and a function that is
+  called where it stands are a part of that function by then. A call that may store and a store in another function
+  expression miss values the same way, and stay as in upstream (`react-compiler/CallThatMayStoreThroughAJoin`,
+  `react-compiler/StoreThroughAJoinInAFunction`).
+
+The second walk could mark what it comes to, so that the store and the value share a memo block. An earlier form of
+the rule did. The block of the store is then longer, and a component that is right today turns wrong where it has
+another store that the walk misses too: the values that the longer block makes are cached with it, and that store
+runs again on them. A function that is left as written cannot turn wrong.
+
+`react-compiler/StoreReachesEachValueOfAJoin` in `test/bundler/transpiler/react-compiler.test.ts` has a component for
+each of these. `a function with a store through a join is compiled as before or not at all`, in that file, builds a
+product of such components with and without the switch. The rule can go when upstream's walk comes to these values.
+
+The rule does not see a value that the container got in a statement of its own (`w.push(x)`, `tree.child = leaf`).
+The statement gave the value to a read of the container, and the second walk comes to that read only along an edge
+(`react-compiler/StoreReachesWhatAValueOfAJoinWasGiven`).
+
 ## Hook placement
 
 The compiler runs **per-function, post-visit** at the `S::Function` /

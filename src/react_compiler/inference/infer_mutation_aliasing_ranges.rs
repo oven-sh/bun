@@ -16,8 +16,8 @@
 
 use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap};
 
-use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
-use crate::hir::environment::Environment;
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant, cold_todo};
+use crate::hir::environment::{Environment, MissedValue};
 use crate::hir::type_config::{ValueKind, ValueReason};
 use crate::hir::visitors::{
     for_each_instruction_value_lvalue_mut, for_each_instruction_value_operand_mut,
@@ -572,6 +572,78 @@ impl AliasingState {
         }
         self.queue = queue;
     }
+
+    /// Not in upstream: `DESIGN.md`, "A store through a join". Notes each value that the walk of the store missed.
+    fn note_missed_values(
+        &mut self,
+        index: u32,
+        start: IdentifierId,
+        transitive: bool,
+        end: EvaluationOrder,
+        loc: Option<SourceLocation>,
+        env: &mut Environment,
+    ) {
+        let Some(start) = self.at(start) else {
+            return;
+        };
+        let walk_of_the_store = self.walks;
+        self.walks += 1;
+        let new_to_this_walk = self.walks << 2;
+        let mut queue = std::mem::take(&mut self.queue);
+        let entry = QueueEntry {
+            place: start,
+            transitive,
+            direction: Direction::Backwards,
+            kind: MutationKind::Definite,
+        };
+        queue.push(entry);
+        while let Some(QueueEntry {
+            place, transitive, ..
+        }) = queue.pop()
+        {
+            let node = &mut self.nodes[place as usize];
+            if matches!(node.value, NodeValue::Missing) {
+                continue;
+            }
+            if node.arrival < new_to_this_walk {
+                if node.arrival >> 2 != walk_of_the_store {
+                    env.missed_values.push(MissedValue {
+                        identifier: node.id,
+                        end,
+                        loc,
+                    });
+                }
+                node.arrival = new_to_this_walk;
+            }
+            // In this walk the low bits of `arrival` say how it came: 1 as local, 3 as transitive, which does both.
+            let how = if transitive { 3 } else { 1 };
+            if node.arrival & how == how {
+                continue;
+            }
+            node.arrival |= how;
+            let captures = if transitive {
+                node.captures
+            } else {
+                List::EMPTY
+            };
+            let sources = [
+                (node.created_from, true),
+                (node.aliases, transitive),
+                (node.maybe_aliases, transitive),
+                (captures, true),
+            ];
+            for (list, transitive) in sources {
+                for link in list.iter(&self.links).filter(|link| link.index < index) {
+                    queue.push(QueueEntry {
+                        place: link.node,
+                        transitive,
+                        ..entry
+                    });
+                }
+            }
+        }
+        self.queue = queue;
+    }
 }
 
 /// The legacy effect of each place of the instruction at hand.
@@ -688,6 +760,9 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     let mut index: u32 = 0;
 
     let should_record_errors = !is_function_expression && env.enable_validations();
+    // Not in upstream: `DESIGN.md`, "A store through a join".
+    let notes_missed_values =
+        !is_function_expression && env.config.missed_values_are_refused && env.enable_memoization();
 
     // Create nodes for params, context vars, and return
     for param in &func.params {
@@ -888,6 +963,16 @@ pub(crate) fn infer_mutation_aliasing_ranges(
             env,
             should_record_errors,
         );
+        if notes_missed_values && mutation.kind == MutationKind::Definite {
+            state.note_missed_values(
+                mutation.index,
+                mutation.place,
+                mutation.transitive,
+                EvaluationOrder(mutation.id.0 + 1),
+                mutation.loc,
+                env,
+            );
+        }
     }
 
     // Process renders
@@ -1205,6 +1290,23 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     }
 
     Ok(function_effects)
+}
+
+/// Not in upstream: `DESIGN.md`, "A store through a join". For when the scopes of the function are known.
+pub(crate) fn refuse_a_store_after_the_scope_of_a_missed_value(
+    env: &Environment,
+) -> Result<(), CompilerDiagnostic> {
+    for value in &env.missed_values {
+        let scope = env.identifiers[value.identifier.0 as usize].scope;
+        if scope.is_some_and(|scope| env.scopes[scope.0 as usize].range.end < value.end) {
+            return Err(cold_todo(
+                "Support a store through a local that is one of several values",
+                value.loc,
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 // =============================================================================

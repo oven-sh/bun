@@ -39,6 +39,15 @@ pub enum OutputMode {
     Lint,
 }
 
+/// A value that a store can change and that upstream's walk from it misses: `DESIGN.md`, "A store through a join".
+pub struct MissedValue {
+    pub identifier: IdentifierId,
+    /// Where the range of the value ends if the store changes it.
+    pub end: EvaluationOrder,
+    /// Of the store.
+    pub loc: Option<SourceLocation>,
+}
+
 pub struct Environment {
     // Counters
     pub next_block_id_counter: u32,
@@ -53,6 +62,9 @@ pub struct Environment {
 
     // Error accumulation
     pub errors: CompilerError,
+
+    /// Of the function at hand, from InferMutationAliasingRanges.
+    pub missed_values: Vec<MissedValue>,
 
     /// For what calls itself along the nesting of the source: [`Environment::has_stack`].
     /// It keeps to a thread's usual stack: a thread that has more has it for what cannot ask,
@@ -191,6 +203,7 @@ impl Environment {
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),
+            missed_values: Vec::new(),
             stack: bun_core::StackCheck::init()
                 .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
             is_out_of_stack: std::cell::Cell::new(false),

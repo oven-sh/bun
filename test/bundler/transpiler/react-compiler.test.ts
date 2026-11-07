@@ -3800,6 +3800,905 @@ describe("bundler", () => {
     });
   }
 
+  // A store through a local changes one of the objects that the local can hold, so each of them has to be in the memo
+  // block of the store. InferMutationAliasingRanges walks from the local to those objects, and it passes over a value
+  // that the walk has come to before, also where the second arrival has more to do than the first: go on to what an
+  // object or an array holds, or to the other values of a join. Such an object gets a memo block of its own, and each
+  // render runs the store again on the object of the first render. babel-plugin-react-compiler 1.0.0 does the same.
+  // With `EnvironmentConfig::missed_values_are_refused` such a function is left as written:
+  // src/react_compiler/DESIGN.md, "A store through a join".
+  // Each component renders several times on one memo cache and has to render what the plain build renders. `*` marks a
+  // render that got the element of the render before it. A component that is left as written has none.
+  const storeThroughAJoinOutput = `
+    ElementOrArray 2 2 200 200
+    ArrayOrElement 2 2* 200 200*
+    ElementOrArrayIf 2 2 200 200
+    NullishElementOrArray 2 2 201 201
+    NullishChain 2 2 201 201
+    DestructuredOrArray 2 2 200 200
+    ChildOrTree 2 2 201 201
+    OptionalChildOrTree 2 2 201 201
+    ChildIfAsked 2 2 200 200
+    LastOfAList 2 2 201 201
+    StepsIntoAList 2 2 201 201
+    PathIntoATree 2 2 201 201
+    JoinOfAJoin 2 2 200 200
+    JoinOfAJoinOtherOrder 2 2* 200 200*
+    NestedJoin 2 2 200 200
+    TwoJoins 2 2 200 200
+    JoinThenNullish 2 2 200 200
+    OneOfTwoLists "0/1" "0/1" "0/1"
+    SizeFromASwitch 100 200 300
+    ResultOfACallWithAJoinOfAJoin 2 2 200 200
+    FunctionWithAJoinOfAJoin 2 2 2
+    ElementStoreOfAFunction 2 2 2
+    ReassignedBetweenTwoStores 2 2 2
+    StateBetween 2 2 200 200
+    EffectBetween 2 2 200 200
+    ChildThenJoinOfAJoin 2 2* 200 200*
+    PushToAnArray {"n":1} {"n":1}* {"n":1}*
+    StoreThroughAJoinThenTheElement 2 2* 200 200*
+    HandlerOrData 1 1 200 200
+    MemoNextToTheStore 4 4 600 600
+    CallbackNextToTheStore 2 2 200 200
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/StoreReachesEachValueOfAJoin-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render, useCallback, useEffect, useMemo, useState } from "react";
+          import { same } from "./helpers";
+
+          // In the first twelve the local holds an object, or an array or an object that holds that object.
+          function ElementOrArray({ n }) {
+            const x = { n };
+            const w = [x];
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          // The operands the other way round: the walk comes to the array from its element first, and the component is
+          // compiled.
+          function ArrayOrElement({ n }) {
+            const x = { n };
+            const w = [x];
+            const first = w[0];
+            const y = n > 100 ? w : first;
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          function ElementOrArrayIf({ n }) {
+            const x = { n };
+            const w = [x];
+            const first = w[0];
+            let y;
+            if (n < 100) {
+              y = first;
+            } else {
+              y = w;
+            }
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          function NullishElementOrArray({ n }) {
+            const x = { n };
+            const w = [x];
+            const a = w;
+            const y = a[0] ?? a;
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          function NullishChain({ n }) {
+            const x = { n };
+            const w = [x];
+            const y = null ?? w[0] ?? w;
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          function DestructuredOrArray({ n }) {
+            const x = { n };
+            const w = [x];
+            const [first] = w;
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          function ChildOrTree({ n }) {
+            const leaf = { n };
+            const tree = { child: leaf };
+            const node = tree.child || tree;
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          function OptionalChildOrTree({ n }) {
+            const leaf = { n };
+            const tree = { child: leaf };
+            const node = tree?.child ?? tree;
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          function ChildIfAsked({ n }) {
+            const leaf = { n };
+            const tree = { child: leaf };
+            let node = tree;
+            if (n < 100) node = node.child;
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          function LastOfAList({ n }) {
+            const leaf = { n };
+            const list = { next: { next: leaf } };
+            let node = list;
+            while (node.next) node = node.next;
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          function StepsIntoAList({ n }) {
+            const leaf = { n };
+            const list = { next: { next: leaf } };
+            let node = list;
+            for (let i = 0; i < 2; i++) node = node.next;
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          function PathIntoATree({ n }) {
+            const leaf = { n };
+            const tree = { a: { b: leaf } };
+            let node = tree;
+            for (const key of ["a", "b"]) node = node[key];
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          // In the next seven one of the values of the join is a join itself, and both have one value.
+          function JoinOfAJoin({ n }) {
+            const b = { n };
+            const a = { n };
+            const p = n > 100 ? a : b;
+            const z = n < 100 ? p : a;
+            z.n = z.n + 1;
+            return <b>{b.n}</b>;
+          }
+
+          // The operands the other way round: the walk comes to the inner join before it comes to a.
+          function JoinOfAJoinOtherOrder({ n }) {
+            const b = { n };
+            const a = { n };
+            const p = n > 100 ? a : b;
+            const z = n > 100 ? a : p;
+            z.n = z.n + 1;
+            return <b>{b.n}</b>;
+          }
+
+          function NestedJoin({ n }) {
+            const b = { n };
+            const a = { n };
+            let chosen = a;
+            if (n < 100) {
+              chosen = n > 100 ? a : b;
+            }
+            chosen.n = chosen.n + 1;
+            return <b>{b.n}</b>;
+          }
+
+          function TwoJoins({ n }) {
+            const b = { n };
+            const a = { n };
+            let best = a;
+            if (n < 100) best = b;
+            let chosen = a;
+            if (n < 100) chosen = best;
+            chosen.n = chosen.n + 1;
+            return <b>{b.n}</b>;
+          }
+
+          function JoinThenNullish({ n }) {
+            const b = { n };
+            const a = { n };
+            const best = n < 100 ? b : a;
+            const chosen = best ?? a;
+            chosen.n = chosen.n + 1;
+            return <b>{b.n}</b>;
+          }
+
+          function OneOfTwoLists({ n, side }) {
+            const errors = [];
+            const warnings = [];
+            let target = errors;
+            if (n < 100) target = side === "l" ? errors : warnings;
+            target.push(n);
+            return <b>{errors.length + "/" + warnings.length}</b>;
+          }
+
+          // Reduced from VizLayout of grafana-ui.
+          function SizeFromASwitch({ width, height, placement, legendWidth, measuredWidth, measuredHeight }) {
+            let size = null;
+            switch (placement) {
+              case "bottom":
+                if (measuredHeight) {
+                  size = { width, height: height - measuredHeight };
+                }
+                break;
+              case "right":
+                if (measuredWidth) {
+                  size = { width: width - measuredWidth, height };
+                }
+                if (typeof legendWidth === "string") {
+                  break;
+                }
+                if (legendWidth != null) {
+                  if (!measuredWidth) {
+                    size = { width: width - legendWidth, height };
+                  }
+                }
+                break;
+            }
+            if (size?.width === 0) {
+              size.width = width;
+            }
+            if (size?.height === 0) {
+              size.height = height;
+            }
+            return <b>{size && size.width}</b>;
+          }
+
+          // In the next three the store is behind a call. What same returns can be its argument. The two functions tell
+          // their callers that they store into the parameter, or into what it holds.
+          function ResultOfACallWithAJoinOfAJoin({ n }) {
+            const b = { n };
+            const a = { n };
+            const p = n > 100 ? a : b;
+            const z = n < 100 ? p : a;
+            const result = same(z);
+            result.n = result.n + 1;
+            return <b>{b.n}</b>;
+          }
+
+          function FunctionWithAJoinOfAJoin({ n, k }) {
+            const b = { n };
+            const a = { n };
+            const calls = { k };
+            const store = value => {
+              calls.count = 1;
+              value.n = value.n + 1;
+            };
+            const p = n > 100 ? a : b;
+            const z = n < 100 ? p : a;
+            store(z);
+            return <b>{b.n}</b>;
+          }
+
+          function ElementStoreOfAFunction({ n, k }) {
+            const b = { n };
+            const a = { n };
+            const listOfB = [b];
+            const listOfA = [a];
+            const calls = { k };
+            const store = list => {
+              calls.count = 1;
+              const first = list[0];
+              first.n = first.n + 1;
+            };
+            const p = n > 100 ? listOfA : listOfB;
+            const z = n < 100 ? p : listOfA;
+            store(z);
+            return <b>{b.n}</b>;
+          }
+
+          // Two stores, and box gets v between them. The walk of the first comes to box as a value of the place that
+          // it stores through. That must not count for the walk of the second, which comes to box from u first.
+          function ReassignedBetweenTwoStores({ n, k }) {
+            const v = { n };
+            const u = { n };
+            let box = u;
+            const read = () => box;
+            box.m = k;
+            box = v;
+            const y = n < 100 ? box : u;
+            y.n = y.n + 1;
+            return <b title={read}>{v.n}</b>;
+          }
+
+          // In the next two a hook is called between the array and the store.
+          function StateBetween({ n }) {
+            const x = { n };
+            const w = [x];
+            const [step] = useState(1);
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + step;
+            return <b>{x.n}</b>;
+          }
+
+          function EffectBetween({ n }) {
+            const x = { n };
+            const w = [x];
+            useEffect(() => {
+              globalThis.seen = n;
+            }, [n]);
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return <b>{x.n}</b>;
+          }
+
+          // The next three are compiled, as without the rule. In the first the walk passes over tree once, and comes to
+          // leaf by another way.
+          function ChildThenJoinOfAJoin({ n }) {
+            const leaf = { n };
+            const tree = { child: null };
+            tree.child = leaf;
+            const other = { n: 0 };
+            const p = n > 100 ? other : tree;
+            const z = n < 100 ? p : other;
+            const child = tree.child;
+            const node = n === 1 ? child : z;
+            node.n = node.n + 1;
+            return <b>{leaf.n}</b>;
+          }
+
+          // A push changes the array alone. The walk comes back to the array from the push that was read out of it,
+          // and that is no reason to leave the function as written: x keeps a block of its own.
+          function PushToAnArray({ n, k }) {
+            const x = { n };
+            const w = [x];
+            w.push(k);
+            return <b>{x}</b>;
+          }
+
+          // The walk of the first store misses x. The second store comes to x, so the memo block of x holds both
+          // stores, and the first cannot run again on an x of an earlier render.
+          function StoreThroughAJoinThenTheElement({ n }) {
+            const x = { n };
+            const w = [x];
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            x.seen = true;
+            return <b>{x.n}</b>;
+          }
+
+          // The next three are right without the rule too, and are left as written with it. In each the store can change
+          // a value that has a memo block of its own: the function that h holds, and q. Without the rule that block and
+          // the block of the store have the same dependencies, or the store does not come to that value in these renders.
+          function HandlerOrData({ n }) {
+            const h = {
+              onSave: () => {
+                globalThis.title = "saved";
+              },
+              data: { n },
+            };
+            const t = n < 100 ? h.data : h;
+            t.touched = true;
+            return <b onClick={h.onSave}>{h.data.n}</b>;
+          }
+
+          function MemoNextToTheStore({ n }) {
+            const q = { k: n };
+            const x = { n };
+            const w = [x, q];
+            const v = useMemo(() => q.k * 2, [q]);
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return <b>{x.n + v}</b>;
+          }
+
+          function CallbackNextToTheStore({ n }) {
+            const q = { k: n };
+            const x = { n };
+            const w = [x, q];
+            const read = useCallback(() => q.k, [q]);
+            const first = w[0];
+            const y = n < 100 ? first : w;
+            y.n = y.n + 1;
+            return <b onClick={read}>{x.n}</b>;
+          }
+
+          const sameThenOther = [{ n: 1 }, { n: 1 }, { n: 200 }, { n: 200 }];
+          const otherK = [{ n: 1, k: 1 }, { n: 1, k: 2 }, { n: 1, k: 3 }];
+          function run(Component, renders = sameThenOther) {
+            let previous;
+            const results = renders.map(props => {
+              const element = render(Component, props);
+              const hit = element === previous ? "*" : "";
+              previous = element;
+              return JSON.stringify(element.children) + hit;
+            });
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          run(ElementOrArray);
+          run(ArrayOrElement);
+          run(ElementOrArrayIf);
+          run(NullishElementOrArray);
+          run(NullishChain);
+          run(DestructuredOrArray);
+          run(ChildOrTree);
+          run(OptionalChildOrTree);
+          run(ChildIfAsked);
+          run(LastOfAList);
+          run(StepsIntoAList);
+          run(PathIntoATree);
+          run(JoinOfAJoin);
+          run(JoinOfAJoinOtherOrder);
+          run(NestedJoin);
+          run(TwoJoins);
+          run(JoinThenNullish);
+          run(OneOfTwoLists, [1, 2, 3].map(n => ({ n, side: "r" })));
+          run(SizeFromASwitch, [100, 200, 300].map(width => ({ width, height: 50, placement: "right", legendWidth: width })));
+          run(ResultOfACallWithAJoinOfAJoin);
+          run(FunctionWithAJoinOfAJoin, otherK);
+          run(ElementStoreOfAFunction, otherK);
+          run(ReassignedBetweenTwoStores, otherK);
+          run(StateBetween);
+          run(EffectBetween);
+          run(ChildThenJoinOfAJoin);
+          run(PushToAnArray, otherK);
+          run(StoreThroughAJoinThenTheElement);
+          run(HandlerOrData);
+          run(MemoNextToTheStore);
+          run(CallbackNextToTheStore);
+        `,
+        "/helpers.js": /* js */ `
+          export function same(value) {
+            return value;
+          }
+        `,
+        // One memo cache per component, kept between renders, as a fiber keeps it.
+        "/node_modules/react/index.js": /* js */ `
+          const fibers = new Map();
+          let current;
+          exports.render = (Component, ...args) => {
+            current = fibers.get(Component);
+            if (!current) fibers.set(Component, (current = { cache: null }));
+            return Component(...args);
+          };
+          exports.memoCache = size =>
+            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+          exports.useMemo = make => make();
+          exports.useCallback = callback => callback;
+          exports.useState = value => [value, () => {}];
+          exports.useEffect = () => {};
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? storeThroughAJoinOutput : storeThroughAJoinOutput.replaceAll("*", "") },
+    });
+  }
+
+  // For the `todo` tests below: one memo cache for each component, kept between its renders.
+  const oneCacheForEachComponent = {
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+    "/node_modules/react/compiler-runtime.js": `
+      const caches = new Map();
+      exports.c = n => {
+        if (!caches.has(globalThis.rendering))
+          caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(globalThis.rendering);
+      };
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+  const rendersOf = /* js */ `
+    const sameThenOther = [{ n: 1 }, { n: 1 }, { n: 200 }, { n: 200 }];
+    const otherK = [{ n: 1, k: 1 }, { n: 1, k: 2 }, { n: 1, k: 3 }];
+    function run(Component, renders = sameThenOther) {
+      globalThis.rendering = Component;
+      console.log(Component.name + " " + renders.map(props => Component(props).children).join(" "));
+    }
+  `;
+
+  // The same joins, with a call in place of the store. Nothing is known of what the other file has: bump can store into
+  // its argument, bumpHeld into what its argument holds, and a Counter into what it was made with. The walk from such a
+  // call misses values as the walk from a store does, and the rule leaves it so: most calls of this kind store
+  // nothing, and each function that has one would be left as written. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/CallThatMayStoreThroughAJoin", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { bump, Counter, tools } from "./helpers";
+
+        function CallWithAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          bump(z);
+          return <b>{b.n}</b>;
+        }
+
+        function MethodWithAHolderOfAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          tools.bumpHeld({ held: z });
+          return <b>{b.n}</b>;
+        }
+
+        function NewWithAJoinOfAJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const p = n > 100 ? a : b;
+          const z = n < 100 ? p : a;
+          const counter = new Counter(z);
+          counter.count();
+          return <b>{b.n}</b>;
+        }
+
+        ${rendersOf}
+        run(CallWithAJoinOfAJoin);
+        run(MethodWithAHolderOfAJoinOfAJoin);
+        run(NewWithAJoinOfAJoin);
+      `,
+      "/helpers.js": /* js */ `
+        export function bump(value) {
+          value.n = value.n + 1;
+        }
+        export const tools = {
+          bumpHeld(holder) {
+            holder.held.n = holder.held.n + 1;
+          },
+        };
+        export class Counter {
+          constructor(value) {
+            this.value = value;
+          }
+          count() {
+            this.value.n = this.value.n + 1;
+          }
+        }
+      `,
+      ...oneCacheForEachComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        CallWithAJoinOfAJoin 2 2 200 200
+        MethodWithAHolderOfAJoinOfAJoin 2 2 200 200
+        NewWithAJoinOfAJoin 2 2 200 200
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The same store, where the array or the object got the other object in a statement of its own: the object has a
+  // memo block of its own, and each render prints one more. babel-plugin-react-compiler 1.0.0 does the same. In the
+  // first three the statement gave the object to a read of the array or of the tree. The second walk of the rule would
+  // come to that read along an edge alone, and it goes against the edges.
+  // The last three are a join that a push gave to the list, a store through a part of what was assigned, and an
+  // assignment through another name of the object.
+  itBundled("react-compiler/StoreReachesWhatAValueOfAJoinWasGiven", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function PushedElementOrArray({ n }) {
+          const x = { n };
+          const w = [];
+          w.push(x);
+          const first = w[0];
+          const y = n < 100 ? first : w;
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function AssignedChildOrTree({ n }) {
+          const leaf = { n };
+          const tree = {};
+          tree.child = leaf;
+          const node = tree.child ?? tree;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function LastOfAnAssignedList({ n }) {
+          const leaf = { n };
+          const list = { next: null };
+          list.next = leaf;
+          let node = list;
+          while (node.next) node = node.next;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function PushedJoin({ n }) {
+          const b = { n };
+          const a = { n };
+          const chosen = n < 100 ? a : b;
+          const list = [a];
+          list.push(chosen);
+          const last = list[list.length - 1];
+          last.n = last.n + 1;
+          return <b>{b.n}</b>;
+        }
+
+        function PartOfAssignedChildOrChild({ n }) {
+          const leaf = { n };
+          const child = { leaf };
+          const tree = { child: null };
+          tree.child = child;
+          const part = tree.child.leaf;
+          const node = n > 100 ? part : child;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+
+        function AssignedThroughAnotherName({ n }) {
+          const leaf = { n };
+          const tree = { child: null };
+          const same = tree;
+          same.child = leaf;
+          const node = tree.child ?? same;
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+        ${rendersOf}
+        run(PushedElementOrArray);
+        run(AssignedChildOrTree);
+        run(LastOfAnAssignedList);
+        run(PushedJoin);
+        run(PartOfAssignedChildOrChild);
+        run(AssignedThroughAnotherName);
+      `,
+      ...oneCacheForEachComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        PushedElementOrArray 2 2 200 200
+        AssignedChildOrTree 2 2 201 201
+        LastOfAnAssignedList 2 2 201 201
+        PushedJoin 1 1 201 201
+        PartOfAssignedChildOrChild 1 1 201 201
+        AssignedThroughAnotherName 2 2 201 201
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The same joins in a function expression. The rule looks at the stores of the component or hook alone. The walk of
+  // a function expression says what the function tells its callers, and here that is too little: that store changes
+  // b, that a store through the parameter reaches what the parameter holds, and that choose can return its second
+  // parameter. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/StoreThroughAJoinInAFunction", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function JoinOfAJoinInAFunction({ n }) {
+          const b = { n };
+          const a = { n };
+          const store = () => {
+            const p = n > 100 ? a : b;
+            const z = n < 100 ? p : a;
+            z.n = z.n + 1;
+          };
+          store();
+          return <b>{b.n}</b>;
+        }
+
+        function ParameterOrElement({ n, k }) {
+          const x = { n };
+          const w = [x];
+          const calls = { k };
+          const store = list => {
+            calls.count = 1;
+            const first = list[0];
+            const y = n < 100 ? first : list;
+            y.n = y.n + 1;
+          };
+          store(w);
+          return <b>{x.n}</b>;
+        }
+
+        function ReturnedJoinOfAJoin({ n, k }) {
+          const b = { n };
+          const a = { n };
+          const calls = { k };
+          const choose = (first, second) => {
+            calls.count = 1;
+            const p = n > 100 ? first : second;
+            return n < 100 ? p : first;
+          };
+          const z = choose(a, b);
+          z.n = z.n + 1;
+          return <b>{b.n}</b>;
+        }
+        ${rendersOf}
+        run(JoinOfAJoinInAFunction);
+        run(ParameterOrElement, otherK);
+        run(ReturnedJoinOfAJoin, otherK);
+      `,
+      ...oneCacheForEachComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        JoinOfAJoinInAFunction 2 2 200 200
+        ParameterOrElement 2 2 2
+        ReturnedJoinOfAJoin 2 2 2
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // A function that returns a part of its parameter tells its callers that it returns the parameter. A store through
+  // what it returns is then a store into the parameter alone, and what the parameter holds has a memo block of its own.
+  // No join is in it, and the walk passes over nothing. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/StoreThroughAPartThatAFunctionReturns", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function PartFromAFunction({ n, k }) {
+          const leaf = { n };
+          const tree = { child: leaf };
+          const calls = { k };
+          const childOf = value => {
+            calls.count = 1;
+            return value.child;
+          };
+          const node = childOf(tree);
+          node.n = node.n + 1;
+          return <b>{leaf.n}</b>;
+        }
+        ${rendersOf}
+        run(PartFromAFunction, otherK);
+      `,
+      ...oneCacheForEachComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "PartFromAFunction 2 2 2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // A store in the body of a loop, before the loop gives the local its next value. The walk of a store goes only along
+  // what the graph had before the store. It comes to the next value of the local through the join at the head of the
+  // loop, and stops there: that this value was read out of the list, or is b, comes later in the body. So leaf and b
+  // have a memo block of their own. The walk passes over nothing. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/StoreInALoopBeforeTheLocalGetsItsNextValue", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { bump } from "./helpers";
+
+        function MarkEachOfAList({ n }) {
+          const leaf = { n };
+          const list = { n: 0, next: { n: 0, next: leaf } };
+          let node = list;
+          while (node) {
+            node.n = node.n + 1;
+            node = node.next;
+          }
+          return <b>{leaf.n}</b>;
+        }
+
+        function StoreThenTheOther({ n }) {
+          const b = { n };
+          const a = { n };
+          let current = a;
+          for (let i = 0; i < 2; i++) {
+            current.n = current.n + 1;
+            current = b;
+          }
+          return <b>{b.n}</b>;
+        }
+
+        function CallThenTheOther({ n }) {
+          const b = { n };
+          const a = { n };
+          let current = a;
+          for (let i = 0; i < 2; i++) {
+            bump(current);
+            current = b;
+          }
+          return <b>{b.n}</b>;
+        }
+
+        ${rendersOf}
+        run(MarkEachOfAList);
+        run(StoreThenTheOther);
+        run(CallThenTheOther);
+      `,
+      "/helpers.js": /* js */ `
+        export function bump(value) {
+          value.n = value.n + 1;
+        }
+      `,
+      ...oneCacheForEachComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        MarkEachOfAList 2 2 201 201
+        StoreThenTheOther 2 2 201 201
+        CallThenTheOther 2 2 201 201
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // A store through what a method of an array or of a Map returns. For the compiler the method returns the array or
+  // the Map, and not a part of it. So the store is one into the array or the Map alone, and x has a memo block of its
+  // own. That is in what is known of the method, and not in the walk. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/StoreThroughWhatAMethodOfAContainerReturns", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function ElementAtOfAnArray({ n }) {
+          const x = { n };
+          const w = [x];
+          const y = w.at(0);
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        function ValueOfAMap({ n }) {
+          const x = { n };
+          const m = new Map([["key", x]]);
+          const y = m.get("key");
+          y.n = y.n + 1;
+          return <b>{x.n}</b>;
+        }
+
+        ${rendersOf}
+        run(ElementAtOfAnArray);
+        run(ValueOfAMap);
+      `,
+      ...oneCacheForEachComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        ElementAtOfAnArray 2 2 201 201
+        ValueOfAMap 2 2 201 201
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Codegen prints an instruction with an unnamed result inside the statement
   // that uses it, and every other instruction as a statement where it stands.
   // So a statement in the middle of an expression (the body of an inlined
@@ -4596,6 +5495,137 @@ describe("bundler", () => {
     },
   });
 });
+
+// With `EnvironmentConfig::missed_values_are_refused` a function is not compiled where a store can change a value
+// that upstream's walk misses: src/react_compiler/DESIGN.md, "A store through a join". Each function has to have the
+// text that it has without the switch, which `@missedValuesAreRefused:false` is, or the text of the plain build. The
+// components are each order of the operands of two joins that give an object or another one that can hold it. The
+// holder is an array literal, an array that a push fills, or an object that holds nothing. The joins are in the
+// component or in a function that it calls, and a store follows them.
+test.skipIf(!isDebug && !isASAN)(
+  "react-compiler: a function with a store through a join is compiled as before or not at all",
+  async () => {
+    const fills: Record<string, [string[], string]> = {
+      literal: [["const w = [x];"], "w[0]"],
+      push: [["const w = [];", "w.push(x);"], "w[0]"],
+      none: [["const w = { n };"], "x"],
+    };
+    const names: string[] = [];
+    const components: string[] = [];
+    for (const [fill, [fillLines, part]] of Object.entries(fills)) {
+      for (const where of ["here", "function"]) {
+        // P is what stands for the part where the joins are, C what stands for the holder.
+        const [P, C] = where === "function" ? ["u", "v"] : ["first", "w"];
+        for (const inner of ["PC", "CP"]) {
+          for (const other of ["P", "C"]) {
+            for (const order of ["pO", "Op"]) {
+              // With n = 200 each join gives the part.
+              const [a, b] = inner === "PC" ? [P, C] : [C, P];
+              const innerJoin = `const p = ${a === P ? "n > 100" : "n < 100"} ? ${a} : ${b};`;
+              const [l, r] = order === "pO" ? ["p", other === "P" ? P : C] : [other === "P" ? P : C, "p"];
+              const outerJoin = `${l === "p" ? "n > 100" : "n < 100"} ? ${l} : ${r}`;
+              const joins =
+                where === "function"
+                  ? [
+                      "const calls = { n };",
+                      `const choose = (u, v) => { calls.count = 1; ${innerJoin} return ${outerJoin}; };`,
+                      "const chosen = choose(first, w);",
+                    ]
+                  : [innerJoin, `const chosen = ${outerJoin};`];
+              const name = ["C", fill, where, inner, other, order].join("_");
+              names.push(name);
+              components.push(
+                [
+                  `function ${name}({ n }) {`,
+                  "const x = { n };",
+                  ...fillLines,
+                  `const first = ${part};`,
+                  ...joins,
+                  "chosen.n = chosen.n + 1;",
+                  "return <b>{x.n}</b>;",
+                  "}",
+                ].join("\n"),
+              );
+            }
+          }
+        }
+      }
+    }
+    // Each module gives what its components render and their text. The bundle has a name of its own for each component
+    // of each module, so the text has one name for all of them.
+    const source = `
+      import { render } from "react";
+      ${components.join("\n")}
+      export const rendered = [${names.join(", ")}].map(Component => [
+        [1, 1, 200, 200].map(n => render(Component, { n }).children).join(" "),
+        String(Component).replaceAll(Component.name, "Component"),
+      ]);
+    `;
+    using dir = tempDir("react-compiler-store-through-a-join", {
+      "entry.js": `
+        import { rendered as plain } from "./plain";
+        import { rendered as without } from "./without";
+        import { rendered as withIt } from "./with";
+        console.log(JSON.stringify({ plain, without, withIt }));
+      `,
+      "plain.jsx": `"use no memo";\n${source}`,
+      "without.jsx": `// @panicThreshold:"none" @missedValuesAreRefused:false\n${source}`,
+      "with.jsx": `// @panicThreshold:"none"\n${source}`,
+      // One memo cache per component, kept between renders, as a fiber keeps it.
+      "node_modules/react/index.js": `
+        const fibers = new Map();
+        let current;
+        exports.render = (Component, props) => {
+          current = fibers.get(Component);
+          if (!current) fibers.set(Component, (current = { cache: null }));
+          return Component(props);
+        };
+        exports.memoCache = size =>
+          (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+      `,
+      "node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+      "node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+      "node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+      "node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    });
+    await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      target: "browser",
+      reactCompiler: true,
+      // @ts-expect-error test-only option, not in bun-types
+      reactCompilerParseTestPragmas: true,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "entry.js")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    type Rendered = [rendered: string, text: string][];
+    const { plain, without, withIt }: Record<string, Rendered> = JSON.parse(stdout);
+    const isCompiled = ([, text]: Rendered[number]) => /\$\[\d+\]/.test(text);
+    const isRight = ([rendered]: Rendered[number], index: number) => rendered === plain[index][0];
+    expect({
+      components: plain.length,
+      compiledPlain: plain.filter(isCompiled).length,
+      compiledWithout: without.filter(isCompiled).length,
+      compiledWith: withIt.filter(isCompiled).length,
+      rightWithout: without.filter(isRight).length,
+      rightWith: withIt.filter(isRight).length,
+      neither: names.filter((name, index) => ![without[index][1], plain[index][1]].includes(withIt[index][1])),
+    }).toEqual({
+      components: 48,
+      compiledPlain: 0,
+      compiledWithout: 48,
+      compiledWith: 36,
+      rightWithout: 24,
+      rightWith: 34,
+      neither: [],
+    });
+  },
+);
 
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component

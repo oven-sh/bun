@@ -584,6 +584,8 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
                 env_bool!(enable_verbose_no_set_state_in_effect, val)
             }
             b"enableForest" => env_bool!(enable_forest, val),
+            // Not in upstream: a test builds with and without this refusal.
+            b"missedValuesAreRefused" => env_bool!(missed_values_are_refused, val),
 
             // ---- EnvironmentConfig: enums / lists / complex -----------------
             b"validateExhaustiveEffectDependencies" => {

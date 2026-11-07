@@ -228,6 +228,18 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // As in both tools. `EnvironmentConfig::missed_values_are_refused` is off for `bun lint`: with it, a
+  // `react(todo)` takes the place of the report for the function of `WriterBehindAJoinOfAJoin` (28:7).
+  test("a store through a join is reported for the values that the walk of the tools comes to", async () => {
+    const { diagnostics, exit } = await report(small.joins);
+    expect(diagnostics).toEqual(expected.reports.joins.diagnostics);
+    expect(locationsOf(diagnostics["joins.jsx"])).toEqual([
+      ["react(immutability)", 16, 7],
+      ["react(immutability)", 28, 7],
+    ]);
+    expect(exit).toBe(1);
+  });
+
   test("a module's own useMemo isn't React's, and an expression that contains JSX can't be evaluated earlier", async () => {
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);
@@ -611,6 +623,10 @@ describe.concurrent(
         "disabled.jsx": [],
         // All three are reported at the first write.
         "writes.jsx": Array(3).fill("react-hooks/immutability 5:3-5:4 Error: This value cannot be modified"),
+        // A store through a join: the functions of `HandlerOrData` (4:7) and of the last component have no report.
+        "joins.jsx": ["16:7-16:17", "28:7-28:17"].map(
+          position => `react-hooks/immutability ${position} Error: This value cannot be modified`,
+        ),
         "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
         "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
         "long.jsx": [

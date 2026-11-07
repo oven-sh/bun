@@ -694,6 +694,7 @@ pub(crate) fn run_reactive_scope_passes(
         "MergeOverlappingReactiveScopesHIR",
         crate::inference::merge_overlapping_reactive_scopes_hir(hir, env)
     );
+    crate::inference::refuse_a_store_after_the_scope_of_a_missed_value(env)?;
 
     pass!(
         env,

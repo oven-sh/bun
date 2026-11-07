@@ -3804,6 +3804,50 @@
     ]
    }
   },
+  "joins": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "joins.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a variable defined outside a component or hook is not allowed. Consider using an effect",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 7,
+         "length": 10,
+         "line": 16,
+         "offset": 334
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a variable defined outside a component or hook is not allowed. Consider using an effect",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 7,
+         "length": 10,
+         "line": 28,
+         "offset": 600
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "names": {
    "exit": 1,
    "files": 5,
@@ -4892,6 +4936,31 @@
       "column": 40,
       "endLine": 2,
       "endColumn": 41,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "joins.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a variable defined outside a component or hook is not allowed. Consider using an effect.\n\n  14 |   const h = {\n  15 |     onSave: () => {\n> 16 |       globalThis.title = \"saved\";\n     |       ^^^^^^^^^^ value cannot be modified\n  17 |     },\n  18 |     data: { n: props.n },\n  19 |   };",
+      "line": 16,
+      "column": 7,
+      "endLine": 16,
+      "endColumn": 17,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a variable defined outside a component or hook is not allowed. Consider using an effect.\n\n  26 |   const b = {\n  27 |     onSave: () => {\n> 28 |       globalThis.title = \"saved\";\n     |       ^^^^^^^^^^ value cannot be modified\n  29 |     },\n  30 |     n: props.n,\n  31 |   };",
+      "line": 28,
+      "column": 7,
+      "endLine": 28,
+      "endColumn": 17,
       "suggestions": []
      }
     ],

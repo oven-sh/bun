@@ -244,6 +244,64 @@ const writes = `export default function Component(props) {
 }
 `;
 
+/**
+ * A store through a join in a component. The walk from the store passes over a value that it has come to another way,
+ * so the order of the operands decides what is reported: the function that `h` holds when the walk comes to `h` from
+ * `h.data` first (`DataOrHandler`), and the function that `b` holds when the walk does not come to `b`.
+ */
+const joins = `export function HandlerOrData(props) {
+  const h = {
+    onSave: () => {
+      globalThis.title = "saved";
+    },
+    data: { n: props.n },
+  };
+  const t = props.n < 100 ? h.data : h;
+  t.touched = true;
+  return <b onClick={h.onSave}>{h.data.n}</b>;
+}
+
+export function DataOrHandler(props) {
+  const h = {
+    onSave: () => {
+      globalThis.title = "saved";
+    },
+    data: { n: props.n },
+  };
+  const t = props.n > 100 ? h : h.data;
+  t.touched = true;
+  return <b onClick={h.onSave}>{h.data.n}</b>;
+}
+
+export function WriterBehindAJoinOfAJoin(props) {
+  const b = {
+    onSave: () => {
+      globalThis.title = "saved";
+    },
+    n: props.n,
+  };
+  const a = { n: props.n };
+  const p = props.n > 100 ? a : b;
+  const z = props.n < 100 ? p : a;
+  z.n = z.n + 1;
+  return <b title={b}>{b.n}</b>;
+}
+
+export function WriterBehindAJoinOfAJoinOtherOrder(props) {
+  const b = {
+    onSave: () => {
+      globalThis.title = "saved";
+    },
+    n: props.n,
+  };
+  const a = { n: props.n };
+  const p = props.n > 100 ? a : b;
+  const z = props.n > 100 ? a : p;
+  z.n = z.n + 1;
+  return <b title={b}>{b.n}</b>;
+}
+`;
+
 /** These aren't React's hooks, despite their names. */
 const ownHooks = `export function Component(props) {
   const f = useCallback(() => [props.a()], [props.a()]);
@@ -635,6 +693,7 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
+  joins: { ".oxlintrc.json": rc(), "joins.jsx": joins },
   names: {
     ".oxlintrc.json": rc(),
     "own-hooks.tsx": ownHooks,
@@ -726,6 +785,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "casts.tsx": casts,
   "defaults.tsx": defaults,
   "writes.jsx": writes,
+  "joins.jsx": joins,
   "own-hooks.tsx": ownHooks,
   "defaults-with-jsx.jsx": defaultsWithJsx,
   "react-by-its-name.jsx": reactByItsName,

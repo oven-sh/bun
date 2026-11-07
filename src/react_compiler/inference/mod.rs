@@ -62,6 +62,7 @@ pub(crate) use flatten_reactive_loops_hir::flatten_reactive_loops_hir;
 pub(crate) use flatten_scopes_with_hooks_or_use_hir::flatten_scopes_with_hooks_or_use_hir;
 pub(crate) use infer_mutation_aliasing_effects::infer_mutation_aliasing_effects;
 pub(crate) use infer_mutation_aliasing_ranges::infer_mutation_aliasing_ranges;
+pub(crate) use infer_mutation_aliasing_ranges::refuse_a_store_after_the_scope_of_a_missed_value;
 pub(crate) use infer_reactive_places::infer_reactive_places;
 pub(crate) use infer_reactive_scope_variables::infer_reactive_scope_variables;
 pub(crate) use memoize_fbt_and_macro_operands_in_same_scope::memoize_fbt_and_macro_operands_in_same_scope;

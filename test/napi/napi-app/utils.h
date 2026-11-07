@@ -13,18 +13,21 @@ public:
   BlockingStdoutScope() {
     original = fcntl(1, F_GETFL);
     fcntl(1, F_SETFL, original & ~O_NONBLOCK);
-    setvbuf(stdout, nullptr, _IOFBF, 8192);
     fflush(stdout);
+    // Both runtimes start with stdout unbuffered. glibc keeps the existing
+    // 1-byte buffer when setvbuf is given a null buffer, so pass a real one.
+    setvbuf(stdout, buffer, _IOFBF, sizeof(buffer));
   }
 
   ~BlockingStdoutScope() {
     fflush(stdout);
     fcntl(1, F_SETFL, original);
-    setvbuf(stdout, nullptr, _IOLBF, 0);
+    setvbuf(stdout, nullptr, _IONBF, 0);
   }
 
 private:
   int original;
+  inline static char buffer[8192];
 };
 
 #endif

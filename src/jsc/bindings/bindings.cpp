@@ -767,6 +767,17 @@ static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* o
     return type == ProxyObjectType || (type == FinalObjectType && object->getPrototypeDirect() != globalObject->objectPrototype());
 }
 
+// Null if a Proxy of the chain is revoked.
+static JSObject* targetOfProxyChain(JSObject* object)
+{
+    while (auto* proxy = dynamicDowncast<ProxyObject>(object)) {
+        if (proxy->isRevoked())
+            return nullptr;
+        object = proxy->target();
+    }
+    return object;
+}
+
 // Jest's and vitest's `isDomNode`, but no getter or Proxy trap runs unless the value has an `isEqualNode`.
 static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, JSValue& isEqualNode)
 {
@@ -775,12 +786,9 @@ static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!mayBeDOMNode(globalObject, object))
         return false;
 
-    JSObject* target = object;
-    while (auto* proxy = dynamicDowncast<ProxyObject>(target)) {
-        if (proxy->isRevoked())
-            return false;
-        target = proxy->target();
-    }
+    JSObject* target = targetOfProxyChain(object);
+    if (!target)
+        return false;
     {
         // Scoped, because a VMInquiry slot forbids entering the VM while it's alive.
         PropertySlot inquiry(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
@@ -881,6 +889,18 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
+
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+std::optional<bool> servedCollectionsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2);
+
+// specialObjectsDequal takes a Set or a Map for unequal to a Proxy. For toEqual(), servedCollectionsDequal decides that pair. The test is not in the two arms: there it made each pair that a Set or Map scan compares 3 to 7 instructions dearer.
+template<bool isStrict, bool enableAsymmetricMatchers>
+static ALWAYS_INLINE bool isForServedCollections(bool equal, JSCell* collection, JSCell* other)
+{
+    if constexpr (enableAsymmetricMatchers && !isStrict)
+        return !equal && other->type() == ProxyObjectType && (collection->type() == JSSetType || collection->type() == JSMapType);
+    return false;
+}
 
 template<typename T>
 static bool looseFloatContentsEqual(std::span<const T> a, std::span<const T> b)
@@ -1152,10 +1172,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    if (isSpecialEqual.has_value() && !isForServedCollections<isStrict, enableAsymmetricMatchers>(*isSpecialEqual, c1, c2)) return WTF::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    if (isSpecialEqual.has_value() && !isForServedCollections<isStrict, enableAsymmetricMatchers>(*isSpecialEqual, c2, c1)) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
@@ -1288,6 +1308,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     if constexpr (enableAsymmetricMatchers) {
         if (mayBeDOMNode(globalObject, o1) || mayBeDOMNode(globalObject, o2)) {
+            if constexpr (!isStrict) {
+                // Here the pair is in its order, and isArray() has thrown for a revoked Proxy. specialObjectsDequal has neither.
+                if (o1->type() == ProxyObjectType || o2->type() == ProxyObjectType) {
+                    auto servedEqual = servedCollectionsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (servedEqual)
+                        return *servedEqual;
+                }
+            }
             auto nodesEqual = domNodesDequal(globalObject, scope, o1, o2, isStrict ? DOMNodeComparison::StrictEqual : DOMNodeComparison::Equal);
             RETURN_IF_EXCEPTION(scope, false);
             if (nodesEqual)
@@ -2259,6 +2288,282 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     }
 
     return std::nullopt;
+}
+
+// What Function.prototype.toString prints as `[native code]`.
+static bool isNativeFunction(JSValue value)
+{
+    if (!value.isCallable())
+        return false;
+    JSObject* object = asObject(value);
+#if ENABLE(AOT)
+    if (JSC::AOT::CompiledCallee::isCompiledCallee(object))
+        return JSC::AOT::belongsToBuiltinModule(object) || JSC::AOT::CompiledCallee::isBoundFunction(object);
+#endif
+    auto* function = dynamicDowncast<JSFunction>(object);
+    return !function || function->isHostOrPrivateBuiltinFunction();
+}
+
+// The `constructor` step of iterableEquality: one value. Jest 30.5.2 also takes two native functions of one name, as the Sets of two realms have. Vitest 4.1.12 does not. False if an exception is pending.
+static bool constructorsMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2)
+{
+    VM& vm = globalObject->vm();
+    JSValue constructor1 = o1->get(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue constructor2 = o2->get(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool same = JSValue::strictEqual(globalObject, constructor1, constructor2);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (same)
+        return true;
+    if (Bun__VM__isRunningVitestEntry(bunVM(globalObject)))
+        return false;
+    if (constructor1.isUndefinedOrNull() || constructor2.isUndefinedOrNull())
+        return false;
+    JSValue name1 = constructor1.get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue name2 = constructor2.get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool sameName = JSValue::strictEqual(globalObject, name1, name2);
+    RETURN_IF_EXCEPTION(scope, false);
+    return sameName && isNativeFunction(constructor1) && isNativeFunction(constructor2);
+}
+
+// One side of a Set or Map comparison that a Proxy takes part in. A Proxy is asked what script would ask it, as Jest 30.5.2 and Vitest 4.1.12 ask it.
+class ServedCollection {
+public:
+    ServedCollection(ThrowScope& scope, JSObject* object, JSObject* target)
+        : m_scope(scope)
+        , m_object(object)
+        , m_isMap(target->type() == JSMapType)
+        , m_targetIsCollection(m_isMap || target->type() == JSSetType)
+        , m_isProxy(object != target)
+    {
+    }
+
+    bool isMap() const { return m_isMap; }
+    bool isSetOrMap() const { return m_targetIsCollection && !m_isProxy; }
+    bool targetIsCollection() const { return m_targetIsCollection; }
+
+    // The gate of Jest and Vitest is `!!object[Symbol.iterator]`. The method is read here only.
+    bool servesIterator(JSGlobalObject* globalObject)
+    {
+        if (!m_isProxy)
+            return true;
+        m_iteratorMethod = m_object->get(globalObject, globalObject->vm().propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(m_scope, false);
+        return m_iteratorMethod.toBoolean(globalObject);
+    }
+
+    JSValue size(JSGlobalObject* globalObject)
+    {
+        if (m_isProxy)
+            return m_object->get(globalObject, globalObject->vm().propertyNames->size);
+        return jsNumber(m_isMap ? uncheckedDowncast<JSMap>(m_object)->size() : uncheckedDowncast<JSSet>(m_object)->size());
+    }
+
+    bool has(JSGlobalObject* globalObject, JSValue key)
+    {
+        if (!m_isProxy)
+            return m_isMap ? uncheckedDowncast<JSMap>(m_object)->has(globalObject, key) : uncheckedDowncast<JSSet>(m_object)->has(globalObject, key);
+        JSValue has = callMethod(globalObject, globalObject->vm().propertyNames->has, key, "has is not a function"_s);
+        RETURN_IF_EXCEPTION(m_scope, false);
+        return has.toBoolean(globalObject);
+    }
+
+    JSValue get(JSGlobalObject* globalObject, JSValue key)
+    {
+        if (!m_isProxy)
+            return uncheckedDowncast<JSMap>(m_object)->get(globalObject, key);
+        return callMethod(globalObject, globalObject->vm().propertyNames->get, key, "get is not a function"_s);
+    }
+
+    // Starts a walk at the first member. It closes the walk before, as `for...of` closes an iterator that it leaves early.
+    void iterate(JSGlobalObject* globalObject)
+    {
+        close(globalObject);
+        RETURN_IF_EXCEPTION(m_scope, void());
+        VM& vm = globalObject->vm();
+        if (m_isProxy) {
+            m_served = iteratorForIterable(globalObject, m_object, m_iteratorMethod);
+            RETURN_IF_EXCEPTION(m_scope, void());
+            m_isOpen = true;
+        } else if (m_isMap)
+            m_entries = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(m_object), IterationKind::Entries);
+        else
+            m_members = JSSetIterator::create(vm, globalObject->setIteratorStructure(), uncheckedDowncast<JSSet>(m_object), IterationKind::Keys);
+    }
+
+    // False at the end of the walk, and if an exception is pending. A Map gives `entry` for valueOf().
+    bool next(JSGlobalObject* globalObject, JSValue& key, JSValue& entry)
+    {
+        if (m_members)
+            return m_members->next(globalObject, key);
+        if (m_entries)
+            return m_entries->nextKeyValue(globalObject, key, entry);
+        if (!m_isOpen)
+            return false;
+        // An iterator that throws or that is at its end is not closed.
+        m_isOpen = false;
+        JSValue step = iteratorStep(globalObject, m_served);
+        RETURN_IF_EXCEPTION(m_scope, false);
+        if (step.isFalse())
+            return false;
+        entry = iteratorValue(globalObject, step);
+        RETURN_IF_EXCEPTION(m_scope, false);
+        m_isOpen = true;
+        if (!m_isMap) {
+            key = entry;
+            return true;
+        }
+        key = entry.get(globalObject, static_cast<unsigned>(0));
+        RETURN_IF_EXCEPTION(m_scope, false);
+        return true;
+    }
+
+    // The value of an entry that a Proxy serves is read when script reads it: after its key is found.
+    JSValue valueOf(JSGlobalObject* globalObject, JSValue entry)
+    {
+        return m_isProxy ? entry.get(globalObject, static_cast<unsigned>(1)) : entry;
+    }
+
+    // An exception that is pending stays the exception.
+    void close(JSGlobalObject* globalObject)
+    {
+        m_members = nullptr;
+        m_entries = nullptr;
+        if (!std::exchange(m_isOpen, false))
+            return;
+        iteratorClose(globalObject, m_served.iterator);
+        RETURN_IF_EXCEPTION(m_scope, void());
+    }
+
+private:
+    JSValue callMethod(JSGlobalObject* globalObject, const Identifier& name, JSValue argument, ASCIILiteral notCallable)
+    {
+        JSValue method = m_object->get(globalObject, name);
+        RETURN_IF_EXCEPTION(m_scope, {});
+        MarkedArgumentBuffer arguments;
+        arguments.append(argument);
+        JSValue result = JSC::call(globalObject, method, m_object, arguments, notCallable);
+        RETURN_IF_EXCEPTION(m_scope, {});
+        return result;
+    }
+
+    // The scope of the caller. With a scope of its own, each member above would leave its caller a check to make.
+    ThrowScope& m_scope;
+    JSObject* m_object;
+    bool m_isMap;
+    bool m_targetIsCollection;
+    bool m_isProxy;
+    JSSetIterator* m_members { nullptr };
+    JSMapIterator* m_entries { nullptr };
+    JSValue m_iteratorMethod;
+    IterationRecord m_served;
+    bool m_isOpen { false };
+};
+
+// The rule of Jest and Vitest for a Set and a Map: `has` of the second value, then its members. False if an exception is pending. The caller closes the walks.
+static bool servedMembersDequal(const DeepEqualsMode& mode, JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSValue, JSValue>, 16>& stack, ThrowScope& scope, ServedCollection& collection1, ServedCollection& collection2)
+{
+    bool isMap = collection1.isMap();
+    collection1.iterate(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue key1, entry1;
+    while (collection1.next(globalObject, key1, entry1)) {
+        bool found = collection2.has(globalObject, key1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (found && isMap) {
+            JSValue value1 = collection1.valueOf(globalObject, entry1);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue value2 = collection2.get(globalObject, key1);
+            RETURN_IF_EXCEPTION(scope, false);
+            found = mode.deepEquals(globalObject, value1, value2, gcBuffer, stack, scope, false);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (found)
+            continue;
+
+        collection2.iterate(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue key2, entry2;
+        while (!found && collection2.next(globalObject, key2, entry2)) {
+            found = mode.deepEquals(globalObject, key1, key2, gcBuffer, stack, scope, false);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (found && isMap) {
+                JSValue value1 = collection1.valueOf(globalObject, entry1);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue value2 = collection2.valueOf(globalObject, entry2);
+                RETURN_IF_EXCEPTION(scope, false);
+                found = mode.deepEquals(globalObject, value1, value2, gcBuffer, stack, scope, false);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+        }
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!found)
+            return false;
+    }
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+// A pair with a Proxy. nullopt: the pair has no rule here, and the property walk decides.
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+NEVER_INLINE std::optional<bool> servedCollectionsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
+{
+    JSObject* target1 = targetOfProxyChain(o1);
+    JSObject* target2 = targetOfProxyChain(o2);
+    // isArray() in Bun__deepEquals has thrown for a revoked Proxy.
+    ASSERT(target1 && target2);
+    ServedCollection collection1(scope, o1, target1);
+    ServedCollection collection2(scope, o2, target2);
+    if (!collection1.targetIsCollection() && !collection2.targetIsCollection())
+        return std::nullopt;
+
+    bool bothStandForCollection = collection1.targetIsCollection() && collection2.targetIsCollection();
+    if (bothStandForCollection) {
+        bothStandForCollection = collection1.servesIterator(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (bothStandForCollection) {
+        bothStandForCollection = collection2.servesIterator(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (!bothStandForCollection) {
+        if (collection1.isSetOrMap() || collection2.isSetOrMap())
+            return false;
+        // Jest and Vitest compare Object.prototype.toString of a pair that is not two iterables, then the properties.
+        JSString* tag1 = Bun::objectPrototypeToStringOutOfLine(globalObject, o1);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSString* tag2 = Bun::objectPrototypeToStringOutOfLine(globalObject, o2);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool sameTag = tag1->equal(globalObject, tag2);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!sameTag)
+            return false;
+        return std::nullopt;
+    }
+    if (collection1.isMap() != collection2.isMap())
+        return false;
+
+    bool sameConstructor = constructorsMatch(globalObject, scope, o1, o2);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!sameConstructor)
+        return false;
+    JSValue size1 = collection1.size(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue size2 = collection2.size(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool sameSize = JSValue::strictEqual(globalObject, size1, size2);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!sameSize)
+        return false;
+
+    bool equal = servedMembersDequal(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, collection1, collection2);
+    collection1.close(globalObject);
+    collection2.close(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return equal;
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>

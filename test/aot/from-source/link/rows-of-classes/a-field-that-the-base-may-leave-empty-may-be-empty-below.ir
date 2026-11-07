@@ -1,0 +1,14 @@
+# Which fields a row of constructors leaves empty is found down the row: below a base whose whole list of fields a class takes, only the own fields and what the base leaves empty are asked.
+# The constructor of the base fills `a` on one way alone. So `a` may be empty in the base and in the class below it, which fills nothing more; `b` is filled in both.
+# -- source: a-field-that-the-base-may-leave-empty.js
+# class Base { constructor(fill) { if (fill) this.a = 1; this.b = 2; } }
+# class Below extends Base { constructor() { super(false); this.c = 3; } }
+# console.log(new Base(true).a, new Below().a, new Below().b);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.1 "b" proven=i32 writers-known written-at-construction-alone filled
+# CHECK: field L1.0 "c" proven=i32 writers-known written-at-construction-alone filled
+# CHECK: field L1.1 "a" proven=i32 writers-known written-at-construction-alone
+# CHECK: field L1.2 "b" proven=i32 writers-known written-at-construction-alone filled
+# RUN(EMPTY): link fields mechanisms=all
+# EMPTY-NOT: "a" proven=i32 writers-known written-at-construction-alone filled

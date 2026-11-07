@@ -1,0 +1,34 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# function Closed(this: any, n: number) { this.tag = n; }
+# Closed.prototype.weigh = function () { return "weigh " + this.tag; };
+# Closed.prototype.kind = "closed";
+# const kept = new (Closed as any)(0);
+# const tell = () => kept.weigh() + " " + kept.kind + " " + new (Closed as any)(1).weigh() + " " + (new (Closed as any)(1) instanceof Closed) + " " + new (Closed as any)(2).late;
+# print(tell());
+# poke();
+# print(tell());
+# -- end of source
+# The function, its prototype object and its objects stay with compiled code, and `weigh` holds one function: compiled code takes `weigh` for that function, finds nothing under `late`, and takes the `prototype` property to be as it was made, all without a look.
+# `kind` holds no function, so the record of the class does not declare it. The image lists it beside the record, and every other name stays ruled out.
+# `poke` is a free name that each run defines, and it is handed nothing. It climbs from an object that it takes out of the heap: another function under `weigh`, a name that the program does not lay, another object in the `prototype` property are ruled out and end the process.
+# The same function stored again, a store under `kind` and another `constructor` go through.
+# The green twin: deeds-on-a-constructor-function-that-unseen-code-was-handed-go-through.ir.
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell globalThis.poke = () => { const above = Object.getPrototypeOf(aotFindObjectOfLayout(0)); above.weigh = above.weigh; above.kind = "closed"; above.constructor = Object; };
+# CHECK: weigh 0 closed weigh 1 true undefined
+# CHECK-NEXT: weigh 0 closed weigh 1 true undefined
+# CHECK-NEXT: exited with 0
+# RUN(REPLACES): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).weigh = function () { return "other weigh"; }; print("went on"); };
+# REPLACES: AOT: ReplaceMember of the prototype object of the class of layout L0
+# REPLACES-NOT: went on
+# REPLACES: crashed with
+# RUN(ADDS): run-in-shell globalThis.poke = () => { Object.getPrototypeOf(aotFindObjectOfLayout(0)).late = "late"; print("went on"); };
+# ADDS: AOT: AddName of the prototype object of the class of layout L0
+# ADDS-NOT: went on
+# ADDS: crashed with
+# RUN(SWAPS): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).constructor.prototype = { weigh() { return "other weigh"; } }; print("went on"); };
+# SWAPS: AOT: ChangePrototypeProperty of a closure of the function f{{*}} (Closed)
+# SWAPS-NOT: went on
+# SWAPS: crashed with

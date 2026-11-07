@@ -1,0 +1,17 @@
+# -- source: construction-of-a-variable-that-may-not-be-filled-yet-stands-behind-one-test.js
+# function Node(kind, pos) { this.kind = kind; this.pos = pos; }
+# var Maker;
+# function start() { Maker = Node; }
+# function make(kind) { return new Maker(kind, 1); }
+# start();
+# sink(make(2).kind);
+# -- end of source
+# `new Maker(kind, 1)`: the variable is proven to hold the closure of one function or undefined. A construction of what is no object throws, so one test stands in front, nothing comes back from the side that fails it, and behind it the object is made here.
+# A call had that test. A construction went by the stub, and what it gave was anything.
+# f3 = make
+# RUN: walk f3 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=f1
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK: frequency=Rare
+# CHECK: = Construct
+# CHECK-NEXT: Unreachable

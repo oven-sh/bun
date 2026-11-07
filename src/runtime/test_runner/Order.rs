@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
 
-use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
+use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Flavor, Only, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
 pub(crate) struct Order {
@@ -72,7 +72,7 @@ impl Order {
             let sequences_end = self.sequences.len();
             let failure_skip_to = self.groups.len() + 1;
             self.groups
-                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
+                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to, None)); // add a new concurrentgroup to order
             self.previous_group_was_concurrent = false;
         }
         let end = self.groups.len();
@@ -184,8 +184,8 @@ impl Order {
         debug_assert!(current.base.has_callback == current.callback.is_some());
         let use_each_hooks = current.base.has_callback;
         let first_parent: Option<*mut DescribeScope> = current.base.parent;
-        let (retry_count, repeat_count, concurrent) =
-            (current.retry_count, current.repeat_count, current.base.concurrent);
+        let (retry_count, repeat_count, concurrent, flavor) =
+            (current.retry_count, current.repeat_count, current.base.concurrent, current.flavor);
         // `list.append` and the skip-past loop below reborrow the entry through this pointer.
         let current = NonNull::from(current);
 
@@ -280,15 +280,17 @@ impl Order {
             repeat_count,
         )); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
-        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
+        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end, flavor)?; // add or extend the concurrent group
         Ok(())
     }
 
+    /// `flavor` is that of the tests in the sequences.
     pub(crate) fn append_or_extend_concurrent_group(
         &mut self,
         concurrent: bool,
         sequences_start: usize,
         sequences_end: usize,
+        flavor: Flavor,
     ) -> JsResult<()> {
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
@@ -298,14 +300,14 @@ impl Order {
             let previous_group = self.groups.last_mut().expect("non-empty");
             if prev_was_concurrent {
                 // extend the previous group to include this sequence
-                if previous_group.try_extend(sequences_start, sequences_end) {
+                if previous_group.try_extend(sequences_start, sequences_end, flavor) {
                     return Ok(());
                 }
             }
         }
         let failure_skip_to = self.groups.len() + 1;
         self.groups
-            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
+            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to, Some(flavor))); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
 }

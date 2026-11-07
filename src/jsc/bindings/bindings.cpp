@@ -994,6 +994,8 @@ static bool isWellKnownConstructor(JSValue value)
 }
 
 extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
+// Whether the `expect()` object of the running matcher sides with Vitest. Without a matcher, `Bun__VM__isRunningVitestEntry`.
+extern "C" bool Expect__comparesLikeVitest();
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
@@ -1179,7 +1181,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
         } else if constexpr (enableAsymmetricMatchers) {
             // Vitest's toEqual() compares the lengths. Jest's takes an item that isn't there for undefined.
-            if (array1Length != array2Length && Bun__VM__isRunningVitestEntry(bunVM(globalObject))) {
+            if (array1Length != array2Length && Expect__comparesLikeVitest()) {
                 return false;
             }
         }
@@ -1805,7 +1807,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
-            bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
+            bool isLikeVitest = mode.enableAsymmetricMatchers && Expect__comparesLikeVitest();
 
             if (mode.isStrict && !isLikeVitest) {
                 if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {

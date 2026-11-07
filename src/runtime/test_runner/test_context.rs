@@ -44,6 +44,8 @@ pub(crate) struct TestContext {
     buntest: BunTestPtrWeak,
     group_index: usize,
     sequence_index: usize,
+    /// The module the test was registered through.
+    flavor: Flavor,
     /// `BunTest::extra_execution_entries` owns the entries.
     deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,
     fixtures: JsCell<Vec<usize>>,
@@ -82,11 +84,13 @@ impl TestContext {
         buntest: &BunTestPtr,
         group_index: usize,
         sequence_index: usize,
+        flavor: Flavor,
     ) -> JSValue {
         TestContext {
             buntest: Rc::downgrade(buntest),
             group_index,
             sequence_index,
+            flavor,
             deferred: JsCell::new(Vec::new()),
             fixtures: JsCell::new(Vec::new()),
         }
@@ -149,11 +153,7 @@ impl TestContext {
 
     pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
         let gets_context = matches!(when, Deferred::OnTestFinished | Deferred::OnTestFailed);
-        let sequences = &buntest.execution.sequences;
-        let start = buntest.execution.groups.get(self.group_index).map(|group| group.sequence_start);
-        let sequence = start.and_then(|start| sequences.get(start + self.sequence_index));
-        let flavor = Flavor::of(sequence.and_then(|sequence| sequence.test_entry), || None);
-        let entry = buntest.create_vitest_entry(callback, timeout, gets_context, flavor);
+        let entry = buntest.create_vitest_entry(callback, timeout, gets_context, self.flavor);
         if when == Deferred::Around {
             // SAFETY: just allocated.
             unsafe { (*entry.as_ptr()).around = Some((Around::Each, AroundPhase::TearDown)) };
@@ -391,22 +391,22 @@ impl TestContext {
 #[optimize(size)]
 pub(crate) fn expect(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
-    Expect::call_in(global, received.to_js(), message.to_js(), state)
+    let this = TestContext::of_call(global, this_value)?;
+    Expect::call_in(global, received.to_js(), message.to_js(), this.state_data(this_value.to_js()), this.flavor)
 }
 
 #[optimize(size)]
 pub(crate) fn soft(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
-    Expect::soft_in(global, received.to_js(), message.to_js(), state)
+    let this = TestContext::of_call(global, this_value)?;
+    Expect::soft_in(global, received.to_js(), message.to_js(), this.state_data(this_value.to_js()), this.flavor)
 }
 
 #[optimize(size)]
 pub(crate) fn poll(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, callback: JsLocal<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
-    Expect::poll_in(global, callback.to_js(), options.to_js(), state)
+    let this = TestContext::of_call(global, this_value)?;
+    Expect::poll_in(global, callback.to_js(), options.to_js(), this.state_data(this_value.to_js()), this.flavor)
 }
 
 #[optimize(size)]

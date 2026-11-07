@@ -110,10 +110,17 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
+    /// The module that every test of the group was registered through. `None` if they differ, or for a group of a hook.
+    pub(crate) flavor: Option<Flavor>,
 }
 
 impl ConcurrentGroup {
-    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
+    pub(crate) fn init(
+        sequence_start: usize,
+        sequence_end: usize,
+        next_index: usize,
+        flavor: Option<Flavor>,
+    ) -> ConcurrentGroup {
         ConcurrentGroup {
             sequence_start,
             sequence_end,
@@ -122,15 +129,18 @@ impl ConcurrentGroup {
             failure_skip_to: next_index,
             next_sequence_index: 0,
             pending_matchers: 0,
+            flavor,
         }
     }
 
-    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
+    /// `flavor` is that of the tests to add.
+    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize, flavor: Flavor) -> bool {
         if self.sequence_end != next_sequence_start {
             return false;
         }
         self.sequence_end = next_sequence_end;
         self.remaining_incomplete_entries = self.sequence_end - self.sequence_start;
+        self.flavor = self.flavor.filter(|shared| *shared == flavor);
         true
     }
 
@@ -235,7 +245,8 @@ impl ExecutionSequence {
         if let Some(context) = &self.context {
             return context.get();
         }
-        let context = TestContext::create(global, buntest, group_index, sequence_index);
+        let flavor = Flavor::of(self.test_entry, || None);
+        let context = TestContext::create(global, buntest, group_index, sequence_index, flavor);
         self.context = Some(Strong::create(context, global));
         // SAFETY: arena-owned entry
         if let Some(fixtures) = self.test_entry.and_then(|test| unsafe { test.as_ref() }.fixtures.as_ref()) {

@@ -511,6 +511,10 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
 | `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
+| `toContain()` on a DOM node                               | an error, if the node isn't iterable | passes if `node.contains(value)`                                     |
+| `toEqual([1, undefined])` on `[1]`                        | passes                               | fails: the lengths differ                                            |
+| `toEqual()` on an error with a `cause`                    | compares the causes                  | compares the causes only if the expected error has one               |
+| `toEqual()` on an `AggregateError`                        | doesn't compare `errors`             | compares `errors`                                                    |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
@@ -521,6 +525,13 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 `import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. If `chai` isn't there, as with pnpm, Bun looks next to the installed `vitest`. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
 
 In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
+
+`expect` is the same function in each module. Its matchers follow the rows of the table for the code that is running:
+
+- A test follows the module that its `test` function comes from. So do its `beforeEach`, `afterEach` and `aroundEach` hooks, whichever module they come from.
+- A `beforeAll`, `afterAll` or `aroundAll` hook follows the module that the hook function comes from.
+- Tests that run [concurrently](/test#concurrent-test-execution) follow the module that all of them come from. If they come from both modules, they follow `"bun:test"`. The `expect` of the [test context](#test-context) follows its own test.
+- Code outside of a test or a hook follows `"bun:test"`. That is the top level of a file and a `describe` callback.
 
 ### Types
 

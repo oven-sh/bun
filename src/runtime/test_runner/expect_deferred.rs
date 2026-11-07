@@ -17,7 +17,7 @@ use bun_jsc::{
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
-    BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, StepResult,
+    BunTest, BunTestPtr, BunTestPtrWeak, Flavor, Phase, RefDataValue, StepResult,
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
@@ -293,6 +293,10 @@ enum Role {
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
+    /// For `Role::Matcher`, `expect.is_vitest()`, once deep equality has asked for it.
+    vitest: Cell<Option<bool>>,
+    /// For `Role::Matcher`, the `expect()` object the matcher was called on. It outlives the pass.
+    expect: *const Expect,
     /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
     cursor: Cell<u32>,
     /// Four bits per `recent` entry: `Asked << 1 | threw`.
@@ -319,10 +323,12 @@ impl Pass {
     const STRIDE: u32 = 4;
 
     #[inline]
-    fn new(role: Role, journal: JSValue) -> Pass {
+    fn new(role: Role, expect: *const Expect, journal: JSValue) -> Pass {
         Pass {
             outer: Cell::new(core::ptr::null()),
             role,
+            vitest: Cell::new(None),
+            expect,
             cursor: Cell::new(0),
             recent_kinds: Cell::new(0),
             journal: Cell::new(journal),
@@ -331,16 +337,16 @@ impl Pass {
     }
 
     #[inline]
-    fn of_matcher() -> Pass {
-        Self::new(Role::Matcher, JSValue::ZERO)
+    fn of_matcher(expect: &Expect) -> Pass {
+        Self::new(Role::Matcher, expect, JSValue::ZERO)
     }
 
     fn replaying(deferred: JSValue) -> Pass {
-        Self::new(Role::Replaying, deferred)
+        Self::new(Role::Replaying, core::ptr::null(), deferred)
     }
 
     pub(crate) fn barrier() -> Pass {
-        Self::new(Role::Barrier, JSValue::ZERO)
+        Self::new(Role::Barrier, core::ptr::null(), JSValue::ZERO)
     }
 
     #[inline]
@@ -360,6 +366,28 @@ impl Pass {
     fn current<'a>() -> Option<&'a Pass> {
         // SAFETY: a live `EnteredPass` in a caller's frame borrows whatever `innermost()` points to.
         unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
+    }
+
+    /// The innermost matcher body that is running, also through a barrier.
+    #[inline]
+    fn innermost_matcher<'a>() -> Option<&'a Pass> {
+        let mut pass = Self::innermost().get();
+        // SAFETY: as in `current`. A pass outlives every pass entered inside it.
+        while let Some(entered) = unsafe { pass.as_ref() } {
+            if entered.role == Role::Matcher {
+                return Some(entered);
+            }
+            pass = entered.outer.get();
+        }
+        None
+    }
+
+    #[cold]
+    fn resolve_vitest(&self) -> bool {
+        // SAFETY: the matcher's frame borrows its `expect()` object for as long as its pass is entered.
+        let vitest = unsafe { self.expect.as_ref() }.is_some_and(Expect::is_vitest);
+        self.vitest.set(Some(vitest));
+        vitest
     }
 
     #[inline]
@@ -541,6 +569,16 @@ impl Pass {
         js::awaited_set_cached(deferred, global, promise.as_value());
         js::journal_set_cached(deferred, global, journal);
         global.throw_value(deferred)
+    }
+}
+
+/// Called by C++ deep equality, for the comparisons where Vitest and Jest disagree.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Expect__comparesLikeVitest() -> bool {
+    match Pass::innermost_matcher() {
+        Some(pass) => pass.vitest.get().unwrap_or_else(|| pass.resolve_vitest()),
+        // No matcher is running: an `equals()` kept from a custom matcher, or `asymmetricMatch()` called directly.
+        None => bun_jsc::virtual_machine::VirtualMachine::get().is_running_vitest_entry,
     }
 }
 
@@ -956,7 +994,7 @@ impl Expect {
         if !self.flags.get().is_plain() {
             return self.call_modified_matcher(cx, call, &matcher);
         }
-        let pass = Pass::of_matcher();
+        let pass = Pass::of_matcher(self);
         let _entered = pass.enter();
         match matcher(cx) {
             Ok(value) => Ok(value),
@@ -984,7 +1022,7 @@ impl Expect {
         call: &MatcherCall<'_>,
         matcher: Matcher<'_, 'a>,
     ) -> JsResult<JSValue> {
-        let pass = Pass::of_matcher();
+        let pass = Pass::of_matcher(self);
         let _entered = pass.enter();
         let flags = self.flags.get();
         let result = if flags.promise() != Promise::None {
@@ -1079,6 +1117,7 @@ impl Expect {
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
             matcher_ran: Cell::new(false),
+            flavor: if self.is_vitest() { Flavor::Vitest } else { Flavor::Jest },
             parent: None,
             custom_label: self.custom_label.clone(),
         }
@@ -1166,6 +1205,7 @@ impl Expect {
         let copy = Expect {
             flags: Cell::new(self.flags.get()),
             matcher_ran: Cell::new(false),
+            flavor: self.flavor,
             parent: self.parent.clone(),
             custom_label: self.custom_label.clone(),
         }

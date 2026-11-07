@@ -1812,6 +1812,14 @@ impl RefDataValue {
         // SAFETY: `active_entry` is a valid intrusive node while the sequence is live.
         the_sequence.active_entry.map(|p| unsafe { &mut *p.as_ptr() })
     }
+
+    /// Whose rules apply here, where the runner knows: `Flavor::of`, else the module that the concurrent group's tests share.
+    pub(crate) fn flavor(&self, buntest: &mut BunTest) -> Option<Flavor> {
+        let RefDataValue::Execution { group_index, .. } = *self else { return None };
+        let test = self.sequence(buntest).and_then(|sequence| sequence.test_entry);
+        Flavor::known(test, || self.entry(buntest).map(NonNull::from))
+            .or_else(|| buntest.execution.groups.get(group_index)?.flavor)
+    }
 }
 
 impl fmt::Display for RefDataValue {
@@ -1969,8 +1977,16 @@ impl Flavor {
         test: Option<NonNull<ExecutionEntry>>,
         hook: impl FnOnce() -> Option<NonNull<ExecutionEntry>>,
     ) -> Flavor {
+        Self::known(test, hook).unwrap_or(Flavor::Jest)
+    }
+
+    /// `of`, or `None` without a test or a hook.
+    pub(crate) fn known(
+        test: Option<NonNull<ExecutionEntry>>,
+        hook: impl FnOnce() -> Option<NonNull<ExecutionEntry>>,
+    ) -> Option<Flavor> {
         // SAFETY: arena-owned entries, alive for the lifetime of their `BunTest`.
-        test.or_else(hook).map_or(Flavor::Jest, |entry| unsafe { entry.as_ref() }.flavor)
+        test.or_else(hook).map(|entry| unsafe { entry.as_ref() }.flavor)
     }
 }
 

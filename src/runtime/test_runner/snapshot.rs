@@ -356,7 +356,7 @@ impl Snapshots {
         };
         let format = if !contents.is_empty() {
             Format::of_file(&contents)
-        } else if expect.is_in_vitest_test(buntest) {
+        } else if expect.is_vitest() {
             Format::Vitest
         } else {
             Format::Bun

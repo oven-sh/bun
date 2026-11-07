@@ -351,7 +351,7 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
     /// `bun test`: what is running is a test or a hook of Vitest's. There, an error that a `process` listener takes is
-    /// not the runner's, and arrays of different lengths are never equal.
+    /// not the runner's, and deep equality that no matcher asked for follows Vitest's rules.
     pub is_running_vitest_entry: bool,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),

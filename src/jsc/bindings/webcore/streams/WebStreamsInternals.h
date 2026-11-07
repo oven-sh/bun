@@ -624,7 +624,7 @@ JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream
 void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind); // userJS: no — JSDirectStreamController.cpp
 // Drop the direct controller's retained user-source state once no further pull/close callbacks
 // can run (m_closed set, or the stream has left Readable). Idempotent.
-void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
+JSC::JSValue directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
 
 // BunStreamConsumers.cpp — Bun.readableStreamTo*, the buffered fast path, the direct
 // consumers, and the generic accumulators. These are the native entry points; their

@@ -335,6 +335,8 @@ fn evaluate_instruction(
             object,
             property,
             value,
+            // Not in upstream: see `MemberUpdate`.
+            update,
             loc,
         } => {
             let prop_value = read(constants, property);
@@ -343,6 +345,7 @@ fn evaluate_instruction(
                     PrimitiveValue::String(s) if s.as_bytes().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
                         let store_value = value.clone();
+                        let update = *update;
                         let loc = *loc;
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
                             bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
@@ -351,18 +354,21 @@ fn evaluate_instruction(
                             object,
                             property: new_property,
                             value: store_value,
+                            update,
                             loc,
                         };
                     }
                     PrimitiveValue::Number(n) => {
                         let object = object.clone();
                         let store_value = value.clone();
+                        let update = *update;
                         let loc = *loc;
                         let new_property = PropertyLiteral::Number(*n);
                         instr.value = InstructionValue::PropertyStore {
                             object,
                             property: new_property,
                             value: store_value,
+                            update,
                             loc,
                         };
                     }

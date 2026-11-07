@@ -4786,6 +4786,21 @@ test("react-compiler does not end the process on a try in which nothing but a re
   expect(exitCode).toBe(0);
 });
 
+// One `bun build --react-compiler` of `entry` in a process of its own: what it prints, and its CPU time in microseconds.
+async function buildInItsOwnProcess(cwd: string, entry: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return { stdout, cpuTime: Number(proc.resourceUsage()!.cpuTime.total) };
+}
+
 test("react-compiler time does not grow with the cube of a chain of functions", async () => {
   // The CPU time of a process on Windows (GetProcessTimes) is a count of 1/64 s ticks, whatever the resolution of
   // timers is. In a release build one component of n functions takes a tick or two.
@@ -4806,21 +4821,12 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
   using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
 
   const cpuTime = async (entry: string) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const { stdout, cpuTime } = await buildInItsOwnProcess(String(dir), entry);
     expect(stdout).toContain("react/compiler-runtime");
-    expect(exitCode).toBe(0);
-    return Number(proc.resourceUsage()!.cpuTime.total);
+    return cpuTime;
   };
 
-  // A debug build: 2 to 2.6, and 5.5 without the fix. A release build: 2.9 to 4.2, which is a square's, and 14.5 to 16.6.
+  // A debug build: 1.3 to 1.5, and 5.5 without the fix. A release build: 1 to 2.4, and 14.5 to 16.6.
   expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });
 
@@ -4955,6 +4961,146 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
       Object.entries(localReassignmentCases).map(([name, { error }]) => [name, { error, memoized: error === null }]),
     ),
   );
+});
+
+// PropagateScopeDependenciesHIR computed the set of the functions that are assumed to be invoked once more for every
+// nested function, and it followed the chains of that set again at every level. On a release build 400 nested arrows
+// took 4 seconds, and 3,200 arrows that call each other in one chain took 20.
+describe("react-compiler PropagateScopeDependenciesHIR finds the functions that are assumed to be invoked once for a component", () => {
+  const arrow = "() => ";
+  const shapes = {
+    // Each arrow is inside the one before it.
+    nested: (name: string, size: number) => `
+      export function ${name}(props) {
+        const f = ${Buffer.alloc(arrow.length * size, arrow)}props.a.b;
+        return <div>{f}</div>;
+      }
+    `,
+    // Each arrow calls the one before it.
+    chain: (name: string, size: number) => `
+      export function ${name}(props) {
+        const f0 = () => props.a.b;
+        ${Array.from({ length: size - 1 }, (_, i) => `const f${i + 1} = () => f${i}();`).join("\n")}
+        f${size - 1}();
+        return <div />;
+      }
+    `,
+  };
+  // The CPU time of a process on Windows is a count of 1/64 s ticks, so a release build there gets more components.
+  const more = isWindows && !isDebug ? 4 : 1;
+  // A shape, the arrows in one large component, the number of large components, and the limit of the ratio. A debug
+  // build compiles 80 nested arrows and not 90: the stack of a bundler thread holds no more.
+  const rows: [keyof typeof shapes, number, number, number][] = isDebug
+    ? [
+        ["nested", 70, 8, 3],
+        ["chain", 400, 1, 3],
+      ]
+    : isASAN
+      ? [
+          ["nested", 70, 40, 3],
+          ["chain", 400, 4, 3],
+        ]
+      : [
+          ["nested", 100, 20 * more, 5],
+          ["nested", 300, 20 * more, 5],
+          ["chain", 800, 8 * more, 4],
+        ];
+
+  test.each(rows)(
+    "%s: the time for an arrow does not grow with %d of them in a component",
+    async (shape, size, components, limit) => {
+      const small = 10;
+      const source = (count: number, each: number) =>
+        Array.from({ length: count }, (_, i) => shapes[shape](`App${i}`, each)).join("\n");
+      using dir = tempDir(`react-compiler-assumed-invoked-${shape}`, {
+        "small.jsx": source((components * size) / small, small),
+        "large.jsx": source(components, size),
+      });
+      const cpuTime = async (entry: string, compiled: number) => {
+        const { stdout, cpuTime } = await buildInItsOwnProcess(String(dir), entry);
+        // A component that the compiler leaves as written has no memo cache.
+        expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(compiled);
+        // The nested arrows are memoized. The path is `props.a` where the compiler does not know that the innermost
+        // arrow is invoked. A chain is called and what it returns is dropped, so no memo block depends on it: the test
+        // below holds the path of a chain.
+        if (shape === "nested") expect(stdout.match(/\$\[0\] !== props\.a\.b\b/g)).toHaveLength(compiled);
+        return cpuTime;
+      };
+
+      // Both files hold the same number of arrows, so the two times are about equal when the time for an arrow does
+      // not depend on the size of its component. Other work on the machine adds to a time, so each is the best of a
+      // few rounds.
+      let smallTime = Infinity;
+      let largeTime = Infinity;
+      for (let round = 0; round < 3; round++) {
+        smallTime = Math.min(smallTime, await cpuTime("small.jsx", (components * size) / small));
+        largeTime = Math.min(largeTime, await cpuTime("large.jsx", components));
+        if (largeTime / smallTime < limit) break;
+      }
+      expect(smallTime).toBeGreaterThan(0);
+      expect(largeTime / smallTime).toBeLessThan(limit);
+    },
+  );
+
+  // The compiler memoizes by `props.a.b` only where it knows that the arrow that reads it is invoked. It follows the
+  // calls from `a` to `c` where `a` itself is assumed to be invoked, and nowhere else. `InvokedThroughManyCalls` has a
+  // chain as long as that of a debug row above, and renders what it returns: its path is `props.a` if the compiler
+  // stops on the way.
+  test("a chain of calls is followed from a function that is assumed to be invoked, and from no other", async () => {
+    const chain = `
+      const c = () => props.a.b;
+      const b = () => c();
+      const a = () => b();
+    `;
+    const links = 400;
+    using dir = tempDir("react-compiler-assumed-invoked-chains", {
+      "entry.jsx": `
+        export function Invoked(props) {
+          ${chain}
+          return <div onClick={a} />;
+        }
+        export function InvokedThroughManyCalls(props) {
+          const f0 = () => props.a.b;
+          ${Array.from({ length: links - 1 }, (_, i) => `const f${i + 1} = () => f${i}();`).join("\n")}
+          const v = f${links - 1}();
+          return <div>{v}</div>;
+        }
+        export function NotInvoked(props) {
+          ${chain}
+          return <div onClick={[a]} />;
+        }
+        export function NestedInvoked(props) {
+          const outer = () => {
+            ${chain}
+            return a;
+          };
+          return <div onClick={outer} />;
+        }
+        export function NestedNotInvoked(props) {
+          const outer = () => {
+            ${chain}
+            return [a];
+          };
+          return <div onClick={outer} />;
+        }
+      `,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.jsx")],
+      target: "browser",
+      external: ["*"],
+      reactCompiler: true,
+    });
+    const out = await result.outputs[0].text();
+    const dependencies = [...out.matchAll(/^function (\w+)\(props\) \{[^]*?\$\[0\] !== ([\w.]+)/gm)];
+    expect(Object.fromEntries(dependencies.map(([, name, path]) => [name, path]))).toEqual({
+      Invoked: "props.a.b",
+      InvokedThroughManyCalls: "props.a.b",
+      NotInvoked: "props.a",
+      NestedInvoked: "props.a.b",
+      NestedNotInvoked: "props.a",
+    });
+  });
 });
 
 // RenameVariables reaches a nested function expression through its

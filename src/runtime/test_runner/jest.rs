@@ -663,6 +663,10 @@ pub(crate) mod on_unhandled_rejection {
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
                     {
+                        // A failed matcher's error that this attempt already reported is not an error between tests.
+                        if buntest.unclaimed.was_reported(&current_state_data, rejection) {
+                            return;
+                        }
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
                     }
@@ -672,7 +676,7 @@ pub(crate) mod on_unhandled_rejection {
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
-                true,
+                bun_test::Report::Once,
                 &current_state_data,
             );
             buntest.is_reporting_uncaught = false;

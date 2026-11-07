@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataValue, Report, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
@@ -1127,7 +1127,7 @@ fn report_around_timeout(
         return Ok(());
     };
     let error = around.timeout_error(global_this, phase, entry.timeout)?;
-    buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
+    buntest_strong.get().on_uncaught_exception(global_this, Some(error), Report::Once, data);
     Ok(())
 }
 
@@ -1295,7 +1295,7 @@ fn step_sequence_one(
                 }
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
-                    buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
+                    buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), Report::Once, &callback_data);
                     Execution::advance_sequence(buntest_ptr, sequence, group);
                     return Ok(None); // run again
                 }

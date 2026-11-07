@@ -768,6 +768,41 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("keeps a matcher's error once in <failure> when the test awaits the matcher after it failed", async () => {
+    await using tmpDir = tempDir("junit-matcher-awaited-later", {
+      "package.json": "{}",
+      "later.test.js": `
+        import { test, expect } from "bun:test";
+        test("t", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = expect(promise).resolves.toBe(2);
+          resolve(1);
+          // The matcher has failed, and the runner has reported that, before this timer fires.
+          await new Promise(resolve => setTimeout(resolve, 1));
+          await matcher;
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const tc = result.testsuites.testsuite[0].testcase[0];
+    expect(tc.failure).toHaveLength(1);
+    expect(tc.failure[0]._.match(/Expected: 2/g)).toEqual(["Expected: 2"]);
+    expect(exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",

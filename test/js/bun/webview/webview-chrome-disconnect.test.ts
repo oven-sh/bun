@@ -9,16 +9,44 @@
 // Most tests here drive the backend from a mock CDP endpoint (a Bun.serve
 // WebSocket speaking just enough of the protocol), so they run without a
 // browser and can leave a navigation committed-but-never-loaded exactly.
-// The last test repeats the scenario against a real Chrome in pipe mode.
+// The last test repeats the scenario against a real Chrome in pipe mode
+// (chrome-closeall-fixture.ts).
 //
 // Every test runs in a subprocess: the CDP transport is a process-wide
 // singleton, so each scenario needs a fresh one, and killing the browser
-// would break any other test sharing it.
+// would break any other test sharing it. A scenario prints one JSON line;
+// watch() records how a promise settled and thrown() how a call returned.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen } from "harness";
+import { join } from "node:path";
 
 const mockCDP = /* js */ `
+  const shape = e => ({ name: e.name, code: e.code ?? null, message: e.message });
+  // Records how a promise settles. Reads as { pending: true } until it does.
+  function watch(promise) {
+    const result = { pending: true };
+    promise.then(
+      resolved => {
+        delete result.pending;
+        result.resolved = resolved ?? null;
+      },
+      e => {
+        delete result.pending;
+        result.rejected = shape(e);
+      },
+    );
+    return result;
+  }
+  function thrown(fn) {
+    try {
+      return { returned: fn() ?? null };
+    } catch (e) {
+      return { threw: shape(e) };
+    }
+  }
+  const print = value => console.log(JSON.stringify(value));
+
   function startMockCDP() {
     let sock;
     let targets = 0;
@@ -29,6 +57,8 @@ const mockCDP = /* js */ `
       // so the op resolves. Scenarios turn it off to leave a navigation
       // committed but never loaded.
       completeLoads: true,
+      // WebSocket connections accepted so far.
+      connections: 0,
       emit(method, params, sessionId) {
         sock.send(JSON.stringify(sessionId ? { method, params, sessionId } : { method, params }));
       },
@@ -52,6 +82,7 @@ const mockCDP = /* js */ `
       websocket: {
         open(ws) {
           sock = ws;
+          mock.connections++;
         },
         message(ws, raw) {
           const { id, method, params = {}, sessionId } = JSON.parse(String(raw));
@@ -108,19 +139,35 @@ async function runScenario(body: string): Promise<unknown> {
     stdout: "pipe",
     stderr: "pipe",
   });
+  return await printedJSON(proc);
+}
+
+// The child printed exactly one JSON line, nothing on stderr, and exited 0.
+async function printedJSON(proc: Bun.Subprocess<"ignore", "pipe", "pipe">): Promise<unknown> {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout, stderr).toEndWith("}\n");
-  expect(exitCode, stderr).toBe(0);
+  expect(stderr).toBe("");
+  expect(stdout).toMatch(/^\{.*\}\n$/);
+  expect(exitCode).toBe(0);
   return JSON.parse(stdout);
 }
 
-const wsClosed = expect.stringMatching(/^rejected: Chrome WebSocket closed \(code \d+\)$/);
+// sock.terminate() closes the TCP connection without a close frame, which
+// the client reports as close code 1006.
+const wsClosed = { name: "Error", code: null, message: "Chrome WebSocket closed (code 1006)" };
+// A view whose page or browser is gone refuses further calls synchronously.
+const viewClosed = (method: string) => ({
+  name: "Error",
+  code: "ERR_INVALID_STATE",
+  message: `Invalid state: WebView.${method}: view is closed`,
+});
 
+// Only navigate() raises view.loading; reload() and goBack() leave it false
+// while their navigation is in flight (the third column).
 test.concurrent.each([
-  ["navigate", `view.navigate("http://mock/2")`],
-  ["reload", `view.reload()`],
-  ["goBack", `view.goBack()`],
-])("%s() rejects when the connection drops after the document committed", async (_, startOp) => {
+  ["navigate", `view.navigate("http://mock/2")`, true],
+  ["reload", `view.reload()`, false],
+  ["goBack", `view.goBack()`, false],
+])("%s() rejects when the connection drops after the document committed", async (_, startOp, loadingWhileCommitted) => {
   const result = await runScenario(`
     const mock = startMockCDP();
     const view = mock.newView();
@@ -129,28 +176,42 @@ test.concurrent.each([
     mock.completeLoads = false;
     const committed = Promise.withResolvers();
     view.onNavigated = () => committed.resolve();
-    let outcome = "pending";
-    ${startOp}.then(() => (outcome = "resolved"), e => (outcome = "rejected: " + e.message));
+    const op = watch(${startOp});
     // onNavigated fires on Page.frameNavigated, which the mock sends after
     // the op's own reply, so by now the backend has consumed that reply and
     // only the promise slot is waiting (for a load event that never comes).
     await committed.promise;
+    const loadingBefore = view.loading;
 
     // A request that is still waiting for its reply. It rejects as soon as
     // the disconnect has been processed, which is how we know when to look
     // at the op's promise.
-    let unanswered = "pending";
-    const unansweredDone = view.evaluate("1").then(
-      () => (unanswered = "resolved"),
-      e => (unanswered = "rejected: " + e.message),
-    );
-
+    const evaluate = view.evaluate("1");
+    const unanswered = watch(evaluate);
     mock.drop();
-    await unansweredDone;
-    console.log(JSON.stringify({ unanswered, outcome, loading: view.loading }));
+    await evaluate.catch(() => {});
+    print({
+      loadingBefore,
+      unanswered,
+      op,
+      loadingAfter: view.loading,
+      afterDrop: {
+        evaluate: thrown(() => view.evaluate("1")),
+        closeAll: thrown(() => Bun.WebView.closeAll()),
+      },
+    });
     mock.stop();
   `);
-  expect(result).toEqual({ unanswered: wsClosed, outcome: wsClosed, loading: false });
+  expect(result).toEqual({
+    loadingBefore: loadingWhileCommitted,
+    unanswered: { rejected: wsClosed },
+    op: { rejected: wsClosed },
+    loadingAfter: false,
+    afterDrop: {
+      evaluate: { threw: viewClosed("evaluate") },
+      closeAll: { returned: null },
+    },
+  });
 });
 
 test.concurrent("a dropped connection rejects the committed navigation of every view", async () => {
@@ -165,32 +226,48 @@ test.concurrent("a dropped connection rejects the committed navigation of every 
     const committedB = Promise.withResolvers();
     a.onNavigated = () => committedA.resolve();
     b.onNavigated = () => committedB.resolve();
-    const nav = { a: "pending", b: "pending" };
-    a.navigate("http://mock/a2").then(() => (nav.a = "resolved"), e => (nav.a = "rejected: " + e.message));
-    b.navigate("http://mock/b2").then(() => (nav.b = "resolved"), e => (nav.b = "rejected: " + e.message));
+    const nav = { a: watch(a.navigate("http://mock/a2")), b: watch(b.navigate("http://mock/b2")) };
     await Promise.all([committedA.promise, committedB.promise]);
     const loadingBefore = [a.loading, b.loading];
 
     // Only view a has a request waiting for a reply; view b has nothing in
     // flight except its committed navigation.
-    const unanswered = a.evaluate("1").catch(() => {});
+    const evaluate = a.evaluate("1");
     mock.drop();
-    await unanswered;
-    console.log(JSON.stringify({ loadingBefore, nav, loadingAfter: [a.loading, b.loading] }));
+    await evaluate.catch(() => {});
+    const loadingAfter = [a.loading, b.loading];
+    const afterDrop = [a, b].map(view => thrown(() => view.evaluate("1")));
+
+    // The views are gone for good, the process is not: the next view opens
+    // a new connection (the mock still listens) and works.
+    mock.completeLoads = true;
+    const c = mock.newView();
+    await c.navigate("http://mock/c1");
+    print({
+      loadingBefore,
+      nav,
+      loadingAfter,
+      afterDrop,
+      reconnected: { url: c.url, title: c.title, connections: mock.connections },
+    });
     mock.stop();
   `);
   expect(result).toEqual({
     loadingBefore: [true, true],
-    nav: { a: wsClosed, b: wsClosed },
+    nav: { a: { rejected: wsClosed }, b: { rejected: wsClosed } },
     loadingAfter: [false, false],
+    afterDrop: [{ threw: viewClosed("evaluate") }, { threw: viewClosed("evaluate") }],
+    reconnected: { url: "http://mock/c1", title: "mock", connections: 2 },
   });
 });
 
 // The connection stays up but the view's own page goes away. The promise
-// was already rejected on these paths; they also have to clear loading.
+// was already rejected on these paths; they also have to clear loading. A
+// second view keeps the connection open (WebSocket mode releases it once
+// the last view is gone) and shows that the other page is untouched.
 test.concurrent.each([
   ["view.close()", `view.close()`, "WebView closed"],
-  // Browser-level event (no sessionId on the envelope) for the only
+  // Browser-level event (no sessionId on the envelope) for the first
   // view's target, which is the first one the mock handed out.
   [
     "Target.detachedFromTarget",
@@ -202,20 +279,40 @@ test.concurrent.each([
     const mock = startMockCDP();
     const view = mock.newView();
     await view.navigate("http://mock/1");
+    const other = mock.newView();
+    await other.navigate("http://mock/other");
 
     mock.completeLoads = false;
     const committed = Promise.withResolvers();
     view.onNavigated = () => committed.resolve();
-    const nav = view.navigate("http://mock/2").then(() => "resolved", e => "rejected: " + e.message);
+    const navigation = view.navigate("http://mock/2");
+    const nav = watch(navigation);
     await committed.promise;
     const loadingBefore = view.loading;
 
     ${takePageAway};
-    const navigate = await nav;
-    console.log(JSON.stringify({ loadingBefore, navigate, loadingAfter: view.loading }));
+    await navigation.catch(() => {});
+    const loadingAfter = view.loading;
+    const afterPageGone = thrown(() => view.evaluate("1"));
+
+    mock.completeLoads = true;
+    await other.navigate("http://mock/3");
+    print({
+      loadingBefore,
+      nav,
+      loadingAfter,
+      afterPageGone,
+      other: { url: other.url, title: other.title, connections: mock.connections },
+    });
     mock.stop();
   `);
-  expect(result).toEqual({ loadingBefore: true, navigate: `rejected: ${reason}`, loadingAfter: false });
+  expect(result).toEqual({
+    loadingBefore: true,
+    nav: { rejected: { name: "Error", code: null, message: reason } },
+    loadingAfter: false,
+    afterPageGone: { threw: viewClosed("evaluate") },
+    other: { url: "http://mock/3", title: "mock", connections: 1 },
+  });
 });
 
 // Same scenario against a real Chrome over the debugging pipe: closeAll()
@@ -223,72 +320,71 @@ test.concurrent.each([
 // is not implemented on Windows; elsewhere this needs a Chrome the runtime
 // finds on its own (BUN_CHROME_PATH or one of the $PATH names it probes),
 // otherwise todo.
-const chromeInstalled =
-  !isWindows &&
-  (!!process.env.BUN_CHROME_PATH ||
-    [
-      "google-chrome-stable",
-      "google-chrome",
-      "chromium-browser",
-      "chromium",
-      "brave-browser",
-      "microsoft-edge",
-      "chrome",
-    ].some(n => Bun.which(n)));
+function findChrome(): string | undefined {
+  if (isWindows) return undefined;
+  if (process.env.BUN_CHROME_PATH) return process.env.BUN_CHROME_PATH;
+  const names = [
+    "google-chrome-stable",
+    "google-chrome",
+    "chromium-browser",
+    "chromium",
+    "brave-browser",
+    "microsoft-edge",
+    "chrome",
+  ];
+  for (const name of names) {
+    const found = Bun.which(name);
+    if (found) return found;
+  }
+  return undefined;
+}
+const chromePath = findChrome();
 
-(chromeInstalled ? test.concurrent : test.todo)(
+(chromePath ? test.concurrent : test.todo)(
   "closeAll() rejects a navigate() whose page committed but never finished loading",
   async () => {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        // --no-sandbox: Chrome refuses to start as root otherwise (containers).
-        const view = new Bun.WebView({ backend: { type: "chrome", url: false, argv: ["--no-sandbox"] }, width: 100, height: 100 });
-        await view.navigate("data:text/html,<body></body>");
-
-        // The document commits, but its <img> request is never answered, so
-        // the load event never fires and navigate() stays pending.
-        const server = Bun.serve({
-          port: 0,
-          hostname: "127.0.0.1",
-          fetch(req) {
-            if (new URL(req.url).pathname === "/hang") return new Promise(() => {});
-            return new Response("<img src='/hang'>", { headers: { "content-type": "text/html" } });
-          },
-        });
-        const committed = Promise.withResolvers();
-        view.onNavigated = () => committed.resolve();
-        let navigate = "pending";
-        view.navigate(server.url.href).then(() => (navigate = "resolved"), e => (navigate = "rejected: " + e.message));
-        await committed.promise;
-        const loadingBefore = view.loading;
-
-        // Still waiting for Chrome's reply when it dies; rejects once the
-        // death has been processed.
-        let unanswered = "pending";
-        const unansweredDone = view.evaluate("new Promise(() => {})").then(
-          () => (unanswered = "resolved"),
-          e => (unanswered = "rejected: " + e.message),
-        );
-
-        Bun.WebView.closeAll();
-        await unansweredDone;
-        console.log(JSON.stringify({ loadingBefore, unanswered, navigate, loadingAfter: view.loading }));
-        server.stop(true);
-        `,
-      ],
-      env: bunEnv,
+      cmd: [bunExe(), join(import.meta.dir, "chrome-closeall-fixture.ts")],
+      env: { ...bunEnv, CHROME_EXECUTABLE: chromePath, LIBC_PATH: libcPathForDlopen() },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout, stderr).toEndWith("}\n");
-    // Whichever the event loop sees first, the pipe closing or the process
-    // exit, decides the wording; both must settle everything.
-    const died = expect.stringMatching(/^rejected: Chrome (killed by signal \d+|process closed the pipe|exited)$/);
-    expect(JSON.parse(stdout)).toEqual({ loadingBefore: true, unanswered: died, navigate: died, loadingAfter: false });
-    expect(exitCode, stderr).toBe(0);
+    const result = (await printedJSON(proc)) as {
+      warmUp: { files: number; bytes: number; ms: number };
+      launchMs: number;
+      chrome: { browser: number; helpers: number };
+      [key: string]: unknown;
+    };
+    // This file is on the slow-test list because of the first Chrome launch
+    // on a fresh agent. Keep its cost visible in the CI log.
+    console.log(
+      `chrome warm-up: ${result.warmUp.files} files, ${(result.warmUp.bytes / 1e6).toFixed(0)} MB in ${result.warmUp.ms} ms; launch: ${result.launchMs} ms`,
+    );
+    // Whichever the event loop sees first, the process exit or the pipe
+    // closing, decides the wording; both must settle everything.
+    const died = {
+      name: "Error",
+      code: null,
+      message: expect.stringMatching(/^Chrome (killed by signal 9|process closed the pipe)$/),
+    };
+    expect(result).toEqual({
+      warmUp: { files: expect.any(Number), bytes: expect.any(Number), ms: expect.any(Number) },
+      launchMs: expect.any(Number),
+      // The fixture counts processes through /proc, so only on Linux.
+      chrome: { browser: isLinux ? 1 : 0, helpers: expect.any(Number) },
+      loadingBefore: true,
+      closeAll: { returned: null },
+      unanswered: { rejected: died },
+      navigate: { rejected: died },
+      loadingAfter: false,
+      afterDeath: {
+        evaluate: { threw: viewClosed("evaluate") },
+        closeAll: { returned: null },
+        close: { returned: null },
+      },
+      // The browser process is dead and reaped (the fixture polls for it).
+      browserLeft: [],
+    });
+    if (isLinux) expect(result.chrome.helpers).toBeGreaterThan(0);
   },
 );

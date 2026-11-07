@@ -965,6 +965,7 @@ pub(crate) mod js_bundler {
                             onstart_promise_array,
                             is_last,
                             false,
+                            false,
                         )?
                     };
 
@@ -2112,6 +2113,8 @@ pub(crate) mod js_bundler {
         _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
+        watch_files: JSValue,
+        watch_dirs: JSValue,
     ) {
         jsc::mark_binding();
         // As `onResolveAsync`: the request's one answer.
@@ -2122,14 +2125,21 @@ pub(crate) mod js_bundler {
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
             let plugin = bv2_plugin(this.bv2);
-            this.value = match crate::node::StringOrBuffer::from_js_to_owned_slice(
-                plugin.global_object(),
-                source_code_value,
-            ) {
-                Ok(source_code) => LoadValue::Success(LoadSuccess {
+            let result = (|| {
+                let global = plugin.global_object();
+                let source_code =
+                    crate::node::StringOrBuffer::from_js_to_owned_slice(global, source_code_value)?;
+                let watch_files = plugin_watch_paths(global, watch_files)?;
+                let watch_dirs = plugin_watch_paths(global, watch_dirs)?;
+                Ok(LoadSuccess {
                     loader: bun_ast::Loader::from_api(loader),
                     source_code: source_code.into(),
-                }),
+                    watch_files,
+                    watch_dirs,
+                })
+            })();
+            this.value = match result {
+                Ok(code) => LoadValue::Success(code),
                 // Flattening a `contents` string can still throw.
                 Err(err) => {
                     let exception = plugin.global_object().take_exception(err);
@@ -2139,6 +2149,32 @@ pub(crate) mod js_bundler {
         }
 
         bv2_mut(this.bv2).on_load_async(this);
+    }
+
+    fn plugin_watch_paths(global: &JSGlobalObject, value: JSValue) -> JsResult<Vec<Box<[u8]>>> {
+        let mut paths = Vec::new();
+        if !value.is_empty_or_undefined_or_null() {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            let mut spill = Vec::new();
+            let mut iterator = value.array_iterator(global)?;
+            while let Some(path) = iterator.next()? {
+                let path = path.to_utf8(global)?;
+                let normalized = bun_paths::resolve_path::join_z_buf_spill::<
+                    bun_paths::platform::Auto,
+                >(&mut *buffer, &mut spill, &[&path]);
+                let normalized = normalized.as_bytes();
+                #[cfg(windows)]
+                let normalized =
+                    bun_paths::string_paths::without_trailing_slash_windows_path(normalized);
+                #[cfg(not(windows))]
+                let normalized = normalized
+                    .strip_suffix(b"/")
+                    .filter(|path| !path.is_empty())
+                    .unwrap_or(normalized);
+                paths.push(normalized.into());
+            }
+        }
+        Ok(paths)
     }
 
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
@@ -2172,6 +2208,7 @@ pub(crate) mod js_bundler {
             target: BunPluginTarget,
         ) -> *mut Plugin;
         safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
+        safe fn JSBundlerPlugin__runOnStartCallbacks(plugin: &Plugin) -> JSValue;
         safe fn JSBundlerPlugin__runOnEndCallbacks(
             plugin: &mut Plugin,
             build_promise: JSValue,
@@ -2191,11 +2228,15 @@ pub(crate) mod js_bundler {
             onstart_promises_array: JSValue,
             is_last: JSValue,
             is_bake: JSValue,
+            is_dev_server: bool,
         ) -> JSValue;
         safe fn JSBundlerPlugin__loadAndResolvePluginsForServe(
             plugin: &Plugin,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            is_dev_server: bool,
+            react_fast_refresh: bool,
+            jsx_development: bool,
         ) -> JSValue;
     }
 
@@ -2203,6 +2244,7 @@ pub(crate) mod js_bundler {
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
     pub(crate) trait PluginJscExt {
+        fn run_on_start_callbacks(&self) -> JsResult<JSValue>;
         fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
@@ -2227,6 +2269,7 @@ pub(crate) mod js_bundler {
             onstart_promises_array: JSValue,
             is_last: bool,
             is_bake: bool,
+            is_dev_server: bool,
         ) -> JsResult<JSValue>;
         fn set_config(&mut self, config: *mut c_void);
         /// Thin FFI forward; the host-call wrapper / exception check is the
@@ -2235,10 +2278,20 @@ pub(crate) mod js_bundler {
             &self,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            is_dev_server: bool,
+            react_fast_refresh: bool,
+            jsx_development: bool,
         ) -> JSValue;
     }
 
     impl PluginJscExt for Plugin {
+        fn run_on_start_callbacks(&self) -> JsResult<JSValue> {
+            let global = self.global_object();
+            bun_jsc::top_scope!(scope, global);
+            let value = JSBundlerPlugin__runOnStartCallbacks(self);
+            scope.return_if_exception()?;
+            Ok(value)
+        }
         fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
             let plugin = JSBundlerPlugin__create(global, target);
@@ -2309,6 +2362,7 @@ pub(crate) mod js_bundler {
             onstart_promises_array: JSValue,
             is_last: bool,
             is_bake: bool,
+            is_dev_server: bool,
         ) -> JsResult<JSValue> {
             jsc::mark_binding();
             let _tracer = bun_core::perf::trace("JSBundler.addPlugin");
@@ -2324,6 +2378,7 @@ pub(crate) mod js_bundler {
                     onstart_promises_array,
                     JSValue::from(is_last),
                     JSValue::from(is_bake),
+                    is_dev_server,
                 )
             })
         }
@@ -2337,9 +2392,19 @@ pub(crate) mod js_bundler {
             &self,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            is_dev_server: bool,
+            react_fast_refresh: bool,
+            jsx_development: bool,
         ) -> JSValue {
             jsc::mark_binding();
-            JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder)
+            JSBundlerPlugin__loadAndResolvePluginsForServe(
+                self,
+                plugins,
+                bunfig_folder,
+                is_dev_server,
+                react_fast_refresh,
+                jsx_development,
+            )
         }
     }
 

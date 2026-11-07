@@ -86,7 +86,7 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
 pub(crate) fn check_framework<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) -> JsResult<()> {
     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
     let result =
-        crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options);
+        crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options, true);
     bundler_options.destroy_plugin();
     result?;
     Ok(())

@@ -843,11 +843,14 @@ declare namespace $Node {
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
+    $onStartCallbacks: Array<() => void | Promise<void>> | undefined;
     /** `internalID`: the address of the native request, as a double. */
     onLoadAsync(
       internalID: number,
       sourceCode: string | ArrayBufferView | ArrayBuffer | null,
       loaderKey: number | null,
+      watchFiles?: string[],
+      watchDirs?: string[],
     ): void;
     onResolveAsync(
       internalID: number,
@@ -872,6 +875,8 @@ declare namespace $Node {
     interface OnLoadResult {
       contents?: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
       loader?: string;
+      watchFiles?: string[];
+      watchDirs?: string[];
       /** With `loader: "object"`. */
       exports?: Record<string, unknown>;
     }
@@ -909,6 +914,8 @@ declare namespace $Node {
       target?: string;
       experimentalCss?: boolean;
       experimentalHtml?: boolean;
+      reactFastRefresh?: boolean;
+      jsx?: { development: boolean };
     }
     /** `build`: the object that `runSetupFunction` makes. */
     type Setup = (build: object) => void | Promise<void>;

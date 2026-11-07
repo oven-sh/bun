@@ -462,8 +462,22 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                         if rel == ParentEqual::Unrelated {
                             continue;
                         }
-                        this.watch_events[event_id] =
+                        let mut watch_event =
                             create_watch_event(&event, item_idx as WatchItemIndex);
+                        if watch_event.op.contains(Op::DIRECTORY_ENTRIES_CHANGED)
+                            && this.watchlist.items_kind()[item_idx]
+                                == crate::watcher_impl::WatchItemKind::Directory
+                            && rel == ParentEqual::Parent
+                            && is_parent_or_equal(
+                                path,
+                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                    eventpath,
+                                ),
+                            ) != ParentEqual::Equal
+                        {
+                            watch_event.op.remove(Op::DIRECTORY_ENTRIES_CHANGED);
+                        }
+                        this.watch_events[event_id] = watch_event;
                         event_id += 1;
                     }
                 }
@@ -525,6 +539,9 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
 
 fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     let mut op = Op::empty();
+    if event.action != Action::Modified {
+        op |= Op::DIRECTORY_ENTRIES_CHANGED;
+    }
     if event.action == Action::Removed {
         op |= Op::DELETE;
     }

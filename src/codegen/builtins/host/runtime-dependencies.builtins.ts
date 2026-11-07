@@ -95,7 +95,10 @@ const bundlerPluginFunctions = functionsIn(
 );
 
 // A server runs the plugins that bunfig names, which are code from outside the executable.
-const pluginFunctionsOfServer = bundlerPluginFunctions.map(called => ({
+const pluginFunctionsOfServer = [
+  ...bundlerPluginFunctions,
+  b.functionIn("builtins/BundlerPlugin", "runOnStartCallbacks"),
+].map(called => ({
   function: called,
   when: b.whenBuildAdmitsRuntimeCode,
 }));

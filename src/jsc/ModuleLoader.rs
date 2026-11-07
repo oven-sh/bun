@@ -385,6 +385,20 @@ extern "C" fn Bun__onLoadNamespaceLength(key: &bun_core::String) -> i32 {
     }
 }
 
+/// C++ entry point: a plugin's `onLoad` in the `file` namespace is about to be called for `key`.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__watchFileLoadedByPlugin(vm: &VirtualMachine, key: &bun_core::String) {
+    if vm.is_watcher_enabled() {
+        watch_file_loaded_by_plugin(vm, key);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn watch_file_loaded_by_plugin(vm: &VirtualMachine, key: &bun_core::String) {
+    vm.add_plugin_served_file_to_watcher(key.to_utf8().slice());
+}
+
 /// The `namespace:` prefix of `specifier`, or `b""` if it has none
 /// (Windows drive-letter prefixes are not namespaces).
 fn extract_namespace(specifier: &[u8]) -> &[u8] {

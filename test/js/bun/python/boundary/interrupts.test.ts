@@ -1,6 +1,6 @@
 // What Python is in the middle of is cut short, and then the program goes on.
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { isASAN, isDebug, isWindows, tempDir } from "harness";
+import { isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { runFixture } from "./helpers";
 
 // These builds take seconds to start Python.
@@ -273,3 +273,62 @@ test.skipIf(isWindows).concurrent.each([
   });
   expect(exitCode).toBe(0);
 });
+
+// JS takes the memory of a typed array away whenever it runs, and the handler of a signal may call it.
+// The count that the call returns, the bytes of the array that it writes, and how many it leaves in the pipe.
+const callsWithMemory: [string, number, string, number][] = [
+  ["os.readinto()", 4096, "0 to 4095", 0],
+  ["os.readinto() of a part", 1024, "1024 to 2047", 0],
+  ["os.readv()", 4096, "0 to 4095", 0],
+  ["FileIO.readinto()", 4096, "0 to 4095", 0],
+  ["BufferedReader.readinto()", 4096, "0 to 4095", 0],
+  ["BufferedReader.readinto() of a part", 1024, "1024 to 2047", 0],
+  ["BufferedReader.readinto() over a stream of Python's", 4096, "0 to 4095", 4096],
+  ["os.write()", 4096, "none", 4096],
+  ["os.writev()", 4096, "none", 4096],
+  ["FileIO.write()", 4096, "none", 4096],
+  ["BufferedWriter.write()", 4096, "none", 4096],
+  ["BufferedWriter.write() over a stream of Python's", 4096, "none", 0],
+  ...((isLinux
+    ? [
+        ["FileIO.readinto() of an eventfd", 8, "0 to 6", 4096],
+        ["BufferedReader.readinto1() of an eventfd", 8, "0 to 6", 4096],
+      ]
+    : []) as [string, number, string, number][]),
+];
+const gone = "BufferError: the ArrayBuffer was detached or shrunk";
+test.skipIf(isWindows).concurrent.each(
+  callsWithMemory.flatMap(([call, count, written, left]) => {
+    // What the handler has put into the pipe for a call that reads stays there if the call does not read it.
+    const unread = call.includes("write") ? 0 : call.includes("a part") ? 1024 : 4096;
+    return [
+      [call, "left alone", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
+      [call, "moved and freed", "alone", `${gone}\n0 none 0 ${unread}\n`],
+      [call, "made shorter", "alone", `${gone}\n16 none 0 ${unread}\n`],
+      [call, "made longer", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
+      // There it is pinned: a transfer copies it, and it cannot be made shorter.
+      [call, "moved and freed", "beside another thread", `${count}\n4096 ${written} 0 ${left}\n`],
+      [call, "made shorter", "beside another thread", `${count} (RangeError)\n4096 ${written} 0 ${left}\n`],
+    ];
+  }),
+)(
+  "%s goes on when code of the program that ran in the middle of it has had the memory %s, %s",
+  async (call, how, thread, expected) => {
+    const { stdout, stderr, exitCode } = await runFixture("memory-taken-away-fixture.ts", call, how, thread);
+    expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test
+  .skipIf(!isLinux)
+  .concurrent("os.setxattr() looks the memory up when the audit hooks have been called", async () => {
+    const { stdout, stderr, exitCode } = await runFixture(
+      "memory-taken-away-fixture.ts",
+      "os.setxattr()",
+      "moved and freed",
+      "alone",
+    );
+    expect({ stdout, stderr }).toEqual({ stdout: `${gone}\n0 none 0 4096\n`, stderr: "" });
+    expect(exitCode).toBe(0);
+  });

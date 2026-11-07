@@ -546,7 +546,8 @@ pub fn parse_ts_config(
     Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
 }
 
-/// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
+/// A `define` value: JSON, a keyword, or an implicitly-quoted string. The first token decides
+/// which, so the value starts after the whitespace that the JSON parser skips.
 pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -556,11 +557,12 @@ pub fn parse_env_json(
     if contents.is_empty() {
         return Ok(empty_object_expr());
     }
+    let token = bun_core::strings::trim_js_whitespace_start(contents);
 
-    if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
-        let quote = contents[1];
-        let mut unescaped: Vec<u8> = Vec::with_capacity(contents.len());
-        unescaped.extend_from_slice(&contents[1..]);
+    if token.len() >= 2 && token[0] == b'\\' && matches!(token[1], b'"' | b'\'') {
+        let quote = token[1];
+        let mut unescaped: Vec<u8> = Vec::with_capacity(token.len());
+        unescaped.extend_from_slice(&token[1..]);
         let n = unescaped.len();
         if n >= 3 && unescaped[n - 2] == b'\\' && unescaped[n - 1] == quote {
             unescaped.truncate(n - 2);
@@ -571,19 +573,21 @@ pub fn parse_env_json(
         return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
     }
 
-    match contents[0] {
-        b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
+    match token.first() {
+        Some(b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'') => {
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
-        b'-' | b'.' if leads_a_number(contents) => {
+        Some(b'-' | b'.') if leads_a_number(token) => {
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
-            let word_len = contents
+            let word_len = token
                 .iter()
                 .position(|c| !c.is_ascii_alphanumeric() && *c != b'_' && *c != b'$')
-                .unwrap_or(contents.len());
-            match &contents[..word_len] {
+                .unwrap_or(token.len());
+            match &token[..word_len] {
+                // `falseé` and `false\u0065` are identifiers, not `false`.
+                _ if continues_identifier(&token[word_len..]) => {}
                 b"true" => {
                     return Ok(Expr {
                         loc: bun_ast::Loc { start: 0 },
@@ -610,9 +614,33 @@ pub fn parse_env_json(
                 }
                 _ => {}
             }
-            parse_auto_quoted_string(source, log, bump)
+            // A text of several lines is kept whole: the indent of its first line is text too.
+            let start = if spans_lines(token) {
+                0
+            } else {
+                contents.len() - token.len()
+            };
+            parse_auto_quoted_string(source, start, log, bump)
         }
     }
+}
+
+/// Whether an identifier goes on at `rest`, the text after a run of its ASCII bytes.
+fn continues_identifier(rest: &[u8]) -> bool {
+    match rest.first() {
+        Some(b'\\') => rest.get(1) == Some(&b'u'),
+        Some(0x80..) => bun_core::strings::wtf8_codepoints(rest)
+            .next()
+            .is_some_and(|(_, cp)| bun_core::lexer::is_identifier_part(cp)),
+        _ => false,
+    }
+}
+
+/// Whether `text` has a line break with more text after it.
+fn spans_lines(text: &[u8]) -> bool {
+    bun_core::strings::index_of_any(text, b"\r\n").is_some_and(|line_break| {
+        !bun_core::strings::trim_js_whitespace_start(&text[line_break..]).is_empty()
+    })
 }
 
 fn leads_a_number(contents: &[u8]) -> bool {
@@ -633,16 +661,17 @@ fn leads_a_number(contents: &[u8]) -> bool {
 
 fn parse_auto_quoted_string(
     source: &bun_ast::Source,
+    start: usize,
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
-    let contents: &[u8] = &source.contents;
+    let body: &[u8] = &source.contents[start..];
     let loc = bun_ast::Loc { start: 0 };
 
     let mut needs_decode = false;
     let mut i = 0;
-    while i < contents.len() {
-        match contents[i] {
+    while i < body.len() {
+        match body[i] {
             b'\\' => {
                 needs_decode = true;
                 i += 2;
@@ -654,12 +683,11 @@ fn parse_auto_quoted_string(
             _ => i += 1,
         }
     }
-    let body = contents;
     if !needs_decode {
         return Ok(Expr::allocate(bump, E::String::init(body), loc));
     }
     let opts = DOTENV_JSON_OPTS;
-    match crate::json_stage2::decode_auto_quoted(source, log, bump, body, opts) {
+    match crate::json_stage2::decode_auto_quoted(source, log, bump, start, opts) {
         Ok(s) => Ok(Expr::allocate(bump, s, loc)),
         Err(e) => Err(e),
     }

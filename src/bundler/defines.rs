@@ -449,3 +449,147 @@ impl DefineDataExt for DefineData {
 
 // `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
 // contents automatically; `Box<Define>` frees `self`. No explicit Drop needed.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Some of the 25 code points that `\s` matches. The last test has them all.
+    const WHITESPACE: [&str; 10] = [
+        " ",
+        "\t",
+        "\n",
+        "\r\n",
+        "\x0b",
+        "\x0c",
+        "\u{a0}",
+        "\u{feff}",
+        "\u{2028}",
+        " \t\u{3000}\n ",
+    ];
+
+    /// What `text` is as the value of a define.
+    fn read(text: &str) -> String {
+        bun_ast::initialize_store_or_reset();
+        let _reset = bun_ast::StoreResetGuard::new();
+        let arena = bun_alloc::Arena::new();
+        let mut log = bun_ast::Log::default();
+        let Ok(data) = DefineData::parse(b"K", text.as_bytes(), false, false, &mut log, &arena)
+        else {
+            return "error".to_owned();
+        };
+        match data.value {
+            ExprData::EBoolean(boolean) => boolean.value.to_string(),
+            ExprData::ENull(_) => "null".to_owned(),
+            ExprData::EUndefined(_) => "undefined".to_owned(),
+            ExprData::ENumber(number) => number.value().to_string(),
+            ExprData::EString(string) if string.is_utf16 => {
+                format!("\"{}\"", String::from_utf16_lossy(string.slice16()))
+            }
+            ExprData::EString(string) => {
+                format!("\"{}\"", String::from_utf8_lossy(string.slice8()))
+            }
+            ExprData::EArray(array) => format!("array of {}", array.items.len()),
+            ExprData::EObject(object) => format!("object of {}", object.properties.len()),
+            ExprData::EIdentifier(_) => "identifier".to_owned(),
+            _ => "another kind".to_owned(),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn whitespace_before_a_value_is_not_part_of_it() {
+        for (token, value) in [
+            ("false", "false"),
+            ("true", "true"),
+            ("null", "null"),
+            ("undefined", "undefined"),
+            ("0", "0"),
+            ("-1", "-1"),
+            (".5", "0.5"),
+            ("\"s\"", "\"s\""),
+            ("'s'", "\"s\""),
+            ("{}", "object of 0"),
+            ("[1]", "array of 1"),
+            ("{\"a\":1}", "object of 1"),
+            ("true;", "true"),
+            ("hello world ", "\"hello world \""),
+            ("-abc", "\"-abc\""),
+            (r#"\"s\""#, "\"s\""),
+            ("/* c */ false", "\"/* c */ false\""),
+            ("7 days", "7"),
+            ("[1", "error"),
+            ("1.2.3", "error"),
+            ("1n", "error"),
+            // A keyword ends where its identifier ends.
+            ("false\u{e9} x", "\"false\u{e9} x\""),
+            ("false\u{301} x", "\"false\u{301} x\""),
+            ("null\u{b7} x", "\"null\u{b7} x\""),
+            ("true\\u0065 x", "\"truee x\""),
+            ("false\u{1f600}", "false"),
+            ("true\u{a0}x", "true"),
+            ("null\u{2192}", "null"),
+            ("undefined\u{feff}", "undefined"),
+            ("false\\", "false"),
+            ("false\\n", "false"),
+            ("null\\t", "null"),
+        ] {
+            for ws in std::iter::once("").chain(WHITESPACE) {
+                assert_eq!(read(&format!("{ws}{token}")), value, "{ws:?} + {token:?}");
+            }
+        }
+    }
+
+    // `DefineData::parse` looks for a name in the text as it is written.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn whitespace_before_a_name_makes_it_a_string() {
+        assert_eq!(read("production"), "identifier");
+        assert_eq!(read("a.b"), "identifier");
+        assert_eq!(read("false\u{e9}"), "identifier");
+        assert_eq!(read(""), "object of 0");
+        for ws in WHITESPACE {
+            assert_eq!(read(&format!("{ws}production")), "\"production\"", "{ws:?}");
+            assert_eq!(read(&format!("{ws}a.b")), "\"a.b\"", "{ws:?}");
+            assert_eq!(
+                read(&format!("{ws}false\u{e9}")),
+                "\"false\u{e9}\"",
+                "{ws:?}"
+            );
+            assert_eq!(read(ws), "\"\"", "{ws:?}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn text_of_several_lines_is_kept_whole() {
+        assert_eq!(
+            read("\n  key: value\n  other: 1\n"),
+            "\"\n  key: value\n  other: 1\n\""
+        );
+        assert_eq!(read(" first\nsecond"), "\" first\nsecond\"");
+        assert_eq!(read(" hello\n"), "\"hello\n\"");
+        assert_eq!(read("\n\n"), "\"\"");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn the_whitespace_skipped_is_what_the_json_parser_skips() {
+        let mut skipped = 0;
+        for cp in (0..=0xFFFF).filter_map(char::from_u32) {
+            let by_the_parser = read(&format!("[{cp}\"s\"]")) == "array of 1";
+            let before_a_keyword = read(&format!("{cp}true")) == "true";
+            assert_eq!(before_a_keyword, by_the_parser, "U+{:04X}", cp as u32);
+            if before_a_keyword {
+                assert_eq!(
+                    read(&format!("{cp}[\"s\"]")),
+                    "array of 1",
+                    "U+{:04X}",
+                    cp as u32
+                );
+                skipped += 1;
+            }
+        }
+        assert_eq!(skipped, 25);
+    }
+}

@@ -16,7 +16,11 @@ const writes = name.includes("write");
 let buffer: ArrayBuffer | SharedArrayBuffer = new ArrayBuffer(size);
 if (how === "made shorter") buffer = new ArrayBuffer(size, { maxByteLength: size });
 if (how === "made longer") buffer = new SharedArrayBuffer(size, { maxByteLength: 16 * size });
-const array = new Uint8Array(buffer, 0, how === "made longer" ? size : undefined);
+const memory = new WebAssembly.Memory({ initial: 1, maximum: 16 });
+if (how === "that of WebAssembly, which grows") buffer = memory.buffer;
+// (Left alone, it is one that has no ArrayBuffer until Python looks at it.)
+const array =
+  how === "left alone" ? new Uint8Array(size) : new Uint8Array(buffer, 0, how === "made shorter" ? undefined : size);
 // What comes to lie where the memory was.
 const later: Uint8Array[] = [];
 let refused = "";
@@ -28,6 +32,7 @@ install(() => {
       for (let i = 0; i < 200; i++) later.push(new Uint8Array(size));
     } else if (how === "made shorter") (buffer as ArrayBuffer).resize(16);
     else if (how === "made longer") (buffer as SharedArrayBuffer).grow(16 * size);
+    else if (how === "that of WebAssembly, which grows") memory.grow(1);
   } catch (error) {
     refused = ` (${(error as Error).name})`;
   }

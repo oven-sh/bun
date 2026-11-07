@@ -274,7 +274,8 @@ test.skipIf(isWindows).concurrent.each([
   expect(exitCode).toBe(0);
 });
 
-// JS takes the memory of a typed array away whenever it runs, and the handler of a signal may call it.
+// JS takes the memory of a typed array away whenever it runs, and the handler of a signal may call it. While a call of Python's
+// uses the memory it is pinned: a transfer copies it, and it cannot be made shorter.
 // The count that the call returns, the bytes of the array that it writes, and how many it leaves in the pipe.
 const callsWithMemory: [string, number, string, number][] = [
   ["os.readinto()", 4096, "0 to 4095", 0],
@@ -298,19 +299,20 @@ const callsWithMemory: [string, number, string, number][] = [
 ];
 const gone = "BufferError: the ArrayBuffer was detached or shrunk";
 test.skipIf(isWindows).concurrent.each(
-  callsWithMemory.flatMap(([call, count, written, left]) => {
-    // What the handler has put into the pipe for a call that reads stays there if the call does not read it.
-    const unread = call.includes("write") ? 0 : call.includes("a part") ? 1024 : 4096;
-    return [
-      [call, "left alone", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
-      [call, "moved and freed", "alone", `${gone}\n0 none 0 ${unread}\n`],
-      [call, "made shorter", "alone", `${gone}\n16 none 0 ${unread}\n`],
-      [call, "made longer", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
-      // There it is pinned: a transfer copies it, and it cannot be made shorter.
-      [call, "moved and freed", "beside another thread", `${count}\n4096 ${written} 0 ${left}\n`],
-      [call, "made shorter", "beside another thread", `${count} (RangeError)\n4096 ${written} 0 ${left}\n`],
-    ];
-  }),
+  callsWithMemory.flatMap(([call, count, written, left]) => [
+    [call, "left alone", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
+    [call, "moved and freed", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
+    [call, "moved and freed", "beside another thread", `${count}\n4096 ${written} 0 ${left}\n`],
+    [call, "made shorter", "alone", `${count} (RangeError)\n4096 ${written} 0 ${left}\n`],
+    [call, "made longer", "alone", `${count}\n4096 ${written} 0 ${left}\n`],
+    // That cannot be pinned. What the handler has put into the pipe for a call that reads stays there.
+    [
+      call,
+      "that of WebAssembly, which grows",
+      "alone",
+      `${gone}\n0 none 0 ${call.includes("write") ? 0 : call.includes("a part") ? 1024 : 4096}\n`,
+    ],
+  ]),
 )(
   "%s goes on when code of the program that ran in the middle of it has had the memory %s, %s",
   async (call, how, thread, expected) => {
@@ -326,7 +328,7 @@ test
     const { stdout, stderr, exitCode } = await runFixture(
       "memory-taken-away-fixture.ts",
       "os.setxattr()",
-      "moved and freed",
+      "that of WebAssembly, which grows",
       "alone",
     );
     expect({ stdout, stderr }).toEqual({ stdout: `${gone}\n0 none 0 4096\n`, stderr: "" });

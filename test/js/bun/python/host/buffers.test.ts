@@ -333,8 +333,8 @@ def view(*items):
     ],
     ["m[0]", "!BufferError: the ArrayBuffer was detached or shrunk"],
     [
-      "u = js.Uint8Array(1 << 16)\nclass Detaches:\n    def __index__(self):\n        js.structuredClone(u.buffer, transfer=[u.buffer])\n        return 0\nstruct.pack_into('<I', u, Detaches(), 1)",
-      "!BufferError: the ArrayBuffer was detached or shrunk",
+      "u = js.Uint8Array(1 << 16)\nclass Detaches:\n    def __index__(self):\n        js.structuredClone(u.buffer, transfer=[u.buffer])\n        return 0\nstruct.pack_into('<I', u, Detaches(), 1), len(u), u[0]",
+      "(None, 65536, 1)",
     ],
     [
       "len(bytes(js.SharedArrayBuffer(8))), memoryview(js.Uint8Array(js.SharedArrayBuffer(8))).nbytes, memoryview(js.Uint8Array(0)).tolist(), bytes(js.DataView(js.ArrayBuffer(4), 1, 2))",
@@ -345,5 +345,109 @@ def view(*items):
       "(True, 5)",
     ],
     ["js.WebAssembly.Instance(js.WebAssembly.Module(wasm)).exports.add(2, 3)", "5"],
+  ],
+);
+
+// While a function written in C++ uses the memory of a typed array, the memory is pinned: JS gets a copy where it asks for the
+// memory itself, and the function goes on where it was.
+group(
+  "memory that JavaScript would take away in the middle of a call",
+  {
+    setup: `
+import _codecs, codecs, ctypes, io, marshal, pickle, sys, threading, types
+def array(size=1 << 16): return js.Uint8Array(size).fill(0x11)
+class Takes:
+    "Asked for a number or for its truth, it has JS move the memory away and drop it, and make other things where it was."
+    def __init__(self, u, value=0): self.u, self.value, self.moved = u, value, None
+    def __call__(self, *ignored):
+        if self.moved is None:
+            self.moved = self.u.buffer.transfer().byteLength
+            js.Bun.gc(True)
+            self.later = [js.Uint8Array(1 << 16).fill(0x5a) for _ in range(50)]
+    def __index__(self): self(); return self.value
+    def __bool__(self): self(); return True
+    # How long the array is now, how much JS got, and how many of the later arrays are no longer as they were made.
+    def state(self): return len(self.u), self.moved, sum(bytes(a) != bytes([0x5a]) * (1 << 16) for a in self.later)
+`,
+  },
+  [
+    [
+      "u = array()\nt = Takes(u, 0xee)\nstruct.pack_into('<B', u, 0, t), u[0], t.state()",
+      "(None, 238, (65536, 65536, 0))",
+    ],
+    [
+      "u = array()\nt = Takes(u, 4)\nstruct.pack_into('<B', u, t, 0xee), u[4], t.state()",
+      "(None, 238, (65536, 65536, 0))",
+    ],
+    [
+      "u = array()\nt = Takes(u)\nset(_codecs.utf_8_decode(u, 'strict', t)[0]), t.state()",
+      "({'\\x11'}, (65536, 65536, 0))",
+    ],
+    [
+      "u = array()\nu[0] = 0xff\nt = Takes(u)\ncodecs.register_error('takes', lambda e: (t(), ('?', e.end))[1])\nsorted(set(str(u, 'ascii', 'takes'))), t.state()",
+      "(['\\x11', '?'], (65536, 65536, 0))",
+    ],
+    [
+      "u = array()\nt = Takes(u)\nsys.modules['takes'] = types.SimpleNamespace(take=t)\npayload = b'ctakes\\ntake\\n)R0B' + struct.pack('<I', 100) + bytes([0x11]) * 100 + b'.'\nmemoryview(u)[:len(payload)] = payload\nset(pickle.loads(u)), t.state()",
+      "({17}, (65536, 65536, 0))",
+    ],
+    [
+      "u = array()\nt = Takes(u)\nsearch = lambda name: (t(), codecs.lookup('latin-1'))[1] if name == 'takes' else None\ncodecs.register(search)\ntry: text = str(u, 'takes')\nfinally: codecs.unregister(search)\nset(text), t.state()",
+      "({'\\x11'}, (65536, 65536, 0))",
+    ],
+    [
+      "u = array()\nu[0] = 0xff\nt = Takes(u)\nclass Chunks(io.BufferedIOBase):\n    chunks = [u]\n    def readable(self): return True\n    def read1(self, size=-1): return self.chunks.pop() if self.chunks else b''\n    read = read1\ncodecs.register_error('takes too', lambda e: (t(), ('?', e.end))[1])\nsorted(set(io.TextIOWrapper(Chunks(), encoding='ascii', errors='takes too').read())), t.state()",
+      "(['\\x11', '?'], (65536, 65536, 0))",
+    ],
+    ["u = array()\nt = Takes(u)\nmarshal.loads(u, allow_code=t)", "!ValueError: bad marshal data (unknown type code)"],
+    ["t.state()", "(65536, 65536, 0)"],
+    // One format is not native, so the module struct unpacks each item, and that is code like any other.
+    [
+      "u = array()\nt = Takes(u)\nother = (ctypes.c_int32.__ctype_be__ * (1 << 14))(*([0x11111111] * (1 << 14)))\nclass Struct:\n    def __init__(self, format): self.unpack = struct.Struct(format).unpack_from\n    def unpack_from(self, buffer): t(); return self.unpack(buffer)\nsys.modules['struct'] = types.SimpleNamespace(Struct=Struct)\ntry: equal = memoryview(u).cast('i') == memoryview(other)\nfinally: sys.modules['struct'] = struct\nequal, t.state()",
+      "(True, (65536, 65536, 0))",
+    ],
+    [
+      "b = js.ArrayBuffer(1 << 16, maxByteLength=1 << 17)\nu = js.Uint8Array(b)\nsaid = []\nclass Shrinks:\n    def __index__(self):\n        try: b.resize(16)\n        except Exception as e: said.append(str(e)[:10])\n        return 0xee\nstruct.pack_into('<B', u, 1 << 15, Shrinks()), u[1 << 15], said, b.byteLength",
+      "(None, 238, ['RangeError'], 65536)",
+    ],
+    // An array of up to 1000 items has its memory in the heap of JS until it is given an ArrayBuffer, and then the memory moves.
+    ["u = array(16)\nt = Takes(u, 0xee)\nstruct.pack_into('<B', u, 0, t), u[0], t.state()", "(None, 238, (16, 16, 0))"],
+    [
+      "u = array(1000)\nt = Takes(u)\nset(_codecs.utf_8_decode(u, 'strict', t)[0]), t.state()",
+      "({'\\x11'}, (1000, 1000, 0))",
+    ],
+    // That is before anybody is told where the memory is: an address that ctypes keeps stays good when Python looks again.
+    ...(
+      [
+        ["Uint8Array", 16],
+        ["Uint8Array", 1000],
+        ["Uint8Array", 1001],
+        ["Uint16Array", 1000],
+        ["Float64Array", 1000],
+        ["Float64Array", 1001],
+      ] as const
+    ).map(([type, length]): [string, string] => [
+      `u = js.${type}(${length})\na = (ctypes.c_uint8 * u.byteLength).from_buffer(u)\np = ctypes.cast(a, ctypes.POINTER(ctypes.c_uint8))\nbefore = ctypes.addressof(a)\np[0] = 1\nlooked = bytes(u), struct.unpack_from('<B', u), memoryview(u)[0], u == b'x'\np[1] = 2\nbytes(u)[:2], ctypes.addressof(a) == before`,
+      "(b'\\x01\\x02', True)",
+    ]),
+    // No thread is kept out meanwhile: code of the program that the function calls may wait for one. (The thread cannot be through
+    // before the wait begins: it needs a turn after go.set().)
+    [
+      "u = array(16)\nalive = []\nclass Joins:\n    def __index__(self):\n        go = threading.Event()\n        thread = threading.Thread(target=go.wait)\n        thread.start()\n        go.set()\n        thread.join(10)\n        alive.append(thread.is_alive())\n        return 1\nstruct.pack_into('<B', u, 0, Joins()), alive",
+      "(None, [False])",
+    ],
+    // Memory of WebAssembly is not pinned. Between two views no thread is kept out either, while code of the program runs that may wait for one.
+    [
+      "w = js.WebAssembly.Memory(initial=1)\nu = js.Uint8Array(w.buffer, 0, 16)\nother = (ctypes.c_int32.__ctype_be__ * 4)()\nwaited = []\nclass Struct:\n    def __init__(self, format): self.unpack = struct.Struct(format).unpack_from\n    def unpack_from(self, buffer):\n        if not waited:\n            go, done = threading.Event(), threading.Event()\n            threading.Thread(target=lambda: (go.wait(), done.set())).start()\n            go.set()\n            waited.append(done.wait(10))\n        return self.unpack(buffer)\nsys.modules['struct'] = types.SimpleNamespace(Struct=Struct)\ntry: equal = memoryview(u).cast('i') == memoryview(other)\nfinally: sys.modules['struct'] = struct\nequal, waited",
+      "(True, [True])",
+    ],
+    [
+      "w = js.WebAssembly.Memory(initial=1, maximum=4)\nu = js.Uint8Array(w.buffer)\nclass Grows:\n    def __index__(self): w.grow(1); return 1\nstruct.pack_into('<B', u, 0, Grows())",
+      "!BufferError: the ArrayBuffer was detached or shrunk",
+      "memory of WebAssembly is not held, and pack_into() does not look it up again behind the conversion",
+    ],
+    // Afterwards it is as free as before.
+    ["b.resize(16), b.byteLength", "(None, 16)"],
+    ["u = array()\nstruct.pack_into('<B', u, 0, 1), u.buffer.transfer().byteLength, len(u)", "(None, 65536, 0)"],
   ],
 );

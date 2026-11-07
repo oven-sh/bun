@@ -12,6 +12,8 @@
 //! Exit codes: 0 = clean, 1 = violations outside allowlist, 2 = tool error.
 
 mod aarch64;
+#[cfg(test)]
+mod tests;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -154,9 +156,8 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
 
     // CLDEMOTE encodes in hint/NOP space (0f 1c /0) and is architecturally
     // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Only
-    // ever observed as a data-in-.text misdecode (the CRT strspn family's
-    // switch-table RVAs, same as RTM below), but the hint-space encoding
-    // makes it harmless regardless of provenance.
+    // ever observed as a data-in-.text misdecode (#35785), but the hint-space
+    // encoding makes it harmless regardless of provenance.
     if insn.mnemonic() == Mnemonic::Cldemote {
         return true;
     }
@@ -177,11 +178,11 @@ fn is_allowed(feat: CpuidFeature) -> bool {
 /// and XTEST which iced tags HLE_or_RTM) is never compiler-emitted without
 /// `_xbegin()` intrinsics, no Bun dependency uses it, and Intel deprecated it
 /// (SDM vol. 1 2.5: future parts drop it; existing parts disable it via
-/// microcode for TAA). When a scan sees RTM it is the MSVC CRT's inline RVA
-/// jump tables decoding as `C7 F8` XBEGIN / `C6 F8` XABORT — see the
-/// strcspn/strspn/strpbrk note in allowlist-x64-windows.txt. No compiler
-/// targeting x86-64 in any configuration emits these — their presence in a
-/// scan means a linear sweep walked through inline data.
+/// microcode for TAA). Data that nothing marks decodes as `C7 F8` XBEGIN /
+/// `C6 F8` XABORT at some link layouts (#35770): the LLInt opcode ids inside
+/// `llint_entry` on Windows, and every MSVC jump table of a PE scanned without
+/// its PDB. No compiler targeting x86-64 in any configuration emits these —
+/// their presence in a scan means a linear sweep walked through inline data.
 ///
 /// MSVC inlines jump tables in .text (LLVM puts them in .rodata), so this
 /// matters on PE more than ELF.
@@ -305,6 +306,17 @@ struct Sym {
     name: String,
 }
 
+/// Where the PDB says a procedure keeps data inside its own code. MSVC stores
+/// a switch's jump table after the function's last instruction and marks its
+/// first byte with an unnamed, untyped S_LDATA32 record in the procedure's
+/// scope. Field order is sort order: by procedure, then by address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TableMark {
+    proc_start: u64,
+    proc_end: u64,
+    va: u64,
+}
+
 fn build_symbol_table(file: &object::File) -> Vec<Sym> {
     // Collect ALL defined text-section symbols, including zero-size ones.
     // Hand-written asm often omits .size directives; dropping those labels
@@ -388,7 +400,10 @@ fn build_symbol_table(file: &object::File) -> Vec<Sym> {
 /// memory). The PE header stores the preferred image base. iced's `ip` is the
 /// full VA, which object gives us via `section.address()` = image_base + RVA.
 /// So: VA = relative_address_base() + RVA.
-fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sym>, String> {
+fn build_symbol_table_pdb(
+    pdb_path: &Path,
+    file: &object::File,
+) -> Result<(Vec<Sym>, Vec<TableMark>), String> {
     let f = std::fs::File::open(pdb_path)
         .map_err(|e| format!("opening pdb {}: {}", pdb_path.display(), e))?;
     let mut pdb =
@@ -414,12 +429,15 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     use pdb::FallibleIterator;
 
     let mut raw: Vec<(u64, u64, String)> = Vec::new();
+    let mut table_marks: Vec<TableMark> = Vec::new();
 
     // ---- Pass 1: DBI module stream (S_LPROC32/S_GPROC32) ----
     // Per-compiland records, one per function, with an actual byte-length.
     // The dense source: covers every static function the public stream can't
     // see. module_info() returns Option — some modules are import-only stubs
     // with no symbol substream.
+    //
+    // The same stream holds the data records that become `TableMark`s.
     //
     // We also collect each module's object-file name while iterating, for use
     // in pass 3 below. Section contributions (pass 3) reference modules by
@@ -454,22 +472,46 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
         let mut syms = info
             .symbols()
             .map_err(|e| format!("pdb module symbols: {e}"))?;
+        // The procedure whose scope the next records are in: the index of its
+        // S_END record, and its code range. The scopes nested in it (an inlined
+        // call, a block) end before its table marks, so only its own end counts.
+        let mut scope: Option<(pdb::SymbolIndex, u64, u64)> = None;
         while let Some(sym) = syms.next().map_err(|e| format!("pdb sym iter: {e}"))? {
-            // S_LPROC32 (local/static) and S_GPROC32 (global) both land in
-            // SymbolData::Procedure. .len is the real function body length
-            // in bytes — no gap-synthesis needed for these.
-            let parsed: Result<pdb::SymbolData, _> = sym.parse();
-            let Ok(pdb::SymbolData::Procedure(p)) = parsed else {
-                continue;
-            };
-            let Some(rva) = p.offset.to_rva(&address_map) else {
-                continue;
-            };
-            let va = image_base + u64::from(rva.0);
-            if !in_text(va) {
-                continue;
+            match sym.parse() {
+                // S_LPROC32 (local/static) and S_GPROC32 (global) both land in
+                // SymbolData::Procedure. .len is the real function body length
+                // in bytes — no gap-synthesis needed for these.
+                Ok(pdb::SymbolData::Procedure(p)) => {
+                    let Some(rva) = p.offset.to_rva(&address_map) else {
+                        continue;
+                    };
+                    let va = image_base + u64::from(rva.0);
+                    if !in_text(va) {
+                        continue;
+                    }
+                    let len = u64::from(p.len);
+                    scope = Some((p.end, va, va + len));
+                    raw.push((va, len, p.name.to_string().into_owned()));
+                }
+                Ok(pdb::SymbolData::Data(d)) => {
+                    let Some((end, proc_start, proc_end)) = scope else {
+                        continue;
+                    };
+                    if sym.index() >= end || d.type_index.0 != 0 || !d.name.is_empty() {
+                        continue;
+                    }
+                    let Some(rva) = d.offset.to_rva(&address_map) else {
+                        continue;
+                    };
+                    table_marks.push(TableMark {
+                        proc_start,
+                        proc_end,
+                        va: image_base + u64::from(rva.0),
+                    });
+                }
+                // Every other kind, and the kinds pdb 0.8 cannot parse.
+                _ => {}
             }
-            raw.push((va, u64::from(p.len), p.name.to_string().into_owned()));
         }
     }
 
@@ -613,7 +655,58 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     syms.extend(gap_fillers);
     syms.sort_by_key(|s| s.addr);
 
-    Ok(syms)
+    Ok((syms, table_marks))
+}
+
+/// Turn `TableMark`s into the address ranges the x64 sweep leaves out.
+///
+/// A block runs from a mark to the next mark of the same procedure, or to the
+/// procedure's end. It is a jump table only if it is whole 4-byte words and
+/// every word is the RVA of code of that procedure: an address in
+/// [procedure start, the procedure's first mark). The rule is all or nothing
+/// per block, so a record that is not a table hides no code, and the byte
+/// index table of a two-level switch stays decoded (its bytes are small
+/// integers that do not change with link layout).
+///
+/// `read_u32` reads the little-endian word at a VA of the image. `marks` is
+/// left sorted, with one entry for each mark that lies in its procedure.
+fn msvc_table_ranges(
+    marks: &mut Vec<TableMark>,
+    image_base: u64,
+    read_u32: impl Fn(u64) -> Option<u32>,
+) -> Vec<(u64, u64)> {
+    marks.retain(|m| (m.proc_start..m.proc_end).contains(&m.va));
+    // The PDB lists a procedure's marks from its last table to its first, and
+    // lists them again for each identical procedure the linker folded into it.
+    marks.sort_unstable();
+    marks.dedup();
+
+    let mut ranges = Vec::new();
+    for of_proc in marks.chunk_by(|a, b| (a.proc_start, a.proc_end) == (b.proc_start, b.proc_end)) {
+        let code = of_proc[0].proc_start..of_proc[0].va;
+        for (i, mark) in of_proc.iter().enumerate() {
+            let end = of_proc.get(i + 1).map_or(mark.proc_end, |next| next.va);
+            let is_table = (end - mark.va) % 4 == 0
+                && (mark.va..end).step_by(4).all(|at| {
+                    read_u32(at)
+                        .and_then(|rva| image_base.checked_add(u64::from(rva)))
+                        .is_some_and(|target| code.contains(&target))
+                });
+            if is_table {
+                ranges.push((mark.va, end));
+            }
+        }
+    }
+    ranges
+}
+
+/// The little-endian u32 at `va`, if a section of the file holds its 4 bytes.
+fn image_u32(file: &object::File, va: u64) -> Option<u32> {
+    file.sections().find_map(|s| {
+        let at = usize::try_from(va.checked_sub(s.address())?).ok()?;
+        let word = s.data().ok()?.get(at..at.checked_add(4)?)?;
+        Some(u32::from_le_bytes(word.try_into().ok()?))
+    })
 }
 
 /// Binary search for the symbol whose [addr, end) range contains `ip`.
@@ -769,8 +862,43 @@ fn record(
     });
 }
 
+/// The code of one section, in address order: [sec_addr, sec_end) without
+/// `data_ranges` (sorted by start). A range ends at the first symbol start in
+/// it: a symbol start is an instruction boundary, and the sweep skips none.
+fn code_pieces(
+    sec_addr: u64,
+    sec_end: u64,
+    data_ranges: &[(u64, u64)],
+    starts: &[u64],
+) -> Vec<(u64, u64)> {
+    let mut pieces = Vec::new();
+    let mut from = sec_addr;
+    for &(lo, hi) in data_ranges {
+        let lo = lo.max(from);
+        let next_symbol = starts.get(starts.partition_point(|&s| s < lo));
+        let hi = next_symbol.map_or(hi, |&s| hi.min(s)).min(sec_end);
+        if lo >= hi {
+            continue;
+        }
+        if from < lo {
+            pieces.push((from, lo));
+        }
+        from = hi;
+    }
+    if from < sec_end {
+        pieces.push((from, sec_end));
+    }
+    pieces
+}
+
 /// x64 decode + classify. iced provides exact per-instruction CpuidFeature.
-fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist) -> ScanResult {
+fn scan_x86_64(
+    bytes: &[u8],
+    sec_addr: u64,
+    syms: &[Sym],
+    allowlist: &Allowlist,
+    data_ranges: &[(u64, u64)],
+) -> ScanResult {
     let mut violations = Buckets::new();
     let mut allowlisted = Buckets::new();
     let mut total_insns = 0u64;
@@ -793,59 +921,64 @@ fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist)
     starts.dedup();
     let mut next_start = 0usize;
 
-    let mut decoder = Decoder::with_ip(64, bytes, sec_addr, DecoderOptions::NONE);
     let mut insn = Instruction::default();
-    while decoder.can_decode() {
-        decoder.decode_out(&mut insn);
-        let (ip, next_ip) = (insn.ip(), decoder.ip());
-        while next_start < starts.len() && starts[next_start] <= ip {
-            next_start += 1;
-        }
-        if next_start < starts.len() && starts[next_start] < next_ip {
-            let resync = starts[next_start];
-            decoder
-                .set_position((resync - sec_addr) as usize)
-                .expect("symbol start inside section");
-            decoder.set_ip(resync);
-            continue;
-        }
-        if insn.is_invalid() {
-            continue;
-        }
-        total_insns += 1;
-
-        let feats = insn.cpuid_features();
-        // Fast path: no post-baseline features at all (the common case).
-        if feats.iter().copied().all(is_allowed) {
-            continue;
-        }
-        if is_harmless_on_nehalem(&insn) {
-            continue;
-        }
-
-        // iced's Mnemonic and CpuidFeature are repr'd via tables with static
-        // &str names behind their Debug impls, but there's no public stable
-        // accessor. Leak the Debug repr once per hit — tiny volume (tens of
-        // thousands of hits max, each a few bytes; a KB or so for a full scan).
-        let mnem: &'static str = Box::leak(format!("{:?}", insn.mnemonic()).into_boxed_str());
-        // Record EVERY post-baseline feature, not just the first one found.
-        // Multi-feature instructions (e.g. VPCLMULQDQ requires AVX+PCLMULQDQ)
-        // must check each feature against the ceiling independently — if the
-        // ceiling says [AVX] but PCLMULQDQ is also required, that's a violation.
-        for bad_feat in feats.iter().copied().filter(|f| !is_allowed(*f)) {
-            if is_impossible_feature(bad_feat) {
+    // One decoder per piece of code, so iced never reads a data range: an
+    // instruction that would run into one runs out of bytes and is INVALID.
+    for (from, to) in code_pieces(sec_addr, sec_end, data_ranges, &starts) {
+        let piece = &bytes[(from - sec_addr) as usize..(to - sec_addr) as usize];
+        let mut decoder = Decoder::with_ip(64, piece, from, DecoderOptions::NONE);
+        while decoder.can_decode() {
+            decoder.decode_out(&mut insn);
+            let (ip, next_ip) = (insn.ip(), decoder.ip());
+            while next_start < starts.len() && starts[next_start] <= ip {
+                next_start += 1;
+            }
+            if next_start < starts.len() && starts[next_start] < next_ip {
+                let resync = starts[next_start];
+                decoder
+                    .set_position((resync - from) as usize)
+                    .expect("symbol start inside the piece");
+                decoder.set_ip(resync);
                 continue;
             }
-            let feat: &'static str = Box::leak(format!("{:?}", bad_feat).into_boxed_str());
-            record(
-                insn.ip(),
-                mnem,
-                feat,
-                syms,
-                allowlist,
-                &mut violations,
-                &mut allowlisted,
-            );
+            if insn.is_invalid() {
+                continue;
+            }
+            total_insns += 1;
+
+            let feats = insn.cpuid_features();
+            // Fast path: no post-baseline features at all (the common case).
+            if feats.iter().copied().all(is_allowed) {
+                continue;
+            }
+            if is_harmless_on_nehalem(&insn) {
+                continue;
+            }
+
+            // iced's Mnemonic and CpuidFeature are repr'd via tables with static
+            // &str names behind their Debug impls, but there's no public stable
+            // accessor. Leak the Debug repr once per hit — tiny volume (tens of
+            // thousands of hits max, each a few bytes; a KB or so for a full scan).
+            let mnem: &'static str = Box::leak(format!("{:?}", insn.mnemonic()).into_boxed_str());
+            // Record EVERY post-baseline feature, not just the first one found.
+            // Multi-feature instructions (e.g. VPCLMULQDQ requires AVX+PCLMULQDQ)
+            // must check each feature against the ceiling independently — if the
+            // ceiling says [AVX] but PCLMULQDQ is also required, that's a violation.
+            for bad_feat in feats.iter().copied().filter(|f| !is_allowed(*f)) {
+                if is_impossible_feature(bad_feat) {
+                    continue;
+                }
+                let feat: &'static str = Box::leak(format!("{:?}", bad_feat).into_boxed_str());
+                record(
+                    insn.ip(),
+                    mnem,
+                    feat,
+                    syms,
+                    allowlist,
+                    &mut violations,
+                    &mut allowlisted,
+                );
+            }
         }
     }
 
@@ -980,18 +1113,26 @@ struct Args {
     binary: PathBuf,
     allowlists: Vec<PathBuf>,
     pdb: Option<PathBuf>,
+    min_data_ranges: usize,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut binary: Option<PathBuf> = None;
     let mut allowlists: Vec<PathBuf> = Vec::new();
     let mut pdb: Option<PathBuf> = None;
+    let mut min_data_ranges = 0usize;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--binary" => binary = Some(it.next().ok_or("--binary needs a path")?.into()),
             "--allowlist" => allowlists.push(it.next().ok_or("--allowlist needs a path")?.into()),
             "--pdb" => pdb = Some(it.next().ok_or("--pdb needs a path")?.into()),
+            "--min-data-ranges" => {
+                let n = it.next().ok_or("--min-data-ranges needs a count")?;
+                min_data_ranges = n
+                    .parse()
+                    .map_err(|_| format!("--min-data-ranges needs a count, got '{n}'"))?;
+            }
             "--target" => {
                 // Informational only. Actual target is inferred from the
                 // binary's ELF e_machine field, which is the unambiguous
@@ -1005,7 +1146,7 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "-h" | "--help" => {
-                return Err("usage: verify-baseline-static --binary <path> [--allowlist <path>]... [--pdb <path>]".into())
+                return Err("usage: verify-baseline-static --binary <path> [--allowlist <path>]... [--pdb <path>] [--min-data-ranges <n>]".into())
             }
             _ => return Err(format!("unknown argument: {a}")),
         }
@@ -1030,6 +1171,7 @@ fn parse_args() -> Result<Args, String> {
         binary,
         allowlists,
         pdb,
+        min_data_ranges,
     })
 }
 
@@ -1064,24 +1206,38 @@ fn run() -> Result<bool, String> {
     // PE has no in-binary .symtab — everything's in a companion .pdb.
     // For ELF the PDB arg is ignored (even if someone passes one).
     let is_pe = matches!(file.format(), object::BinaryFormat::Pe);
-    let syms = match (is_pe, &args.pdb) {
+    let (syms, mut table_marks) = match (is_pe, &args.pdb) {
         (true, Some(pdb_path)) => build_symbol_table_pdb(pdb_path, &file)?,
         (true, None) => {
             eprintln!(
                 "note: PE binary without --pdb; attribution will be <no-symbol@ADDR>. \
                  Pass --pdb <path> (default: <binary>.pdb if present)."
             );
-            build_symbol_table(&file)
+            (build_symbol_table(&file), Vec::new())
         }
-        (false, _) => build_symbol_table(&file),
+        (false, _) => (build_symbol_table(&file), Vec::new()),
     };
-    // Only aarch64 uses mapping symbols for data skipping. On x64, LLVM puts
-    // jump tables in .rodata so literal-pool false positives are a non-issue.
+    // Data in .text that the toolchain marks is left out of the sweep: ARM
+    // mapping symbols on aarch64, the PDB's switch-table records on x64. Only
+    // MSVC stores jump tables in .text (LLVM uses .rodata), so ELF x64 has none.
     let data_ranges = if arch == object::Architecture::Aarch64 {
         aarch64_data_ranges(&file)
     } else {
-        Vec::new()
+        msvc_table_ranges(&mut table_marks, file.relative_address_base(), |va| {
+            image_u32(&file, va)
+        })
     };
+    // A scan that depends on the marks says so. Without them it passes at most
+    // link layouts and fails at a few, in a build that did not lose them.
+    if data_ranges.len() < args.min_data_ranges {
+        return Err(format!(
+            "{} data ranges, --min-data-ranges wants {}: the marks of data in .text \
+             did not reach the scan (table marks in the PDB: {})",
+            data_ranges.len(),
+            args.min_data_ranges,
+            table_marks.len()
+        ));
+    }
 
     eprintln!(
         "scanning {} ({} bytes, {} symbols, {} data ranges) against {}",
@@ -1091,6 +1247,13 @@ fn run() -> Result<bool, String> {
         data_ranges.len(),
         target_desc
     );
+    if !table_marks.is_empty() {
+        eprintln!(
+            "{} table marks in the PDB, {} of them jump tables",
+            table_marks.len(),
+            data_ranges.len()
+        );
+    }
 
     let mut violations = Buckets::new();
     let mut allowlisted = Buckets::new();
@@ -1108,7 +1271,7 @@ fn run() -> Result<bool, String> {
 
         let res = match arch {
             object::Architecture::X86_64 => {
-                scan_x86_64(bytes, section.address(), &syms, &allowlist)
+                scan_x86_64(bytes, section.address(), &syms, &allowlist, &data_ranges)
             }
             object::Architecture::Aarch64 => {
                 scan_aarch64(bytes, section.address(), &syms, &allowlist, &data_ranges)

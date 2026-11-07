@@ -1964,8 +1964,7 @@ pub(crate) enum Flavor {
 }
 
 impl Flavor {
-    /// Whose rules a callback runs under: those of the module its test was registered through. A hook that runs for no
-    /// test (`beforeAll`, `afterAll`, `aroundAll`) follows the module it was registered through itself.
+    /// Whose rules a callback follows: its test's module. A hook that runs for no test, such as `beforeAll`, follows its own.
     pub(crate) fn of(
         test: Option<NonNull<ExecutionEntry>>,
         hook: impl FnOnce() -> Option<NonNull<ExecutionEntry>>,

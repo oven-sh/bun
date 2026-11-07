@@ -1033,6 +1033,51 @@ describe.concurrent("bun test --isolate", () => {
     }).toEqual({ stdout: "", counts: [" 2 pass", " 0 fail"], exitCode: 0 });
   });
 
+  test("with --isolate, an unwrapKey() may end after the global of its file was collected", async () => {
+    const collects = `
+      import { test } from "bun:test";
+      test("collects", () => Bun.gc(true));
+    `;
+    using dir = tempDir("isolate-late-unwrap-key", {
+      // The global of the first file lives longer.
+      "a.test.ts": collects,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("leaves an unwrapKey() behind two operations that fill the thread pool", async () => {
+          const iv = new Uint8Array(12);
+          const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "unwrapKey"]);
+          const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new Uint8Array(32));
+          const password = await crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]);
+          for (let i = 0; i < 2; i++) {
+            crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: iv, iterations: 3_000_000 }, password, 256);
+          }
+          crypto.subtle.unwrapKey("raw", wrapped, key, { name: "AES-GCM", iv }, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+        });
+      `,
+      "c.test.ts": collects,
+      "d.test.ts": collects,
+      "e.test.ts": collects,
+      "f.test.ts": `
+        import { test } from "bun:test";
+        test("waits for the thread pool", async () => {
+          Bun.gc(true);
+          // Asked for after the unwrapKey(), so it ends after it.
+          await crypto.subtle.digest("SHA-256", new Uint8Array(1 << 20));
+          await new Promise(resolve => setImmediate(resolve));
+        }, 60_000);
+      `,
+    });
+    const files = ["a", "b", "c", "d", "e", "f"].map(name => `./${name}.test.ts`);
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], files, {
+      ...bunEnv,
+      UV_THREADPOOL_SIZE: "2",
+    });
+    expect({ counts: stderr.match(/^ \d+ (pass|fail|error)$/gm), exitCode }).toEqual({
+      counts: [" 6 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+
   test.each(isolateFlags)(
     "with %s, a BroadcastChannel left open in a ShadowRealm stops receiving messages",
     async isolate => {
@@ -2391,23 +2436,28 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
-  test("WebCrypto operations left under way, in the file and in a ShadowRealm", async () => {
+  test("WebCrypto operations left under way: by the file, in a ShadowRealm and by a close handler", async () => {
     using dir = tempDir(
       "isolate-leak-webcrypto",
       makeLeakFixture(`
         import { afterAll } from "bun:test";
-        let settled = 0;
+        const importKey = () => crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]);
         // It takes minutes, so it outlasts the run.
-        const derive = \`(started, settled) => void crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]).then(key => {
-          crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512).then(settled, settled);
-          started();
-        })\`;
-        for (const evaluate of [eval, source => new ShadowRealm().evaluate(source)]) {
-          const started = Promise.withResolvers();
-          evaluate(derive)(started.resolve, () => void settled++);
-          await started.promise;
-        }
+        const derive = key => crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512);
+        let settled = 0;
+        const count = () => void settled++;
         afterAll(() => expect(settled).toBe(0));
+
+        const key = await importKey();
+        derive(key).then(count, count);
+
+        const started = Promise.withResolvers();
+        new ShadowRealm().evaluate(\`(started, count) => void (\${importKey})().then(key => ((\${derive})(key).then(count, count), started()))\`)(started.resolve, count);
+        await started.promise;
+
+        // The close handler of a socket that is left open is the last of the file's script to run.
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close() {} } });
+        await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {}, close: () => void derive(key) } });
       `),
     );
     const env = {

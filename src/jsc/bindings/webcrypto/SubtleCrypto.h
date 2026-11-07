@@ -113,7 +113,7 @@ private:
         RefPtr<DeferredPromise> get(DeferredPromise*) const;
         RefPtr<DeferredPromise> take(DeferredPromise*);
         void remove(DeferredPromise*);
-        // The entries stay: the operations under way find their promises by address.
+        // For good: script of a retired context still runs for a while. The entries stay: the operations under way find their promises by address.
         void unroot();
 
     private:
@@ -122,6 +122,7 @@ private:
             JSC::Strong<JSC::Unknown> root;
         };
         HashMap<DeferredPromise*, Entry> m_entries;
+        bool m_isUnrooted { false };
     };
 
     Ref<WorkQueue> m_workQueue;

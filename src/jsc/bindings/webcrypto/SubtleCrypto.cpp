@@ -739,7 +739,9 @@ static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params,
 
 void SubtleCrypto::PendingPromises::add(DeferredPromise* index, Ref<DeferredPromise>&& promise)
 {
-    JSC::Strong<JSC::Unknown> root { promise->globalObject()->vm(), promise->promise() };
+    JSC::Strong<JSC::Unknown> root;
+    if (!m_isUnrooted)
+        root.set(promise->globalObject()->vm(), promise->promise());
     m_entries.add(index, Entry { WTF::move(promise), WTF::move(root) });
 }
 
@@ -761,6 +763,7 @@ void SubtleCrypto::PendingPromises::remove(DeferredPromise* index)
 
 void SubtleCrypto::PendingPromises::unroot()
 {
+    m_isUnrooted = true;
     for (auto& entry : m_entries.values())
         entry.root.clear();
 }
@@ -1573,6 +1576,11 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = crossThreadCopyImportParams(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
         if (weakThis) {
             if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
+                // The realm may have been retired, and collected, while the thread pool worked.
+                if (promise->isSuspended()) {
+                    weakThis->m_pendingPromises.remove(index);
+                    return;
+                }
                 auto& state = *(promise->globalObject());
                 auto& vm = state.vm();
                 JSLockHolder locker(vm);

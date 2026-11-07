@@ -2106,13 +2106,16 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
+        // Before the dispatch (JS may submit a queued request), and never for an idle stream.
+        if old_state != StreamState::IDLE {
+            let _ = self.write(&buffer);
+        }
         self.dispatch_with_2_extra(
             js::on_aborted_get_cached,
             identifier,
             abort_reason,
             JSValue::js_number(old_state as u8 as f64),
         );
-        let _ = self.write(&buffer);
     }
 
     pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
@@ -2144,11 +2147,13 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
+        // Written before the dispatch, as in abort_stream.
+        let _ = self.write(&buffer);
         if rst_code == ErrorCode::NO_ERROR {
             self.dispatch_with_extra(
                 js::on_stream_end_get_cached,
                 identifier,
-                JSValue::js_number(stream.state as u8 as f64),
+                JSValue::js_number(StreamState::CLOSED as u8 as f64),
             );
         } else {
             self.dispatch_with_extra(
@@ -2157,8 +2162,6 @@ impl H2FrameParser {
                 JSValue::js_number(rst_code.0 as f64),
             );
         }
-
-        let _ = self.write(&buffer);
     }
 
     pub(crate) fn send_go_away(

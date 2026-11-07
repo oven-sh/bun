@@ -76,6 +76,7 @@ type Http2ConnectOptions = {
   maxConcurrentStreams?: number;
   maxOutstandingSettings?: number;
   maxReservedRemoteStreams?: number;
+  peerMaxConcurrentStreams?: number;
   maxOriginSetSize?: number;
   remoteCustomSettings?: number[];
   strictFieldWhitespaceValidation?: boolean;
@@ -130,6 +131,13 @@ function initialLocalSettings(submitted: any) {
   if (custom != null && typeof custom === "object") {
     settings.customSettings = { ...custom };
   }
+  return settings;
+}
+
+// nghttp2's remote settings until the peer's first SETTINGS frame (nghttp2_session.c#L495, v1.64.0).
+function initialRemoteSettings(peerMaxConcurrentStreams: unknown): Settings {
+  const settings = getUnpackedSettings();
+  settings.maxConcurrentStreams = typeof peerMaxConcurrentStreams === "number" ? peerMaxConcurrentStreams >>> 0 : 100;
   return settings;
 }
 
@@ -1918,6 +1926,14 @@ type Settings = {
 };
 
 type HeadersObject = { [name: string | symbol]: any };
+// A client request that waits for the connect or for a free stream slot.
+type PendingClientRequest = {
+  req: ClientHttp2Stream;
+  headers: HeadersObject;
+  wireHeaders: HeadersObject | any[];
+  sensitiveNames: Record<string, boolean>;
+  options: any;
+};
 interface ClientRequestOptions {
   endStream?: boolean;
   exclusive?: boolean;
@@ -2150,6 +2166,8 @@ enum StreamState {
   EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
   // The native side closed the stream (the peer's RST_STREAM, a protocol error), not destroy().
   ClosedByNative = 1 << 12, // 1000000000000 = 4096
+  // A client request that counts against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit.
+  HoldsRequestSlot = 1 << 13, // 10000000000000 = 8192
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2769,6 +2787,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
+      this[bunHTTP2StreamStatus] |= StreamState.ResetScheduled;
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
 
@@ -4204,7 +4223,7 @@ class ServerHttp2Session extends Http2Session {
   // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
   // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
   #pendingSettingsCallbacks: Array<[SettingsCallback, number] | null> = [null];
-  #remoteSettings: Settings | null = null;
+  #remoteSettings: Settings;
   #pingCallbacks: Array<[PingCallback, number]> | null = null;
   #strictFieldWhitespaceValidation: boolean = true;
   // The SETTINGS_MAX_CONCURRENT_STREAMS value this session advertised (enforced from the moment it
@@ -4686,6 +4705,7 @@ class ServerHttp2Session extends Http2Session {
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
       this.#maxOutstandingSettings = options.maxOutstandingSettings;
     }
+    this.#remoteSettings = initialRemoteSettings(options?.peerMaxConcurrentStreams);
     const advertisedMaxConcurrentStreams = options?.settings?.maxConcurrentStreams ?? options?.maxConcurrentStreams;
     if (typeof advertisedMaxConcurrentStreams === "number") {
       this.#advertisedMaxConcurrentStreams = advertisedMaxConcurrentStreams;
@@ -4754,9 +4774,9 @@ class ServerHttp2Session extends Http2Session {
     return this.#closeCalled;
   }
 
-  get remoteSettings() {
+  get remoteSettings(): Settings | Record<string, never> {
     if (this.destroyed || this.connecting) return {};
-    return (this.#remoteSettings ??= getDefaultSettings());
+    return this.#remoteSettings;
   }
 
   get localSettings() {
@@ -5195,7 +5215,10 @@ class ClientHttp2Session extends Http2Session {
   // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
   // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
   #pendingSettingsCallbacks: Array<[SettingsCallback, number] | null> = [null];
-  #remoteSettings: Settings | null = null;
+  // initialRemoteSettings() until the peer's first SETTINGS frame arrives.
+  #remoteSettings: Settings;
+  // The request gate's limit, kept apart from the object the remoteSettings getter exposes.
+  #remoteMaxConcurrentStreams: number;
   #pingCallbacks: Array<[PingCallback, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
@@ -5206,13 +5229,8 @@ class ClientHttp2Session extends Http2Session {
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
   // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
-  #pendingRequests: Array<{
-    req: ClientHttp2Stream;
-    headers: HeadersObject;
-    wireHeaders: HeadersObject | any[];
-    sensitiveNames: Record<string, boolean>;
-    options: any;
-  }> | null = null;
+  #flushingPendingRequests: boolean = false;
+  #pendingRequests: PendingClientRequest[] | null = null;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -5284,12 +5302,14 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+      self.#releaseRequestSlot(stream);
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
+      self.#releaseRequestSlot(stream);
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
@@ -5315,6 +5335,7 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
+        self.#releaseRequestSlot(stream);
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side: node defers the
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
@@ -5445,6 +5466,7 @@ class ClientHttp2Session extends Http2Session {
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
       self.#remoteSettings = settings;
+      self.#remoteMaxConcurrentStreams = settings.maxConcurrentStreams;
       self.emit("remoteSettings", settings);
       // The peer may have raised maxConcurrentStreams: queued requests might fit now.
       self.#flushPendingRequests();
@@ -5720,9 +5742,9 @@ class ClientHttp2Session extends Http2Session {
     return this.#closeCalled;
   }
 
-  get remoteSettings() {
+  get remoteSettings(): Settings | Record<string, never> {
     if (this.destroyed || this.connecting) return {};
-    return (this.#remoteSettings ??= getDefaultSettings());
+    return this.#remoteSettings;
   }
 
   get localSettings() {
@@ -5872,6 +5894,8 @@ class ClientHttp2Session extends Http2Session {
 
     assertIsObject(url, "authority", ["string", "Object", "URL"]);
 
+    this.#remoteSettings = initialRemoteSettings(options.peerMaxConcurrentStreams);
+    this.#remoteMaxConcurrentStreams = this.#remoteSettings.maxConcurrentStreams;
     if (options.maxReservedRemoteStreams !== undefined) {
       this.#maxReservedRemoteStreams = options.maxReservedRemoteStreams;
     }
@@ -6466,11 +6490,10 @@ class ClientHttp2Session extends Http2Session {
       // a "pending" stream (no id) and sends its HEADERS frame once the session connects / a slot
       // frees, keeping stream id allocation in submission order. Deferring until connect is what
       // lets a stream destroyed before connect never reach the wire.
-      const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
       if (
         !this.#connected ||
         (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
-        (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
+        this.#activeRequestCount >= this.#remoteMaxConcurrentStreams
       ) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
@@ -6512,11 +6535,17 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-      this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      // Tracked first: a rejection the native call dispatches synchronously releases the slot.
+      this.#trackActiveRequest(req);
+      try {
+        this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      } catch (e) {
+        this.#releaseRequestSlot(req);
+        throw e;
+      }
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
-      this.#trackActiveRequest(req);
       // node corks every Http2Stream until its native handle is assigned (always at least one tick
       // after request() returns), so body chunks written synchronously after request() are buffered
       // and flushed together through _writev.
@@ -6538,17 +6567,36 @@ class ClientHttp2Session extends Http2Session {
   // stream closes, then tries to submit queued requests.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
+    req[bunHTTP2StreamStatus] |= StreamState.HoldsRequestSlot;
     req.once("close", () => {
-      this.#activeRequestCount--;
-      this.#flushPendingRequests();
+      // A scheduled RST_STREAM frees the slot when the engine writes it, not one tick before.
+      if ((req[bunHTTP2StreamStatus] & StreamState.ResetScheduled) === 0) this.#releaseRequestSlot(req);
     });
+  }
+
+  // Called at the native close report (the peer frees the slot then), and from 'close' as a backstop.
+  #releaseRequestSlot(req: ClientHttp2Stream) {
+    if ((req[bunHTTP2StreamStatus] & StreamState.HoldsRequestSlot) === 0) return;
+    req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;
+    this.#activeRequestCount--;
+    this.#flushPendingRequests();
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
   // are available, in the order they were made.
   #flushPendingRequests() {
     const queue = this.#pendingRequests;
-    if (queue === null || queue.length === 0) return;
+    // A release that the native submit dispatches synchronously lands here from inside the loop.
+    if (queue === null || queue.length === 0 || this.#flushingPendingRequests) return;
+    this.#flushingPendingRequests = true;
+    try {
+      this.#submitPendingRequests(queue);
+    } finally {
+      this.#flushingPendingRequests = false;
+    }
+  }
+
+  #submitPendingRequests(queue: PendingClientRequest[]) {
     while (queue.length > 0) {
       const parser = this.#parser;
       if (this.destroyed || !parser) {
@@ -6560,20 +6608,25 @@ class ClientHttp2Session extends Http2Session {
         }
         continue;
       }
-      const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
-      if (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams) {
+      if (this.#activeRequestCount >= this.#remoteMaxConcurrentStreams) {
         break;
       }
       const { req, headers, wireHeaders, sensitiveNames, options } = queue.shift()!;
       // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
       // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
       if (req.destroyed) continue;
+      // An abort's native listener can free a slot before its JS listener destroyed this request.
+      if (options?.signal?.aborted) {
+        abortRequestStream.$call(req, options.signal);
+        continue;
+      }
       const stream_id: number = parser.getNextStream();
       if (stream_id < 0) {
         process.nextTick(emitOutofStreamErrorNT, req);
         continue;
       }
       req[kSetStreamId](stream_id);
+      this.#trackActiveRequest(req);
       try {
         if (typeof options === "undefined") {
           parser.request(stream_id, req, wireHeaders, sensitiveNames);
@@ -6588,6 +6641,7 @@ class ClientHttp2Session extends Http2Session {
         // never reached the wire either, so the teardown must not write RST_STREAM for an id the
         // peer considers idle.
         this.#connections--;
+        this.#releaseRequestSlot(req);
         req[kNeverAnnounced] = true;
         if (!req.destroyed) req.destroy(err as Error);
         continue;
@@ -6595,7 +6649,6 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
-      this.#trackActiveRequest(req);
       process.nextTick(emitEventNT, req, "ready");
     }
   }

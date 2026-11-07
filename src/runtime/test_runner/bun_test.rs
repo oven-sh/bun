@@ -836,7 +836,8 @@ impl BunTest {
             ExecutionEntry::create(
                 None,
                 None,
-                ExecutionEntryCfg { calling: Calling::Vitest { context: false }, ..Default::default() },
+                // Only a fixture of `test.extend()` is torn down in its sequence.
+                ExecutionEntryCfg { calling: Calling::Vitest { context: false }, flavor: Flavor::Vitest, ..Default::default() },
                 None,
                 BaseScopeCfg::default(),
                 AddedInPhase::Collection,

@@ -3140,7 +3140,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
   });
 
   test("in a vitest test, expect() counts for the run that calls it and its matchers count for no run", async () => {
-    const { log, results, exitCode } = await runTests({
+    const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
@@ -3218,7 +3218,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
         });
       `,
     });
-    expect({ log, results, exitCode }).toEqual({
+    expect({ log, results, errors, exitCode }).toEqual({
       log: [
         "bun run 1 starts at 0",
         "bun run 2 starts at 0",
@@ -3247,12 +3247,22 @@ describe.concurrent("behavior depends on the module a function is imported from"
         "(pass) vitest, hasAssertions() and expect() with no matcher > in aroundAll > the hook does not fail",
         "(pass) vitest, hasAssertions() and expect() with no matcher > in beforeAll > the hook does not fail",
       ],
+      // Each test with `retry: 1` throws in attempt 1. The two failures are the count of the "vitest" tests.
+      errors: [
+        "error: attempt 1 fails",
+        "error: attempt 1 fails",
+        "error: attempt 1 fails",
+        "AssertionError: expected 1 assertion, but test ended with 0 assertions",
+        "error: attempt 1 fails",
+        "AssertionError: expected 1 assertion, but test ended with 0 assertions",
+      ],
       exitCode: 1,
     });
   });
 
   // The module that registered the test decides for the test and its hooks. `test.for()` and `test.extend()` make
-  // Vitest tests, from "bun:test" too. A hook that runs one time for a scope goes by its own module.
+  // Vitest tests, from "bun:test" too. A hook that runs one time for a scope goes by its own module. What follows
+  // `use()` in a fixture of the file runs after the last test: only `test.extend()` makes one, so Vitest decides.
   test("the test decides what its hooks count, and a beforeAll, afterAll or aroundAll hook decides for itself", async () => {
     const counted = `
       const counted = () => {
@@ -3276,8 +3286,11 @@ describe.concurrent("behavior depends on the module a function is imported from"
         test("test()", () => log("test"));
         test.each([1])("test.each(%i)", () => log("test"));
         test.for([1])("test.for(%i)", () => log("test"));
-        const extended = test.extend({ made: async ({}, use) => { log("fixture"); await use(1); } });
-        extended("test.extend()", ({ made }) => log("test"));
+        const extended = test.extend({
+          made: async ({}, use) => { log("fixture"); await use(1); },
+          shared: [async ({}, use) => { await use(1); console.log("file fixture, after use():", counted()); }, { scope: "file" }],
+        });
+        extended("test.extend()", ({ made, shared }) => log("test"));
       `,
       "b.test.js": `
         import * as bun from "bun:test";
@@ -3306,6 +3319,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
         ...["aroundEach", "beforeEach", "test", "afterEach"].map(entry => `test.for(1) ${entry}: 2`),
         ...["aroundEach", "beforeEach", "fixture", "test", "afterEach"].map(entry => `test.extend() ${entry}: 2`),
         "afterAll: 1",
+        "file fixture, after use(): 2",
         "vitest beforeAll: 2",
         "vitest beforeEach: 1",
         "bun:test beforeAll: 1",

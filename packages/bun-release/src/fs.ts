@@ -12,9 +12,8 @@ export function basename(...paths: (string | string[])[]): string {
   return path.basename(join(...paths));
 }
 
-export function tmp(): string {
-  const tmpdir = process.env["RUNNER_TEMP"] ?? os.tmpdir();
-  const dir = fs.mkdtempSync(join(tmpdir, "bun-"));
+export function tmp(parent: string = process.env["RUNNER_TEMP"] ?? os.tmpdir()): string {
+  const dir = fs.mkdtempSync(join(parent, "bun-"));
   debug("tmp", dir);
   return dir;
 }
@@ -55,14 +54,15 @@ export function rm(path: string): void {
   fs.rmdirSync(path);
 }
 
-export function rename(path: string, newPath: string): void {
-  debug("rename", path, newPath);
+export function rename(oldPath: string, newPath: string): void {
+  debug("rename", oldPath, newPath);
   try {
-    fs.renameSync(path, newPath);
+    fs.renameSync(oldPath, newPath);
     return;
   } catch (error) {
     debug("fs.renameSync failed", error);
-    // If there is an error, delete the new path and try again.
+    // If there is an error, delete the new path, ensure its parent
+    // directory exists and try again.
   }
   try {
     rm(newPath);
@@ -70,7 +70,13 @@ export function rename(path: string, newPath: string): void {
     debug("rm failed", error);
     // The path could have been deleted already.
   }
-  fs.renameSync(path, newPath);
+  try {
+    fs.mkdirSync(path.dirname(newPath), { recursive: true });
+  } catch (error) {
+    debug("fs.mkdirSync failed", error);
+    // Let the rename below report what is wrong with the path.
+  }
+  fs.renameSync(oldPath, newPath);
 }
 
 export function write(dst: string, content: string | ArrayBuffer | ArrayBufferView): void {

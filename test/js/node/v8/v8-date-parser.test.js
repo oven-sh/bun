@@ -478,4 +478,70 @@ describe("v8 date parser", () => {
     input = "2020-09-21 15:19:06 +00:00";
     expect(Date.parse(input)).toBe(1600701546000);
   });
+
+  // V8 reads the date string as UTF-16 and skips every ECMAScript WhiteSpace
+  // code point. The port reads UTF-8 bytes and knows ASCII white space only, so
+  // DateCache::parseDate (JSDateMath.cpp in oven-sh/WebKit) replaces each
+  // non-ASCII WhiteSpace code point with a space before the parse.
+  // The expected values are what Node.js v26.3.0 returns.
+  describe("non-ASCII white space", () => {
+    const hex = codePoint => "U+" + codePoint.toString(16).toUpperCase().padStart(4, "0");
+    const table = (codePoints, row) =>
+      Object.fromEntries(codePoints.map(codePoint => [hex(codePoint), row(codePoint)]));
+    const parseAtEachPosition = codePoint => {
+      const ws = String.fromCodePoint(codePoint);
+      return {
+        leading: Date.parse(`${ws}Jul 23 2026 10:00:00 GMT+0000`),
+        trailing: Date.parse(`Jul 23 2026 10:00:00 GMT+0000${ws}`),
+        betweenTokens: Date.parse(`Jul${ws}23${ws}2026${ws}10:00:00${ws}GMT+0000`),
+        beforeOffset: Date.parse(`Jul 23 2026 10:00:00 GMT${ws}+0000`),
+        beforeMeridiem: Date.parse(`7/23/2026, 10:00:00${ws}AM UTC`),
+      };
+    };
+    const atEachPosition = time => ({
+      leading: time,
+      trailing: time,
+      betweenTokens: time,
+      beforeOffset: time,
+      beforeMeridiem: time,
+    });
+
+    test("NBSP, BOM and every Zs code point separate tokens", () => {
+      const whiteSpace = [
+        0x00a0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x202f,
+        0x205f, 0x3000, 0xfeff,
+      ];
+      expect(table(whiteSpace, parseAtEachPosition)).toEqual(table(whiteSpace, () => atEachPosition(1784800800000)));
+    });
+
+    test("code points that only look like white space make the date invalid", () => {
+      // U+2028 and U+2029 are LineTerminators. The others are not in category Zs.
+      const notWhiteSpace = [0x0085, 0x00ad, 0x180e, 0x200b, 0x200c, 0x200d, 0x2028, 0x2029, 0x2060];
+      expect(table(notWhiteSpace, parseAtEachPosition)).toEqual(table(notWhiteSpace, () => atEachPosition(NaN)));
+    });
+
+    test("NBSP in an 8-bit string and in a 16-bit string", () => {
+      // JSC keeps a string with no code point above U+00FF in 8 bits. The two
+      // representations take different paths in DateCache::parseDate.
+      expect(new Date("Jul\u00a023\u00a02026\u00a010:00:00\u00a0GMT+0000").getTime()).toBe(1784800800000);
+      expect(new Date("\u3000Jul\u00a023\u00a02026\u00a010:00:00\u00a0GMT+0000").getTime()).toBe(1784800800000);
+    });
+
+    test("forms in local time", () => {
+      // The en-US locale format, and a date-only ISO form. White space after
+      // the ISO form sends it to the legacy parser, which reads local time.
+      expect(Date.parse("7/23/2026, 10:00:00\u00a0AM")).toBe(new Date(2026, 6, 23, 10).getTime());
+      expect(Date.parse("2026-07-23\u00a0")).toBe(new Date(2026, 6, 23).getTime());
+      expect(Date.parse("2026-07-23\u3000")).toBe(new Date(2026, 6, 23).getTime());
+    });
+
+    test("the ISO date-time form takes no white space", () => {
+      const around = ws => [Date.parse(`${ws}2026-07-23T10:00:00Z`), Date.parse(`2026-07-23T10:00:00Z${ws}`)];
+      expect([" ", "\u00a0", "\ufeff"].map(around)).toEqual([
+        [NaN, NaN],
+        [NaN, NaN],
+        [NaN, NaN],
+      ]);
+    });
+  });
 });

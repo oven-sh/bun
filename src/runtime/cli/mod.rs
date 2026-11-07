@@ -156,6 +156,8 @@ pub(crate) mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub(crate) mod audit_command;
+#[path = "captured_child.rs"]
+pub(crate) mod captured_child;
 #[path = "check_command.rs"]
 pub(crate) mod check_command;
 #[path = "dedupe_command.rs"]

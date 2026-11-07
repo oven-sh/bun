@@ -7991,6 +7991,19 @@ try {
     expect(await inHere("../*/x.js")).toEqual(["x.js", "../there/x.js"]);
   });
 
+  // A child process runs each config while the thread that needs it waits. With every pool thread waiting, nothing the wait
+  // depends on can be left to the pool.
+  test("config files that are programs work with the smallest thread pool", async () => {
+    const files: Record<string, string> = {};
+    for (const name of ["a", "b"]) {
+      files[`${name}/prettier.config.mjs`] = "export default { semi: false }\n";
+      files[`${name}/x.js`] = "a;\n";
+    }
+    const { stdout, exitCode } = await format(files, ["-l", "."], { env: { GOMAXPROCS: "2" } });
+    expect(stdout.trim().split("\n").sort()).toEqual(["a/x.js", "b/x.js"]);
+    expect(exitCode).toBe(1);
+  });
+
   // A configuration file can be a program. Prettier 3.9.9 runs every one that a pattern reaches. oxfmt 0.72.0 doesn't
   // accept `..`, and only searches the working directory for a pattern's matches.
   describe("a pattern that leaves a working directory without a configuration file", () => {

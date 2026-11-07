@@ -5655,6 +5655,9 @@ declare module "bun" {
   namespace inspect {
     /**
      * Symbol for declaring a custom inspect function on an object. Same as `util.inspect.custom` in Node.js.
+     *
+     * Bun doesn't catch an error that the function throws. `Bun.inspect()`, `console.log()`, and a failing
+     * `bun:test` matcher that prints the object throw that error.
      */
     const custom: typeof import("util").inspect.custom;
 

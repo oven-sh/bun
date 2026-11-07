@@ -734,13 +734,20 @@ impl JSGlobalObject {
         })
     }
 
+    /// `args` formatted as UTF-8, and whether a `Display` impl failed mid-way.
+    fn format_message(args: Arguments<'_>) -> (Vec<u8>, bool) {
+        let mut buf: Vec<u8> = Vec::with_capacity(2048);
+        use core::fmt::Write;
+        let failed = write!(WriteVec(&mut buf), "{}", args).is_err();
+        (buf, failed)
+    }
+
     /// `args` formatted as UTF-8. If a `Display` impl fails mid-way (e.g. a
     /// JS `Symbol.toPrimitive` threw), the pending exception is cleared and
     /// the partial message is used rather than an error about an error.
     fn error_message(&self, args: Arguments<'_>) -> Vec<u8> {
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
+        let (buf, failed) = Self::format_message(args);
+        if failed {
             let _ = self.clear_exception_except_termination();
         }
         buf
@@ -813,7 +820,27 @@ impl JSGlobalObject {
     #[cold]
     #[inline(never)]
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
-        self.throw_value(self.create_error_instance(args))
+        self.throw_formatted(ErrorKind::Error, args)
+    }
+
+    /// Throws `new <kind>(args)`. If formatting `args` ran JS that threw (a custom inspect method,
+    /// a `Symbol.toPrimitive`), that exception is the one thrown: a caller that throws can hand it
+    /// on, where `create_*_error_instance` has to return an error and clears it.
+    #[cold]
+    #[inline(never)]
+    fn throw_formatted(&self, kind: ErrorKind, args: Arguments<'_>) -> JsError {
+        if args.as_str().is_some() {
+            return self.throw_value(self.error_instance(kind, args));
+        }
+        let (message, failed) = Self::format_message(args);
+        if failed && self.has_exception() {
+            return JsError::Thrown;
+        }
+        self.throw_value(error_instance(
+            &StringView::borrow_utf8(&message),
+            self,
+            kind,
+        ))
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -855,8 +882,7 @@ impl JSGlobalObject {
     #[cold]
     #[inline(never)]
     pub fn throw_type_error(&self, args: Arguments<'_>) -> JsError {
-        let instance = self.create_type_error_instance(args);
-        self.throw_value(instance)
+        self.throw_formatted(ErrorKind::TypeError, args)
     }
 
     pub fn throw_dom_exception(&self, code: DOMExceptionCode, args: Arguments<'_>) -> JsError {

@@ -802,25 +802,22 @@ impl Expect {
     /// user data and is emitted verbatim. `signature` is the pre-processed
     /// header returned by `get_signature` (ANSI or stripped, per stderr
     /// colour state). Nothing here scans bytes for `<…>` markers.
+    ///
+    /// If printing a value throws (a custom inspect method), `JSGlobalObject::throw` throws that
+    /// error in place of the message.
+    #[inline(never)]
     pub(crate) fn throw_rendered(
         &self,
         global_this: &JSGlobalObject,
         signature: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        use core::fmt::Write as _;
-        let mut message = String::new();
-        let rendered = if self.custom_label.is_empty() {
-            write!(message, "{signature}{args}")
+        Err(if self.custom_label.is_empty() {
+            global_this.throw(format_args!("{signature}{args}"))
         } else {
             // custom_label is user-supplied; emit verbatim.
-            write!(message, "{}{args}", self.custom_label)
-        };
-        // If printing a value threw (a getter, a Proxy trap), propagate that error like Jest does.
-        if rendered.is_err() && global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Err(global_this.throw(format_args!("{message}")))
+            global_this.throw(format_args!("{}{args}", self.custom_label))
+        })
     }
 
     pub(crate) fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
@@ -1596,7 +1593,12 @@ impl Expect {
         matcher_name: &bun_core::String,
         result: JSValue,
     ) -> JsError {
+        // `create_error_instance` has to return an error, so it drops what printing `result` throws. Print first.
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+        let mut returned: Vec<u8> = Vec::new();
+        if let Err(err) = formatter.format_value::<false>(result, &mut returned) {
+            return err;
+        }
 
         // The template has no `<tag>` markers so the colors branch is a no-op anyway.
         let err = global_this.create_error_instance(format_args!(
@@ -1605,7 +1607,7 @@ impl Expect {
              {{message?: string | function, pass: boolean}}\n\
              '{}' was returned",
             matcher_name,
-            result.to_fmt(&mut formatter),
+            bstr::BStr::new(&returned),
         ));
         match bun_core::String::static_("InvalidMatcherError").to_js(global_this) {
             Ok(name) => err.put(global_this, b"name", name),

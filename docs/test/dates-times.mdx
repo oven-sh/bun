@@ -187,6 +187,8 @@ As in Vitest and Jest, a fake `setTimeout()` without a delay is due right away, 
 
 `AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` follow the fake clock when `setTimeout` is faked. With `vi` imported from `"vitest"`, `AbortSignal.timeout()` stays on the real clock, as in Vitest.
 
+`Bun.sleep(date)` waits from the current time until `date`. When the time is mocked, with `setSystemTime()` or a faked `Date`, the current time is the mocked time. Bun reads it once, when you call `Bun.sleep()`. A spy on `Date.now` doesn't change it. `Bun.cron.parse()` starts from the same time when you pass no start date.
+
 ### Wait for real time while fake timers are on
 
 A timer function that you save before calling `useFakeTimers()` stays real. The `node:timers` and `node:timers/promises` exports stay real too.

@@ -68,6 +68,8 @@ await Bun.sleep(oneSecondInFuture);
 console.log("hello one second later!");
 ```
 
+Bun reads the current time once, when you call `Bun.sleep()`, to work out how long to wait.
+
 ## `Bun.sleepSync()`
 
 `Bun.sleepSync(ms: number)`

@@ -1878,12 +1878,15 @@ pub(crate) fn parse(
         }
     };
 
-    let from_ms = relative_date.unwrap_or_else(|| bun_core::time::milli_timestamp() as f64);
-
-    // An out-of-range `relative_date` is an invalid argument. next() would report it as "no match".
-    if from_ms.is_nan() || from_ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME {
-        return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
-    }
+    let from_ms = match relative_date {
+        // An out-of-range `relative_date` is an invalid argument. next() would report it as "no match".
+        Some(ms) if ms.is_nan() || ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME => {
+            return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
+        }
+        Some(ms) => ms,
+        // The clock behind `Date.now()`. bun:test can mock it past the Date range, which is "no match" too.
+        None => global.js_date_now(),
+    };
 
     let tz = resolve_cron_tz(global, options)?;
 

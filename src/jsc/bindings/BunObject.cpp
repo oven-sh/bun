@@ -722,8 +722,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     JSC::JSValue millisecondsValue = callFrame->argument(0);
 
     if (millisecondsValue.inherits<JSC::DateInstance>()) {
-        auto now = MonotonicTime::now();
-        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - now.approximate<WTF::WallTime>().secondsSinceEpoch().milliseconds();
+        // Measured from the clock behind Date.now(), which bun:test can mock.
+        double milliseconds = uncheckedDowncast<JSC::DateInstance>(millisecondsValue)->internalNumber() - globalObject->jsDateNow();
         millisecondsValue = JSC::jsNumber(milliseconds > 0 ? std::ceil(milliseconds) : 0);
     }
 

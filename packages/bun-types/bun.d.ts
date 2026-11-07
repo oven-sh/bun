@@ -6360,7 +6360,9 @@ declare module "bun" {
    *
    * @param ms milliseconds to wait before resolving the promise. This is a
    * minimum; it may take longer. Pass a {@link Date} to sleep until that time
-   * is reached.
+   * is reached. Bun reads the current time once, when `sleep` is called, to
+   * work out how long to wait. In `bun:test`, that is the mocked time if one
+   * is set.
    *
    * @example
    * ## Sleep for 1 second

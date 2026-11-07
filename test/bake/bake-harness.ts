@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 // @ts-ignore
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isLinux, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
@@ -141,6 +141,7 @@ export interface DevServerTest {
   only?: boolean;
   /**
    * Extra environment variables for the spawned dev-server process.
+   * On Linux the harness sets `BUN_WATCHER_TRACE` itself: see `Dev.watcherTrace`.
    */
   env?: Record<string, string>;
 }
@@ -186,7 +187,7 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
-enum WatchSynchronization {
+export enum WatchSynchronization {
   // Callback for starting a batch
   Started = 0,
   // During a batch, files were seen. Batch is still running.
@@ -211,6 +212,22 @@ export class Dev extends EventEmitter {
   stressTestEndurance = false;
 
   socket?: WebSocket;
+  /**
+   * Linux: the file where the watcher thread of the dev server logs each
+   * batch of events before it hands the batch on (`BUN_WATCHER_TRACE`).
+   */
+  watcherTrace?: string;
+  /** Where `#flushWatcher` reads `watcherTrace` next. Always the start of a line. */
+  #tracePosition = 0;
+  /**
+   * Part of the name of each fence. `#flushWatcher` changes it when it gives
+   * up, so a fence that it left behind cannot pass for a later one.
+   */
+  #fenceEpoch = 0;
+  /** Folders that can report a fence. The one that reported the last fence is first. */
+  #fenceFolders: string[];
+  /** The folders of the files that the open batch changed through this class. */
+  #changedFolders = new Set<string>();
 
   // These properties are not owned by this class
   devProcess: Subprocess<"pipe", "pipe", "pipe">;
@@ -223,9 +240,19 @@ export class Dev extends EventEmitter {
     stream: OutputLineStream,
     nodeEnv: "development" | "production",
     options: DevServerTest,
+    watcherTrace?: string,
   ) {
     super();
+    this.watcherTrace = watcherTrace;
     this.rootDir = realpathSync(root);
+    // The dev server watches the folder of a file once it has bundled the file.
+    this.#fenceFolders = [
+      ...new Set(
+        [options.cwd ?? ".", ...Object.keys(options.files ?? {}).map(file => path.dirname(file))].map(folder =>
+          path.join(this.rootDir, folder),
+        ),
+      ),
+    ];
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
     this.devProcess = process;
@@ -285,6 +312,102 @@ export class Dev extends EventEmitter {
     });
   }
 
+  /**
+   * Linux only. Resolves to true once the dev server thread has every file
+   * change that was made before this call, and to false if it cannot tell.
+   *
+   * inotify reports changes in the order in which they were made, with the
+   * name of a file that changes in a watched folder. So a change to a fence
+   * file is reported after every earlier change. The watcher thread logs a
+   * batch of changes before it hands the batch on. So two fences are needed:
+   * once the second one is logged, the batch with the first one was handed on.
+   */
+  async #flushWatcher(wantsHmrEvent: boolean): Promise<boolean> {
+    if (!this.watcherTrace) return false;
+    // The dev server watches the folder of each file that it bundled. The
+    // latest folder of this batch is first: a fence there adds no event to a
+    // folder that the batch left alone. The folder that reported the last
+    // fence is second.
+    const changed = [...this.#changedFolders].reverse();
+    let folders = [
+      ...new Set([...changed.slice(0, 1), ...this.#fenceFolders.slice(0, 1), ...changed, ...this.#fenceFolders]),
+    ];
+    // A batch that expects no hot update can be for files that the dev server
+    // does not watch. If it watches none of the folders, no fence is reported.
+    const deadline = Date.now() + (wantsHmrEvent ? 2000 : 250) * WAIT_MULTIPLIER;
+    const trace = fs.openSync(this.watcherTrace, "r");
+    let flushed = false;
+    try {
+      for (let round = 0; round < 2; round++) {
+        // The fences that a round did not wait for are logged before the
+        // fence of the next round, which has the other name.
+        const name = `.bake-harness-fence-${this.#fenceEpoch}-${round}`;
+        let fenced = 0;
+        let written = 0;
+        let fenceNextAt = 0;
+        let reported: string | undefined;
+        while (true) {
+          // The first folder, then the second, then all the others. Most
+          // rounds end with the first one.
+          if (fenced < folders.length && Date.now() >= fenceNextAt) {
+            const end = fenced < 2 ? fenced + 1 : folders.length;
+            for (const folder of folders.slice(fenced, end)) {
+              try {
+                fs.appendFileSync(path.join(folder, name), "\n");
+                written++;
+              } catch (err: any) {
+                // The folder is gone or is read-only. Another folder can report the fence.
+                if (!["ENOENT", "ENOTDIR", "EACCES", "EROFS"].includes(err.code)) throw err;
+              }
+            }
+            fenced = end;
+            fenceNextAt = Date.now() + 25;
+          }
+          const logged = Buffer.alloc(fs.fstatSync(trace).size - this.#tracePosition);
+          fs.readSync(trace, logged, 0, logged.length, this.#tracePosition);
+          // The watcher thread can be in the middle of a line.
+          const lines = logged.subarray(0, logged.lastIndexOf("\n") + 1);
+          this.#tracePosition += lines.length;
+          for (const line of lines.toString().split("\n")) {
+            // A line can have two entries for one folder, and `JSON.parse`
+            // keeps the last one. So the fence is found in the text.
+            if (reported !== undefined || !line.includes(JSON.stringify(name))) continue;
+            // Each folder that the line names is watched.
+            const named = Object.keys(JSON.parse(line).files).map(file => path.resolve(file));
+            reported = folders.slice(0, fenced).find(folder => named.includes(folder)) ?? folders[0];
+          }
+          if (reported !== undefined) break;
+          if (this.panicked) return false;
+          const noFence = fenced === folders.length && written === 0;
+          if (noFence || Date.now() > deadline) {
+            if (wantsHmrEvent) {
+              console.warn(
+                "\x1b[33mWARN: " +
+                  (noFence
+                    ? "No folder took a fence file: "
+                    : "The watcher of the dev server reported no change in: ") +
+                  folders.join(", ") +
+                  "\x1b[0m",
+              );
+            }
+            return false;
+          }
+          await Bun.sleep(1);
+        }
+        folders = [...new Set([reported, ...folders])];
+      }
+      flushed = true;
+    } finally {
+      fs.closeSync(trace);
+      if (!flushed) this.#fenceEpoch++;
+    }
+    this.#fenceFolders = [...new Set([folders[0], ...this.#fenceFolders])];
+    // The dev server thread takes each batch as a task. It runs the tasks
+    // that it has before it reads a frame that is sent after this response.
+    await (await this.fetch("/_dev_server_test_set")).arrayBuffer();
+    return true;
+  }
+
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
     if (this.batchingChanges) {
       this.batchingChanges.write?.();
@@ -327,14 +450,18 @@ export class Dev extends EventEmitter {
     const b = {
       write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async () => {
-        if (wantsHmrEvent && interactive) {
-          await seenFiles.promise;
-        } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise]);
+        const flushed = await this.#flushWatcher(wantsHmrEvent);
+        this.#changedFolders.clear();
+        if (!flushed) {
+          if (wantsHmrEvent && interactive) {
+            await seenFiles.promise;
+          } else if (wantsHmrEvent) {
+            await Promise.race([seenFiles.promise]);
+          }
+          // One Bun.write can surface as several watcher events (notably on
+          // Windows); let them coalesce so releasing the batch bundles once.
+          await Bun.sleep(50);
         }
-        // One Bun.write can surface as several watcher events (notably on
-        // Windows); let them coalesce so releasing the batch bundles once.
-        await Bun.sleep(50);
 
         dev.off("watch_synchronization", onSeenFiles);
 
@@ -360,6 +487,7 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const isDev = this.nodeEnv === "development";
+      if (isDev) this.#changedFolders.add(path.dirname(this.join(file)));
       await using _wait = isDev
         ? await this.batchChanges({
             errors: options.errors,
@@ -398,6 +526,7 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
+      if (isDev) this.#changedFolders.add(path.dirname(this.join(file)));
       await using _wait = isDev
         ? await this.batchChanges({
             errors: options.errors,
@@ -427,6 +556,7 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("patch " + file);
       const isDev = this.nodeEnv === "development";
+      if (isDev) this.#changedFolders.add(path.dirname(this.join(file)));
       await using _wait = isDev
         ? await this.batchChanges({
             errors: errors,
@@ -1588,6 +1718,12 @@ if (!fs.existsSync(reactCacheDir)) {
   fs.mkdirSync(reactCacheDir, { recursive: true });
 }
 
+// Linux: the dev server of each test logs its watcher events to a file in this
+// folder (`BUN_WATCHER_TRACE`). The folder holds nothing else, so no dev server
+// watches it. A dev server that watched the folder of its log would log each
+// line of the log as a change, without end.
+const watcherTraceDir = path.resolve(tempDir, ".watcher-trace");
+
 function cleanTestDir(dir: string) {
   if (!fs.existsSync(dir)) return;
   const files = fs.readdirSync(dir);
@@ -2084,6 +2220,14 @@ function testImpl<T extends DevServerTest>(
       },
     };
 
+    // Linux: the dev server logs its watcher events for `Dev.batchChanges`.
+    const watcherTrace =
+      isLinux && NODE_ENV === "development" ? path.join(watcherTraceDir, basename + count + ".jsonl") : undefined;
+    if (watcherTrace) {
+      fs.mkdirSync(watcherTraceDir, { recursive: true });
+      fs.writeFileSync(watcherTrace, "");
+    }
+
     await using devProcess = Bun.spawn({
       cwd: path.join(root, options.cwd ?? "."),
       cmd: [process.execPath, path.join(root, "harness_start.ts")],
@@ -2102,6 +2246,8 @@ function testImpl<T extends DevServerTest>(
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
           ...options.env,
         },
+        // After `options.env`: `Dev` reads this file, so a test cannot move it.
+        { BUN_WATCHER_TRACE: watcherTrace },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
       onExit: (subprocess, exitCode, signalCode, error) => {
@@ -2116,7 +2262,7 @@ function testImpl<T extends DevServerTest>(
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
-    const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
+    const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options, watcherTrace);
     if (dev.nodeEnv === "development") {
       await dev.connectSocket();
     }

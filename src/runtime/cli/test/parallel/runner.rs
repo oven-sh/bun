@@ -286,6 +286,7 @@ pub(crate) fn run_as_coordinator(
         },
         coverage_files: Default::default(),
         last_header_idx: None,
+        printed_scopes: Vec::new(),
         header_printed_by_worker: None,
         frame: Frame::default(),
         files_done: 0,
@@ -1171,10 +1172,10 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 // pointee outlives all callers (process exits before it's dropped).
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
-/// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
+/// fully-formatted status line (✓/✗ + indent + name + duration, including ANSI
 /// codes), which the coordinator prints verbatim so output matches serial, and,
-/// when the coordinator asked for it (`--reporter`), the structured result it
-/// replays into its own reporters.
+/// when the coordinator asked for it (`--reporter`) or needs the describe scopes
+/// to print headers above a nested line, the structured result.
 #[optimize(size)]
 pub(crate) fn worker_emit_test_done(
     file_idx: u32,

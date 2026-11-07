@@ -20,6 +20,7 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::{self, Part, PartBuilder, PartState, Parts};
 use super::reservation::{Reservation, Room, own_kilobytes_in};
+use super::runner;
 use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::cli::command::TestOptions;
 use crate::cli::run_compiled::{
@@ -63,6 +64,9 @@ pub(crate) struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub(crate) last_header_idx: Option<u32>,
+    /// Describe scopes `(name, line)` whose headers have already been printed
+    /// under `last_header_idx`. Cleared whenever the file header is re-emitted.
+    pub(crate) printed_scopes: Vec<(Vec<u8>, u32)>,
     /// Where the run ends as in one process: the file that the worker has begun. It has printed the header itself.
     pub(crate) header_printed_by_worker: Option<u32>,
     pub frame: Frame,
@@ -850,6 +854,7 @@ impl<'a> Coordinator<'a> {
         }
         self.end_group();
         self.last_header_idx = Some(file_idx);
+        self.printed_scopes.clear();
         let file_prefix: &[u8] = if Output::is_github_action() {
             b"::group::"
         } else {
@@ -932,6 +937,16 @@ impl<'a> Coordinator<'a> {
                 if !is_dot {
                     self.break_dots();
                     self.ensure_header(idx);
+                    if !self.dots
+                        && let Some(test) =
+                            runner::decode_test_case(&mut frame::Reader { p: rd.p }, b"")
+                    {
+                        CommandLineReporter::emit_scope_headers(
+                            &mut self.printed_scopes,
+                            test.scopes.iter().copied(),
+                            Output::error_writer(),
+                        );
+                    }
                 }
                 let _ = Output::error_writer().write_all(formatted);
                 self.last_printed_dot = is_dot;

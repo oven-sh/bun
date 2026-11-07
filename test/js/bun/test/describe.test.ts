@@ -104,8 +104,8 @@ describe("shows first arg name correctly in test output", () => {
 
     const fullOutput = stdout.toString() + stderr.toString();
 
-    expect(fullOutput).toInclude("add > should pass");
-    expect(fullOutput).not.toInclude("[object Object] > should pass");
+    expect(fullOutput).toInclude("add\n  (pass) should pass");
+    expect(fullOutput).not.toInclude("[object Object]");
   });
   test("describe block shows named class correctly in test output", async () => {
     await using test_dir = tempDir(".", {
@@ -131,9 +131,9 @@ describe("shows first arg name correctly in test output", () => {
 
     const fullOutput = stdout.toString() + stderr.toString();
 
-    expect(fullOutput).toInclude("Rectangle > should pass");
-    expect(fullOutput).not.toInclude("[object Object] > should pass");
-    expect(fullOutput).not.toInclude("MyClass > should pass");
+    expect(fullOutput).toInclude("Rectangle\n  (pass) should pass");
+    expect(fullOutput).not.toInclude("[object Object]");
+    expect(fullOutput).not.toInclude("MyClass");
   });
 
   test("describe block shows anonymous class correctly in test output", async () => {
@@ -160,8 +160,8 @@ describe("shows first arg name correctly in test output", () => {
 
     const fullOutput = stdout.toString() + stderr.toString();
 
-    expect(fullOutput).toInclude("MyClass > should pass");
-    expect(fullOutput).not.toInclude("[object Object] > should pass");
+    expect(fullOutput).toInclude("MyClass\n  (pass) should pass");
+    expect(fullOutput).not.toInclude("[object Object]");
   });
 });
 
@@ -279,7 +279,7 @@ test("deeply nested describe() doesn't overflow the native stack", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toInclude(" > d2 > d1 > d0 > leaf");
+  expect(stderr).toMatch(/\n +d2\n +d1\n +d0\n +\(pass\) leaf/);
   expect(stderr).toInclude("\n 1 pass");
   expect(stderr).toInclude("\n 0 fail");
   expect(exitCode).toBe(0);

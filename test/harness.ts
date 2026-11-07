@@ -2423,6 +2423,51 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     },
   };
 }
+
+/**
+ * Rewrites `bun test`'s nested result lines (indented beneath describe headers)
+ * to the flat `(pass) outer > inner > name` form, dropping the header lines.
+ * Other lines pass through unchanged.
+ */
+export function flattenNestedTestOutput(output: string): string {
+  const result = /^((?:  )*)(\((?:pass|fail|skip|todo|pending)\)) (.*)$/;
+  // Error output that can directly precede a result line whose headers were already printed.
+  const noise = /^\s*(?:\w*(?:Error|error|warn)\b.*:|\d+ \||at |\^|-{3,}|# |Expected|Received|\S+\.\w+:$)/;
+  const lines = output.split("\n");
+  const out: string[] = [];
+  const scopes: string[] = [];
+  let pending: string[] = [];
+  let lastIndent = "";
+  const depthOf = (line: string) => line.match(/^ */)![0].length;
+  for (let line of lines) {
+    const m = line.match(result);
+    if (!m) {
+      // `  ^ this test …` explanations are indented with their result line.
+      if (lastIndent && line.startsWith(lastIndent + "  ^ ")) line = line.slice(lastIndent.length);
+      pending.push(line);
+      continue;
+    }
+    lastIndent = m[1];
+    const depth = m[1].length / 2;
+    // Headers are written directly ahead of the line they introduce: walk back through
+    // `pending` while each line sits exactly one level shallower than the next.
+    let taken = 0;
+    while (taken < depth && taken < pending.length) {
+      const candidate = pending[pending.length - 1 - taken];
+      const want = depth - 1 - taken;
+      if (candidate.trim() === "" || depthOf(candidate) !== want * 2 || noise.test(candidate)) break;
+      scopes[want] = candidate.trim();
+      taken++;
+    }
+    out.push(...pending.slice(0, pending.length - taken));
+    pending = [];
+    scopes.length = depth;
+    out.push([m[2], [...scopes, m[3]].join(" > ")].join(" "));
+  }
+  out.push(...pending);
+  return out.join("\n");
+}
+
 export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
   if (optionalDir) {
     snapshot = snapshot

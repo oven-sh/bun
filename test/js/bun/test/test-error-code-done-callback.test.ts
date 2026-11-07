@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 import path from "path";
 
 test("done(error) ends a test that returns a promise that never settles", async () => {
@@ -14,7 +14,7 @@ test("done(error) ends a test that returns a promise that never settles", async 
     `,
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "test"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
   expect(stderr).toContain("error: reported");
   expect(stderr).not.toContain("timed out");
   expect(stderr.match(/^\((pass|fail)\) \w+/gm)).toEqual(["(fail) ends", "(pass) next"]);
@@ -176,7 +176,7 @@ test("an error passed to the done callback of a concurrent test fails that test"
     stdout: "ignore",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
   expect({
     lines: stderr.match(/^(\((pass|fail)\) [a-z >]+[a-z]|error: .*|# Unhandled.*)/gm)?.sort(),
     exitCode,

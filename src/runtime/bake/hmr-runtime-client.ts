@@ -336,17 +336,39 @@ if (config.console) {
     ws.sendBuffered(str);
   }
 
+  // Console calls in progress, counted from before the browser's own call. Page code that a call runs can call console again.
+  let depth = 0;
+
   if (typeof originalLog === "function") {
     console.log = function log(...args: any[]) {
-      originalLog(...args);
-      websocketInspect("l", args);
+      depth++;
+      try {
+        originalLog(...args);
+        // Only two levels are forwarded. A throw from here on only drops the forwarded line.
+        if (depth <= 2) {
+          try {
+            websocketInspect("l", args);
+          } catch {}
+        }
+      } finally {
+        depth--;
+      }
     };
   }
 
   if (typeof consoleErrorWithoutInspector === "function") {
     console.error = function error(...args: any[]) {
-      consoleErrorWithoutInspector(...args);
-      websocketInspect("e", args);
+      depth++;
+      try {
+        consoleErrorWithoutInspector(...args);
+        if (depth <= 2) {
+          try {
+            websocketInspect("e", args);
+          } catch {}
+        }
+      } finally {
+        depth--;
+      }
     };
   }
 }

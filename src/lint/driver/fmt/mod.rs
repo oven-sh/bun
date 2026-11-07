@@ -1973,7 +1973,10 @@ impl Run<'_> {
             true => paths_with(|it| matches!(it, Done::Different(_))),
             false => Vec::new(),
         };
-        let mut partly_staged = paths_with(|it| matches!(it, Done::PartlyStaged));
+        let mut partly_staged = match only.is_some() {
+            true => paths_with(|it| matches!(it, Done::PartlyStaged)),
+            false => Vec::new(),
+        };
         for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {

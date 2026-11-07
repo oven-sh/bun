@@ -2908,6 +2908,22 @@ console.log(<div {...obj} key="after" />);`),
     }
   });
 
+  // `Bun.Transpiler` targets the browser by default and folds the default
+  // defines, `process.env.NODE_ENV` and `process.browser` before, the
+  // `import.meta.env` mode keys now. A `define` entry still wins.
+  it("import.meta.env mode keys fold like process.env.NODE_ENV", () => {
+    const input = "console.log(process.env.NODE_ENV, process.browser, import.meta.env.DEV, import.meta.env.MODE);";
+    expect(new Bun.Transpiler({ define: { "process.env.NODE_ENV": '"production"' } }).transformSync(input)).toBe(
+      'console.log("production", true, false, "production");\n',
+    );
+    expect(
+      new Bun.Transpiler({
+        define: { "process.env.NODE_ENV": '"production"', "import.meta.env.MODE": '"staging"' },
+      }).transformSync(input),
+    ).toBe('console.log("production", true, false, "staging");\n');
+    expect(new Bun.Transpiler({ target: "bun" }).transformSync(input)).toContain("import.meta.env.DEV");
+  });
+
   it("JSX bare key prop followed by key with a value does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [

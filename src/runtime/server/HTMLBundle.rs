@@ -391,19 +391,23 @@ impl Route {
             config.minify.syntax = true;
         }
 
-        // Mirrors `bake::add_import_meta_defines` (the HMR dev server's key
-        // list; keep the two in sync) so `import.meta.env.*` folds to constants
-        // instead of reaching the browser as a property access that throws.
-        let (dev_bool, prod_bool, mode_str): (&[u8], &[u8], &[u8]) = if is_development {
-            (b"true", b"false", b"\"development\"")
-        } else {
-            (b"false", b"true", b"\"production\"")
-        };
-        config.define.put(b"import.meta.env.DEV", dev_bool)?;
-        config.define.put(b"import.meta.env.PROD", prod_bool)?;
-        config.define.put(b"import.meta.env.MODE", mode_str)?;
-        config.define.put(b"import.meta.env.SSR", b"false")?;
-        config.define.put(b"import.meta.env.STATIC", b"false")?;
+        // The route's `development` flag picks the mode, not `NODE_ENV`. A
+        // user define of the whole `import.meta.env` object keeps its keys.
+        let user_defines_import_meta = cli.args.serve_define.as_ref().is_some_and(|define| {
+            define
+                .keys
+                .iter()
+                .any(|key| &**key == b"import.meta.env" || &**key == b"import.meta")
+        });
+        if !user_defines_import_meta {
+            for (key, value) in bundler_options::default_user_defines::import_meta_env_defines(
+                /* is_production: */ !is_development,
+                /* ssr: */ false,
+                /* static_: */ false,
+            ) {
+                config.define.put(key, value)?;
+            }
+        }
 
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());

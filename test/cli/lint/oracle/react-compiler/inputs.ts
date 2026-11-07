@@ -153,6 +153,37 @@ export function InTheBody(props: { useThing?: () => number }) {
 }
 `;
 
+/**
+ * Each default reads what its parameter list or pattern binds after it. The tools compile the function, so they report
+ * the ref. `bun build` leaves such a function as written.
+ */
+const defaultsThatReadALaterBinding = `import { useRef } from "react";
+
+const COLORS = { a: "red", b: "blue" };
+
+export function InTheProps({ color = shade, shade }) {
+  const ref = useRef(null);
+  return <p>{color}{shade}{ref.current}</p>;
+}
+
+export function AsAKey({ color = COLORS[shade], shade }) {
+  const ref = useRef(null);
+  return <p>{color}{shade}{ref.current}</p>;
+}
+
+export function InAnArray(props) {
+  const [color = shade, shade] = props.pair;
+  const ref = useRef(null);
+  return <p>{color}{shade}{ref.current}</p>;
+}
+
+export function InAParameterList(props) {
+  const ref = useRef(null);
+  const pair = (color = shade, shade) => [color, shade];
+  return <p>{pair(props.color, props.shade)}{ref.current}</p>;
+}
+`;
+
 /** What's reported for `a = a + 1` depends on the order in which the compiler visits the loops' blocks. */
 const order = `export default function Component(props) {
   let a = props.a,
@@ -643,7 +674,12 @@ function Component(props) {
     "fbt.jsx": duplicateFbtTags,
     "callback-of-map.jsx": callbackOfMap,
   },
-  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  lowering: {
+    ".oxlintrc.json": rc(),
+    "forever.tsx": forever,
+    "defaults.tsx": defaults,
+    "defaults-that-read-a-later-binding.jsx": defaultsThatReadALaterBinding,
+  },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

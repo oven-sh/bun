@@ -15,6 +15,7 @@ use super::helpers::{
     lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
+use super::stmt::refs_in_expr;
 use crate::lowering::FunctionNode;
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -1342,7 +1343,7 @@ pub(crate) fn lower_reorderable_expression(
     expr: &Expr,
 ) -> Result<Place, CompilerError> {
     if !is_reorderable_expression(builder, expr, true) {
-        builder.record_error(CompilerErrorDetail {
+        let error = CompilerErrorDetail {
             category: ErrorCategory::Todo,
             reason: format!(
                 "(BuildHIR::node.lowerReorderableExpression) Expression type `{}` cannot be safely reordered",
@@ -1351,7 +1352,14 @@ pub(crate) fn lower_reorderable_expression(
             description: None,
             loc: convert_loc(expr.loc),
             suggestions: None,
-        })?;
+        };
+        // Not in upstream, which lowers `expr` even so. Here it would read what `bound_ahead` names after it is bound.
+        if builder.has_bound_ahead() {
+            let mut thrown = CompilerError::new();
+            thrown.push_error_detail(error);
+            return Err(thrown);
+        }
+        builder.record_error(error)?;
     }
     lower_expression_to_temporary(builder, expr)
 }
@@ -1369,7 +1377,8 @@ fn is_reorderable_expression(
             if is_module_level_or_global(builder, ident.ref_) {
                 true
             } else {
-                allow_local_identifiers
+                // Unlike upstream: the source reads what `bound_ahead` names before it is bound, and throws.
+                allow_local_identifiers && !builder.is_bound_ahead(ident.ref_)
             }
         }
         Data::EImportIdentifier(_) => true,
@@ -1418,10 +1427,10 @@ fn is_reorderable_expression(
             }
         }),
         Data::EDot(d) if d.optional_chain.is_none() => {
-            is_member_chain_of_module_level_or_global(builder, &d.target)
+            is_member_chain_of_module_level_or_global(builder, &d.target, allow_local_identifiers)
         }
         Data::EIndex(i) if i.optional_chain.is_none() => {
-            is_member_chain_of_module_level_or_global(builder, &i.target)
+            is_member_chain_of_module_level_or_global(builder, expr, allow_local_identifiers)
         }
         Data::EArrow(arrow) => {
             let stmts = arrow.body.stmts.slice();
@@ -1461,12 +1470,22 @@ fn is_reorderable_expression(
 }
 
 /// `a.b[c].d` rooted at a module-level or global binding (no optional chaining).
-fn is_member_chain_of_module_level_or_global(builder: &HirBuilder, target: &Expr) -> bool {
+fn is_member_chain_of_module_level_or_global(
+    builder: &HirBuilder,
+    target: &Expr,
+    allow_local_identifiers: bool,
+) -> bool {
     let mut inner = target;
     loop {
         match &inner.data {
             Data::EDot(d) if d.optional_chain.is_none() => inner = &d.target,
-            Data::EIndex(i) if i.optional_chain.is_none() => inner = &i.target,
+            Data::EIndex(i) if i.optional_chain.is_none() => {
+                // Unlike upstream, which does not look at a key. In a function the key is read when that is called.
+                if allow_local_identifiers && reads_bound_ahead(builder, &i.index) {
+                    return false;
+                }
+                inner = &i.target;
+            }
             _ => break,
         }
     }
@@ -1475,6 +1494,18 @@ fn is_member_chain_of_module_level_or_global(builder: &HirBuilder, target: &Expr
         Data::EImportIdentifier(_) => true,
         _ => false,
     }
+}
+
+/// Whether `expr` reads, outside of a function in it, what `HirBuilder::bound_ahead` names.
+fn reads_bound_ahead(builder: &HirBuilder, expr: &Expr) -> bool {
+    if !builder.has_bound_ahead() {
+        return false;
+    }
+    let mut found = false;
+    refs_in_expr(builder, expr, false, &mut |ref_, in_function| {
+        found |= !in_function && builder.is_bound_ahead(ref_);
+    });
+    found
 }
 
 fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {

@@ -45,6 +45,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         joined_ref_values_keep_their_place: is_oxlint,
         effects_keep_their_place: is_oxlint,
         jsx_can_be_reordered: false,
+        defaults_read_no_later_binding: false,
         arguments_of_no_alias_methods_escape: false,
         captured_targets_with_keys_force_temporaries: is_oxlint,
         unreachable_code_is_reported_at_its_function: is_oxlint,

@@ -234,6 +234,20 @@ pub(super) fn lower_inner<'h>(
                 let place = build_temporary_place(&mut builder, param_loc);
                 promote_temporary(&mut builder, place.identifier);
                 hir_params.push(ParamPattern::Place(place.clone()));
+                // Not in upstream: a later parameter that is only a name stays a parameter, so it is bound before
+                // the default and the pattern of this one, which go into the body.
+                let bound_ahead = builder.bound_ahead_len();
+                let later_params = match has_rest_arg {
+                    true => &params[i + 1..last],
+                    false => &params[i + 1..],
+                };
+                for later in later_params {
+                    if later.default.is_none()
+                        && let b::B::BIdentifier(name) = &later.binding.data
+                    {
+                        builder.push_bound_ahead(name.r#ref);
+                    }
+                }
                 let value = match &param.default {
                     Some(default) => helpers::lower_assignment_pattern_default(
                         &mut builder,
@@ -251,6 +265,7 @@ pub(super) fn lower_inner<'h>(
                     value,
                     AssignmentStyle::Assignment,
                 )?;
+                builder.truncate_bound_ahead(bound_ahead);
             }
         }
     }

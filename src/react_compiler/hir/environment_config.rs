@@ -88,6 +88,9 @@ pub struct EnvironmentConfig {
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
+    /// A default that reads what its parameter list or pattern binds after it cannot be evaluated later: by then that
+    /// binding has its value, where the source throws a `ReferenceError`. Upstream compiles such a function.
+    pub defaults_read_no_later_binding: bool,
     /// What is passed to a method of a mutable array escapes by the array, also for `map`, `filter` and the like, whose
     /// signatures say that they keep none of their arguments. To upstream nothing escapes so.
     pub arguments_of_no_alias_methods_escape: bool,
@@ -158,6 +161,7 @@ impl Default for EnvironmentConfig {
             joined_ref_values_keep_their_place: false,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
+            defaults_read_no_later_binding: true,
             arguments_of_no_alias_methods_escape: true,
             captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,

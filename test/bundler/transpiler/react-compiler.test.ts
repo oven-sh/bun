@@ -3973,6 +3973,260 @@ describe("bundler", () => {
     });
   }
 
+  // A default runs where its parameter or its element is bound. What the parameter list or the
+  // pattern binds after that is in its dead zone there, so a default that reads it throws a
+  // ReferenceError. The compiler lowers a default into the body, after the parameters that are
+  // only a name and after the names of its pattern that have no default. There the read got a
+  // value. So a function with such a default is left as written. A default that reads what is
+  // bound before it is compiled, and so is a function in a default that reads what is bound
+  // after it, because it reads it when it is called.
+  {
+    // What the source prints for three renders: `{ a: "A", b: "a" }`, `{ b: "b" }`, `{ b: "a" }`.
+    const leftAsWritten = {
+      LaterParameter: `["A","a"] ReferenceError ReferenceError`,
+      LaterParameterInACall: `["A","a"] ReferenceError ReferenceError`,
+      LaterParameterInAnArray: `["A","a"] ReferenceError ReferenceError`,
+      LaterParameterInALogicalExpression: `["A","a"] ReferenceError ReferenceError`,
+      LaterParameterAsAKey: `["A","a"] ReferenceError ReferenceError`,
+      LaterParameterAsAKeyOfAMember: `["A","a"] ReferenceError ReferenceError`,
+      LaterParameterThatAClosureAssigns: `["A","set"] ReferenceError ReferenceError`,
+      LaterParameterInAPattern: `["A","a"] ReferenceError ReferenceError`,
+      LaterElement: `["A","a"] ReferenceError ReferenceError`,
+      LaterRestElement: `["A",["a"]] ReferenceError ReferenceError`,
+      LaterElementOfTheOuterPattern: `["A","a"] ReferenceError ReferenceError`,
+      LaterProperty: `["A","a"] ReferenceError ReferenceError`,
+      LaterRestProperty: `["A",{"b":"a"}] ReferenceError ReferenceError`,
+      LaterPropertyOfTheOuterPattern: `["A","a"] ReferenceError ReferenceError`,
+      LaterPropertyAsAKey: `["A","a"] ReferenceError ReferenceError`,
+      LaterElementOfADeclaration: `["A","a"] ReferenceError ReferenceError`,
+      LaterPropertyOfADeclaration: `["A","a"] ReferenceError ReferenceError`,
+      LaterPropertyOfTheProps: `["A","a"] ReferenceError ReferenceError`,
+      useLaterParameter: `["A","a","state"] ReferenceError ReferenceError`,
+      useLaterElementOfARestParameter: `["A","a","state"] ReferenceError ReferenceError`,
+    };
+    const compiled = {
+      EarlierParameter: `["A","a"] ["b","b"] ["a","a"]`,
+      EarlierParameterAfterADefault: `["A","a","x","z"] ["b","b","x","z"] ["a","a","x","z"]`,
+      EarlierElementOfADeclaration: `["A","a"] ["b","b"] ["a","a"]`,
+      EarlierPropertyOfTheProps: `["A","a"] ["b","b"] ["a","a"]`,
+      EarlierPropertyAfterADefault: `["A","a","x",null] ["b","b","x",null] ["a","a","x",null]`,
+      EarlierPropertyAsAKey: `["A","a"] ["blue","b"] ["red","a"]`,
+      LaterPropertyInAFunction: `["A","a"] ["blue","b"] ["red","a"]`,
+      LaterDeclarationOfTheEnclosingFunction: `["A","a"] ["b","b"] ["a","a"]`,
+      DefaultThatReadsNoBinding: `["A","a"] ["none","b"] ["none","a"]`,
+      DefaultInALoop: `["A","A"] ["b","b!"] ["a","a!"]`,
+      CaseThatReadsALocal: `["miss","a"] ["hit","b"] ["miss","a"]`,
+    };
+    for (const [mode, reactCompiler, target] of [
+      ["plain", false, "browser"],
+      ["ssr", true, "bun"],
+      ["client", true, "browser"],
+    ] as const) {
+      itBundled(`react-compiler/DefaultThatReadsALaterBinding-${mode}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import { render } from "react";
+            import * as forms from "./forms";
+            const props = [{ a: "A", b: "a" }, { b: "b" }, { b: "a" }];
+            for (const name of Object.keys(forms).sort()) {
+              const printed = props.map(p => {
+                try {
+                  const args = name.startsWith("use") ? [p.a, p.b] : [p];
+                  return JSON.stringify(render(forms[name], ...args).value);
+                } catch (error) {
+                  return error.constructor.name;
+                }
+              });
+              console.log(name + "=" + printed.join(" "));
+            }
+          `,
+          "/forms.jsx": /* jsx */ `
+            import { useState } from "react";
+
+            const id = value => value;
+            const COLORS = { a: "red", b: "blue" };
+
+            export function LaterParameter(p) {
+              const f = (a = b, b) => [a, b];
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterInACall(p) {
+              const f = (a = id(b), b) => [a, b];
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterInAnArray(p) {
+              const f = (a = [b], b) => [a, b];
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterInALogicalExpression(p) {
+              const f = (a = b || "none", b) => [a, b];
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterAsAKey(p) {
+              const f = (a = COLORS[b], b) => [a, b];
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterAsAKeyOfAMember(p) {
+              const f = (a = COLORS[b].length, b) => [a, b];
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterThatAClosureAssigns(p) {
+              const f = (a = b, b) => {
+                const set = () => {
+                  b = "set";
+                };
+                set();
+                return [a, b];
+              };
+              return <out value={f(p.a, p.b)} />;
+            }
+            export function LaterParameterInAPattern(p) {
+              const f = ({ a = b }, b) => [a, b];
+              return <out value={f(p, p.b)} />;
+            }
+            export function LaterElement(p) {
+              const f = ([a = b, b]) => [a, b];
+              return <out value={f([p.a, p.b])} />;
+            }
+            export function LaterRestElement(p) {
+              const f = ([a = rest, ...rest]) => [a, rest];
+              return <out value={f([p.a, p.b])} />;
+            }
+            export function LaterElementOfTheOuterPattern(p) {
+              const f = ([[a = b], b]) => [a, b];
+              return <out value={f([[p.a], p.b])} />;
+            }
+            export function LaterProperty(p) {
+              const f = ({ a = b, b }) => [a, b];
+              return <out value={f(p)} />;
+            }
+            export function LaterRestProperty(p) {
+              const f = ({ a = rest, ...rest }) => [a, rest];
+              return <out value={f(p)} />;
+            }
+            export function LaterPropertyOfTheOuterPattern(p) {
+              const f = ({ inner: { a = b }, b }) => [a, b];
+              return <out value={f({ inner: p, b: p.b })} />;
+            }
+            export function LaterPropertyAsAKey(p) {
+              const f = ({ a = COLORS[b], b }) => [a, b];
+              return <out value={f(p)} />;
+            }
+            export function LaterElementOfADeclaration(p) {
+              const [a = b, b] = [p.a, p.b];
+              return <out value={[a, b]} />;
+            }
+            export function LaterPropertyOfADeclaration(p) {
+              const { a = b, b } = p;
+              return <out value={[a, b]} />;
+            }
+            export function LaterPropertyOfTheProps({ a = b, b }) {
+              return <out value={[a, b]} />;
+            }
+            export function useLaterParameter(a = b, b) {
+              const [state] = useState("state");
+              return { value: [a, b, state] };
+            }
+            export function useLaterElementOfARestParameter(...[a = b, b]) {
+              const [state] = useState("state");
+              return { value: [a, b, state] };
+            }
+
+            export function EarlierParameter(p) {
+              const f = (b, a = b) => [a, b];
+              return <out value={f(p.b, p.a)} />;
+            }
+            // The names after the first default are not after the second one.
+            export function EarlierParameterAfterADefault(p) {
+              const f = (x = "x", b, a = b, last) => [a, b, x, last];
+              return <out value={f(undefined, p.b, p.a, "z")} />;
+            }
+            export function EarlierPropertyAfterADefault({ x = "x", b, a = b, last }) {
+              return <out value={[a, b, x, last]} />;
+            }
+            export function EarlierElementOfADeclaration(p) {
+              const [b, a = b] = [p.b, p.a];
+              return <out value={[a, b]} />;
+            }
+            export function EarlierPropertyOfTheProps({ b, a = b }) {
+              return <out value={[a, b]} />;
+            }
+            export function EarlierPropertyAsAKey({ b, a = COLORS[b] }) {
+              return <out value={[a, b]} />;
+            }
+            // The third render has another b than the second. The function has to read that one.
+            export function LaterPropertyInAFunction({ a = () => COLORS[b], b }) {
+              return <out value={[typeof a === "function" ? a() : a, b]} />;
+            }
+            export function LaterDeclarationOfTheEnclosingFunction(p) {
+              const f = (a = later) => [a, later];
+              const later = p.b;
+              return <out value={f(p.a)} />;
+            }
+            export function DefaultThatReadsNoBinding({ a = "none", b }) {
+              return <out value={[a, b]} />;
+            }
+            export function DefaultInALoop(p) {
+              const all = [];
+              for (const item of [p.b, p.b + "!"]) {
+                const { a = item } = p;
+                all.push(a);
+              }
+              return <out value={all} />;
+            }
+            export function CaseThatReadsALocal(p) {
+              const wanted = "b";
+              let found;
+              switch (p.b) {
+                case wanted:
+                  found = "hit";
+                  break;
+                default:
+                  found = "miss";
+              }
+              return <out value={[found, p.b]} />;
+            }
+          `,
+          // One memo cache per function, kept between renders, as a fiber keeps it.
+          "/node_modules/react/index.js": /* js */ `
+            const caches = new Map();
+            let rendering;
+            exports.render = (fn, ...args) => {
+              rendering = fn;
+              return fn(...args);
+            };
+            exports.memoCache = size => {
+              if (!caches.has(rendering)) {
+                caches.set(rendering, new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+              }
+              return caches.get(rendering);
+            };
+            exports.useState = value => [value, () => {}];
+          `,
+          "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        },
+        reactCompiler,
+        target,
+        backend: "cli",
+        onAfterBundle(api) {
+          if (mode !== "client") return;
+          // A compiled function starts with its memo cache.
+          const withCache = api.readFile("/out.js").matchAll(/function (\w+)\([^)]*\) \{\s*let \$ = [\w$]+\(\d+\);/g);
+          expect(Array.from(withCache, match => match[1]).sort()).toEqual(Object.keys(compiled).sort());
+        },
+        run: {
+          stdout: Object.entries({ ...leftAsWritten, ...compiled })
+            .sort(([a], [b]) => (a < b ? -1 : 1))
+            .map(([name, printed]) => `${name}=${printed}`)
+            .join("\n"),
+        },
+      });
+    }
+  }
+
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `

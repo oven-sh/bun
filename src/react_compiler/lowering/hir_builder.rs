@@ -23,6 +23,7 @@ use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
 use crate::program::Host;
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 // ---------------------------------------------------------------------------
@@ -310,6 +311,10 @@ pub(crate) struct HirBuilder<'h> {
     /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
     /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
     import_bindings: &'h IndexMap<Ref, VariableBinding>,
+    /// Not in upstream. What the parameter list or pattern that is being lowered has bound already, of what the
+    /// source binds after the default that is being lowered. `is_reorderable_expression` keeps that default from
+    /// reading them: the source reads them in their dead zone.
+    bound_ahead: SmallVec<[Ref; 8]>,
 }
 
 impl<'h> HirBuilder<'h> {
@@ -349,6 +354,7 @@ impl<'h> HirBuilder<'h> {
             scope_stack: vec![function_scope],
             context_identifiers,
             import_bindings,
+            bound_ahead: SmallVec::new(),
         }
     }
 
@@ -1055,6 +1061,31 @@ impl<'h> HirBuilder<'h> {
 
     pub(crate) fn is_context_binding(&self, ref_: Ref) -> bool {
         self.is_context_identifier(ref_)
+    }
+
+    pub(crate) fn bound_ahead_len(&self) -> usize {
+        self.bound_ahead.len()
+    }
+
+    /// `ref_` is bound already, and the source binds it after the default that is lowered next.
+    /// Give the length from before back to `truncate_bound_ahead` after that default.
+    pub(crate) fn push_bound_ahead(&mut self, ref_: Ref) {
+        if self.env.config.defaults_read_no_later_binding {
+            let ref_ = self.resolve_ref(ref_);
+            self.bound_ahead.push(ref_);
+        }
+    }
+
+    pub(crate) fn truncate_bound_ahead(&mut self, len: usize) {
+        self.bound_ahead.truncate(len);
+    }
+
+    pub(crate) fn has_bound_ahead(&self) -> bool {
+        !self.bound_ahead.is_empty()
+    }
+
+    pub(crate) fn is_bound_ahead(&self, ref_: Ref) -> bool {
+        self.has_bound_ahead() && self.bound_ahead.contains(&self.resolve_ref(ref_))
     }
 }
 

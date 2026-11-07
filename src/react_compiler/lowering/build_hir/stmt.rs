@@ -463,7 +463,7 @@ fn refs_in_class(builder: &HirBuilder, class: &G::Class, in_function: bool, on_r
     refs_in_properties(builder, class.properties.slice(), in_function, on_ref);
 }
 
-fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef) {
+pub(super) fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef) {
     if !builder.environment().has_stack() {
         return;
     }
@@ -1871,6 +1871,7 @@ pub(super) fn lower_assignment_binding(
         b::B::BArray(pattern) => {
             let mut items: HirVec<ArrayPatternElement> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Binding, Option<&Expr>)> = Vec::new();
+            let mut bound_after_a_followup: BoundAfterAFollowup = SmallVec::new();
 
             let elements = pattern.items();
             let last_idx = elements.len().wrapping_sub(1);
@@ -1890,6 +1891,9 @@ pub(super) fn lower_assignment_binding(
                             builder, elem_loc, elem_loc, kind, id.r#ref,
                         )? {
                             Some(IdentifierForAssignment::Place(place)) => {
+                                if !followups.is_empty() {
+                                    bound_after_a_followup.push((followups.len(), id.r#ref));
+                                }
                                 if is_spread {
                                     items
                                         .push(ArrayPatternElement::Spread(SpreadPattern { place }));
@@ -1948,7 +1952,9 @@ pub(super) fn lower_assignment_binding(
                 },
             )?;
 
-            for (place, path, default) in followups {
+            let bound_ahead = push_bound_after_followups(builder, &bound_after_a_followup);
+            for (nth, (place, path, default)) in followups.into_iter().enumerate() {
+                keep_bound_after_followup(builder, bound_ahead, &bound_after_a_followup, nth);
                 let followup_loc = convert_loc(builder.with_default(path.loc)).or(loc);
                 let resolved = match default {
                     Some(d) => lower_default_value(builder, followup_loc, place, d)?,
@@ -1963,12 +1969,14 @@ pub(super) fn lower_assignment_binding(
                     assignment_style,
                 )?;
             }
+            builder.truncate_bound_ahead(bound_ahead);
             Ok(Some(temporary))
         }
 
         b::B::BObject(pattern) => {
             let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Binding, Option<&Expr>)> = Vec::new();
+            let mut bound_after_a_followup: BoundAfterAFollowup = SmallVec::new();
 
             for prop in pattern.properties() {
                 let prop_loc = convert_loc(builder.with_default(prop.value.loc));
@@ -1983,6 +1991,9 @@ pub(super) fn lower_assignment_binding(
                                 builder, prop_loc, prop_loc, kind, id.r#ref,
                             )? {
                                 Some(IdentifierForAssignment::Place(place)) => {
+                                    if !followups.is_empty() {
+                                        bound_after_a_followup.push((followups.len(), id.r#ref));
+                                    }
                                     properties.push(ObjectPropertyOrSpread::Spread(
                                         SpreadPattern { place },
                                     ));
@@ -2046,6 +2057,9 @@ pub(super) fn lower_assignment_binding(
                             builder, prop_loc, prop_loc, kind, id.r#ref,
                         )? {
                             Some(IdentifierForAssignment::Place(place)) => {
+                                if !followups.is_empty() {
+                                    bound_after_a_followup.push((followups.len(), id.r#ref));
+                                }
                                 properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
                                     key,
                                     property_type: ObjectPropertyType::Property,
@@ -2095,7 +2109,9 @@ pub(super) fn lower_assignment_binding(
                 },
             )?;
 
-            for (place, path, default) in followups {
+            let bound_ahead = push_bound_after_followups(builder, &bound_after_a_followup);
+            for (nth, (place, path, default)) in followups.into_iter().enumerate() {
+                keep_bound_after_followup(builder, bound_ahead, &bound_after_a_followup, nth);
                 let followup_loc = convert_loc(builder.with_default(path.loc)).or(loc);
                 let resolved = match default {
                     Some(d) => lower_default_value(builder, followup_loc, place, d)?,
@@ -2110,11 +2126,38 @@ pub(super) fn lower_assignment_binding(
                     assignment_style,
                 )?;
             }
+            builder.truncate_bound_ahead(bound_ahead);
             Ok(Some(temporary))
         }
 
         b::B::BMissing(_) => Ok(None),
     }
+}
+
+/// Not in upstream. Each name that a pattern puts into its `Destructure` after a followup, with the number of
+/// followups of that pattern before it, in source order. The `Destructure` binds the name before those followups
+/// are lowered, and the source binds it after them.
+type BoundAfterAFollowup = SmallVec<[(usize, Ref); 8]>;
+
+/// Tells the builder all of them, the last one first: the ones in front of a later followup are then on top.
+/// Returns what `truncate_bound_ahead` takes after the last followup.
+fn push_bound_after_followups(builder: &mut HirBuilder, names: &[(usize, Ref)]) -> usize {
+    let bound_ahead = builder.bound_ahead_len();
+    for &(_, name) in names.iter().rev() {
+        builder.push_bound_ahead(name);
+    }
+    bound_ahead
+}
+
+/// Takes away the ones in front of the `nth` followup, which the source has bound by then.
+fn keep_bound_after_followup(
+    builder: &mut HirBuilder,
+    bound_ahead: usize,
+    names: &[(usize, Ref)],
+    nth: usize,
+) {
+    let in_front = names.partition_point(|&(followups_before, _)| followups_before <= nth);
+    builder.truncate_bound_ahead(bound_ahead + names.len() - in_front);
 }
 
 /// Port of upstream `PatternLike::AssignmentPattern` arm: emit

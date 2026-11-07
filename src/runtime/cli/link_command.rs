@@ -211,6 +211,7 @@ pub(crate) fn link_global_bins(
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
+        chmod_only: false,
     };
     if unlink {
         bin_linker.unlink(true);

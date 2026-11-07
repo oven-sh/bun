@@ -2442,6 +2442,7 @@ impl<'a> Installer<'a> {
             is_behind_link: links.is_behind_link,
             err: None,
             skipped_due_to_missing_bin: false,
+            chmod_only: false,
         };
 
         bin_linker.link(global);

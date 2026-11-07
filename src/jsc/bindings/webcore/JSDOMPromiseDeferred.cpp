@@ -72,6 +72,7 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
         break;
     }
 
+    pendingActivityDone();
     if (m_mode == Mode::ClearPromiseOnResolve)
         clear();
 }

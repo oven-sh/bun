@@ -12,6 +12,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
 use bun_paths::resolve_path::{self, platform};
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_paths::{fs, path_buffer_pool};
 
 use crate::lexer::T;
@@ -154,7 +155,7 @@ struct Options<'a> {
 /// A pattern split at its first segment that has glob syntax.
 struct Pattern {
     negated: bool,
-    /// Absolute. Empty when `glob` matches against the whole path.
+    /// Absolute.
     dir: Vec<u8>,
     glob: Vec<u8>,
     /// No segment has glob syntax, and `glob` is the file name.
@@ -395,8 +396,26 @@ impl Pattern {
             return path == self.glob;
         }
         let path = with_posix_separators(path);
-        bun_glob::r#match(&self.glob, strings::trim_leading_char(&path, b'/')).matches()
+        bun_glob::r#match(&self.glob, &path).matches()
     }
+}
+
+/// The deepest directory that contains the `dir` of every including pattern. Only the part of a path below it can
+/// exclude a file: "node_modules" (the directory may itself be inside one) and a pattern that starts with `!**`.
+/// rolldown's `get_common_base` is the same rule. Vite's `getCommonBase` also leaves a directory whose name has a `.`.
+fn shared_dir(patterns: &[Pattern]) -> Option<&[u8]> {
+    let mut dirs = patterns
+        .iter()
+        .filter(|pattern| !pattern.negated)
+        .map(|pattern| pattern.dir.as_slice());
+    // Of `X/` (a literal head, the root after `process.chdir()`) and `X`, only `X` has both below it.
+    let mut shared = without_trailing_slash_windows_path(dirs.next()?);
+    for dir in dirs {
+        while path_below(shared, dir).is_none() {
+            shared = bun_paths::dirname(shared)?;
+        }
+    }
+    Some(shared)
 }
 
 fn find_files(
@@ -405,15 +424,7 @@ fn find_files(
     importer: &[u8],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut files = Vec::<Vec<u8>>::new();
-    // Only skip "node_modules" below the directory all patterns share, which may itself be inside one.
-    let mut shared_dir: Option<&[u8]> = None;
     for pattern in patterns.iter().filter(|pattern| !pattern.negated) {
-        let mut shared = shared_dir.unwrap_or(&pattern.dir);
-        while path_below(shared, &pattern.dir).is_none() {
-            shared = bun_paths::dirname(shared).unwrap_or_default();
-        }
-        shared_dir = Some(shared);
-
         if pattern.is_name {
             let mut buf = path_buffer_pool::get();
             if let Some(file) = absolute_from(&pattern.dir, &pattern.glob)
@@ -456,7 +467,10 @@ fn find_files(
         }
     }
 
-    let below_shared_dir = shared_dir.unwrap_or_default().len().saturating_sub(1);
+    let below_shared_dir = shared_dir(patterns)
+        .unwrap_or_default()
+        .len()
+        .saturating_sub(1);
     files.retain(|file| {
         **file != *importer
             && (exhaustive
@@ -611,6 +625,7 @@ impl<'a> Arguments<'a, '_> {
         };
 
         let mut patterns = Vec::with_capacity(globs.len());
+        let mut has_excluding_globstar = false;
         for &(glob, glob_loc) in globs {
             let (negated, glob) = match glob {
                 [b'!', glob @ ..] => (true, glob),
@@ -622,15 +637,10 @@ impl<'a> Arguments<'a, '_> {
                 Pattern::new(negated, &base_dir, glob)
             } else if glob.starts_with(b"**") {
                 if negated {
-                    Some(Pattern {
-                        negated,
-                        dir: Vec::new(),
-                        glob: glob.to_vec(),
-                        is_name: false,
-                    })
-                } else {
-                    Pattern::new(negated, root, glob)
+                    has_excluding_globstar = true;
+                    continue;
                 }
+                Pattern::new(negated, root, glob)
             } else if let Some((dir, aliased)) =
                 host.resolve_alias(importer_dir.unwrap_or(root), glob)
             {
@@ -657,6 +667,19 @@ impl<'a> Arguments<'a, '_> {
                 return self.invalid(glob_loc, format_args!("The glob pattern is too long"));
             };
             patterns.push(pattern);
+        }
+        // A `!**` pattern starts at the shared directory, which takes every including pattern to know.
+        if has_excluding_globstar {
+            for &(glob, glob_loc) in globs {
+                if !glob.starts_with(b"!**") {
+                    continue;
+                }
+                let dir = shared_dir(&patterns).unwrap_or(root);
+                let Some(pattern) = Pattern::new(true, dir, &glob[1..]) else {
+                    return self.invalid(glob_loc, format_args!("The glob pattern is too long"));
+                };
+                patterns.push(pattern);
+            }
         }
 
         let files = match find_files(&patterns, options.exhaustive, source.path.text) {

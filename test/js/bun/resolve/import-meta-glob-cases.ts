@@ -1,4 +1,5 @@
-// Expected values are what Vite 8.3 evaluates the same call to in the same tree.
+// Vite has two transforms for `import.meta.glob`: `vite dev` and Vitest run one, and `vite build` runs rolldown's.
+// Expected values are what the first evaluates the same call to in the same tree, with Vite 8.3.6 and Vitest 5.1.0.
 export type Entry = [key: string, kind: "lazy" | "eager", value: unknown];
 export type Case = [code: string, expected: Entry[]];
 
@@ -16,6 +17,7 @@ export const tree = {
   "proj/src/dir/.hidden/h.ts": "export default 'hidden';",
   "proj/src/dir/node_modules/pkg/index.ts": "export default 'in node_modules';",
   "proj/src/dir/sub/d.ts": "export default 'sub/d';",
+  "proj/src/dir2/e.ts": "export default 'e';",
   "proj/src/other/o.ts": "export default 'other';",
   "proj/src/[id]/(group)/{x}/p.ts": "export default 'p';",
   "proj/src/[id]/(group)/{x}/q.ts": "export default 'q';",
@@ -78,6 +80,35 @@ export const cases: Case[] = [
   ['import.meta.glob(["./dir/a.ts", , "./dir/b.ts"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
   ['import.meta.glob(["./dir/a.ts", "./dir/a.ts", "./dir/[ab].ts"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
   ['import.meta.glob(["./dir/*.ts", "!./dir/[a-c].ts", "./dir/a.ts"])', [["./dir/Upper.ts", "lazy", {"default":"upper"}], ["./dir/skip.ts", "lazy", {"default":"skip"}]]],
+  // A pattern that starts with `!**` only sees the part of a path below the directory that the patterns without `!` share.
+  // rolldown 1.3 does the same (rolldown/rolldown#11495). The rolldown 1.2 of `vite build` 8.3 starts at the project root.
+  ['import.meta.glob(["./dir/[ab].ts", "!**/*import-meta-glob*/**"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**/proj/**"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["/src/dir/[ab].ts", "!**/proj/**"])', [["/src/dir/a.ts", "lazy", A], ["/src/dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**/src/**"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**/dir/a.ts"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["../src/dir/[ab].ts", "!**/dir/a.ts"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./[ab].ts", "!**/dir/a.ts"], { base: "./dir" })', [["./a.ts", "lazy", A], ["./b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/a.ts", "./dir/sub/d.ts", "!**/dir/**"])', [["./dir/a.ts", "lazy", A], ["./dir/sub/d.ts", "lazy", {"default":"sub/d"}]]],
+  ['import.meta.glob(["./dir/[ab].ts", "./other/*.ts", "!**/dir/a.ts"])', [["./dir/b.ts", "lazy", B], ["./other/o.ts", "lazy", {"default":"other"}]]],
+  ['import.meta.glob(["./dir/[ab].ts", "./dir2/*.ts", "!**/dir2/**"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir2/*.ts", "./dir/[ab].ts", "!**/dir2/**"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./nope/*.ts", "./dir/[ab].ts", "!**/src/**"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/**/[ad].ts", "!**/dir/sub/**"])', [["./dir/a.ts", "lazy", A], ["./dir/sub/d.ts", "lazy", {"default":"sub/d"}]]],
+  ['import.meta.glob(["./dir/**/[ad].ts", "!**/sub/**"])', [["./dir/a.ts", "lazy", A]]],
+  ['import.meta.glob(["./dir/**/[dh].ts", "!**/dir/.hidden/**"], { exhaustive: true })', [["./dir/.hidden/h.ts", "lazy", {"default":"hidden"}], ["./dir/sub/d.ts", "lazy", {"default":"sub/d"}]]],
+  ['import.meta.glob(["!**/a.ts", "./dir/[ab].ts"])', [["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[abc].ts", "!./dir/a.ts", "!**/dir/b.ts"])', [["./dir/b.ts", "lazy", B], ["./dir/c.ts", "lazy", C]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!./other/o.ts", "!**/dir/a.ts"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/node_modules/pkg/*.ts", "!./other/o.ts"])', [["./dir/node_modules/pkg/index.ts", "lazy", {"default":"in node_modules"}]]],
+  ['import.meta.glob(["../../outside.ts", "./dir/a.ts", "!**/outside.ts"])', [["./dir/a.ts", "lazy", A]]],
+  ['import.meta.glob(["../../outside.ts", "./dir/a.ts", "!**/proj/**"])', [["../../outside.ts", "lazy", {"default":"outside"}]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**a.ts"])', [["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**/@(a|b).ts"])', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B]]],
+  // These are normalized like every other pattern. rolldown matches the first two as they are written, and keeps a.ts.
+  ['import.meta.glob(["./dir/[ab].ts", "!**/./a.ts"])', [["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**/sub/../a.ts"])', [["./dir/b.ts", "lazy", B]]],
+  ['import.meta.glob(["./dir/[ab].ts", "!**/../a.ts"])', [["./dir/b.ts", "lazy", B]]],
   ['import.meta.glob(`./dir/a.ts`)', [["./dir/a.ts", "lazy", A]]],
   ['import.meta.glob("./dir/{a,c}.ts")', [["./dir/a.ts", "lazy", A], ["./dir/c.ts", "lazy", C]]],
   ['import.meta.glob("./dir/?.ts")', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B], ["./dir/c.ts", "lazy", C]]],

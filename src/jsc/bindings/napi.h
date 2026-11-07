@@ -21,6 +21,7 @@
 
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/Lock.h>
 
 #include <optional>
@@ -30,6 +31,7 @@
 
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
 extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_threadsafe_function_release_js(void* tsfn);
 extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
@@ -367,6 +369,15 @@ public:
         m_pendingRefFinalizers.remove(ref);
     }
 
+    // Every live reference is linked into m_refs, like Node's RefTracker, so releaseRefs() reaches those an addon never deleted.
+    // Defined in napi.cpp, where NapiRef is complete.
+    void trackRef(Zig::NapiRef*);
+
+    // Stops the env from keeping JS values alive on the addon's behalf (every reference becomes weak, the callback of every
+    // threadsafe function is dropped) so they can be collected, without running any callback of the addon. The NapiRef objects stay
+    // allocated: the addon owns them and may delete them later.
+    void releaseHeldValues();
+
     /// Will abort the process if a duplicate entry would be added.
     /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
@@ -655,6 +666,7 @@ private:
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     static void drainOneRefFinalizer(napi_env, void*, void*);
     WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
+    WTF::SentinelLinkedList<Zig::NapiRef, WTF::BasicRawSentinelNode<Zig::NapiRef>> m_refs;
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
@@ -838,7 +850,7 @@ private:
     } m_value;
 };
 
-class NapiRef {
+class NapiRef : public WTF::BasicRawSentinelNode<NapiRef> {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
@@ -852,6 +864,15 @@ public:
         , finalizer(WTF::move(finalizer))
         , refCount(count)
     {
+        this->env->trackRef(this);
+    }
+
+    // Holds the value weakly from now on, whatever the count: it stays reachable while something else keeps it alive,
+    // and its finalizer still runs when it is collected. A value that cannot be held weakly keeps its strong reference.
+    void release()
+    {
+        if (!m_isEternal && !weakValueRef.isClear())
+            strongRef.clear();
     }
 
     JSC::JSValue value() const
@@ -860,7 +881,8 @@ public:
             return weakValueRef.get();
         }
 
-        return strongRef.get();
+        JSC::JSValue strong = strongRef.get();
+        return strong ? strong : weakValueRef.get();
     }
 
     void setValueInitial(JSC::JSValue value, bool can_be_weak)
@@ -905,6 +927,7 @@ public:
     {
         NAPI_LOG("destruct napi ref %p", this);
         env->dequeueRefFinalizer(this);
+        remove();
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;

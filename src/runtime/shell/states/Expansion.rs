@@ -40,9 +40,7 @@ pub(crate) struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
-    /// The atom is an assignment value (`A=v`, `export A=v`), so
-    /// command-substitution output is not field split (POSIX 2.9.1).
-    pub(crate) assign_ctx: bool,
+    pub(crate) ctx: WordContext,
     /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
@@ -52,6 +50,35 @@ pub(crate) struct Expansion {
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
     pub(crate) out_exit_code: ExitCode,
+}
+
+/// What the word is for. It selects the expansions that can turn one word into several (POSIX 2.9.1).
+#[derive(Clone, Copy)]
+pub(crate) enum WordContext {
+    /// An argv word, a redirect target or a `[[ ]]` operand.
+    Fields,
+    /// The value of `A=v` with no command.
+    ShellVarValue,
+    /// A value for the environment of a command: `A=v cmd`, `export A=v`.
+    EnvValue,
+}
+
+impl WordContext {
+    /// Unquoted command-substitution output is split into fields.
+    const fn field_splitting(self) -> bool {
+        match self {
+            WordContext::Fields => true,
+            WordContext::ShellVarValue | WordContext::EnvValue => false,
+        }
+    }
+
+    /// A `*` written in the word is matched against file names.
+    const fn pathname_expansion(self) -> bool {
+        match self {
+            WordContext::Fields | WordContext::ShellVarValue => true,
+            WordContext::EnvValue => false,
+        }
+    }
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -90,7 +117,7 @@ impl Expansion {
         shell: *mut ShellExecEnv,
         node: &ast::Atom,
         parent: NodeId,
-        assign_ctx: bool,
+        ctx: WordContext,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(parent, shell),
@@ -102,7 +129,7 @@ impl Expansion {
             meta_offsets: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
-            assign_ctx,
+            ctx,
             has_quoted_empty: false,
             out_exit_code: 0,
         }))
@@ -110,6 +137,11 @@ impl Expansion {
 
     pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
+    }
+
+    #[inline]
+    fn pathname_expansion(&self, atom: &ast::Atom) -> bool {
+        atom.has_glob_expansion() && self.ctx.pathname_expansion()
     }
 
     /// Walks the
@@ -246,7 +278,7 @@ impl Expansion {
                 me.state = ExpansionState::BraceExpand;
                 continue;
             }
-            if atom.has_glob_expansion() {
+            if me.pathname_expansion(atom) {
                 return Self::transition_to_glob_state(interp, this);
             }
             Self::push_current_out(me);
@@ -341,7 +373,7 @@ impl Expansion {
 
         let node = me.node;
         let atom = node.get();
-        if atom.has_glob_expansion() {
+        if me.pathname_expansion(atom) {
             // brace + glob composes. Keep
             // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
             // the glob walker brace-expands and globs it; its matches are
@@ -634,7 +666,7 @@ impl Expansion {
 
         let no_split = {
             let me = interp.as_expansion(this);
-            me.cmd_subst_quoted || me.assign_ctx
+            me.cmd_subst_quoted || !me.ctx.field_splitting()
         };
         {
             let me = interp.as_expansion_mut(this);

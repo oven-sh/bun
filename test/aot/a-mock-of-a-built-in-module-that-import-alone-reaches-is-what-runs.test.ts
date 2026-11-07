@@ -277,7 +277,7 @@ for (const name of modulesOfLibrary) {
     true,
   );
   // The loader holds such a module as an ES module once an import has loaded it, so require() answers the namespace object, which shows the mock.
-  // Where what the factory made has `__esModule` and `default`, as a copy of bun:sqlite has, require() answers that `default`.
+  // What the factory made is answered as it is, even where it has `__esModule` and `default`, as a copy of bun:sqlite has.
   runsAsPlain(
     ofLibrary,
     `require("${name}") behind an import() of it and a mock`,

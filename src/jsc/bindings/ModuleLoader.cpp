@@ -412,21 +412,18 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
         OnLoadResult result = {};
         result.type = OnLoadResultTypePromise;
         result.value.promise = objectValue;
-        result.wasMock = wasModuleMock;
         return result;
     }
 
     return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock);
 }
 
+// The `module.exports` of a plugin `loader: "object"` module: the `default` of an object marked `__esModule`.
 // Returns empty when require() should return the module namespace object instead.
-static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JSC::JSObject* object, bool wasModuleMock)
+static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JSC::JSObject* object)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (auto* mockedCommonJSModule = wasModuleMock ? dynamicDowncast<JSCommonJSModule>(object) : nullptr)
-        RELEASE_AND_RETURN(scope, mockedCommonJSModule->exportsObject());
 
     auto esModuleValue = object->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
     RETURN_IF_EXCEPTION(scope, {});
@@ -436,7 +433,7 @@ static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JS
         if (defaultValue && !defaultValue.isUndefined())
             return defaultValue;
     }
-    return wasModuleMock ? object : JSValue();
+    return {};
 }
 
 template<bool allowPromise>
@@ -518,9 +515,25 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
-        JSC::JSObject* exportsObject = wasModuleMock ? Bun::resultOfModuleMock(object) : object;
-        if (commonJSModule && exportsObject) {
-            JSValue exports = commonJSExportsOfObjectModule(globalObject, exportsObject, wasModuleMock);
+
+        if (wasModuleMock) {
+            // As in Jest, require() gets what the factory returned. `__esModule` on it only shapes the default import.
+            JSC::JSObject* result = Bun::resultOfModuleMock(object);
+            if (commonJSModule && result) {
+                JSValue exports = Bun::commonJSExportsOfModuleMockResult(result);
+                if (scope.exception()) [[unlikely]] {
+                    return rejectOrResolve({});
+                }
+                commonJSModule->setExportsObject(exports);
+                commonJSModule->hasEvaluated = true;
+                return commonJSModule;
+            }
+            JSSourceCode* source = Bun::sourceCodeOfModuleMock(globalObject, object, specifier->toWTFString(), fetch.typeAttribute ? fetch.typeAttribute->toWTFString() : String());
+            RELEASE_AND_RETURN(scope, rejectOrResolve(source));
+        }
+
+        if (commonJSModule) {
+            JSValue exports = commonJSExportsOfObjectModule(globalObject, object);
             if (scope.exception()) [[unlikely]] {
                 return rejectOrResolve({});
             }
@@ -529,11 +542,6 @@ static JSValue handleVirtualModuleResult(
                 commonJSModule->hasEvaluated = true;
                 return commonJSModule;
             }
-        }
-
-        if (wasModuleMock) {
-            JSSourceCode* source = Bun::sourceCodeOfModuleMock(globalObject, object, specifier->toWTFString(), fetch.typeAttribute ? fetch.typeAttribute->toWTFString() : String());
-            RELEASE_AND_RETURN(scope, rejectOrResolve(source));
         }
 
         RELEASE_AND_RETURN(scope, rejectOrResolve(createObjectModuleSourceCode(vm, object, specifier->toWTFString(BunString::ZeroCopy))));
@@ -664,7 +672,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
                 JSC::throwException(globalObject, scope, createAsyncModuleRequiredError(globalObject, specifier->toWTFString(BunString::ZeroCopy)));
                 return {};
             }
-            JSValue exports = commonJSExportsOfObjectModule(globalObject, result, true);
+            JSValue exports = Bun::commonJSExportsOfModuleMockResult(result);
             RETURN_IF_EXCEPTION(scope, {});
             return { Kind::Exports, exports };
         }

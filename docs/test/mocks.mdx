@@ -339,7 +339,7 @@ test("mock.module", async () => {
 });
 ```
 
-Like the rest of Bun, module mocks support both `import` and `require`.
+Like the rest of Bun, module mocks support both `import` and `require`. `require()` returns the object the factory returned as `module.exports`, named exports included. As in Jest, an `__esModule: true` property on that object does not change what `require()` returns.
 
 ### Overriding Already Imported Modules
 

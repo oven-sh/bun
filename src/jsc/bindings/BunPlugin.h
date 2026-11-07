@@ -271,6 +271,8 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, con
 bool isModuleMockInUse(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 // The exports, or a JSCommonJSModule that has them as `module.exports`. Null until the factory settles.
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
+// What require() of the mock returns: the `module.exports` of a JSCommonJSModule result, else the result itself. Can throw.
+JSC::JSValue commonJSExportsOfModuleMockResult(JSC::JSObject* result);
 // The factory is an async function that is running, or that nothing has called. require() can't wait for it, and calling it
 // from there would make the test file the file of a running factory, whose own import of the module gets the original.
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);

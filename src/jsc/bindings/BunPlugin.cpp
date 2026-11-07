@@ -2397,11 +2397,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
         RETURN_IF_EXCEPTION(scope, );
         if (cached != moduleObject)
             return;
-        JSValue moduleExports = exports;
-        if (commonJSExports) {
-            moduleExports = commonJSExports->exportsObject();
-            RETURN_IF_EXCEPTION(scope, );
-        }
+        JSValue moduleExports = Bun::commonJSExportsOfModuleMockResult(exports);
+        RETURN_IF_EXCEPTION(scope, );
         moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), moduleExports, 0);
         moduleObject->hasEvaluated = true;
     }
@@ -5359,6 +5356,13 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
 {
     auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
+}
+
+JSC::JSValue commonJSExportsOfModuleMockResult(JSC::JSObject* result)
+{
+    if (auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(result))
+        return commonJSModule->exportsObject();
+    return result;
 }
 
 static bool hasUncalledFactoryThatAwaits(Zig::JSModuleMock* mock)

@@ -727,6 +727,7 @@ describe.concurrent("the original of a mocked module", () => {
     await expectFixturesToPass(
       {
         ...modules,
+        "throwing-proxy.cjs": `module.exports = new Proxy({ before: 1, get boom() { throw new Error("boom"); }, after: 2 }, {});`,
         "original.test.ts": `
           import { expect, mock, test, vi } from "bun:test";
 
@@ -765,6 +766,15 @@ describe.concurrent("the original of a mocked module", () => {
             expect(require("cjs-pkg")).toBe(cjs);
           });
 
+          test("a CommonJS module whose exports are a Proxy with a getter that throws", async () => {
+            const proxy = require("./throwing-proxy.cjs");
+            vi.doMock("./throwing-proxy.cjs", () => ({ mocked: true }));
+            const { default: actualDefault, ...actual } = await vi.importActual("./throwing-proxy.cjs");
+            expect(actual).toStrictEqual({ before: 1, boom: undefined, after: 2 });
+            expect(actualDefault).toBe(proxy);
+            vi.doUnmock("./throwing-proxy.cjs");
+          });
+
           test("a builtin, with an export that is made on first use", async () => {
             const fs = await import("node:fs");
             const real = require("fs");
@@ -782,7 +792,7 @@ describe.concurrent("the original of a mocked module", () => {
           });
         `,
       },
-      4,
+      5,
     );
   });
 

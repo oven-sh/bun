@@ -765,7 +765,7 @@ pub(crate) struct BunTest {
     /// frame, which never returns; `exit_file()` nulls this before drop.
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
     pub(crate) timer: EventLoopTimer,
-    /// The clock of the last fire of `timer`. What had its deadline before it has timed out.
+    /// The clock of the last fire of `timer`. A fire has found every deadline before it passed.
     pub(crate) judged_at: Timespec,
     /// The deadline that the last fire left to arm `timer` for. In the timer's own callback, a fire that came a moment early would repeat at once.
     arm_after_fire: Timespec,
@@ -1103,7 +1103,7 @@ impl BunTest {
             (*this).timer.state = EventLoopTimerState::PENDING;
         }
         if in_timer_pass && global.vm().is_entered() {
-            // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that a fire is the same cut as at the top level.
+            // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that the fire finds what they end in the queue, as at the top level.
             let _ = global.bun_vm().event_loop_mut().drain_microtasks();
         }
         // SAFETY: as above.

@@ -965,7 +965,7 @@ type UpdateHook = (
 
 A library that accepts a database from several runtimes can tell them apart: `db[Symbol.for("sqlite-type")]` is `"bun:sqlite"` for a `Database` and `"node:sqlite"` for a `DatabaseSync`.
 
-To see every SQL string that a `Database` receives, override `query()`, `prepare()`, `run()` and `exec()` in a subclass. None of the four calls another. `transaction()` runs its `BEGIN`, `COMMIT`, `ROLLBACK` and savepoint statements without calling any of the four.
+To see every SQL string that your code passes to a `Database`, override `query()`, `prepare()`, `run()` and `exec()` in a subclass. None of the four calls another. `transaction()` runs its `BEGIN`, `COMMIT`, `ROLLBACK` and savepoint statements without calling any of the four. Create the subclass with `new`. `Database.open()` and `Database.deserialize()` return a plain `Database`, also when you call them on the subclass.
 
 ### Datatypes
 

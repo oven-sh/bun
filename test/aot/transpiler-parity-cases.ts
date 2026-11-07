@@ -105,6 +105,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > ts/EnumTreeShaking/namespace-before.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumTreeShaking/namespace-after.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumRulesFrom_TypeScript_5_0/not-supported.ts": "TS2304: nothing declares capture",
+    "bundler > ts/SloppyNamespaceNamedArgumentsOrEvalESMOutput":
+      "TS1215: a module is strict code, so a namespace in it cannot be named arguments or eval",
   },
 };
 

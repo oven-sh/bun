@@ -32,9 +32,10 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
 }
 
 /// Names no chunk may use for a cross-chunk binding: keywords and the like,
-/// every unbound or must-not-be-renamed name in any module scope of the
-/// bundle, and the entry points' own export names. A per-chunk renamer only
-/// avoids its own chunk's; a bundle-wide name has to avoid all of them.
+/// every name a module scope of the bundle reserves
+/// (`compute_reserved_names_for_scope`), and the entry points' own export
+/// names. A per-chunk renamer only avoids its own chunk's; a bundle-wide name
+/// has to avoid all of them.
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
@@ -133,8 +134,8 @@ pub(crate) fn assign_minified(
     if refs.is_empty() {
         return Ok(());
     }
-    // Every chunk's renamer already reserved the keywords plus its own module
-    // scopes' unbound / pinned names; a bundle-wide name avoids all of them.
+    // Every chunk's renamer already reserved the keywords plus the names its
+    // own module scopes reserve; a bundle-wide name avoids all of them.
     let mut reserved = StringHashMap::<u32>::default();
     let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks.iter() {

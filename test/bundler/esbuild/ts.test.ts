@@ -2541,4 +2541,19 @@ describe("bundler", () => {
       `,
     },
   });
+  // The parser reports `var arguments` in a sloppy file as an error for esm
+  // output, but it accepts a namespace with that name. All of an ES module is
+  // strict code, so the bindings of the namespace get other names.
+  itBundled("ts/SloppyNamespaceNamedArgumentsOrEvalESMOutput", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace arguments { export const x = 1 }
+        namespace eval { export const y = 2 }
+        console.log(JSON.stringify([arguments.x, eval.y]))
+      `,
+    },
+    run: {
+      stdout: "[1,2]",
+    },
+  });
 });

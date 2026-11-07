@@ -780,8 +780,9 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     specifier: &BunString,
     from: &BunString,
     mode: ResolveMode,
+    paths: Option<&[BunString]>,
 ) -> JsResult<BunString> {
-    match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+    match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode, paths)? {
         Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
             Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
         }
@@ -815,6 +816,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     specifier: &BunString,
     from: &BunString,
     mode: ResolveMode,
+    paths: Option<&[BunString]>,
 ) -> JsResult<Resolved> {
     let mut query_string = BunString::EMPTY;
 
@@ -832,6 +834,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         from,
         Some(&mut query_string),
         mode,
+        paths,
     )? {
         Ok(path) => path,
         Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
@@ -870,7 +873,7 @@ pub(crate) fn resolve_sync(
     } else {
         ResolveMode::Require
     };
-    do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
+    do_resolve_with_args::<false>(global_this, &module_id, &parent, mode, None)
 }
 
 pub(crate) fn resolve(
@@ -919,6 +922,7 @@ pub(crate) fn bun_resolve_sync(
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            None,
         )?
         .into_js(global)
     })
@@ -966,23 +970,13 @@ pub(crate) fn bun_resolve_sync_with_paths(
         return JSValue::ZERO;
     };
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let bun_vm = global.bun_vm().as_mut();
-    debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
-    scopeguard::defer! {
-        // SAFETY: same VM pointer; called before returning to C++.
-        global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
-    }
-
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            Some(paths),
         )?
         .into_js(global)
     })
@@ -1008,6 +1002,7 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
             &specifier_str,
             source,
             ResolveMode::from_ffi_bools(is_esm, false),
+            None,
         )? {
             Resolved::Found(value) => value.into_js(global),
             Resolved::NotFound(_) => Ok(JSValue::UNDEFINED),

@@ -562,13 +562,6 @@ pub struct Resolver<'a> {
     /// over "module" in package.json
     pub prefer_module_field: bool,
 
-    /// This is an array of paths to resolve against. Used for passing an
-    /// object '{ paths: string[] }' to `require` and `resolve`; This field
-    /// is overwritten while the resolution happens.
-    ///
-    /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_core::String]>,
-
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
 }
@@ -634,9 +627,6 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
-            // Transient per-resolve scratch (only set for `require(..., {paths})`);
-            // never carried across worker init.
-            custom_dir_paths: None,
             esm_failure: None,
         }
     }
@@ -991,7 +981,6 @@ impl<'a> Resolver<'a> {
             store_fd: false,
             standalone_module_graph: None,
             prefer_module_field: true,
-            custom_dir_paths: None,
             esm_failure: None,
         }
     }
@@ -1239,12 +1228,14 @@ impl<'a> Resolver<'a> {
             .or_else(|| graph.file_at_source_path(path))
     }
 
+    /// `paths` is the option of `require.resolve()`: where a relative or bare `import_path` is looked up, in place of `source_dir`.
     pub fn resolve_and_auto_install<'r>(
         &mut self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
+        paths: Option<&[bun_core::String]>,
     ) -> ResultUnion<'r> {
         let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
@@ -1604,8 +1595,13 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
 
-        let mut tmp =
-            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        let mut tmp = self.resolve_without_symlinks(
+            source_dir_normalized,
+            import_path,
+            kind,
+            global_cache,
+            paths,
+        );
         if matches!(tmp, ResultUnion::NotFound)
             && let Some(path) =
                 self.resolve_at_source_path(source_dir_normalized, import_path, kind)
@@ -1644,6 +1640,7 @@ impl<'a> Resolver<'a> {
                     &import_path[0..suffix],
                     kind,
                     global_cache,
+                    paths,
                 );
                 if matches!(result2, ResultUnion::NotFound) {
                     break 'try_without_suffix;
@@ -1753,7 +1750,13 @@ impl<'a> Resolver<'a> {
         import_path: &'r [u8],
         kind: ast::ImportKind,
     ) -> crate::CrateResult<Result<'r>> {
-        match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
+        match self.resolve_and_auto_install(
+            source_dir,
+            import_path,
+            kind,
+            GlobalCache::disable,
+            None,
+        ) {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
@@ -1991,6 +1994,7 @@ impl<'a> Resolver<'a> {
         input_import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
+        paths: Option<&[bun_core::String]>,
     ) -> ResultUnion<'r> {
         debug_assert!(bun_paths::is_absolute(source_dir));
 
@@ -2125,7 +2129,7 @@ impl<'a> Resolver<'a> {
         let check_package = is_package_path_;
 
         if check_relative {
-            if let Some(custom_paths) = self.custom_dir_paths {
+            if let Some(custom_paths) = paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
@@ -2264,7 +2268,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(custom_paths) = self.custom_dir_paths {
+            if let Some(custom_paths) = paths {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();

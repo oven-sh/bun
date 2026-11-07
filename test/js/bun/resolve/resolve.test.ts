@@ -457,6 +457,83 @@ it("can resolve with source directories that do not exist", () => {
   expect(exitCode).toBe(0);
 });
 
+describe.concurrent("require.resolve() with paths", () => {
+  it("looks up the path that an onResolve callback returns in paths, in their order", async () => {
+    using dir = tempDir("resolve-paths-on-resolve", {
+      "renamed.js": ``,
+      "first/renamed.js": ``,
+      "other/renamed.js": ``,
+      "plugin.ts": `
+        Bun.plugin({
+          name: "renames",
+          setup(build) {
+            build.onResolve({ filter: /^\\.\\/original$/ }, () => ({ path: "./renamed" }));
+          },
+        });
+      `,
+      "entry.cjs": `
+        const short = path => path.slice(__dirname.length + 1).replaceAll("\\\\", "/");
+        const first = __dirname + "/first";
+        const other = __dirname + "/other";
+        console.log(short(require.resolve("./original")));
+        console.log(short(require.resolve("./original", { paths: [other] })));
+        console.log(short(require.resolve("./original", { paths: [first, other] })));
+        console.log(short(require.resolve("./original", { paths: [other, first] })));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: ["renamed.js", "other/renamed.js", "first/renamed.js", "other/renamed.js"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Without paths, `bun test` finds the chai that pnpm links next to vitest.
+  it(`doesn't look for "chai" next to vitest`, async () => {
+    const store = "node_modules/.pnpm/vitest@1.0.0/node_modules";
+    using dir = tempDir("resolve-paths-chai", {
+      [`${store}/vitest/package.json`]: `{ "name": "vitest", "exports": { "./package.json": "./package.json" } }`,
+      [`${store}/chai/package.json`]: `{ "name": "chai", "main": "index.js" }`,
+      [`${store}/chai/index.js`]: ``,
+      "elsewhere/package.json": `{}`,
+      "a.test.js": `
+        import { test } from "vitest";
+        test("test", () => {
+          const found = require.resolve("chai").slice(import.meta.dir.length + 1).replaceAll("\\\\", "/");
+          let code;
+          try {
+            require.resolve("chai", { paths: [import.meta.dir + "/elsewhere"] });
+          } catch (error) {
+            code = error.code;
+          }
+          console.log(found, code);
+        });
+      `,
+    });
+    symlinkSync(join(String(dir), store, "vitest"), join(String(dir), "node_modules", "vitest"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(pass) test");
+    // `bun test` prints its version to stdout first.
+    const lines = stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test "));
+    expect({ lines, exitCode }).toEqual({ lines: [`${store}/chai/index.js MODULE_NOT_FOUND`], exitCode: 0 });
+  });
+});
+
 describe("When CJS and ESM are mixed", () => {
   const fixturePath = fixture("tsyringe.ts");
 

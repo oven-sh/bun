@@ -842,6 +842,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     normalized,
                     ImportKind::Stmt,
                     global_cache,
+                    None,
                 )
             } {
                 ResolveResultUnion::Success(r) => r,

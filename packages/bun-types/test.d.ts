@@ -90,7 +90,8 @@ declare module "bun:test" {
      */
     module(id: string, factory: ModuleMockFactory): void | Promise<void>;
     /**
-     * Restore every spied-on property. A mock that is not a spy keeps its recorded calls and its implementation.
+     * Restore every spied-on property. A `vi.spyOn()` spy keeps its recorded calls and its implementation. A mock
+     * that is not a spy is left as it is.
      */
     restore(): void;
 

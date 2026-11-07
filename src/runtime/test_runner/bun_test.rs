@@ -1540,9 +1540,8 @@ impl BunTest {
             return;
         };
         // SAFETY: entries outlive the sequences that run them.
-        let (calling, flavor, timeout, scope) =
-            unsafe { (hook.as_ref().calling, hook.as_ref().flavor, hook.as_ref().timeout, hook.as_ref().base.parent) };
-        if !calling.is_vitest() {
+        let (flavor, timeout, scope) = unsafe { (hook.as_ref().flavor, hook.as_ref().timeout, hook.as_ref().base.parent) };
+        if flavor != Flavor::Vitest {
             return;
         }
         if sequence.test_entry.is_none() {
@@ -1968,7 +1967,8 @@ impl Default for Calling {
     }
 }
 impl Calling {
-    pub(crate) fn is_vitest(self) -> bool {
+    /// Whether the callback is called the way Vitest calls one, with or without the context.
+    pub(crate) fn is_context_style(self) -> bool {
         matches!(self, Calling::Vitest { .. })
     }
 }
@@ -2273,7 +2273,7 @@ impl DescribeScope {
         if entry.callback.is_none() {
             return;
         }
-        let is_vitest = cfg.calling.is_vitest();
+        let is_vitest = cfg.flavor == Flavor::Vitest;
         let first_teardown_slot = self.after_all.len() - self.vitest_before_all().count();
         match tag {
             HookTag::BeforeAll if is_vitest => {
@@ -2303,7 +2303,7 @@ impl DescribeScope {
     }
 
     fn vitest_before_all(&self) -> impl Iterator<Item = &ExecutionEntry> {
-        self.before_all.iter().map(|hook| &**hook).filter(|hook| hook.calling.is_vitest())
+        self.before_all.iter().map(|hook| &**hook).filter(|hook| hook.flavor == Flavor::Vitest)
     }
 
     /// `after_all` ends with one slot per Vitest `beforeAll`, in reverse order, to run the function that hook returns.
@@ -2396,7 +2396,7 @@ impl ExecutionEntry {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {
-        debug_assert!(cfg.flavor == Flavor::Jest || cfg.calling.is_vitest(), "Vitest has no done callback");
+        debug_assert!(cfg.flavor == Flavor::Jest || cfg.calling.is_context_style(), "Vitest has no done callback");
         let mut entry = Box::new(ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
@@ -2405,7 +2405,7 @@ impl ExecutionEntry {
             calling: cfg.calling,
             around: cfg.around,
             fixtures: None,
-            parameter: (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default),
+            parameter: (cfg.calling.is_context_style() && phase != AddedInPhase::Execution).then(Default::default),
             added_in_phase: phase,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,

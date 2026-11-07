@@ -132,7 +132,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     switch (keyType) {
     case KeyType::Public: {
         ncrypto::MarkPopErrorOnReturn popErrorScope;
-        auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, optionsValue);
+        auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, optionsValue, "key"_s);
         RETURN_IF_EXCEPTION(scope, {});
         if (prepareResult.keyData) {
             RefPtr<KeyObjectData> data = *prepareResult.keyData;
@@ -153,7 +153,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     }
     case KeyType::Private: {
         ncrypto::MarkPopErrorOnReturn popErrorScope;
-        auto prepareResult = KeyObject::preparePrivateKey(globalObject, scope, optionsValue);
+        auto prepareResult = KeyObject::preparePrivateKey(globalObject, scope, optionsValue, "privateKey"_s);
         RETURN_IF_EXCEPTION(scope, {});
         if (prepareResult.keyData) {
             RefPtr<KeyObjectData> data = *prepareResult.keyData;

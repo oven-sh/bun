@@ -329,8 +329,8 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     }
 
     auto prepareResult = mode == Mode::Verify
-        ? KeyObject::preparePublicOrPrivateKey(globalObject, scope, keyValue)
-        : KeyObject::preparePrivateKey(globalObject, scope, keyValue);
+        ? KeyObject::preparePublicOrPrivateKey(globalObject, scope, keyValue, "key"_s)
+        : KeyObject::preparePrivateKey(globalObject, scope, keyValue, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     ClearErrorOnReturn clearError;

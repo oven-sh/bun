@@ -440,10 +440,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::CRYPTO_SIGN_KEY_REQUIRED(scope, lexicalGlobalObject);
     }
 
-    if (!options.isCell()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
-    }
-
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
     RETURN_IF_EXCEPTION(scope, {});
@@ -455,7 +451,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options, "privateKey"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     KeyObject keyObject;

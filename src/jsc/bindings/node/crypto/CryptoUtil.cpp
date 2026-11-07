@@ -741,12 +741,13 @@ bool isStringOrBuffer(JSValue value)
     return false;
 }
 
-String makeOptionString(WTF::StringView objName, const ASCIILiteral& optionName)
+// Node's option(name, prefix). The prefix is the whole path of the object that holds the option, as the caller names it.
+String makeOptionString(WTF::ASCIILiteral prefix, WTF::ASCIILiteral option)
 {
-    return objName.isNull() ? makeString("options."_s, optionName) : makeString("options."_s, objName, '.', optionName);
+    return makeString(prefix, '.', option);
 }
 
-ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject, ThrowScope& scope, JSValue formatValue, std::optional<EVPKeyPointer::PKFormatType> defaultFormat, WTF::String optionName)
+ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject, ThrowScope& scope, JSValue formatValue, std::optional<EVPKeyPointer::PKFormatType> defaultFormat, WTF::ASCIILiteral prefix)
 {
     if (formatValue.isUndefined() && defaultFormat) {
         return *defaultFormat;
@@ -773,11 +774,11 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject
         }
     }
 
-    ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
+    ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "format"_s), formatValue);
     return {};
 }
 
-std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* globalObject, ThrowScope& scope, JSValue typeValue, bool required, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::String optionName)
+std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* globalObject, ThrowScope& scope, JSValue typeValue, bool required, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::ASCIILiteral prefix)
 {
     if (typeValue.isUndefined() && !required) {
         return std::nullopt;
@@ -820,11 +821,11 @@ std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* global
         }
     }
 
-    ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, typeValue);
+    ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "type"_s), typeValue);
     return std::nullopt;
 }
 
-void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, bool isInput, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, bool isInput, WTF::ASCIILiteral prefix, EVPKeyPointer::PrivateKeyEncodingConfig& config)
 {
     VM& vm = globalObject->vm();
 
@@ -833,17 +834,17 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
     JSValue typeValue = enc->get(globalObject, Identifier::fromString(vm, "type"_s));
     RETURN_IF_EXCEPTION(scope, );
 
-    config.format = parseKeyFormat(globalObject, scope, formatValue, isInput ? std::optional { EVPKeyPointer::PKFormatType::PEM } : std::nullopt, makeOptionString(objName, "format"_s));
+    config.format = parseKeyFormat(globalObject, scope, formatValue, isInput ? std::optional { EVPKeyPointer::PKFormatType::PEM } : std::nullopt, prefix);
     RETURN_IF_EXCEPTION(scope, );
 
     if (config.format == EVPKeyPointer::PKFormatType::RawPublic) {
         if (isPublic && *isPublic == false) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "format"_s), formatValue);
             return;
         }
         if (!typeValue.isUndefined()) {
             if (!typeValue.isString()) {
-                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "type"_s), typeValue);
                 return;
             }
             auto typeStr = typeValue.toWTFString(globalObject);
@@ -851,7 +852,7 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
             if (typeStr == "compressed"_s) {
                 config.ec_point_form = POINT_CONVERSION_COMPRESSED;
             } else if (typeStr != "uncompressed"_s) {
-                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "type"_s), typeValue);
                 return;
             }
         }
@@ -860,18 +861,18 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
 
     if (config.format == EVPKeyPointer::PKFormatType::RawPrivate || config.format == EVPKeyPointer::PKFormatType::RawSeed) {
         if (isPublic && *isPublic == true) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "format"_s), formatValue);
             return;
         }
         if (!typeValue.isUndefined()) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "type"_s), typeValue);
             return;
         }
         return;
     }
 
     bool isRequired = (!isInput || config.format == EVPKeyPointer::PKFormatType::DER) && config.format != EVPKeyPointer::PKFormatType::JWK;
-    std::optional<EVPKeyPointer::PKEncodingType> maybeKeyType = parseKeyType(globalObject, scope, typeValue, isRequired, keyTypeValue, isPublic, makeOptionString(objName, "type"_s));
+    std::optional<EVPKeyPointer::PKEncodingType> maybeKeyType = parseKeyType(globalObject, scope, typeValue, isRequired, keyTypeValue, isPublic, prefix);
     RETURN_IF_EXCEPTION(scope, );
 
     if (maybeKeyType) {
@@ -879,13 +880,13 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
     }
 }
 
-void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::ASCIILiteral prefix, EVPKeyPointer::PrivateKeyEncodingConfig& config)
 {
     VM& vm = globalObject->vm();
 
     bool isInput = keyTypeValue.isUndefined();
 
-    parseKeyFormatAndType(globalObject, scope, enc, keyTypeValue, isPublic, isInput, objName, config);
+    parseKeyFormatAndType(globalObject, scope, enc, keyTypeValue, isPublic, isInput, prefix, config);
     RETURN_IF_EXCEPTION(scope, );
 
     JSValue encodingValue = jsUndefined();
@@ -909,7 +910,7 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
             }
             if (!cipherValue.isUndefinedOrNull()) {
                 if (!cipherValue.isString()) {
-                    ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);
+                    ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "cipher"_s), cipherValue);
                     return;
                 }
                 if (config.format == EVPKeyPointer::PKFormatType::DER && (config.type == EVPKeyPointer::PKEncodingType::PKCS1 || config.type == EVPKeyPointer::PKEncodingType::SEC1)) {
@@ -917,13 +918,13 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
                     return;
                 }
             } else if (!passphraseValue.isUndefined()) {
-                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "cipher"_s), cipherValue);
                 return;
             }
         }
 
         if ((isInput && !passphraseValue.isUndefined() && !isStringOrBuffer(passphraseValue)) || (!isInput && !cipherValue.isUndefinedOrNull() && !isStringOrBuffer(passphraseValue))) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "passphrase"_s), passphraseValue);
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(prefix, "passphrase"_s), passphraseValue);
             return;
         }
     }
@@ -961,10 +962,10 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     }
 }
 
-void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, EVPKeyPointer::PublicKeyEncodingConfig& config)
+void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::ASCIILiteral prefix, EVPKeyPointer::PublicKeyEncodingConfig& config)
 {
     EVPKeyPointer::PrivateKeyEncodingConfig dummyConfig = {};
-    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, keyTypeValue.pureToBoolean() != TriState::False ? std::optional<bool>(true) : std::nullopt, objName, dummyConfig);
+    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, keyTypeValue.pureToBoolean() != TriState::False ? std::optional<bool>(true) : std::nullopt, prefix, dummyConfig);
     RETURN_IF_EXCEPTION(scope, );
 
     // using private config because it's a super set of public config
@@ -974,9 +975,9 @@ void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSO
     config.ec_point_form = dummyConfig.ec_point_form;
 }
 
-void parsePrivateKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)
+void parsePrivateKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::ASCIILiteral prefix, EVPKeyPointer::PrivateKeyEncodingConfig& config)
 {
-    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, false, objName, config);
+    parseKeyEncoding(globalObject, scope, enc, keyTypeValue, false, prefix, config);
 }
 
 bool isArrayBufferOrView(JSValue value)

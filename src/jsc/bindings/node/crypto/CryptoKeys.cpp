@@ -36,7 +36,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
 
     JSValue keyValue = callFrame->argument(0);
 
-    auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePublic);
+    auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePublic, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     KeyObject keyObject;
@@ -71,7 +71,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
 
     JSValue keyValue = callFrame->argument(0);
 
-    auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePrivate);
+    auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePrivate, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     KeyObject keyObject;

@@ -480,6 +480,7 @@ describe.concurrent("test context", () => {
   });
 
   const tooFew = "AssertionError: expected 1 assertion, but test ended with 0 assertions";
+  const none = "AssertionError: received 0 assertions, but expected at least one assertion to be called";
   const lateInVitest = `note: 1 assertion ran after the test callback and was not counted. A test from "vitest", test.extend() or test.for() checks the count when its callback ends. Make the assertion in the test callback.`;
   // The errors, the notes and the results of a report, in the order in which it prints them.
   const reportOf = (stderr: string) =>
@@ -509,6 +510,7 @@ describe.concurrent("test context", () => {
             afterEach(() => { expect(1).toBe(1); });
             test("too few", ({ onTestFailed }) => { onTestFailed(() => console.log("failed")); expect.assertions(1); });
             test("one of three", () => { expect.assertions(3); expect(1).toBe(1); });
+            test("none", () => { expect.hasAssertions(); });
             test("met", () => { expect.assertions(1); expect(1).toBe(1); });
           });
           describe("afterEach removes the count", () => {
@@ -526,6 +528,9 @@ describe.concurrent("test context", () => {
           "AssertionError: expected 3 assertions, but test ended with 1 assertion",
           lateInVitest,
           "(fail) afterEach asserts > one of three",
+          none,
+          lateInVitest,
+          "(fail) afterEach asserts > none",
           "(pass) afterEach asserts > met",
           tooFew,
           "(fail) afterEach removes the count > too late",

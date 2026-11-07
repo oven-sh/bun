@@ -142,7 +142,17 @@ export function join(first: string, second: string): string {
   static accessor #count: number = 0;
   accessor #echo = <T>(value: T): T => value;
   busy(): boolean {
-    return this.#echo(this.#mode) === "busy";
+    const mode = this.#echo<"idle" | "busy">(this.#mode);
+    switch (mode) {
+      case "idle":
+        return false;
+      case "busy":
+        return true;
+      default: {
+        const unreachable: never = mode;
+        return unreachable;
+      }
+    }
   }
   static next(): number {
     return ++Mode.#count;
@@ -153,12 +163,14 @@ export function join(first: string, second: string): string {
 }
 `,
     });
+    // busy() passes the type checker only if #mode and #echo have their types. A file with a type error is left out, with a warning.
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
     expect(typed).toContain('#mode_accessor_storage: "idle" | "busy" = "idle";');
     expect(typed).toContain("static #count_accessor_storage: number = 0;");
-    expect(typed).toContain('#echo_accessor_storage = { "#echo": <T>(value: T): T => value }["#echo"];');
+    // The parameter of a setter cannot be optional (TS1051), and the build does not stop at that error.
+    expect(typed).not.toContain("?: any");
   });
 
   test("a build without it writes what it always did", async () => {

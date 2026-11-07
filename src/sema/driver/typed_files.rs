@@ -3151,7 +3151,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                     .first_identifier(output_file[parameter].pat)
                     .is_some_and(|name| mappings.original(name).is_some())
             };
-            if mappings.original(Syntax::function_key(function)).is_some()
+            // The parameter of a setter has the type of its getter and cannot be optional (TS1051).
+            if matches!(function.kind, FnKind::Setter)
+                || mappings.original(Syntax::function_key(function)).is_some()
                 || function.params.iter().any(is_mapped)
             {
                 continue;

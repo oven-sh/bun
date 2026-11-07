@@ -87,7 +87,9 @@ const mockCDP = /* js */ `
               // that. Any evaluate() a scenario sends itself is deliberately
               // left unanswered, so it is still waiting for a reply when the
               // connection goes away.
-              if (params.expression === "document.title") return reply({ result: { type: "string", value: "mock" } });
+              if (params.expression.endsWith("document.title")) {
+                return reply({ result: { type: "string", value: "mock" } });
+              }
               return;
             default:
               return reply({});

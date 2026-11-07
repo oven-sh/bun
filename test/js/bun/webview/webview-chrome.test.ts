@@ -1281,6 +1281,9 @@ it("chrome: reload() rejects after a failed navigate() and one that Chrome abort
   await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
   await expect(view.navigate(srv.base + "/no-content")).rejects.toThrow("net::ERR_ABORTED");
   await errorPageLoaded(view);
+  // The error page's load event made the view ask for a title. The error
+  // page's own is not the view's.
+  expect({ url: view.url, title: view.title }).toEqual({ url: srv.base + "/before", title: "T/before" });
   await expect(view.reload()).rejects.toThrow("Navigation to 'http://127.0.0.1:9/' failed");
   expect(events).toEqual([
     "failed:net::ERR_UNSAFE_PORT",

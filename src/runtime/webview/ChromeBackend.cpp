@@ -894,11 +894,13 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::PageTitle:
     case Method::PageTitleRefresh: {
-        // Runtime.evaluate("document.title") chained from a commit.
+        // The title fetch (sendTitleFetch) chained from a commit.
         // result.result.value is the string. Set m_title, settle Navigate.
         auto inner = jsonField(result, { "result", 6 });
-        auto value = jsonString(jsonField(inner, { "value", 5 }));
-        if (!view->m_chromeOnErrorPage) view->m_title = WTF::String::fromUTF8(value);
+        // Not a string: Chrome's error page answered, and its title is not the view's.
+        auto type = jsonString(jsonField(inner, { "type", 4 }));
+        if (type.size() == 6 && memcmp(type.data(), "string", 6) == 0)
+            view->m_title = WTF::String::fromUTF8(jsonString(jsonField(inner, { "value", 5 })));
         if (entry.method == Method::PageTitle) settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
@@ -1148,12 +1150,13 @@ static bool isMainFrame(JSWebView* view, std::span<const char> frameId)
     return memcmp(target.span8().data(), frameId.data(), frameId.size()) == 0;
 }
 
-// Runtime.evaluate("document.title"): a PageTitle reply settles the Navigate slot, a PageTitleRefresh only sets m_title.
+// Runtime.evaluate of document.title: a PageTitle reply settles the Navigate slot, a PageTitleRefresh only sets m_title.
+// The document says itself when it is Chrome's error page, because Chrome holds the command over a navigation and does not announce every error page.
 void Transport::sendTitleFetch(JSWebView* view, Method method)
 {
     uint32_t tid = nextId();
     m_pending.add(tid, Pending { method, PendingSlot::Navigate, view->m_viewId });
-    send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+    send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "location.protocol==='chrome-error:'?null:document.title"_s).boolean("returnByValue"_s, true));
 }
 
 // The bits clear now, so a second commit before the title reply is the page's own.
@@ -1221,14 +1224,13 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     // Reported once the error page has loaded and the tab takes commands again.
     view->m_chromeUnreportedFailure = errorPage && (own || !reported) ? failedUrlForMessage(frame) : WTF::String();
     if (errorPage) {
-        // The error page would answer a title fetch that is still out. The navigation that waits for one has loaded, so it resolves here.
+        // A navigation that still waits for its title has loaded. It resolves here, so its slot is free when this page's failure is reported.
         bool navigationWaits = false;
-        m_pending.removeIf([&](auto& kv) {
-            auto& pending = kv.value;
-            if (pending.viewId != view->m_viewId || (pending.method != Method::PageTitle && pending.method != Method::PageTitleRefresh)) return false;
-            navigationWaits |= pending.method == Method::PageTitle;
-            return true;
-        });
+        for (auto& pending : m_pending.values()) {
+            if (pending.viewId != view->m_viewId || pending.method != Method::PageTitle) continue;
+            pending.method = Method::PageTitleRefresh;
+            navigationWaits = true;
+        }
         if (navigationWaits) settle(m_global, view, PendingSlot::Navigate, true, jsUndefined());
         return;
     }
@@ -1282,7 +1284,7 @@ void Transport::onLoadEventFired(JSWebView* view)
     bool ownLoad = view->m_chromeSettleOnLoad && view->m_chromeNavigationCommitted;
 
     if (view->m_chromeOnErrorPage) {
-        // No title fetch: the title an error page has is not the view's.
+        // No title fetch: an error page answers none.
         auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String());
         if (failedUrl.isNull()) return;
         auto* g = m_global;

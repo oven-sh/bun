@@ -1101,10 +1101,11 @@ test.concurrent("an error page that never loads still takes the failure navigate
 // Chrome does not always commit an error page for a failure that navigate()
 // reported, or does not announce the commit. Chrome 153: the next navigate()
 // is aborted (a 204, a download), and the first failure's error page then
-// commits with no Page.frameNavigated, only its load event. One error page
-// stays counted as due. reload() fails on an error page of its own, and no
-// reply of reload() carries an errorText: if that page were taken for the one
-// navigate() reported, the promise would never settle.
+// commits with no Page.frameNavigated, only its load event. The title that
+// this load event asks for is the error page's, not the view's. One error
+// page stays counted as due. reload() fails on an error page of its own, and
+// no reply of reload() carries an errorText: if that page were taken for the
+// one navigate() reported, the promise would never settle.
 test.concurrent("reload() rejects on its own error page when one from a failed navigate() never came", async () => {
   const result = await runScenario(`
     const view = newView();
@@ -1114,15 +1115,20 @@ test.concurrent("reload() rejects on its own error page when one from a failed n
     view.onNavigationFailed = error => events.push("failed:" + error.message);
     const failed = await outcome(view.navigate("http://fake/unreachable-late"));
     const aborted = await outcome(view.navigate("http://fake/no-content"));
-    await view.evaluate("__fake_load_event()");
+    await view.evaluate("__fake_error_page_unannounced('http://fake/unreachable-late')");
+    // The title fetch went out behind the load event; its reply is in by now.
+    const titleFetches = await view.evaluate("__fake_title_fetches()");
+    const title = view.title;
     const reloaded = await outcome(view.reload());
     const next = await outcome(view.navigate("http://fake/after"));
-    print({ failed, aborted, reloaded, next, events, url: view.url });
+    print({ failed, aborted, titleFetches, title, reloaded, next, events, url: view.url });
     view.close();
   `);
   expect(result).toEqual({
     failed: { rejected: "net::ERR_CONNECTION_REFUSED" },
     aborted: { rejected: "net::ERR_ABORTED" },
+    titleFetches: 2,
+    title: "fake chrome",
     reloaded: { rejected: "Navigation to 'http://fake/unreachable-late' failed" },
     next: {},
     events: [
@@ -1407,7 +1413,9 @@ test.concurrent("a title fetch that Chrome's error page answers does not change 
 
 // That navigate() resolves as the error page commits, not when its title
 // fetch is answered, so the slot is free when onNavigationFailed runs for the
-// failed load and a retry from the callback is accepted.
+// failed load and a retry from the callback is accepted. The answer to the
+// title fetch comes later and is not the retry's: the retry's page never loads
+// here, so the retry has to stay pending.
 test.concurrent("onNavigationFailed can navigate() when the failed load interrupted a title fetch", async () => {
   const result = await runScenario(`
     const view = newView();
@@ -1418,27 +1426,29 @@ test.concurrent("onNavigationFailed can navigate() when the failed load interrup
     view.onNavigationFailed = error => {
       events.push("failed:" + error.message);
       try {
-        retry = outcome(view.navigate("http://fake/retry"));
+        retry = view.navigate("http://fake/never-load").then(() => "retry settled", () => "retry rejected");
       } catch (e) {
-        retry = "threw " + e.code;
+        retry = "retry threw " + e.code;
       }
     };
     await pageDoesOnNext(view, "Runtime.evaluate", "__fake_error_page('http://fake/unreachable-from-onload')");
     const navigated = await outcome(view.navigate("http://fake/redirects-on-load"));
+    // The fake answers the title fetch behind the error page's events, so the
+    // callback has run and that answer is in once this resolves.
     await view.evaluate("1");
-    print({ navigated, retry: await retry, events, url: view.url, loading: view.loading });
+    const first = await Promise.race([retry, view.evaluate("'retry still pending'")]);
+    print({ navigated, first, events, url: view.url, loading: view.loading });
     view.close();
   `);
   expect(result).toEqual({
     navigated: {},
-    retry: {},
+    first: "retry still pending",
     events: [
       "navigated:http://fake/redirects-on-load",
       "failed:Navigation to 'http://fake/unreachable-from-onload' failed",
-      "navigated:http://fake/retry",
     ],
-    url: "http://fake/retry",
-    loading: false,
+    url: "http://fake/redirects-on-load",
+    loading: true,
   });
 });
 

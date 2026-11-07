@@ -67,11 +67,16 @@ let currentSessionId: string | undefined;
 // One script per CDP method, run once as the next command of that method is
 // read and before it is handled (see __fake_on_next).
 const onNext = new Map<string, string>();
+// The expression the runtime evaluates for view.title. Chrome's error page
+// answers it null.
+const TITLE_FETCH = "location.protocol==='chrome-error:'?null:document.title";
 // How many document.title fetches the runtime has sent: one per navigation.
 let titleFetches = 0;
 let failNextTitleFetch = false;
 // What document.title answers.
 let documentTitle = "fake chrome";
+// The live document is Chrome's error page.
+let onErrorPage = false;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -112,6 +117,7 @@ Object.assign(globalThis, {
   __fake_page_commit(url: string) {
     loads++;
     documentTitle = "page's own";
+    onErrorPage = false;
     pushEntry(url);
     event("Page.frameNavigated", {
       frame: { id: mainFrameId(), loaderId: "P" + loads, url, mimeType: "text/html" },
@@ -130,6 +136,14 @@ Object.assign(globalThis, {
   __fake_error_page_commit(url: string) {
     if (history[historyIndex]?.url !== url) pushEntry(url);
     commitErrorPage(url, false);
+  },
+  // Chrome 153 behind a navigation that it aborted: the error page of the
+  // failure before it goes in with no Page.frameNavigated, only its load
+  // event.
+  __fake_error_page_unannounced(url: string) {
+    if (history[historyIndex]?.url !== url) pushEntry(url);
+    onErrorPage = true;
+    event("Page.loadEventFired", { timestamp: ++loads });
   },
   // An <iframe> fails to load: Chrome's error page commits inside it.
   __fake_subframe_error_page(url: string) {
@@ -259,6 +273,7 @@ function pushEntry(url: string) {
 // nothing follows.
 function commitDocument(url: string, type: "Navigation" | "BackForwardCacheRestore") {
   documentTitle = "fake chrome";
+  onErrorPage = false;
   const fragment = fragmentOf(url);
   const frame = { id: mainFrameId(), loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
   event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame, type });
@@ -277,11 +292,10 @@ function commitDocument(url: string, type: "Navigation" | "BackForwardCacheResto
 }
 
 // Chrome's error page standing in for a document that failed to load. It names
-// the URL it replaces, it has a title of its own, and it loads. Chromium 139
-// and older commit it under a loader of its own, not the failed navigation's,
-// and so does this.
+// the URL it replaces, and it loads. Chromium 139 and older commit it under a
+// loader of its own, not the failed navigation's, and so does this.
 function commitErrorPage(unreachableUrl: string, load = true) {
-  documentTitle = "chrome error page";
+  onErrorPage = true;
   const frame = { id: mainFrameId(), loaderId: "E" + ++loads, url: "chrome-error://chromewebdata/" };
   const params = { frame: { ...frame, unreachableUrl, mimeType: "text/html" }, type: "Navigation" };
   if (malformed === "error-page-bad-utf8") {
@@ -384,7 +398,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       mouseEvents.push({ type: params.type, x: params.x, y: params.y });
       return reply({});
     case "Runtime.evaluate": {
-      if (params.expression === "document.title") {
+      if (params.expression === TITLE_FETCH) {
         titleFetches++;
         if (noTitleReply) return;
         if (failNextTitleFetch) {
@@ -392,6 +406,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
           const error = { code: -32000, message: "Cannot find context with specified id" };
           return send({ id, error, sessionId });
         }
+        if (onErrorPage) return reply({ result: { type: "object", subtype: "null", value: null } });
         return reply({ result: { type: "string", value: documentTitle } });
       }
       // This is the click(selector) actionability check. It needs a DOM, so

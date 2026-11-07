@@ -1701,29 +1701,31 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
   // per-socket block; a reload that smuggles in the node:http handler used by
   // node's http.Server wrapper must be ignored, not flip the context into
   // node-compat mode under connections allocated with the smaller block.
-  const first: Handler = () => new Response("first");
-  const second: Handler = () => new Response("second");
-  await runTest(
-    {
-      fetch: first,
+  const clientPorts: number[] = [];
+  const respond = (body: string) => (req: Request, server: Server<any>) => {
+    clientPorts.push(server.requestIP(req)!.port);
+    return new Response(body);
+  };
+  // A server of its own: fetch has one pooled connection to it, the one from before the reload.
+  using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: respond("first") });
+  expect(await (await fetch(server.url)).text()).toBe("first");
+  server.reload({
+    fetch: respond("second"),
+    // @ts-expect-error internal option used by node:http's Server
+    onNodeHTTPRequest: () => {
+      throw new Error("must never be routed");
     },
-    async server => {
-      expect(await (await fetch(server.url.origin)).text()).toBe("first");
-      server.reload({
-        fetch: second,
-        // @ts-expect-error internal option used by node:http's Server
-        onNodeHTTPRequest: () => {
-          throw new Error("must never be routed");
-        },
-      });
-      // Fresh connections after the reload (fetch pools per-origin, so mix in
-      // explicit no-keepalive requests to force new native sockets).
-      for (let i = 0; i < 8; i++) {
-        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
-        expect(await res.text()).toBe("second");
-      }
-    },
-  );
+  });
+  expect(await (await fetch(server.url)).text()).toBe("second");
+  for (let i = 0; i < 8; i++) {
+    const res = await fetch(server.url, { keepalive: false });
+    expect(await res.text()).toBe("second");
+  }
+  // The client port identifies the connection: one request on the old connection, eight on new ones.
+  const [beforeReload, reused, ...fresh] = clientPorts;
+  expect(reused).toBe(beforeReload);
+  expect(fresh).toHaveLength(8);
+  expect(fresh).not.toContain(beforeReload);
 });
 
 it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {

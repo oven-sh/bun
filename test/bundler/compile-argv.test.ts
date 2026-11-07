@@ -30,6 +30,7 @@ describe.each(["api", "cli"] as const)("compile env options (%s)", backend => {
           [{ BUN_BE_BUN: "1" }, ["-e", 'console.log("CLI")']],
           [{ BUN_INSPECT_PRELOAD: preload }, ["argument"]],
           [{ BUN_INSPECT: "ws://127.0.0.1:0/compiled?wait=1" }, ["argument"]],
+          [{ BUN_INSPECT: "ws://127.0.0.1:0/compiled?break=1" }, ["argument"]],
           [{ BUN_INSPECT_CONNECT_TO: "invalid inspector URL" }, ["argument"]],
           [
             { BUN_BE_BUN: "1", BUN_OPTIONS: `--preload=${preload}`, BUN_INSPECT_PRELOAD: preload },

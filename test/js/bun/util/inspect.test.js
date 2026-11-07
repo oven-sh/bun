@@ -1,3 +1,4 @@
+import { SQL } from "bun";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
@@ -1181,6 +1182,247 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/13946
+describe("Bun.inspect of an array and its class name", () => {
+  // postgres.js gives its result this shape.
+  class Result extends Array {
+    constructor() {
+      super();
+      Object.defineProperties(this, {
+        count: { value: null, writable: true },
+        state: { value: null, writable: true },
+        command: { value: null, writable: true },
+        columns: { value: null, writable: true },
+        statement: { value: null, writable: true },
+      });
+    }
+  }
+  class Plain extends Array {}
+  class Deep extends Plain {}
+  class Ελληνικά extends Array {}
+  function Es5() {
+    return Object.setPrototypeOf([], Es5.prototype);
+  }
+  Es5.prototype = Object.create(Array.prototype, { constructor: { value: Es5, writable: true, configurable: true } });
+
+  it("prints the class name of a postgres.js Result and none of its non-enumerable properties", () => {
+    const result = new Result();
+    result.push({ "?column?": 1 });
+    result.count = 1;
+    result.state = { pid: 3724 };
+    result.command = "SELECT";
+    expect(Bun.inspect(result)).toBe('Result(1) [\n  {\n    "?column?": 1,\n  }\n]');
+  });
+
+  describe("names the class of an array whose prototype is not Array.prototype", () => {
+    it.each([
+      ["an empty instance", () => new Plain(), "Plain(0) []"],
+      ["an empty instance with non-enumerable properties", () => new Result(), "Result(0) []"],
+      [
+        "an instance with an enumerable property",
+        () => Object.assign(Plain.of(1, 2, 3), { extra: "hello" }),
+        'Plain(3) [ 1, 2, 3, extra: "hello" ]',
+      ],
+      ["an instance with holes", () => new Plain(3), "Plain(3) [ 3 x empty items ]"],
+      ["a subclass of a subclass", () => Deep.of(1), "Deep(1) [ 1 ]"],
+      [
+        "a constructor function that returns an array",
+        () => {
+          const instance = new Es5();
+          instance.push(1);
+          return instance;
+        },
+        "Es5(1) [ 1 ]",
+      ],
+      ["an array that was given the prototype", () => Object.setPrototypeOf([1], Plain.prototype), "Plain(1) [ 1 ]"],
+      [
+        "a class of another realm",
+        () => vm.runInNewContext("class Other extends Array {}; Other.of(1)"),
+        "Other(1) [ 1 ]",
+      ],
+      ["a name that is not Latin-1", () => Ελληνικά.of(1), "Ελληνικά(1) [ 1 ]"],
+      [
+        "an instance that holds itself",
+        () => {
+          const instance = Plain.of(1);
+          instance.push(instance);
+          return instance;
+        },
+        "Plain(2) [ 1, [Circular] ]",
+      ],
+      ["an instance in an object", () => ({ rows: Plain.of(1, 2, 3) }), "{\n  rows: Plain(3) [ 1, 2, 3 ],\n}"],
+      [
+        "instances in an array",
+        () => [Plain.of(1), new Plain(), Deep.of(2)],
+        "[\n  Plain(1) [ 1 ], Plain(0) [], Deep(1) [ 2 ]\n]",
+      ],
+      [
+        "instances on a line that wraps",
+        () => Array.from({ length: 12 }, () => new Plain()),
+        `[\n  ${Array(7).fill("Plain(0) []").join(", ")},\n  ${Array(5).fill("Plain(0) []").join(", ")}\n]`,
+      ],
+    ])("%s", (_, make, expected) => {
+      expect(Bun.inspect(make())).toBe(expected);
+    });
+
+    it("in the marker of an array past the depth limit", () => {
+      expect({
+        instance: Bun.inspect({ a: Plain.of(1) }, { depth: 0 }),
+        nested: Bun.inspect(Plain.of(Plain.of(Deep.of(1))), { depth: 1 }),
+        empty: Bun.inspect({ a: new Plain() }, { depth: 0 }),
+        wraps: Bun.inspect(
+          Array.from({ length: 12 }, () => Plain.of(1)),
+          { depth: 0 },
+        ),
+      }).toEqual({
+        instance: "{\n  a: [Plain ...],\n}",
+        nested: "Plain(1) [\n  Plain(1) [\n    [Deep ...]\n  ]\n]",
+        empty: "{\n  a: Plain(0) [],\n}",
+        wraps: `[\n  ${Array(7).fill("[Plain ...]").join(", ")},\n  ${Array(5).fill("[Plain ...]").join(", ")}\n]`,
+      });
+    });
+
+    // `Ελληνικά` is 8 letters and 16 bytes of UTF-8. A line holds as many as of a Latin-1 name of 8 letters.
+    it("and counts the letters of a name that is not Latin-1 for the line width", () => {
+      const twelve = (...items) =>
+        Bun.inspect(
+          Array.from({ length: 12 }, () => Ελληνικά.of(...items)),
+          { depth: 0 },
+        );
+      const lines = item => `[\n  ${[5, 5, 2].map(count => Array(count).fill(item).join(", ")).join(",\n  ")}\n]`;
+      expect({ prefix: twelve(), marker: twelve(1) }).toEqual({
+        prefix: lines("Ελληνικά(0) []"),
+        marker: lines("[Ελληνικά ...]"),
+      });
+    });
+
+    it("with no color", () => {
+      expect(Bun.inspect(Plain.of(1), { colors: true })).toBe("Plain(1) [ \x1b[0m\x1b[33m1\x1b[0m ]");
+    });
+
+    it("in a test.each title", async () => {
+      using dir = tempDir("inspect-array-title", {
+        "title.test.js": `
+          import { expect, test } from "bun:test";
+          class Plain extends Array {}
+          test.each([[Plain.of(1)]])("%p", value => {
+            expect(value).toBeArray();
+          });
+          test.each([{ rows: Plain.of(2) }])("$rows", ({ rows }) => {
+            expect(rows).toBeArray();
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "title.test.js"],
+        env: { ...bunEnv, AGENT: "0" },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const titles = stderr
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("(pass) "))
+        .map(line => line.slice("(pass) ".length).replace(/ \[[\d.]+ms\]$/, ""));
+      expect({ titles, exitCode }).toEqual({ titles: ["Plain(1) [ 1 ]", "Plain(1) [ 2 ]"], exitCode: 0 });
+    });
+
+    it("for the result of a Bun.SQL query, with its enumerable properties", async () => {
+      await using sql = new SQL(":memory:");
+      expect(Bun.inspect(await sql`select 1 as a`)).toBe(
+        'SQLResultArray(1) [\n  {\n    a: 1,\n  }, count: 1, command: "SELECT", lastInsertRowid: null, affectedRows: 0\n]',
+      );
+    });
+
+    // The length is read before the name: a getter or a trap could change it.
+    it("and runs no getter and no Proxy trap to find the name", () => {
+      const ran = [];
+      class Named extends Array {}
+      Object.defineProperty(Named, "name", { get: () => ran.push("name") });
+      Object.defineProperty(Named, "displayName", { get: () => ran.push("displayName") });
+      Object.defineProperty(Named.prototype, Symbol.toStringTag, { get: () => ran.push("toStringTag") });
+      class Accessor extends Array {}
+      Object.defineProperty(Accessor.prototype, "constructor", { get: () => ran.push("constructor") });
+      const traps = ["get", "has", "getOwnPropertyDescriptor", "getPrototypeOf", "ownKeys"];
+      const trapped = name => [name, (...args) => (ran.push(`${name} ${String(args[1])}`), Reflect[name](...args))];
+      const proxied = Object.setPrototypeOf([1], new Proxy(Array.prototype, Object.fromEntries(traps.map(trapped))));
+      ran.length = 0;
+
+      expect({
+        named: Bun.inspect(Named.of(1)),
+        accessor: Bun.inspect(Accessor.of(1)),
+        proxied: Bun.inspect(proxied),
+        pastDepth: Bun.inspect({ a: proxied }, { depth: 0 }),
+        ran,
+      }).toEqual({
+        named: "Named(1) [ 1 ]",
+        accessor: "[ 1 ]",
+        proxied: "[ 1 ]",
+        pastDepth: "{\n  a: [Array ...],\n}",
+        // The lookup of a custom inspect function, before the array prints.
+        ran: ["get Symbol(nodejs.util.inspect.custom)", "get Symbol(nodejs.util.inspect.custom)"],
+      });
+    });
+  });
+
+  describe("prints no class name", () => {
+    it.each([
+      [
+        "for an instance that was given Array.prototype",
+        () => Object.setPrototypeOf(Plain.of(1), Array.prototype),
+        "[ 1 ]",
+      ],
+      ["for an array of another realm", () => vm.runInNewContext("[1, 2]"), "[ 1, 2 ]"],
+      ["for a class with no name", () => (() => class extends Array {})().of(1), "[ 1 ]"],
+      [
+        "for a class named Array",
+        () => {
+          class Array extends globalThis.Array {}
+          return Array.of(1);
+        },
+        "[ 1 ]",
+      ],
+      ["for an array with its own constructor property", () => Object.assign([1], { constructor: Map }), "[ 1 ]"],
+      [
+        "for an array whose prototype inherits from Array.prototype",
+        () => Object.setPrototypeOf([1], Object.create(Array.prototype)),
+        "[ 1 ]",
+      ],
+      [
+        "for a class with inspect.custom",
+        () =>
+          new (class Custom extends Array {
+            [Bun.inspect.custom]() {
+              return "custom";
+            }
+          })(),
+        "custom",
+      ],
+    ])("%s", (_, make, expected) => {
+      expect(Bun.inspect(make())).toBe(expected);
+    });
+
+    it("in a snapshot of the Bun format", () => {
+      expect(Plain.of(1)).toMatchInlineSnapshot(`
+        [
+          1,
+        ]
+      `);
+    });
+
+    it("in the marker past the depth limit", () => {
+      expect({
+        array: Bun.inspect({ a: [1] }, { depth: 0 }),
+        unnamed: Bun.inspect({ a: (() => class extends Array {})().of(1) }, { depth: 0 }),
+      }).toEqual({
+        array: "{\n  a: [Array ...],\n}",
+        unnamed: "{\n  a: [Array ...],\n}",
+      });
+    });
   });
 });
 

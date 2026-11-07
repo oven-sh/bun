@@ -180,8 +180,27 @@ console.log(hole([1, 2, 3], 0));
   console.log({ [1]: 42, length: 1 });
 }
 
-// TODO: handle DerivedArray
-// It appears to not be set and I don't know why.
+// an instance of an Array subclass: its class name, and no non-enumerable property
+{
+  class Result extends Array {
+    constructor() {
+      super();
+      Object.defineProperties(this, {
+        count: { value: null, writable: true },
+        command: { value: null, writable: true },
+      });
+    }
+  }
+  const result = new Result();
+  console.log(result);
+  result.push({ "?column?": 1 });
+  result.count = 1;
+  result.command = "SELECT";
+  console.log(result);
+  console.log("%O", result);
+  console.dir(result);
+  console.log([result, Object.assign(Result.of(1, 2), { shown: true })]);
+}
 
 console.log({ "": "" });
 

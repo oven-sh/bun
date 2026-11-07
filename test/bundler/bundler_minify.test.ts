@@ -2086,7 +2086,7 @@ test.each(["transformSync", "transform"] as const)(
   "minify.identifiers: %s gives no import or parameter the name of an export",
   async method => {
     const exportNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
-    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
       [
         `import { imported } from "./imported.js";`,
         ...exportNames.map(name => `export const ${name} = "${name}";`),
@@ -2108,7 +2108,7 @@ test.each(["transformSync", "transform"] as const)(
 test.each(["transformSync", "transform"] as const)(
   "minify.identifiers: %s keeps the name of an export that is declared again",
   async method => {
-    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
       "export var t = 1;\nvar t = 2;\nexport function read() { return t; }\n",
     );
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");

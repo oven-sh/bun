@@ -131,10 +131,17 @@ function classifyEdges(
     if (graph.isExported[entry] !== 0) features.push(...exportFeatures);
     entryFeatures.set(entry, sortedUnique(features, ascending));
   }
-  for (let edge = 0; edge < edgeKind.length; edge++) {
-    if (edgeKind[edge] !== EdgeKind.Ordinary) continue;
-    const target = graph.successors[edge]!;
-    if (isGuardedEntry[target] !== 0 && entryFeatures.get(target)!.length === 1) edgeKind[edge] = EdgeKind.Unguarded;
+  for (let referrer = 0; referrer < graph.count; referrer++) {
+    for (let edge = graph.successorStart[referrer]!; edge < graph.successorStart[referrer + 1]!; edge++) {
+      if (edgeKind[edge] !== EdgeKind.Ordinary) continue;
+      const target = graph.successors[edge]!;
+      if (
+        isGuardedEntry[target] !== 0 &&
+        entryFeatures.get(target)!.length === 1 &&
+        !isUnwindRecordOf(graph, referrer, target)
+      )
+        edgeKind[edge] = EdgeKind.Unguarded;
+    }
   }
   return { edgeKind, entryFeatures, isGuardedEntry, isSoftEntry, foldedEntryPoints, failures };
 }

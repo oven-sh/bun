@@ -2169,18 +2169,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `bun test` makes a free test global an import item, so that a read of it can print as a read of `globalThis`.
-    /// A write, a `delete` and a name inside `with` stay as the file has them.
-    #[inline]
-    fn keeps_free_test_global_as_written(
-        &self,
-        ident: E::Identifier,
-        opts: IdentifierOpts,
-    ) -> bool {
-        (opts.assign_target() != js_ast::AssignTarget::None
-            || opts.is_delete_target()
-            || ident.must_keep_due_to_with_stmt())
-            && self.symbols[ident.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
+    /// `bun test`: the printer makes a read of a free test global look at `globalThis` first, and it knows such a
+    /// read by its symbol (`Ast::reads_test_globals_first`). A store, a `delete` and a name inside `with` must
+    /// print as the file has them, so each gets a free name of its own.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn keep_free_test_global_as_written(
+        &mut self,
+        ident: &mut E::Identifier,
+        name: &'a [u8],
+    ) {
+        if !self.jest.refs.contains(&ident.ref_) {
+            return;
+        }
+        let as_written = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
+        self.record_usage(as_written);
+        ident.ref_ = as_written.with_user_bits_from(ident.ref_);
     }
 
     /// This function is very very hot.
@@ -2283,9 +2287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Substitute an EImportIdentifier now if this is an import item
-        if self.is_import_item.contains_key(&ref_)
-            && !self.keeps_free_test_global_as_written(ident, opts)
-        {
+        if self.is_import_item.contains_key(&ref_) {
             self.note_import_use(ref_, opts);
             return self.new_expr(
                 E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
@@ -2371,6 +2373,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // must_keep_due_to_with_stmt / can_be_removed_if_unused /
             // call_can_be_unwrapped_if_unused hints would be silently dropped.
             id_clone.ref_ = result.r#ref.with_user_bits_from(ident.ref_);
+            if self.options.features.inject_jest_globals
+                && (opts.assign_target() != js_ast::AssignTarget::None
+                    || opts.is_delete_target()
+                    || result.is_inside_with_scope)
+            {
+                self.keep_free_test_global_as_written(&mut id_clone, name);
+            }
             return self.new_expr(id_clone, loc);
         }
 
@@ -2546,7 +2555,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         namespace_ref,
                         alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
-                        is_global_with_fallback: false,
                         was_originally_property_access: false,
                     }));
                 }
@@ -4345,7 +4353,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             namespace_ref: stmt.namespace_ref,
                             alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
-                            is_global_with_fallback: false,
                             was_originally_property_access: false,
                         }));
                     }
@@ -4432,7 +4439,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         namespace_ref: stmt.namespace_ref,
                         alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,
-                        is_global_with_fallback: false,
                         was_originally_property_access: false,
                     }));
                 }
@@ -9460,6 +9466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //    the six actually-defaulted scalars avoids that temporary's
             //    construct/drop entirely. ──
             has_lazy_export: false,
+            reads_test_globals_first: false,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
         }))

@@ -23,6 +23,10 @@ pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, Ast
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
+    /// `bun test`: the module imports a test module and uses a test global that it does not bind. The symbol of
+    /// such a name is unbound and linked to the binding of the test module's export. A read of it prints as
+    /// `(globalThis.name ?? binding)`, so what a script puts on `globalThis` wins whenever the read runs.
+    pub reads_test_globals_first: bool,
     pub runtime_imports: runtime::Imports,
 
     pub nested_scope_slot_counts: SlotCounts,
@@ -113,6 +117,7 @@ impl<'a> Ast<'a> {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
+            reads_test_globals_first: false,
             runtime_imports: Default::default(),
             nested_scope_slot_counts: SlotCounts::default(),
             uses_exports_ref: false,

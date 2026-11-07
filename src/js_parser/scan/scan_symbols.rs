@@ -128,13 +128,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // gpe borrows self.module_scope while self.new_symbol needs &mut self.
             // Drop gpe, allocate, then re-insert.
             let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
-            // How a read of a free test global prints is decided after the visit, by the symbol. So the read is
-            // an import identifier, which the printer resolves by the symbol.
-            if self.options.features.inject_jest_globals
-                && self.jest.did_declare_unbound(name, new_ref)
-                && !self.options.features.test_globals_are_properties
-            {
-                self.is_import_item.insert(new_ref, ());
+            if self.options.features.inject_jest_globals {
+                self.jest.did_declare_unbound(name, new_ref);
             }
 
             // SAFETY: as above.

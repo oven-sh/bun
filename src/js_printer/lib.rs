@@ -1662,6 +1662,8 @@ pub(crate) mod __gated_printer {
         pub(crate) stack_overflowed: bool,
 
         pub(crate) was_lazy_export: bool,
+        /// `Ast::reads_test_globals_first`.
+        pub(crate) reads_test_globals_first: bool,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
@@ -2643,6 +2645,15 @@ pub(crate) mod __gated_printer {
         #[inline]
         fn symbols(&self) -> &js_ast::symbol::Map {
             self.renamer.symbols()
+        }
+
+        /// The name of `ref_` as the file has it, when `ref_` is a test global that
+        /// `Ast::reads_test_globals_first` describes. `name_for_symbol` follows the link to the binding.
+        #[cold]
+        fn test_global_read_first(&self, ref_: Ref) -> Option<&'a [u8]> {
+            let symbol = self.symbols().get_const(ref_)?;
+            (symbol.kind == js_ast::symbol::Kind::Unbound && symbol.has_link())
+                .then(|| symbol.original_name.slice())
         }
 
         #[inline]
@@ -4245,7 +4256,18 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print_number(e.value(), level);
                 }
-                ExprData::EIdentifier(e) => {
+                ExprData::EIdentifier(e) => 'identifier: {
+                    if self.reads_test_globals_first {
+                        if let Some(global) = self.test_global_read_first(e.ref_) {
+                            self.add_source_mapping(expr.loc);
+                            self.print(b"(globalThis.");
+                            self.print_identifier(global);
+                            self.print_whitespacer(ws!(b" ?? "));
+                            self.print_symbol(e.ref_);
+                            self.print(b")");
+                            break 'identifier;
+                        }
+                    }
                     let name = self.name_for_symbol(e.ref_);
                     // A for-of loop initializer must not start with the token "let" and
                     // must not be the exact token sequence "async of" (e.g. the escaped
@@ -4285,13 +4307,7 @@ pub(crate) mod __gated_printer {
                         self.print_undefined(expr.loc, level);
                         did_print = true;
                     } else if let Some(namespace) = &symbol.namespace_alias {
-                        if namespace.is_global_with_fallback {
-                            did_print = true;
-                            self.add_source_mapping(expr.loc);
-                            self.print_global_with_fallback(namespace);
-                        } else if (namespace.import_record_index as usize)
-                            < self.import_records.len()
-                        {
+                        if (namespace.import_record_index as usize) < self.import_records.len() {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {
@@ -4616,16 +4632,6 @@ pub(crate) mod __gated_printer {
                 self.print_string_literal_utf8(namespace.alias.slice(), false);
                 self.print(b"]");
             }
-        }
-
-        /// `(globalThis.alias ?? namespace_ref)`. In parentheses, so that it stands wherever an identifier does.
-        #[cold]
-        fn print_global_with_fallback(&mut self, namespace: &G::NamespaceAlias) {
-            self.print(b"(globalThis.");
-            self.print_identifier(namespace.alias.slice());
-            self.print_whitespacer(ws!(b" ?? "));
-            self.print_symbol(namespace.namespace_ref);
-            self.print(b")");
         }
 
         /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
@@ -7042,6 +7048,7 @@ pub(crate) mod __gated_printer {
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,
+                reads_test_globals_first: false,
                 module_info: None,
             }
         }
@@ -7808,6 +7815,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         source_map_builder,
     );
     printer.was_lazy_export = tree.has_lazy_export;
+    printer.reads_test_globals_first = tree.reads_test_globals_first;
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
     // (see `print_with_writer_and_platform`).

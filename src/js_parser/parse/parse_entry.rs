@@ -2161,6 +2161,8 @@ impl<'a> Parser<'a> {
         let uses_test_api = asks_uses_test_api && p.uses_test_api();
         let imports_vitest = uses_test_api && p.imports_vitest();
 
+        let mut reads_test_globals_first = false;
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {
@@ -2202,31 +2204,17 @@ impl<'a> Parser<'a> {
             }
             p.did_apply_test_feature = true;
 
-            let is_cjs = exports_kind == js_ast::ExportsKind::Cjs;
-            let import_record_id = p.add_import_record(
-                match is_cjs {
-                    true => bun_ast::ImportKind::Require,
-                    false => bun_ast::ImportKind::Stmt,
-                },
-                bun_ast::Loc::EMPTY,
-                import_path,
-            );
-
-            // A module that imports a test module gets the function that a script put on `globalThis` under the
-            // name. A script can do that at any time, so each read looks there when it runs. The export is bound to a
-            // name of its own, for a read that finds nothing there.
+            // A module that imports a test module gets what a script put on `globalThis` under the name. A script
+            // can do that at any time, so each read looks there when it runs (`Ast::reads_test_globals_first`). The
+            // export is bound to a name of its own, and the free name is linked to it, for a read that finds nothing
+            // there.
             if imports_test_module {
+                reads_test_globals_first = true;
                 for (name, global) in used.iter_mut() {
                     let export =
                         p.declare_generated_symbol(js_ast::symbol::Kind::Other, name.as_bytes());
                     let symbol = &mut p.symbols[global.inner_index() as usize];
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                        namespace_ref: export,
-                        alias: js_ast::StoreStr::new(name.as_bytes()),
-                        import_record_index: import_record_id,
-                        is_global_with_fallback: true,
-                        was_originally_property_access: false,
-                    }));
+                    symbol.link.set(export);
                     // An import that nothing uses is dropped from a TypeScript file, so the uses of the name count
                     // for the export.
                     let use_count = symbol.use_count_estimate;
@@ -2243,7 +2231,13 @@ impl<'a> Parser<'a> {
             declared_symbols.ensure_total_capacity(used.len())?;
 
             // For CommonJS modules, use require instead of import
-            if is_cjs {
+            if exports_kind == js_ast::ExportsKind::Cjs {
+                let import_record_id = p.add_import_record(
+                    bun_ast::ImportKind::Require,
+                    bun_ast::Loc::EMPTY,
+                    import_path,
+                );
+
                 // Create object binding pattern for destructuring
                 let mut properties = BumpVec::<B::Property>::with_capacity_in(used.len(), p.arena);
                 for &(symbol_name, r) in used.iter() {
@@ -2310,6 +2304,12 @@ impl<'a> Parser<'a> {
                     ..Default::default()
                 });
             } else {
+                let import_record_id = p.add_import_record(
+                    bun_ast::ImportKind::Stmt,
+                    bun_ast::Loc::EMPTY,
+                    import_path,
+                );
+
                 // For ESM modules, use import statement
                 let mut clauses =
                     BumpVec::<js_ast::ClauseItem>::with_capacity_in(used.len(), p.arena);
@@ -2607,7 +2607,8 @@ impl<'a> Parser<'a> {
             uses_test_api || p.options.features.is_test_entry_point || !p.did_apply_test_feature
         );
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let mut ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        ast.reads_test_globals_first = reads_test_globals_first;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

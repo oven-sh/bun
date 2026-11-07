@@ -267,15 +267,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             p.record_assignment(result.r#ref);
+
+            if p.options.features.inject_jest_globals {
+                p.keep_free_test_global_as_written(&mut e_, name);
+            }
         }
 
         let mut original_name: Option<&[u8]> = None;
 
-        // Substitute user-specified defines for unbound symbols
-        if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
-            && !result.is_inside_with_scope
-            && !is_delete_target
-        {
+        let is_unbound =
+            p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
+        if is_unbound && (result.is_inside_with_scope || is_delete_target) {
+            if p.options.features.inject_jest_globals {
+                p.keep_free_test_global_as_written(&mut e_, name);
+            }
+        } else if is_unbound {
+            // Substitute user-specified defines for unbound symbols
             // `p.define: &'a Define` is `Copy`; hoist so the returned
             // `&DefineData` is tied to `'a`, not `&*p`, and `&mut self`
             // helpers (`value_for_define`) below need no lifetime laundering.

@@ -263,6 +263,8 @@ impl<'arena> BundledAst<'arena> {
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
             commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
+            // Only `bun test` sets it, and it does not bundle.
+            reads_test_globals_first: false,
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
                 .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),

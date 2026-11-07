@@ -232,9 +232,6 @@ impl Host for RecordingHost<'_> {
     fn namespace_of_import_item(&self, item: Ref) -> Option<Ref> {
         self.host.namespace_of_import_item(item)
     }
-    fn reads_free_name_as_import(&self, ref_: Ref) -> bool {
-        self.host.reads_free_name_as_import(ref_)
-    }
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.host.is_module_level(ref_)
     }

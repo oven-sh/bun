@@ -1643,17 +1643,15 @@ impl Jest {
         "aroundAll",
     ];
 
-    /// Returns whether `name` is a test global.
     #[cold]
     #[optimize(size)]
-    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) -> bool {
-        let global = Self::GLOBALS
+    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
+        if let Some(global) = Self::GLOBALS
             .iter()
-            .position(|global| global.as_bytes() == name);
-        if let Some(global) = global {
+            .position(|global| global.as_bytes() == name)
+        {
             self.refs[global] = symbol;
         }
-        global.is_some()
     }
 
     pub fn is_of_bun_only(global: &str) -> bool {

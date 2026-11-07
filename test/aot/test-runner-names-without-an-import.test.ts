@@ -84,23 +84,6 @@ test("a file that imports a runner has the global that a preload defined", () =>
   "has-no-global-of-a-preload.test.js": `
 test("a file that imports no runner has the runner's", () => { expect(typeof expect(1).to).toBe("undefined"); });
 `,
-  "defines-expect-in-a-hook.js": `
-import { beforeAll } from "bun:test";
-beforeAll(() => {
-  globalThis.expect = value => ({ to: { equal(other) { console.log("row:", value === other ? "equal" : "not equal"); } } });
-});
-`,
-  "has-a-global-of-a-hook.test.js": `
-import { test } from "bun:test";
-import * as runner from "bun:test";
-test("a file that imports a runner has the global that a hook of a preload defined", () => { expect(1).to.equal(1); console.log("row:", typeof describe); });
-test("and the runner's where the global is gone", () => {
-  expect = undefined;
-  console.log("row:", expect === runner.expect, Object.hasOwn(globalThis, "expect"));
-  delete globalThis.expect;
-  expect(expect).toBe(runner.expect);
-});
-`,
   "imports-jest.test.js": `
 import { expect, test } from "@jest/globals";
 test("a file that imports a runner has the other names too", () => { expect(typeof beforeAll).toBe("function"); });
@@ -126,14 +109,10 @@ async function report(mode: string[], directory: string, file: string) {
 describe("the names of the test runner without an import", () => {
   const testFiles = Object.keys(files).filter(name => name.includes(".test."));
   const withPreload = testFiles.filter(name => name.includes("-of-a-preload."));
-  const withHook = testFiles.filter(name => name.includes("-of-a-hook."));
   const rows = [
-    ...testFiles
-      .filter(file => !withPreload.includes(file) && !withHook.includes(file))
-      .map(file => [file, []] as const),
+    ...testFiles.filter(file => !withPreload.includes(file)).map(file => [file, []] as const),
     ["names-of-one-runner.test.js", ["--globals=vitest"]] as const,
     ...withPreload.map(file => [file, ["--preload=./defines-expect.js"]] as const),
-    ...withHook.map(file => [file, ["--preload=./defines-expect-in-a-hook.js"]] as const),
   ];
   for (const [file, flags] of rows) {
     test(

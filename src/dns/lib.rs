@@ -1,7 +1,10 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
-use std::io::Write as _;
+
+mod eai;
+pub use bun_dns_resolver::Error;
+pub use eai::{eai_raw_by_name, error_from_eai};
 
 use bun_core::String as BunString;
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
@@ -70,17 +73,6 @@ impl GetAddrInfo {
             port: self.port,
             options: self.options,
         }
-    }
-
-    pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
-        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
-
-        hints.ai_family = self.options.family.to_libc();
-        hints.ai_socktype = self.options.socktype.to_libc();
-        hints.ai_protocol = self.options.protocol.to_libc();
-        hints.ai_flags = self.options.flags;
-
-        hints
     }
 
     pub fn hash(&self) -> u64 {
@@ -273,8 +265,7 @@ impl Backend {
         Backend::System
     }
 
-    // Android: c-ares can't discover nameservers (no /etc/resolv.conf,
-    // no JNI for ares_library_init_android). bionic getaddrinfo proxies
+    // Android: there is no /etc/resolv.conf to find the nameservers in. bionic getaddrinfo proxies
     // through netd which knows the real resolvers.
     #[cfg(all(not(any(target_os = "macos", windows)), target_os = "android"))]
     pub const fn default() -> Backend {
@@ -358,36 +349,21 @@ pub fn address_to_string(address: &Address) -> BunString {
     match address.family() {
         sock::AF_INET => {
             let v4 = address.as_in4().unwrap(); // family() just checked
-            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
-            BunString::create_format(format_args!(
-                "{}.{}.{}.{}",
-                bytes[0], bytes[1], bytes[2], bytes[3]
-            ))
+            let octets = v4.sin_addr.s_addr.to_ne_bytes();
+            BunString::clone_latin1(&bun_core::ip_address::format_v4(octets))
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
-            // Render the bare address directly via ares_inet_ntop, then
-            // re-append the `%scope_id` suffix for nonzero scope (e.g. fe80::
-            // link-local from getaddrinfo) — ntop only sees the 16 raw addr
-            // bytes and cannot emit it itself.
-            let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
-            // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            let n = match unsafe {
-                bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
-            } {
-                Some(s) => s.len(),
-                None => return BunString::EMPTY,
-            };
-            let len = if v6.sin6_scope_id != 0 {
-                let mut cursor = &mut buf[n..];
-                let before = cursor.len();
-                // 64 - 46 = 18 > len("%4294967295") = 11, cannot truncate.
-                let _ = write!(cursor, "%{}", v6.sin6_scope_id);
-                n + (before - cursor.len())
-            } else {
-                n
-            };
-            BunString::clone_latin1(&buf[..len])
+            let text = bun_core::ip_address::format_v6(v6.sin6_addr.s6_addr);
+            // A link-local address from getaddrinfo (fe80::) has a scope.
+            if v6.sin6_scope_id == 0 {
+                return BunString::clone_latin1(&text);
+            }
+            BunString::create_format(format_args!(
+                "{}%{}",
+                bstr::BStr::new(&*text),
+                v6.sin6_scope_id
+            ))
         }
         sock::AF_UNIX => {
             // Unix sockets exist on every target Bun ships (Windows 10 rs4+
@@ -459,7 +435,7 @@ impl Order {
 }
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
-/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
+/// `bun_dns_resolver` allows in one (`is_hostname_byte`) or of non-ASCII bytes (UTF-8 mDNS names).
 pub fn is_valid_hostname(name: &[u8]) -> bool {
     fn is_hostname_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
@@ -479,7 +455,7 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 }
 
 /// The process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
+/// cache lives in `bun_runtime` (it owns dns_sd/libuv worker threads + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
 /// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
 /// rather than a `bun_runtime` crate dep, which would cycle.

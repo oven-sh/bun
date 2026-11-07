@@ -82,19 +82,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     #[inline]
-    pub fn find_first_set(&self) -> Option<usize> {
-        let mut i = 0;
-        while i < Self::NUM_WORDS {
-            let m = self.masks[i].get();
-            if m != 0 {
-                return Some(i * WORD_BITS + m.trailing_zeros() as usize);
-            }
-            i += 1;
-        }
-        None
-    }
-
-    #[inline]
     pub fn find_first_unset(&self) -> Option<usize> {
         let mut i = 0;
         while i < Self::NUM_WORDS {
@@ -469,7 +456,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
 /// extracts the value. Single-owner (no `Clone`), so [`DerefMut`] is sound.
 ///
 /// For pools whose tokens cross an opaque round-trip as a slot *index* (e.g.
-/// the c-ares callback context in `dns_jsc`), store
+/// the pending getaddrinfo requests in `dns_jsc`), store
 /// [`HiveArray::index_of`] and recover via [`HiveArray::box_at`].
 pub struct HiveBox<'a, T, const CAPACITY: usize> {
     slot: NonNull<T>,
@@ -1071,7 +1058,7 @@ mod tests {
     #[test]
     fn hive_bitset_iteration() {
         let a = HiveArray::<u8, 8>::init();
-        assert_eq!(a.used.find_first_set(), None);
+        assert_eq!(a.used.iter_set().next(), None);
         assert_eq!(a.used.find_first_unset(), Some(0));
 
         // Claim slots 0..3, then free 0 and 2 so the set is {1, 3}.
@@ -1084,7 +1071,6 @@ mod tests {
         // SAFETY: only token for its slot.
         assert!(unsafe { a.put_raw(s2.as_ptr()) });
 
-        assert_eq!(a.used.find_first_set(), Some(1));
         assert_eq!(a.used.find_first_unset(), Some(0));
 
         let mut it = a.used.iter_set();
@@ -1106,7 +1092,7 @@ mod tests {
         unsafe {
             HiveArray::init_in_place(a.as_mut_ptr());
             let a = &*a.as_ptr();
-            assert_eq!(a.used.find_first_set(), None);
+            assert_eq!(a.used.iter_set().next(), None);
             let p = a.get_init(7).unwrap();
             assert_eq!(*p.as_ptr(), 7);
             // `p` is the only token for its slot; already inside the outer

@@ -235,7 +235,7 @@ impl Listener {
             let hostname = socket_config.hostname_or_unix.slice();
             if !bun_dns::is_valid_hostname(hostname) {
                 return Err(cx.global().throw_value(
-                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), hostname),
+                    crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(cx.global(), hostname),
                 ));
             }
         }

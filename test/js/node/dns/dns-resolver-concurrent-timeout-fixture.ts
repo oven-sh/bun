@@ -1,9 +1,5 @@
-// Exercises the c-ares timeout timer with more concurrent queries than the
-// resolver's 32-slot pending cache: 32 queries get an instant answer (filling
-// every tracked slot) and 8 more are never answered and must ETIMEOUT via the
-// poll timer. Before the fix, the 8 overflow queries were invisible to
-// `any_requests_pending()`, the timer was disarmed once the 32 tracked queries
-// completed, and the 8 promises stayed pending forever (process never exits).
+// 32 queries get an instant answer and 8 more are never answered, which must
+// ETIMEOUT: the answers to the others must not disarm the resolver's timer.
 import dns from "node:dns";
 import dgram from "node:dgram";
 

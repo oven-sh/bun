@@ -17,7 +17,9 @@ use bun_windows_sys::externs;
 use crate as bun_sys;
 use crate::{E, Fd, MaybeExt, SystemErrno};
 
+pub use bun_windows_sys::externs::ExpandEnvironmentStringsW;
 pub use bun_windows_sys::externs::SetFilePointerEx;
+pub use bun_windows_sys::iphlpapi;
 pub use bun_windows_sys::kernel32::GetLastError;
 pub use bun_windows_sys::ntdll;
 pub use bun_windows_sys::ws2_32;

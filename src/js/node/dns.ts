@@ -131,7 +131,7 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
-// ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
+// The native setServers() rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
 function stripZoneId(host: string) {
   const pct = host.indexOf("%");
   return pct === -1 ? host : host.slice(0, pct);
@@ -302,7 +302,7 @@ function translateLookupOptions(options: LookupOptions | number | null | undefin
     all,
     order,
     verbatim,
-    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver, not c-ares.
+    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver, not the "c-ares" backend.
     backend: "system",
   };
 }

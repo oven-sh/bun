@@ -16,7 +16,6 @@ use bun_jsc::{
 use bun_ptr::BackRef;
 
 use crate::node::validators;
-use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
 use bun_libuv_sys::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
@@ -28,7 +27,7 @@ use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
-use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
+use crate::socket::socket_address::inet::{self, sockaddr_in, sockaddr_in6};
 
 bun_output::declare_scope!(UdpSocket, visible);
 
@@ -186,8 +185,7 @@ extern "C" fn on_data(
         // spans the JS calls below.
         let peer = unsafe { (*buf).get_peer(i) };
 
-        let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
-        let hostname: Option<&[u8]>;
+        let hostname: bun_core::ip_address::AddressText;
         let port: u16;
         let mut scope_id: Option<u32> = None;
         let is_ipv6: bool;
@@ -198,20 +196,14 @@ extern "C" fn on_data(
                 is_ipv6 = false;
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
                 let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
-                // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
-                    bun_cares_sys::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf)
-                };
+                hostname = bun_core::ip_address::format_v4(peer4.addr.to_ne_bytes());
                 port = ntohs(peer4.port);
             }
             f if f == inet::AF_INET6 => {
                 is_ipv6 = true;
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
                 let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
-                // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
-                    bun_cares_sys::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf)
-                };
+                hostname = bun_core::ip_address::format_v6(peer6.addr);
                 port = ntohs(peer6.port);
                 if peer6.scope_id != 0 {
                     scope_id = Some(peer6.scope_id);
@@ -223,7 +215,7 @@ extern "C" fn on_data(
             }
         }
 
-        if hostname.is_none() || port == 0 {
+        if port == 0 {
             i += 1;
             continue;
         }
@@ -234,7 +226,7 @@ extern "C" fn on_data(
         // `binary_type.to_js` copy below, before user JS runs.
         let slice = unsafe { (*buf).get_payload(i) };
 
-        let span = hostname.unwrap();
+        let span: &[u8] = &hostname;
         #[allow(unused_labels)]
         let hostname_string = if let Some(id) = scope_id {
             'blk: {
@@ -625,18 +617,18 @@ impl UDPSocket {
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
         if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
-            return Err(cx
-                .global()
-                .throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+            return Err(cx.global().throw_value(
+                crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(
                     cx.global(),
                     hostname_z.as_bytes(),
-                )));
+                ),
+            ));
         }
         if let Some(connect) = &config.connect {
             let address = connect.address.to_utf8();
             if !bun_dns::is_valid_hostname(&address) {
                 return Err(cx.global().throw_value(
-                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
+                    crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(cx.global(), &address),
                 ));
             }
         }
@@ -765,9 +757,9 @@ impl UDPSocket {
                     return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
                 }
 
-                if let Some(eai_err) = c_ares::Error::init_eai(ret) {
+                if let Some(eai_err) = bun_dns::error_from_eai(ret) {
                     return Err(cx.global().throw_value(
-                        crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                        crate::dns_jsc::dns_resolver_jsc::error_to_js_with_syscall_and_hostname(
                             eai_err,
                             cx.global(),
                             b"connect",
@@ -1699,12 +1691,12 @@ pub(crate) fn connect(
 
     let connect_host = host.to_owned_slice_z();
     if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
-        return Err(
-            global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+        return Err(global_this.throw_value(
+            crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(
                 global_this,
                 connect_host.as_bytes(),
-            )),
-        );
+            ),
+        ));
     }
 
     let port = u16::try_from(port).unwrap_or(0);

@@ -512,7 +512,7 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
-// On Windows, c-ares closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
+// On Windows, the resolver closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
 // must not run the close callback that frees the handle while libuv is still dispatching to it.
 test("dns.Resolver: a query's promise reaction can re-enter the event loop", async () => {
   const rounds = 20;
@@ -564,7 +564,7 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
       if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
     }
 
-    // Each round uses a new name, because c-ares answers a repeated name from its cache without opening a socket.
+    // Each round uses a new name, because the resolver answers a repeated name from its cache without opening a socket.
     for (let i = 0; i < ${rounds}; i++) {
       const addresses = await resolver.resolve4("round" + i + ".example.test").then(addresses => {
         reenterEventLoop();

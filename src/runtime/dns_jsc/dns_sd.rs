@@ -1,6 +1,9 @@
 //! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
+use core::cell::Cell;
+
 use super::*;
+use crate::timer::ElTimespec;
 use bun_collections::index_sort;
 
 type DNSServiceRef = *mut c_void;
@@ -763,7 +766,7 @@ impl SharedConnection {
         true
     }
 
-    /// VM teardown: fail in-flight requests (like c-ares' EDESTRUCTION) and release the fd/FilePoll.
+    /// VM teardown: fail in-flight requests (like a closed channel's EDESTRUCTION) and release the fd/FilePoll.
     pub(crate) fn close_for_terminate() {
         let this = SHARED.replace(ptr::null_mut());
         // SAFETY: SHARED held null or the live heap connection.
@@ -811,7 +814,7 @@ pub(crate) fn lookup(
     }
 
     let key = get_addr_info_request::PendingCacheKey::init(query);
-    let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
+    let cache = this.get_or_put_into_pending_cache(&key);
 
     if let CacheHit::Inflight(inflight) = cache {
         let dns_lookup = DNSLookup::init(this, global_this, context);
@@ -824,7 +827,7 @@ pub(crate) fn lookup(
     let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
         if let CacheHit::New(new) = cache {
             // SAFETY: `new` is the fresh HiveArray slot; no other token for it exists.
-            unsafe { this.pending_host_cache_native.get().put(new) };
+            unsafe { this.pending_host_cache.get().put(new) };
         }
         return lib_c::lookup(this, query, global_this, context);
     };
@@ -836,7 +839,6 @@ pub(crate) fn lookup(
         this,
         global_this,
         context,
-        PendingCacheField::PendingHostCacheNative,
     );
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
     let promise_value = unsafe { (*request).head.promise.value() };
@@ -846,7 +848,7 @@ pub(crate) fn lookup(
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
             if let Some(pos) = (*request).pending_slot {
-                let c = this.pending_host_cache_native.get();
+                let c = this.pending_host_cache.get();
                 let slot = c.ptr_at(pos as usize);
                 // SAFETY: `pos` was alloc'd; no other token outstanding.
                 c.put(slot);
@@ -855,8 +857,6 @@ pub(crate) fn lookup(
         }
         return lib_c::lookup(this, query, global_this, context);
     }
-
-    this.request_sent(this.vm());
 
     promise_value
 }

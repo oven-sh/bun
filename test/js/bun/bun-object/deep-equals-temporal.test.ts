@@ -375,12 +375,11 @@ describe("the message of a failing toEqual on Temporal values", () => {
     expect(message).toContain("+     Temporal.Instant 1970-01-01T00:00:00Z,\n");
   });
 
-  // Only the message changes. What a snapshot stores for the value is a separate choice.
-  it("leaves the text of a snapshot as it is", () => {
-    expect(Temporal.PlainDate.from("2024-06-15")).toMatchInlineSnapshot(`PlainDate {}`);
+  it("prints the same text in a snapshot", () => {
+    expect(Temporal.PlainDate.from("2024-06-15")).toMatchInlineSnapshot(`Temporal.PlainDate 2024-06-15`);
     expect({ at: Temporal.Instant.from("1970-01-01T00:00:00Z") }).toMatchInlineSnapshot(`
       {
-        "at": Instant {},
+        "at": Temporal.Instant 1970-01-01T00:00:00Z,
       }
     `);
   });

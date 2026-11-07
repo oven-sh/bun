@@ -683,10 +683,11 @@ impl TimerObjectInternals {
                         }
                     }
                 } else {
-                    // `cancel()` sets `has_cleared_timer` where Node writes `_idleTimeout = -1`.
+                    // The callback can clear the timer, and a nested fire can promote it first.
                     if kind == KindBig::SetTimeout
                         && !repeat.is_null()
                         && !s.flags.get().has_cleared_timer()
+                        && s.flags.get().kind() == Kind::SetTimeout
                     {
                         if let Some(num) = idle_timeout.get_number() {
                             if num != -1.0 {

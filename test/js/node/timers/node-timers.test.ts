@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, jest, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
@@ -486,6 +486,81 @@ describe("_repeat", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it.concurrent("a timeout that fires again under its own callback is promoted once (fake clock)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { jest } = Bun.jest();
+          jest.useFakeTimers();
+          let fires = 0;
+          const t = setTimeout(() => {
+            if (++fires > 1) return;
+            t.refresh();
+            // Fires the timer two more times while its first callback is still running.
+            jest.advanceTimersByTime(20);
+          }, 10);
+          t._repeat = 10;
+          jest.advanceTimersByTime(10);
+          console.log(JSON.stringify({ fires, armed: jest.getTimerCount(), destroyed: t._destroyed }));
+          jest.useRealTimers();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"fires":3,"armed":1,"destroyed":false}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a timeout that fires again under its own callback is promoted once (real clock)", async () => {
+    using dir = tempDir("repeat-nested-fire", {
+      "entry.js": "export default 1;",
+      "index.js": `
+        let fires = 0;
+        let firesUnderFirstCallback = 0;
+        let inFirstCallback = false;
+        const t = setTimeout(() => {
+          if (++fires === 1) {
+            inFirstCallback = true;
+            t.refresh();
+            // Bun.build() runs the event loop in place until the async setup() is done.
+            Bun.build({
+              entrypoints: [import.meta.dir + "/entry.js"],
+              plugins: [{ name: "wait", setup: () => new Promise(resolve => setTimeout(resolve, 20)) }],
+            }).catch(() => {});
+            inFirstCallback = false;
+          } else if (inFirstCallback) {
+            firesUnderFirstCallback++;
+          } else {
+            clearInterval(t);
+            console.log(JSON.stringify({ firedUnderFirstCallback: firesUnderFirstCallback > 0 }));
+          }
+        }, 1);
+        t._repeat = 1;
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"firedUnderFirstCallback":true}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

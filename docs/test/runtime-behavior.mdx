@@ -9,7 +9,7 @@ description: "Learn about Bun test's runtime integration, environment variables,
 
 ### NODE_ENV
 
-`bun test` sets `$NODE_ENV` to `"test"` unless it's already set in the environment or in `.env` files. Most test runners do the same.
+`bun test` sets `$NODE_ENV` to `"test"` unless it's already set in the environment. Most test runners do the same.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect } from "bun:test";
@@ -19,10 +19,18 @@ test("NODE_ENV is set to test", () => {
 });
 ```
 
-You can override this by setting `NODE_ENV` explicitly:
+To use another value, set `NODE_ENV` in the environment:
 
 ```bash terminal icon="terminal"
 NODE_ENV=development bun test
+```
+
+A `NODE_ENV` line in an env file does not change the value. `bun test` skips that line in `.env`, `.env.test`, `.env.test.local` and any file you pass with `--env-file`. It reads the other variables in those files.
+
+To take `NODE_ENV` from a file, pass the file to `bun run`. With a `"test": "bun test"` script in `package.json`, this command runs the tests with the `NODE_ENV` of `.env.staging`:
+
+```bash terminal icon="terminal"
+bun --env-file=.env.staging run test
 ```
 
 ### TZ (Timezone)

@@ -71,6 +71,52 @@ devTest("source map emitted for hmr chunk", {
   },
 });
 
+devTest("source content changes receive a new immutable HMR map", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["snapshot.ts"] }),
+    "snapshot.ts": 'console.log("snapshot-body");\nimport.meta.hot.accept();\n// alpha',
+  },
+  async test(dev) {
+    const body = 'console.log("snapshot-body");\nimport.meta.hot.accept();\n';
+    const mapUrl = (script: string) => {
+      const match = script.match(/\n\/\/# sourceMappingURL=([^\n]+)/);
+      expect(match).not.toBeNull();
+      return match![1];
+    };
+    const code = (script: string) => {
+      const end = script.lastIndexOf('}, "');
+      expect(end).toBeGreaterThan(0);
+      return script.slice(0, end);
+    };
+    await using client = await dev.client("/", { storeHotChunks: true });
+    await client.expectMessage("snapshot-body");
+
+    await dev.write("snapshot.ts", body + "// bravo");
+    await client.expectMessage("snapshot-body");
+    const firstScript = await client.getMostRecentHmrChunk();
+    using first = await extractSourceMap(dev, firstScript);
+    const firstUrl = mapUrl(firstScript);
+    const firstJson = await dev.fetch(firstUrl).json();
+    const source = Bun.pathToFileURL(dev.join("snapshot.ts")).href;
+    expect(first.sourceContentFor(source)).toBe(body + "// bravo");
+
+    await dev.write("snapshot.ts", body + "// cello");
+    await client.expectMessage("snapshot-body");
+    const secondScript = await client.getMostRecentHmrChunk();
+    using second = await extractSourceMap(dev, secondScript);
+    const secondUrl = mapUrl(secondScript);
+    const secondJson = await dev.fetch(secondUrl).json();
+    expect(code(firstScript)).toBe(code(secondScript));
+    expect(firstJson.mappings).toBe(secondJson.mappings);
+    expect(firstJson.sources).toEqual(secondJson.sources);
+    expect(second.sourceContentFor(source)).toBe(body + "// cello");
+    expect(secondUrl).not.toBe(firstUrl);
+
+    using retained = await extractSourceMap(dev, firstScript);
+    expect(retained.sourceContentFor(source)).toBe(body + "// bravo");
+  },
+});
+
 type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
   /** Original script generated */
   script: string;

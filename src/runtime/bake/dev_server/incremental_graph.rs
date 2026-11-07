@@ -611,6 +611,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
+        let was_stale = self.stale_files.bit_length <= file_index.get() as usize
+            || self.stale_files.is_set(file_index.get() as usize);
         if self.stale_files.bit_length > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
@@ -623,14 +625,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
 
-                if found_existing {
+                let previous_file = found_existing.then(|| {
+                    core::mem::take(&mut self.bundled_files.values_mut()[file_index.get() as usize])
+                });
+                if let Some(existing) = &previous_file {
                     // Note: take the existing slot out so `free_file_content`
                     // can borrow `&mut self` while we hold the `File` by value.
-                    let mut existing = core::mem::take(
-                        &mut self.bundled_files.values_mut()[file_index.get() as usize],
-                    );
-                    self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
-
                     if existing.failed {
                         let owner =
                             serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
@@ -684,6 +684,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 };
 
+                // Barrels with deferred exports are reanalyzed even when their
+                // cached module is still valid. Do not turn identical output
+                // into a hot replacement of an unchanged dependency. Explicit
+                // invalidation and recovery from a failed load still emit.
+                let unchanged = !was_stale
+                    && previous_file.as_ref().is_some_and(|previous| {
+                        !previous.failed
+                            && previous.content.kind() == new_content.kind()
+                            && previous.content.js_code() == new_content.js_code()
+                            && previous.source_map == new_source_map
+                    });
+                if let Some(mut previous) = previous_file {
+                    self.free_file_content(key, &mut previous, FreeCssMode::IgnoreCss);
+                }
+
                 self.bundled_files.values_mut()[file_index.get() as usize] = File {
                     kind: new_content.kind(),
                     failed: false,
@@ -698,7 +713,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     content: new_content,
                 };
 
-                if let Some(len) = code_len {
+                if let Some(len) = code_len.filter(|_| !unchanged) {
                     self.current_chunk_parts.push(file_index);
                     self.current_chunk_len += len;
                 }

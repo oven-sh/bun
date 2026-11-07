@@ -1,9 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { randomBytes } from "crypto";
 import fs from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot, pack, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, normalizeBunSnapshot, pack, tempDir } from "harness";
 import { join, relative } from "path";
 import { pathToFileURL } from "url";
-import { ARBORIST, OFFLINE_REGISTRY, fixture, readLock, run, writeExtra } from "./migration-harness";
+import { ARBORIST, OFFLINE_REGISTRY, fixture, readLock, run, startHttpsStandIn, writeExtra } from "./migration-harness";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -1349,6 +1350,414 @@ describe.each([
     const lines = (await Bun.file(join(testDir, "bun.lock")).text()).split("\n").map(line => line.trim());
     expect(lines.find(line => line.startsWith('"native-musl": ['))).toContain(`{ "os": "linux", "libc": "musl" }`);
     expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", {}],');
+  });
+});
+
+// npm packs a git dependency itself and records the sha512 of that archive as `integrity`, which
+// it does not check when it installs (npm/rfcs#525). pnpm records the sha512 of codeload's
+// `/tar.gz/<commit>` archive, and checks it. Bun downloads the GitHub API's archive of the commit,
+// or checks the commit out, and neither has those bytes.
+describe.concurrent("the integrity another package manager records for a git dependency", () => {
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const tarballPath = `/repos/me/gh-dep/tarball/${commit}`;
+  // What npm wrote for substack/minimist#3754568 in npm-arborist/minimist-git-dep.
+  const npmIntegrity =
+    "sha512-dYEyruIho8J+fbL60i3+R+9WbvX0YIN2uomWgCr06hT0AHu9O6BhIl5z5FRiJUgykJ1dzb092eR/FjBtnKEb8w==";
+  // What pnpm 10.34.5 wrote for highlightjs/highlightjs-epp#9f9e1a9 (pnpm/pnpm#13338).
+  const pnpmIntegrity =
+    "sha512-Fppp0fjT5RF5qBCGjG4K8Ek/s7nST54urCDmKtwaL9Q9S9TX6hZuReSCvIXsWk3aA1SUppuQv7SNC2s5OMaWLQ==";
+  const sha512 = (bytes: Uint8Array) => `sha512-${new Bun.CryptoHasher("sha512").update(bytes).digest("base64")}`;
+  /** The entry of `gh-dep` in bun.lock when the lockfile pins the full commit, as npm and pnpm do. */
+  const row = (...integrity: string[]) => [`gh-dep@github:me/gh-dep#${commit}`, {}, commit, ...integrity];
+
+  // A project whose dependency `gh-dep` is on GitHub, and a server that stands in for api.github.com.
+  // `files` can be made from the sha512 of the archive that the server sends.
+  async function githubProject(
+    files: Record<string, string> | ((integrity: string) => Record<string, string>),
+    filler?: Uint8Array,
+  ) {
+    const archive = (marker: string) =>
+      githubTarball("me-gh-dep-0123456", {
+        "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+        "index.js": marker,
+        ...(filler && { "filler.bin": filler }),
+      });
+    let served = await archive("locked");
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(served);
+      },
+    });
+    const dir = synthetic("migrate-git-integrity", typeof files === "function" ? files(sha512(served)) : files);
+    const path = (...parts: string[]) => join(String(dir), ...parts);
+    return {
+      requests,
+      /** The archive that the server sends. */
+      served: () => served,
+      async serveOtherBytes() {
+        served = await archive("other");
+      },
+      async bun(env: Record<string, string>, ...args: string[]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: path(".bun-cache"), GITHUB_API_URL: server.url.origin, ...env },
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
+      },
+      /** The entry of `gh-dep` in bun.lock, or nothing when there is no bun.lock. */
+      locked: async () => (fs.existsSync(path("bun.lock")) ? (await readLock(dir)).lock.packages["gh-dep"] : undefined),
+      /** The marker of the archive that is installed, or nothing. */
+      installed() {
+        const file = path("node_modules", "gh-dep", "index.js");
+        return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+      },
+      read: (name: string) => fs.readFileSync(path(name), "utf8"),
+      remove(...names: string[]) {
+        for (const name of names) fs.rmSync(path(name), { recursive: true, force: true });
+      },
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  // Nothing is installed and nothing is cached without these: the next install has to download.
+  const installed = ["node_modules", ".bun-cache"];
+
+  // package.json names no commit: only package-lock.json says which one to download.
+  const spec = "github:me/gh-dep";
+  const packageLock = {
+    "package.json": JSON.stringify({ name: "git-integrity", dependencies: { "gh-dep": spec } }),
+    "package-lock.json": npmLock("git-integrity", {
+      "": { name: "git-integrity", dependencies: { "gh-dep": spec } },
+      "node_modules/gh-dep": {
+        version: "1.0.0",
+        resolved: `git+ssh://git@github.com/me/gh-dep.git#${commit}`,
+        integrity: npmIntegrity,
+      },
+    }),
+  };
+
+  // pnpm-lock.yaml and package.json for dependencies, each as its name, its spec in package.json,
+  // the version it resolves to and its `resolution`.
+  function pnpmLock(...entries: [name: string, spec: string, version: string, resolution: string][]) {
+    return {
+      "package.json": JSON.stringify({
+        name: "git-integrity",
+        dependencies: Object.fromEntries(entries.map(([name, spec]) => [name, spec])),
+      }),
+      "pnpm-lock.yaml": [
+        "lockfileVersion: '9.0'",
+        "",
+        "importers:",
+        "",
+        "  .:",
+        "    dependencies:",
+        ...entries.flatMap(([name, spec, version]) => [
+          `      ${name}:`,
+          `        specifier: ${spec}`,
+          `        version: ${version}`,
+        ]),
+        "",
+        "packages:",
+        ...entries.flatMap(([name, , version, resolution]) => [
+          "",
+          `  ${name}@${version}:`,
+          `    resolution: ${resolution}`,
+          "    version: 1.0.0",
+        ]),
+        "",
+        "snapshots:",
+        ...entries.flatMap(([name, , version]) => ["", `  ${name}@${version}: {}`]),
+        "",
+      ].join("\n"),
+    };
+  }
+  const codeload = `https://codeload.github.com/me/gh-dep/tar.gz/${commit}`;
+  const codeloadEntry: Parameters<typeof pnpmLock>[number] = [
+    "gh-dep",
+    "github:me/gh-dep",
+    codeload,
+    `{gitHosted: true, integrity: ${pnpmIntegrity}, tarball: ${codeload}}`,
+  ];
+
+  // Both extractors check a download against the integrity of the lockfile on their own. The HTTP
+  // client reads at most 512 KiB at once, so a larger body arrives in several reads, and bun then
+  // streams it into the extractor. gzip cannot shrink random bytes below that size.
+  const extractors = {
+    buffered: { env: {}, filler: undefined, ran: "[gh-dep] Extract " },
+    streaming: {
+      env: { BUN_INSTALL_STREAMING_MIN_SIZE: "1" },
+      filler: randomBytes(600 * 1024),
+      ran: "[gh-dep] Streamed ",
+    },
+  };
+
+  test.each([
+    { linker: "hoisted", extractor: "buffered" },
+    { linker: "hoisted", extractor: "streaming" },
+    { linker: "isolated", extractor: "buffered" },
+    { linker: "isolated", extractor: "streaming" },
+  ] as const)(
+    "package-lock.json: bun install pins a github dependency to the bytes it downloads ($linker linker, $extractor extraction)",
+    async ({ linker, extractor }) => {
+      const { env, filler, ran } = extractors[extractor];
+      using github = await githubProject(packageLock, filler);
+      const install = (...args: string[]) => github.bun(env, "install", "--verbose", "--linker", linker, ...args);
+      if (extractor === "streaming") expect(github.served().length).toBeGreaterThan(512 * 1024);
+
+      const migrating = await install();
+      expect(migrating.errors).toEqual([]);
+      expect(migrating.stderr).toContain("migrated lockfile from package-lock.json");
+      expect(migrating.stderr).toContain(ran);
+      expect(github.requests).toEqual([tarballPath]);
+      expect(await github.locked()).toEqual(row(sha512(github.served())));
+      expect(github.installed()).toBe("locked");
+      expect(migrating.exitCode).toBe(0);
+
+      // bun.lock pins that download now. With nothing cached, the same bytes pass the check,
+      github.remove(...installed);
+      const same = await install("--frozen-lockfile");
+      expect(same.errors).toEqual([]);
+      expect(same.stderr).toContain(ran);
+      expect(github.requests).toEqual([tarballPath, tarballPath]);
+      expect(github.installed()).toBe("locked");
+      expect(same.exitCode).toBe(0);
+
+      // and other bytes do not.
+      github.remove(...installed);
+      const pinned = await github.locked();
+      await github.serveOtherBytes();
+      const other = await install("--frozen-lockfile");
+      expect(other.errors[0]).toBe("error: Integrity check failed for tarball: gh-dep");
+      expect(github.installed()).toBeUndefined();
+      expect(await github.locked()).toEqual(pinned);
+      expect(other.exitCode).toBe(1);
+    },
+  );
+
+  test.each(["pm migrate", "install --lockfile-only"])(
+    "package-lock.json: bun %s saves no integrity for it, and the install after that records one",
+    async command => {
+      using github = await githubProject(packageLock);
+
+      const saving = await github.bun({}, ...command.split(" "));
+      expect(saving.errors).toEqual([]);
+      expect(github.requests).toEqual([]);
+      expect(await github.locked()).toEqual(row());
+      expect(saving.exitCode).toBe(0);
+
+      const installing = await github.bun({}, "install");
+      expect(installing.errors).toEqual([]);
+      expect(github.requests).toEqual([tarballPath]);
+      expect(await github.locked()).toEqual(row(sha512(github.served())));
+      expect(github.installed()).toBe("locked");
+      expect(installing.exitCode).toBe(0);
+    },
+  );
+
+  test("package-lock.json: bun install --no-verify saves the integrity of its download, which a later install checks", async () => {
+    using github = await githubProject(packageLock);
+
+    const unverified = await github.bun({}, "install", "--no-verify");
+    expect(unverified.errors).toEqual([]);
+    expect(await github.locked()).toEqual(row(sha512(github.served())));
+    expect(unverified.exitCode).toBe(0);
+
+    github.remove(...installed);
+    const verified = await github.bun({}, "install", "--frozen-lockfile");
+    expect(verified.errors).toEqual([]);
+    expect(github.requests).toEqual([tarballPath, tarballPath]);
+    expect(github.installed()).toBe("locked");
+    expect(verified.exitCode).toBe(0);
+  });
+
+  test.each(["install --frozen-lockfile", "ci"])(
+    "package-lock.json: bun %s installs it when there is no bun.lock",
+    async command => {
+      using github = await githubProject(packageLock);
+
+      const { errors, exitCode } = await github.bun({}, ...command.split(" "));
+      expect(errors).toEqual([]);
+      expect(github.requests).toEqual([tarballPath]);
+      expect(github.installed()).toBe("locked");
+      expect(await github.locked()).toBeUndefined();
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The install after `bun pm fetch` finds the package in the cache. It downloads nothing, so it has
+  // no integrity to save, as with a package-lock.json that never had one.
+  test("package-lock.json: bun pm fetch downloads it, and the install after that saves no integrity", async () => {
+    using github = await githubProject(packageLock);
+
+    const fetching = await github.bun({}, "pm", "fetch");
+    expect(fetching.errors).toEqual([]);
+    expect(github.requests).toEqual([tarballPath]);
+    expect(await github.locked()).toBeUndefined();
+    expect(github.installed()).toBeUndefined();
+    expect(fetching.exitCode).toBe(0);
+
+    const installing = await github.bun({}, "install");
+    expect(installing.errors).toEqual([]);
+    expect(github.requests).toEqual([tarballPath]);
+    expect(await github.locked()).toEqual(row());
+    expect(github.installed()).toBe("locked");
+    expect(installing.exitCode).toBe(0);
+  });
+
+  test("package-lock.json: bun pm migrate drops it for a git checkout too, and keeps the integrity of a tarball URL", async () => {
+    const tarball = "https://tarballs.example.com/t-1.0.0.tgz";
+    const dependencies = {
+      e: "git+https://gitlab.com/user/e.git",
+      f: "git+ssh://git@github.com/user/f.git",
+      t: tarball,
+    };
+    using dir = synthetic("npm-migrate-git-checkout-integrity", {
+      "package.json": JSON.stringify({ name: "git-integrity", dependencies }),
+      "package-lock.json": npmLock("git-integrity", {
+        "": { name: "git-integrity", dependencies },
+        "node_modules/e": {
+          version: "1.0.0",
+          resolved: `git+https://gitlab.com/user/e.git#${commit}`,
+          integrity: npmIntegrity,
+        },
+        "node_modules/f": {
+          version: "1.0.0",
+          resolved: `git+ssh://git@github.com/user/f.git#${commit}`,
+          integrity: npmIntegrity,
+        },
+        "node_modules/t": { version: "1.0.0", resolved: tarball, integrity: npmIntegrity },
+      }),
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect((await readLock(dir)).lock.packages).toEqual({
+      e: [`e@git+https://gitlab.com/user/e.git#${commit}`, {}, commit],
+      f: [`f@git+ssh://git@github.com/user/f.git#${commit}`, {}, commit],
+      t: [`t@${tarball}`, {}, npmIntegrity],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("pnpm-lock.yaml: bun install pins a codeload tarball of a commit to the bytes it downloads", async () => {
+    using github = await githubProject(pnpmLock(codeloadEntry));
+
+    const migrating = await github.bun({}, "install");
+    expect(migrating.errors).toEqual([]);
+    expect(migrating.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(github.requests).toEqual([tarballPath]);
+    expect(await github.locked()).toEqual(row(sha512(github.served())));
+    expect(github.installed()).toBe("locked");
+    expect(migrating.exitCode).toBe(0);
+  });
+
+  // pnpm locks `github:owner/repo` as codeload's `tar.gz/<commit>`. Every other tarball URL is the
+  // archive that pnpm hashed, on codeload too: bun downloads that URL, so the integrity stays.
+  test("pnpm-lock.yaml: bun pm migrate drops it for a commit on GitHub and a git checkout, and keeps it for a tarball URL", async () => {
+    const git = "git+https://git.example.com/org/g.git";
+    const urls = {
+      branch: "https://codeload.github.com/me/branch/tar.gz/main",
+      refs: "https://codeload.github.com/me/refs/tar.gz/refs/heads/main",
+      legacy: `https://codeload.github.com/me/legacy/legacy.tar.gz/${commit}`,
+      gitlab: `https://gitlab.com/me/gitlab/-/archive/${commit}/gitlab-${commit}.tar.gz`,
+      bitbucket: `https://bitbucket.org/me/bitbucket/get/${commit}.tar.gz`,
+      t: "https://tarballs.example.com/t-1.0.0.tgz",
+    };
+    const gitHosted = (url: string) => `{gitHosted: true, integrity: ${pnpmIntegrity}, tarball: ${url}}`;
+    using dir = synthetic(
+      "pnpm-migrate-git-integrity",
+      pnpmLock(
+        codeloadEntry,
+        [
+          "g",
+          git,
+          `${git}#${commit}`,
+          `{commit: ${commit}, integrity: ${pnpmIntegrity}, repo: https://git.example.com/org/g.git, type: git}`,
+        ],
+        ["branch", urls.branch, urls.branch, gitHosted(urls.branch)],
+        ["refs", "https://github.com/me/refs/archive/main.tar.gz", urls.refs, gitHosted(urls.refs)],
+        ["legacy", `https://github.com/me/legacy/tarball/${commit}`, urls.legacy, gitHosted(urls.legacy)],
+        ["gitlab", "gitlab:me/gitlab", urls.gitlab, gitHosted(urls.gitlab)],
+        ["bitbucket", "bitbucket:me/bitbucket", urls.bitbucket, gitHosted(urls.bitbucket)],
+        ["t", urls.t, urls.t, `{integrity: ${pnpmIntegrity}, tarball: ${urls.t}}`],
+      ),
+    );
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect((await readLock(dir)).lock.packages).toEqual({
+      "gh-dep": row(),
+      g: [`g@${git}#${commit}`, {}, commit],
+      ...Object.fromEntries(Object.entries(urls).map(([name, url]) => [name, [`${name}@${url}`, {}, pnpmIntegrity]])),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("pnpm-lock.yaml: bun ci downloads a codeload URL of a branch as it is written, and checks pnpm's integrity", async () => {
+    const url = "https://codeload.github.com/me/gh-dep/tar.gz/main";
+    using github = await githubProject(integrity =>
+      pnpmLock(["gh-dep", url, url, `{gitHosted: true, integrity: ${integrity}, tarball: ${url}}`]),
+    );
+    const requests: string[] = [];
+    using codeload = await startHttpsStandIn(request => {
+      requests.push(request.url);
+      return request.url === url ? new Response(github.served()) : new Response(null, { status: 404 });
+    });
+
+    const same = await github.bun(codeload.env, "ci");
+    expect(same.errors).toEqual([]);
+    expect(requests).toEqual([url]);
+    expect(github.requests).toEqual([]);
+    expect(github.installed()).toBe("locked");
+    expect(same.exitCode).toBe(0);
+
+    github.remove(...installed);
+    await github.serveOtherBytes();
+    const other = await github.bun(codeload.env, "ci");
+    expect(other.errors[0]).toBe("error: Integrity check failed for tarball: gh-dep");
+    expect(requests).toEqual([url, url]);
+    expect(github.installed()).toBeUndefined();
+    expect(other.exitCode).toBe(1);
+  });
+
+  // yarn writes no `integrity` for a git entry. `bun install --yarn` does: it copies the one of the
+  // bun.lock entry, here the sha512 of the archive that bun downloaded from GitHub. Bun downloads
+  // that archive again when the yarn.lock migrates back, so the line stays a pin.
+  test("yarn.lock: the integrity that bun install --yarn writes for a GitHub dependency still pins it", async () => {
+    using github = await githubProject({
+      "package.json": JSON.stringify({ name: "git-integrity", dependencies: { "gh-dep": "github:me/gh-dep" } }),
+    });
+    const integrity = sha512(github.served());
+
+    const exporting = await github.bun({}, "install", "--yarn");
+    expect(exporting.errors).toEqual([]);
+    expect(github.read("yarn.lock")).toContain(`\n  integrity ${integrity}\n`);
+    expect(exporting.exitCode).toBe(0);
+
+    github.remove("bun.lock", ...installed);
+    const migrating = await github.bun({}, "install");
+    expect(migrating.errors).toEqual([]);
+    expect(migrating.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(await github.locked()).toEqual(["gh-dep@github:me/gh-dep#0123456", {}, "me-gh-dep-0123456", integrity]);
+    expect(github.installed()).toBe("locked");
+    expect(migrating.exitCode).toBe(0);
+
+    github.remove("bun.lock", ...installed);
+    await github.serveOtherBytes();
+    const other = await github.bun({}, "install");
+    expect(other.errors[0]).toBe("error: Integrity check failed for tarball: gh-dep");
+    expect(github.installed()).toBeUndefined();
+    expect(await github.locked()).toBeUndefined();
+    expect(other.exitCode).toBe(1);
   });
 });
 

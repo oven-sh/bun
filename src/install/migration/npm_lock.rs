@@ -18,7 +18,6 @@ use crate::dependency::{
 };
 use crate::external_slice::ExternalSlice;
 use crate::hosted_git_info::{HostProvider, HostedGitInfo};
-use crate::integrity::Integrity;
 use crate::lockfile::{self, Lockfile, PackageListEntry};
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
@@ -416,12 +415,6 @@ impl<'a> Migrator<'a> {
                 lockfile::HasInstallScript::False
             },
 
-            integrity: if let Some(integrity) = pkg.get(b"integrity") {
-                Integrity::parse(integrity.as_str().ok_or(Error::InvalidNPMLockfile)?)
-            } else {
-                Integrity::default()
-            },
-
             ..lockfile::Meta::default()
         };
 
@@ -442,6 +435,11 @@ impl<'a> Migrator<'a> {
             bstr::BStr::new(key),
             res.fmt_for_debug(self.this.buffers.string_bytes.as_slice())
         );
+
+        if let Some(integrity) = pkg.get(b"integrity") {
+            let integrity = integrity.as_str().ok_or(Error::InvalidNPMLockfile)?;
+            meta.integrity = super::foreign_integrity(res.tag, integrity);
+        }
 
         if res.tag == resolution::Tag::Npm {
             let buf = self.this.buffers.string_bytes.as_slice();

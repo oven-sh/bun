@@ -660,11 +660,11 @@ The migration process handles:
 ### Lockfile Migration
 
 - Converts `pnpm-lock.yaml` (lockfile versions 7–9, including pnpm 11's multi-document files) to `bun.lock`
-- Preserves resolved versions and integrity hashes
+- Preserves resolved versions, and the integrity hashes of registry packages and tarball URLs
 - Preserves peer dependency ranges and `peerDependenciesMeta`, so the next `bun install` leaves the migrated lockfile unchanged
 - Writes every catalog entry declared in `pnpm-workspace.yaml` to `bun.lock`, including entries no workspace uses yet (`pnpm-lock.yaml` lists only the entries in use), so the next `bun install` leaves the catalog unchanged
 - Keeps `catalog:` and `workspace:` specifiers as written and records each workspace package's version, so `bun install --frozen-lockfile` accepts the migrated lockfile and the versions pnpm locked for each workspace are the ones installed
-- Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones
+- Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones. A git checkout or a GitHub dependency that is locked to a commit keeps that commit. Bun drops the integrity hash that pnpm recorded for it, because that hash is of an archive Bun does not download (see [automatic lockfile migration](/pm/lockfile#automatic-lockfile-migration))
 - Resolves pnpm named registries (`name@registry:version`) via `namedRegistries` in `pnpm-workspace.yaml`
 - Converts injected workspace packages (`dependenciesMeta.*.injected`) to ordinary workspace dependencies
 - Handles patched dependencies, matching pnpm's hash-only `patchedDependencies` entries to the patch files

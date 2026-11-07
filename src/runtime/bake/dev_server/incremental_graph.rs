@@ -219,6 +219,8 @@ enum FreeCssMode {
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum StaleBit {
     Set,
+    /// Set the bit of a new file. An existing file keeps its bit.
+    SetIfNew,
     Clear,
     Keep,
 }
@@ -479,8 +481,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         match stale {
             StaleBit::Set => self.stale_files.set(idx),
+            StaleBit::SetIfNew if !found_existing => self.stale_files.set(idx),
             StaleBit::Clear => self.stale_files.unset(idx),
-            StaleBit::Keep => {}
+            StaleBit::SetIfNew | StaleBit::Keep => {}
         }
         debug_assert!(self.stale_files.bit_length >= self.bundled_files.count());
         debug_assert_eq!(self.edge_lists.len(), self.bundled_files.count());
@@ -1438,7 +1441,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
         kind: FileKind,
     ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
-        let (idx, found_existing) = self.add_node(abs_path, StaleBit::Set)?;
+        let (idx, found_existing) = self.add_node(abs_path, StaleBit::SetIfNew)?;
         if !found_existing {
             self.bundled_files.values_mut()[idx] = match SIDE {
                 Side::Client => File {

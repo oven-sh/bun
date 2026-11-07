@@ -170,6 +170,41 @@ test
   expect(exitCode).toBe(0);
 });
 
+// A thread that waits polls nothing. With another thread alive it has given up the interpreter meanwhile.
+test.skipIf(isWindows).concurrent.each([
+  ["os.read()", ""],
+  ["select.select()", ""],
+  ["os.read(), and again in what the event loop runs meanwhile", ""],
+  ["os.read(), and again in what the event loop runs meanwhile", "waits"],
+  ["a lock, for a time", ""],
+  ["an event, for a time", ""],
+  ["queue.Queue.get(), for a time", ""],
+  ["queue.SimpleQueue.get(), for a time", ""],
+  ["a lock, for a time", "waits"],
+  ["time.sleep()", "waits"],
+  ["time.sleep()", "computes"],
+  ["a lock", "waits"],
+  ["a lock", "computes"],
+  ["signal.pause()", "waits"],
+  ["signal.sigwait()", "waits"],
+  ["signal.sigwait()", "computes"],
+  ["a sleep() of C", "waits"],
+  ["os.read()", "waits"],
+  ["select.select()", "computes"],
+  ["open() of a FIFO", "waits"],
+  ["os.write() to a pipe that is full", "waits"],
+  ["os.write(), again and again", "waits"],
+  ["os.write(), again and again", "computes"],
+  ["time.sleep(0), again and again", "waits"],
+  ["time.sleep(0), again and again", "computes"],
+  ["select.select() for an instant, again and again", ""],
+  ["select.select() for an instant, again and again", "waits"],
+])("the timeout of node:vm ends a script that waits in %s, another thread: %s", async (what, other) => {
+  const { stdout, stderr, exitCode } = await runFixture("timeout-in-a-wait-fixture.ts", what, other);
+  expect({ stdout, stderr }).toEqual({ stdout: "ERR_SCRIPT_EXECUTION_TIMEOUT\n45\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)("an exception reaches its handler though a script was broken on the way", async () => {
   const { stdout, stderr, exitCode } = await runFixture(
     "interrupt-at-work-fixture.ts",

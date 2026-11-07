@@ -1,6 +1,20 @@
 // Terminates workers whose Python is in the middle of something. `process.argv[2]` says of what. The program tells when it is there, so
 // nothing depends on how long anything takes.
+import { read } from "node:fs";
 import { isMainThread, parentPort, workerData } from "node:worker_threads";
+
+// It is the other thread that tells, through a pipe. It cannot before the thread of the worker, which has woken it, gives up the interpreter:
+// that one is in the call then, or about to make it.
+const whileAnotherThread = (does: "waits" | "computes", program: string) => `
+import os, threading
+told, tells = os.pipe()
+go = threading.Event()
+def other():
+    go.wait()
+    os.write(tells, b".")
+    ${does === "waits" ? "threading.Event().wait()" : "while True: pass"}
+threading.Thread(target=other, daemon=True).start()
+tell(told)${program}`;
 
 const programs: Record<string, string> = {
   // Its thread owes the other finalizers when it ends.
@@ -493,13 +507,106 @@ signal.sigwait({signal.SIGUSR2})`,
 import signal
 tell()
 signal.sigtimedwait({signal.SIGUSR2}, 1000)`,
+  // With another thread alive, the thread of the worker gives up the interpreter for the time of the call: nobody is in the VM, or somebody else is.
+  "in time.sleep(), while another thread waits": whileAnotherThread(
+    "waits",
+    `
+import time
+go.set()
+time.sleep(1000)`,
+  ),
+  "in time.sleep(), while another thread computes": whileAnotherThread(
+    "computes",
+    `
+import time
+go.set()
+time.sleep(1000)`,
+  ),
+  "in signal.pause(), while another thread waits": whileAnotherThread(
+    "waits",
+    `
+import signal
+go.set()
+# (A collection of the other thread's makes it return.)
+while True: signal.pause()`,
+  ),
+  "in signal.sigwait(), while another thread computes": whileAnotherThread(
+    "computes",
+    `
+import signal
+go.set()
+signal.sigwait({signal.SIGUSR2})`,
+  ),
+  "in a sleep() of C, while another thread waits": whileAnotherThread(
+    "waits",
+    `
+import ctypes
+sleep = ctypes.CDLL(None).sleep
+go.set()
+while True: sleep(1000)`,
+  ),
+  "in open() of a FIFO, while another thread waits": whileAnotherThread(
+    "waits",
+    `
+import tempfile
+with tempfile.TemporaryDirectory() as directory:
+    os.mkfifo(directory + "/fifo")
+    go.set()
+    open(directory + "/fifo")`,
+  ),
+  "in os.write() to a pipe that is full, while another thread waits": whileAnotherThread(
+    "waits",
+    `
+full = os.pipe()[1]
+os.set_blocking(full, False)
+try:
+    while True: os.write(full, bytes(4096))
+except BlockingIOError: pass
+os.set_blocking(full, True)
+go.set()
+os.write(full, bytes(4096))`,
+  ),
+  "waiting for a lock, while another thread waits": whileAnotherThread(
+    "waits",
+    `
+lock = threading.Lock()
+lock.acquire()
+go.set()
+lock.acquire()`,
+  ),
+  // Wherever it happens to come: while the thread gives up the interpreter, while it takes it back.
+  "in os.write(), again and again, while another thread waits": whileAnotherThread(
+    "waits",
+    `
+null = os.open(os.devnull, os.O_WRONLY)
+go.set()
+while True: os.write(null, b".")`,
+  ),
+  "in time.sleep(0), again and again, while another thread computes": whileAnotherThread(
+    "computes",
+    `
+import time
+go.set()
+while True: time.sleep(0)`,
+  ),
+  "in os.spawnv(os.P_WAIT, ...)": `
+import os
+# The child ends when nobody can write to the pipe any more: with this process, at the latest.
+r, w = os.pipe()
+os.set_inheritable(r, True)
+tell()
+os.spawnv(os.P_WAIT, "/bin/cat", ["cat", f"/dev/fd/{r}"])`,
 };
 
 if (isMainThread) {
   for (let round = 0; round < 3; ++round) {
     const worker = new Worker(import.meta.url, { workerData: process.argv[2] });
     const closed = new Promise(resolve => worker.addEventListener("close", resolve));
-    await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+    const { data } = await new Promise<MessageEvent>(resolve =>
+      worker.addEventListener("message", resolve, { once: true }),
+    );
+    // A descriptor: it is there when something can be read from that.
+    if (typeof data === "number") await new Promise(resolve => read(data, Buffer.alloc(1), 0, 1, null, resolve));
     worker.terminate();
     await closed;
   }
@@ -509,7 +616,7 @@ if (isMainThread) {
   const { exec, dict } = require("python:builtins");
   // Or it would end by itself, and could no longer be reached.
   setInterval(() => {}, 1000);
-  const tell = () => parentPort!.postMessage("there");
+  const tell = (descriptor?: number) => parentPort!.postMessage(descriptor ?? "there");
   const throwWhatCannotBeShown = () => {
     throw {
       toString() {

@@ -232,9 +232,25 @@ describe.concurrent("workers", () => {
     "in time.sleep(), in the callback of a weak reference",
     "in time.sleep(), in the finally of a generator that is collected",
     // Elsewhere nothing gets the thread out of these.
-    ...(isLinux ? ["in signal.sigwait()", "in signal.sigtimedwait()"] : []),
+    ...(isLinux ? ["in signal.sigwait()", "in signal.sigtimedwait()", "in os.spawnv(os.P_WAIT, ...)"] : []),
+    "in time.sleep(), while another thread waits",
+    "in time.sleep(), while another thread computes",
+    "in signal.pause(), while another thread waits",
+    "in signal.sigwait(), while another thread computes",
+    "in a sleep() of C, while another thread waits",
+    "in open() of a FIFO, while another thread waits",
+    "in os.write() to a pipe that is full, while another thread waits",
+    "waiting for a lock, while another thread waits",
+    "in os.write(), again and again, while another thread waits",
+    "in time.sleep(0), again and again, while another thread computes",
   ])("terminate() of a worker whose Python is %s", async what => {
     const { stdout, stderr, exitCode } = await runFixture("terminate-at-work-fixture.ts", what);
+    expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("terminate() of workers without Python, beside a main program that has it", async () => {
+    const { stdout, stderr, exitCode } = await runFixture("terminate-without-python-fixture.ts");
     expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
     expect(exitCode).toBe(0);
   });

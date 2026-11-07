@@ -3566,6 +3566,200 @@ it.concurrent(
   20_000,
 );
 
+// usockets fires the idle timers from a sweep every 4 s, so this test needs real seconds.
+// Windows takes the first write of a response whole, whatever its size, so no write blocks there.
+it.concurrent.skipIf(isWindows).each([
+  ["tcp", false],
+  ["tls", true],
+] as const)(
+  "idleTimeout closes a connection whose response write is blocked, with a paused or complete request body (%s)",
+  async (_transport, secure) => {
+    const MB = 1024 * 1024;
+    // Larger than the socket buffers: the write blocks until the client reads.
+    const big = new Blob([new Uint8Array(64 * MB)]);
+    // Path of each request that was aborted, with the milliseconds it was open.
+    const closed = new Map<string, number>();
+    const requested = new Map<string, PromiseWithResolvers<void>>();
+    const whenRequested = (path: string) => {
+      let waiter = requested.get(path);
+      if (!waiter) requested.set(path, (waiter = Promise.withResolvers<void>()));
+      return waiter;
+    };
+    const answerLate = Promise.withResolvers<void>();
+    const track = (req: Request) => {
+      const path = new URL(req.url).pathname;
+      const started = Date.now();
+      req.signal.addEventListener("abort", () => closed.set(path, Date.now() - started));
+      whenRequested(path).resolve();
+    };
+    const respond = (req: Request) => {
+      track(req);
+      return new Response(big);
+    };
+    using server = Bun.serve({
+      port: 0,
+      tls: secure ? tls : undefined,
+      // Two sweeps: the timer fires 4 to 8 s after a request arms it.
+      idleTimeout: 8,
+      routes: {
+        "/route/post-10b": { POST: respond },
+      },
+      async fetch(req, server) {
+        const path = new URL(req.url).pathname;
+        switch (path) {
+          case "/post-answered-late":
+            await answerLate.promise;
+            return new Response("late");
+          case "/post-10b-timeout-0":
+            server.timeout(req, 0);
+            break;
+          case "/post-4m-reader-stopped":
+            // One read, then no more: the rest of the body waits in the stream.
+            req
+              .body!.getReader()
+              .read()
+              .catch(() => {});
+            break;
+          case "/stream/post-10b": {
+            track(req);
+            const chunk = new Uint8Array(64 * 1024);
+            let pulls = 0;
+            return new Response(
+              new ReadableStream(
+                {
+                  pull(controller) {
+                    controller.enqueue(chunk);
+                    if (++pulls === 2048) controller.close();
+                  },
+                },
+                { highWaterMark: 1 },
+              ),
+            );
+          }
+        }
+        return respond(req);
+      },
+    });
+
+    const sockets: net.Socket[] = [];
+    // A raw client that sends its request and never reads from its socket.
+    const stalled = async (...writes: (string | Buffer)[]) => {
+      const socket = secure
+        ? nodeTls.connect({ port: server.port!, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(server.port!, "127.0.0.1");
+      sockets.push(socket);
+      socket.on("error", () => {});
+      socket.pause();
+      await once(socket, secure ? "secureConnect" : "connect");
+      for (const bytes of writes) socket.write(bytes);
+      return socket;
+    };
+    const head = (path: string, length: number) =>
+      `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`;
+    const post = (path: string, length: number) =>
+      Buffer.concat([Buffer.from(head(path, length)), Buffer.alloc(length, "x")]);
+    const chunk = (length: number) =>
+      Buffer.concat([Buffer.from(length.toString(16) + "\r\n"), Buffer.alloc(length, "x"), Buffer.from("\r\n")]);
+    const url = (path: string) => new URL(path, server.url);
+    const clientTls = secure ? { tls: { rejectUnauthorized: false } } : {};
+    let sending: ReturnType<typeof setInterval> | undefined;
+
+    try {
+      // server.timeout(req, 0) must keep this one open. It connects first, so
+      // a timer that is armed by mistake is due no later than the others.
+      await stalled(post("/post-10b-timeout-0", 10));
+      await Promise.all([
+        stalled("GET /get HTTP/1.1\r\nHost: x\r\n\r\n"),
+        // Over the 1 MiB at which the server stops reading a body that the handler does not take.
+        stalled(post("/post-4m-unread", 4 * MB)),
+        stalled(post("/post-4m-reader-stopped", 4 * MB)),
+        // Bodies that arrive whole, in the same write as the head.
+        stalled(post("/post-10b", 10)),
+        stalled(post("/post-512k", 512 * 1024)),
+        stalled(post("/route/post-10b", 10)),
+        stalled(post("/stream/post-10b", 10)),
+        // The client also sends its FIN.
+        stalled(post("/post-10b-half-closed", 10)).then(socket => socket.end()),
+        stalled(post("/post-4m-half-closed", 4 * MB)).then(socket => socket.end()),
+      ]);
+      // The body arrives in a later read than the head, after the handler answered.
+      const later = await stalled(head("/post-10b-later", 10));
+      await whenRequested("/post-10b-later").promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      later.write(Buffer.alloc(10, "x"));
+      // The client sends more bytes every second, and still never reads.
+      const sender = await stalled(post("/post-10b-keeps-sending", 10));
+      let sent = 0;
+      sending = setInterval(() => sender.write(sent++ === 0 ? "GET /" : "a"), 1000);
+      // The last write holds the chunk that crosses 1 MiB and the terminator,
+      // so the server stops reading and sees the end of the body in one read.
+      const chunked = await stalled("POST /post-chunked HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+      await new Promise<void>(resolve => chunked.write(chunk(MB - 8192), () => resolve()));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      chunked.write(Buffer.concat([chunk(16384), Buffer.from("0\r\n\r\n")]));
+
+      // This client reads. Its handler answers after the stalled connections
+      // timed out. On plain TCP a body that arrived whole leaves no idle timer
+      // for a silent handler. That is the current behaviour, not a contract
+      // (#33612 proposes to change it), and this change must not alter it.
+      // Over TLS that request is reset at idleTimeout on main too, so it is
+      // not a row there.
+      const late = secure
+        ? undefined
+        : fetch(url("/post-answered-late"), { method: "POST", body: "0123456789" }).then(
+            async response => [response.status, await response.text()],
+            error => String(error),
+          );
+
+      // A client that reads gets the whole response, also when the write is
+      // blocked at its last body chunk.
+      const read = await fetch(url("/post-10b-read"), { method: "POST", body: "0123456789", ...clientTls }).then(
+        async response => {
+          let length = 0;
+          for await (const bytes of response.body!) length += bytes.length;
+          return [response.status, length];
+        },
+        error => String(error),
+      );
+
+      const timedOut = [
+        "/get",
+        "/post-10b",
+        "/post-10b-half-closed",
+        "/post-10b-keeps-sending",
+        "/post-10b-later",
+        "/post-4m-half-closed",
+        "/post-4m-reader-stopped",
+        "/post-4m-unread",
+        "/post-512k",
+        "/post-chunked",
+        "/route/post-10b",
+        "/stream/post-10b",
+      ];
+      const deadline = Date.now() + 24_000;
+      while (closed.size < timedOut.length && Date.now() < deadline) await Bun.sleep(50);
+      answerLate.resolve();
+      expect({
+        closed: [...closed.keys()].sort(),
+        // The timer closes them: none is closed before a timer can fire.
+        early: [...closed].filter(([, open]) => open < 3000).map(([path]) => path),
+        late: await late,
+        read,
+      }).toEqual({
+        closed: timedOut,
+        early: [],
+        late: secure ? undefined : [200, "late"],
+        read: [200, 64 * MB],
+      });
+    } finally {
+      clearInterval(sending);
+      answerLate.resolve();
+      for (const socket of sockets) socket.destroy();
+    }
+  },
+  40_000,
+);
+
 it.concurrent(
   "TLS: reaps every zero-byte pre-handshake connection in a burst",
   async () => {

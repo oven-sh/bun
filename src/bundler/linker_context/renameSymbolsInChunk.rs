@@ -427,6 +427,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             // The symbol "init_foo" is stored in "file.ast.WrapperRef". We need to
             // minify everything inside the closure without introducing a new scope
             // since all top-level variables will be hoisted outside of the closure.
+            // A `KEEP_TOP_LEVEL_IN_WRAPPER` file hoists none, and only a name that must not be renamed can repeat.
             WrapKind::Esm => {
                 r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
             }

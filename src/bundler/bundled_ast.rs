@@ -157,6 +157,8 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
+        /// See `Ast::keep_top_level_in_wrapper`.
+        const KEEP_TOP_LEVEL_IN_WRAPPER = 1 << 11;
         // _padding: u6 fills the rest
     }
 }
@@ -262,6 +264,7 @@ impl<'arena> BundledAst<'arena> {
             },
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
             commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
+            keep_top_level_in_wrapper: self.flags.contains(Flags::KEEP_TOP_LEVEL_IN_WRAPPER),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
@@ -287,6 +290,10 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::USES_EXPORT_KEYWORD, ast.export_keyword.len > 0);
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
         flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);
+        flags.set(
+            Flags::KEEP_TOP_LEVEL_IN_WRAPPER,
+            ast.keep_top_level_in_wrapper,
+        );
         flags.set(Flags::HAS_LAZY_EXPORT, ast.has_lazy_export);
         flags.set(
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,

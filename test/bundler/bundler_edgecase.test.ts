@@ -4335,6 +4335,275 @@ describe("bundler", () => {
     run: { file: "/check.js", stdout: `{"x":1} true` },
   });
 
+  // A name that a `with` body reads keeps its spelling, because the object of
+  // the `with` can own that name. The `__esm` wrapper of a file hoists its
+  // top-level declarations into the scope that the files of a chunk share.
+  // There two scripts' `x` are one binding, a file that reads a free `x` finds
+  // it, and a `var x` next to a `class x` does not load. So a script (no import
+  // or export syntax) with such a name keeps every declaration inside its
+  // wrapper. Each expected line is what Node prints for the source files.
+  const withPinnedNameScripts = {
+    "/a.js": /* js */ `
+      const x = "A";
+      function read(o) { with (o) { return x; } }
+      console.log("a", read({}), read({ x: "o.x" }));
+    `,
+    "/b.js": /* js */ `
+      const x = "B";
+      function read(o) { with (o) { return x; } }
+      console.log("b", read({}), read({ x: "o.x" }));
+    `,
+    "/c.js": /* js */ `
+      class x {}
+      function read(o) { with (o) { return typeof x; } }
+      console.log("c", read({}), read({ x: 1 }));
+    `,
+    "/free.js": /* js */ `console.log("free", typeof x);`,
+  };
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`edgecase/WithPinnedNameOfRequiredScript${backend === "cli" ? "CLI" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          console.log("entry", typeof x);
+          require("./a.js");
+          require("./b.js");
+          require("./c.js");
+          require("./free.js");
+        `,
+        ...withPinnedNameScripts,
+      },
+      format: "cjs",
+      backend,
+      run: { stdout: "entry undefined\na A o.x\nb B o.x\nc function number\nfree undefined" },
+    });
+  }
+  // `import()` without code splitting gives the same wrapper. The esm bundle
+  // has no import or export statement, so it loads as a script.
+  for (const [format, suffix] of [
+    ["cjs", ""],
+    ["iife", "Iife"],
+    ["esm", "Esm"],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfDynamicallyImportedScript${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import("./a.js")
+            .then(() => import("./b.js"))
+            .then(() => console.log(readA({}), readB({}), readA({ x: "o.x" }), typeof x));
+        `,
+        "/a.js": /* js */ `
+          var x = "A";
+          globalThis.readA = function (o) { with (o) { return x; } };
+        `,
+        "/b.js": /* js */ `
+          var x = "B";
+          globalThis.readB = function (o) { with (o) { return x; } };
+        `,
+      },
+      format,
+      run: { stdout: "A B o.x undefined" },
+    });
+  }
+  // An ES module that something require()s is wrapped, and so is each file it imports.
+  itBundled("edgecase/WithPinnedNameOfScriptImportedByWrappedModule", {
+    files: {
+      "/entry.js": /* js */ `console.log("entry", require("./mod.mjs").seen);`,
+      "/mod.mjs": /* js */ `
+        import "./a.js";
+        import "./free.js";
+        export const seen = typeof x;
+      `,
+      "/a.js": withPinnedNameScripts["/a.js"],
+      "/free.js": withPinnedNameScripts["/free.js"],
+    },
+    format: "cjs",
+    run: { stdout: "a A o.x\nfree undefined\nentry undefined" },
+  });
+  // In iife output nothing calls a wrapped CommonJS entry point, so an ES
+  // module entry point loads the file that has the require() calls.
+  itBundled("edgecase/WithPinnedNameOfRequiredScriptIife", {
+    files: {
+      "/entry.js": /* js */ `
+        import seen from "./load.cjs";
+        console.log("entry", seen);
+      `,
+      "/load.cjs": /* js */ `
+        require("./a.js");
+        require("./b.js");
+        module.exports = typeof x;
+      `,
+      "/a.js": withPinnedNameScripts["/a.js"],
+      "/b.js": withPinnedNameScripts["/b.js"],
+    },
+    format: "iife",
+    run: { stdout: "a A o.x\nb B o.x\nentry undefined" },
+  });
+  // `with (o) var t` declares `t` in the scope of the `with`. The top-level
+  // symbol it links to is the one that must keep its name.
+  for (const minifyIdentifiers of [false, true]) {
+    itBundled(`edgecase/WithPinnedNameDeclaredByWithStatement${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          require("./a.js");
+          require("./b.js");
+          console.log(lateA(), lateB(), typeof t);
+        `,
+        "/a.js": /* js */ `
+          var o = {};
+          with (o) var t = "A";
+          globalThis.lateA = function () { return t; };
+        `,
+        "/b.js": /* js */ `
+          var o = {};
+          with (o) var t = "B";
+          globalThis.lateB = function () { return t; };
+        `,
+      },
+      format: "cjs",
+      minifyIdentifiers,
+      run: { stdout: "A B undefined" },
+    });
+  }
+  // An entry point that a file it loads imports back is wrapped.
+  itBundled("edgecase/WithPinnedNameOfEntryPointLoadedBack", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = "E";
+        function read(o) { with (o) { return x; } }
+        console.log("entry", read({}), read({ x: "o.x" }));
+        import("./dep.mjs");
+      `,
+      "/dep.mjs": /* js */ `
+        import "./entry.js";
+        console.log("dep", typeof x);
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "entry E o.x\ndep undefined" },
+  });
+  // A hoisted `var x = "A"` has its value before the script runs, and a hoisted
+  // class is out of its temporal dead zone. In the wrapper they are not.
+  itBundled("edgecase/WithPinnedNameReadAboveItsDeclaration", {
+    files: {
+      "/entry.js": /* js */ `require("./a.js");`,
+      "/a.js": /* js */ `
+        function read(o) {
+          with (o) {
+            try { return typeof x + " " + typeof C; } catch (error) { return error.name; }
+          }
+        }
+        console.log("above", typeof x, read({}));
+        var x = "A";
+        class C {}
+        console.log("below", read({}));
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "above undefined ReferenceError\nbelow string function" },
+  });
+  // The value of require() does not change: under each minifier pass, and in
+  // a bytecode build, which is always cjs output.
+  for (const [suffix, options] of [
+    ["MinifySyntax", { minifySyntax: true }],
+    ["MinifyWhitespace", { minifyWhitespace: true }],
+    ["MinifyIdentifiers", { minifyIdentifiers: true }],
+    ["Bytecode", { target: "bun", bytecode: true }],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfRequiredScriptResult${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          var a = require("./a.js");
+          var b = require("./b.js");
+          console.log(JSON.stringify([a, b]), readA({}), readB({}), readA({ x: "o.x" }), typeof x);
+        `,
+        "/a.js": /* js */ `
+          var x = "A";
+          globalThis.readA = function (o) { with (o) { return x; } };
+        `,
+        "/b.js": /* js */ `
+          var x = "B";
+          globalThis.readB = function (o) { with (o) { return x; } };
+        `,
+      },
+      format: "cjs",
+      ...options,
+      run: { stdout: "[{},{}] A B o.x undefined" },
+    });
+  }
+  // Every statement of this script could hoist, so the script had no wrapper
+  // symbol. The statements now stay in the wrapper, which needs that symbol.
+  // They are live only with tree shaking off and the script as an entry point.
+  itBundled("edgecase/WithPinnedNameOfDeclarationsOnlyScriptKeepsWrapper", {
+    files: {
+      "/main.js": /* js */ `
+        require("./a.js");
+        console.log(typeof x, typeof read);
+      `,
+      "/a.js": /* js */ `
+        var x = "A";
+        function read(o) { with (o) { return x; } }
+      `,
+    },
+    entryPoints: ["/main.js", "/a.js"],
+    outdir: "/out",
+    format: "cjs",
+    treeShaking: false,
+    // The CLI has no flag to disable tree shaking.
+    backend: "api",
+    run: { file: "/out/main.js", stdout: "undefined undefined" },
+  });
+  // The three cases below are files that still hoist. A file with exports
+  // does: the files that import it read its top-level names from the shared
+  // scope. Bun accepts `with` in an ES module that it prints as cjs.
+  itBundled("edgecase/WithPinnedNameOfModuleWithExports", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("./mod.js");
+        console.log(m.value, m.read({}), m.read({ x: "o.x" }));
+      `,
+      "/mod.js": /* js */ `
+        var x = "M";
+        export const value = "v";
+        export function read(o) { with (o) { return x; } }
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "v M o.x" },
+  });
+  // In esm output `exports.name = value` of a CommonJS file becomes an ES export.
+  itBundled("edgecase/WithPinnedNameOfLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `import("./mod.mjs").then(m => console.log(m.seen));`,
+      "/mod.mjs": /* js */ `
+        import { value, read } from "./lib.js";
+        export const seen = [value, read({}), read({ x: "o.x" })].join(" ");
+      `,
+      "/lib.js": /* js */ `
+        var x = "L";
+        exports.value = "v";
+        exports.read = function (o) { with (o) { return x; } };
+      `,
+    },
+    format: "esm",
+    run: { stdout: "v L o.x" },
+  });
+  // A script whose `with` bodies read only globals and function locals.
+  itBundled("edgecase/WithStatementThatPinsNoTopLevelName", {
+    files: {
+      "/entry.js": /* js */ `require("./a.js");`,
+      "/a.js": /* js */ `
+        var kept = "kept";
+        function largest(o) { var local = 1; with (Math) { return max(local, o); } }
+        console.log(kept, largest(2));
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "kept 2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/^var kept = "kept";$/m);
+    },
+  });
+
   // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
   // accessor or `#private` next to each class. Every class needs its own.
   itBundled("edgecase/StandardDecoratorTemporariesPerClass", {

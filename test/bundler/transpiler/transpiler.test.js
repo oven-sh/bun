@@ -3955,7 +3955,8 @@ console.log(resolve.length)
         expect(parsed("true", true, false)).toBe("");
         expect(parsed("!0", true, false)).toBe("");
         expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
-        expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
+        // The dead `var` hoists out of the brace-less body, as it does out of a block body.
+        expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  ;\nvar x");
         expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {}");
       });
       it("should not DCE with deadCodeElimination: false", () => {

@@ -214,12 +214,12 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     (
         "a.js",
         r#"if (typeof require === "undefined") { async function f() {} }"#,
-        CommonJs,
+        Esm,
     ),
     (
         "a.js",
         r#"if (typeof require === "undefined") { function* f() {} }"#,
-        CommonJs,
+        Esm,
     ),
     ("a.ts", r#"typeof module as string;"#, Esm),
     (
@@ -409,7 +409,7 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     (
         "a.js",
         r#"if (typeof require === "undefined") { switch (1) {} }"#,
-        CommonJs,
+        Esm,
     ),
     (
         "a.js",

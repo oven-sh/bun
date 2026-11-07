@@ -1428,6 +1428,7 @@ impl<'a> Converter<'a, '_> {
                     init: self.stmt(left)?,
                     value: self.expr(expr)?,
                     body: self.stmt(body)?,
+                    await_range: bun_ast::Range::NONE,
                 },
                 loc,
             ),

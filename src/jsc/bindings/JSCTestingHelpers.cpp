@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ZeroCollectorStack.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -92,6 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLiveCellAtRawAddress, (JSGlobalObject * glo
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * globalObject, CallFrame*))
 {
     JSC::getVM(globalObject).heap.collectSync(JSC::CollectionScope::Full);
+    Bun::zeroCollectorStack();
     return JSValue::encode(jsUndefined());
 }
 

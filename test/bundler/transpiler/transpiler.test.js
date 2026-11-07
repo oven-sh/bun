@@ -3892,6 +3892,159 @@ console.log(resolve.length)
       });
     });
 
+    describe("an identifier diagnostic covers the whole identifier", () => {
+      // Each error, then each of its notes, as [message, the source text its position covers].
+      const diagnostics = code => {
+        const source = Buffer.from(code);
+        const covered = ({ message, position }) => [
+          message,
+          source.subarray(position.offset, position.offset + position.length).toString(),
+        ];
+        try {
+          transpiler.transformSync(code, "js");
+        } catch (e) {
+          const errors = e instanceof AggregateError ? e.errors : [e];
+          return errors.flatMap(error => [covered(error), ...error.notes.map(covered)]);
+        }
+        throw new Error("Expected parse error for code\n\t" + code);
+      };
+      const check = (code, expected) => expect(diagnostics(code)).toEqual(expected);
+
+      const strictClass = ["All code inside a class is implicitly in strict mode", "class"];
+      const strictImport = ['This file is implicitly in strict mode because of the "import" keyword here', "import"];
+
+      it.each([
+        ["for (;;) { break \\u{79}; }", [['There is no containing label named "y"', "\\u{79}"]]],
+        ["export { \\u{61} };", [['"a" is not declared in this file', "\\u{61}"]]],
+        ["export { \\u{69}f };", [['Expected identifier but found "\\u{69}f"', "\\u{69}f"]]],
+        ["const \\u{61};", [['The constant "a" must be initialized', "\\u{61}"]]],
+        [
+          "const a = 1; \\u{61} = 2;",
+          [
+            ['Cannot assign to "a" because it is a constant', "\\u{61}"],
+            ['The symbol "a" was declared a constant here:', "a"],
+          ],
+        ],
+        [
+          "const \\u{61} = 1; a = 2;",
+          [
+            ['Cannot assign to "a" because it is a constant', "a"],
+            ['The symbol "a" was declared a constant here:', "\\u{61}"],
+          ],
+        ],
+        [
+          "let a; export { a, \\u{61} };",
+          [
+            ['Multiple exports with the same name "a"', "\\u{61}"],
+            ['"a" was originally exported here', "a"],
+          ],
+        ],
+        [
+          "let a; export { \\u{61}, a };",
+          [
+            ['Multiple exports with the same name "a"', "a"],
+            ['"a" was originally exported here', "\\u{61}"],
+          ],
+        ],
+        [
+          "let a; { var \\u{61}; }",
+          [
+            ["a has already been declared", "a"],
+            ["a was originally declared here", "\\u{61}"],
+          ],
+        ],
+        [
+          "let \\u{61}; { var a; }",
+          [
+            ["a has already been declared", "\\u{61}"],
+            ["a was originally declared here", "a"],
+          ],
+        ],
+        [
+          "function f(\\u{61}, \\u{61}) { 'use strict' }",
+          [['"a" cannot be bound multiple times in the same parameter list', "\\u{61}"]],
+        ],
+        ["({ get x(\\u{61}) {} })", [["Getter x must have zero arguments", "\\u{61}"]]],
+        ["({ set x(\\u{61}, \\u{62}) {} })", [["Setter x must have exactly 1 argument (there are 2)", "\\u{62}"]]],
+        [
+          "({ __proto__: 1, \\u{5f}_proto__: 2 })",
+          [['Cannot specify the "__proto__" property more than once per object', "\\u{5f}_proto__"]],
+        ],
+        ["(async function \\u{61}wait() {})", [['An async function cannot be named "await"', "\\u{61}wait"]]],
+        ["import { \\u{65}val } from 'x'", [['Cannot use "eval" as an identifier here', "\\u{65}val"]]],
+        ["class A { static { \\u{61}rguments } }", [['Cannot access "arguments" here', "\\u{61}rguments"]]],
+        [
+          "class A { m() { \\u{79}ield } }",
+          [['"yield" is a reserved word and cannot be used in strict mode', "\\u{79}ield"], strictClass],
+        ],
+        [
+          "class A { m(\\u{65}val) {} }",
+          [['Declarations with the name "eval" cannot be used in strict mode', "\\u{65}val"], strictClass],
+        ],
+        [
+          "import.meta; function \\u{65}val() {}",
+          [['Declarations with the name "eval" cannot be used in strict mode', "\\u{65}val"], strictImport],
+        ],
+      ])("that starts with a \\u{...} escape: %j", check);
+
+      it.each([
+        ["for (;;) { break a\\u{62}; }", [['There is no containing label named "ab"', "a\\u{62}"]]],
+        ["for (;;) { break a\\u{62}é; }", [['There is no containing label named "abé"', "a\\u{62}é"]]],
+        ["export { a\\u{62} as x };", [['"ab" is not declared in this file', "a\\u{62}"]]],
+        ["const a\\u{62}, b = 1;", [['The constant "ab" must be initialized', "a\\u{62}"]]],
+        [
+          "let ab; { var a\\u{62}; }",
+          [
+            ["ab has already been declared", "ab"],
+            ["ab was originally declared here", "a\\u{62}"],
+          ],
+        ],
+        [
+          "let a\\u{62}; { var ab; }",
+          [
+            ["ab has already been declared", "a\\u{62}"],
+            ["ab was originally declared here", "ab"],
+          ],
+        ],
+      ])("that ends with a \\u{...} escape: %j", check);
+
+      // The error itself points at the token after `await`. Only its note comes from this scan.
+      it.each(["\\u{61}", "a\\u{62}"])("in the note about a missing async: %j", name => {
+        expect(diagnostics(`${name} => { await x }`).slice(1)).toEqual([
+          ['Consider adding the "async" keyword here', name],
+        ]);
+      });
+
+      it.each([
+        ["const x", [['The constant "x" must be initialized', "x"]]],
+        ["for (;;) break abc", [['There is no containing label named "abc"', "abc"]]],
+        ["for (;;) break é", [['There is no containing label named "é"', "é"]]],
+        ["for (;;) break \\u0061", [['There is no containing label named "a"', "\\u0061"]]],
+        ["break", [['Cannot use "break" here', "break"]]],
+        ["export default interface", [['Unexpected "interface"', "interface"]]],
+        [
+          "import.meta; yield",
+          [['"yield" is a reserved word and cannot be used in strict mode', "yield"], strictImport],
+        ],
+        [
+          "export { x, typeof",
+          [
+            ['Expected "}" but found end of file', ""],
+            ['Expected identifier but found "typeof"', "typeof"],
+          ],
+        ],
+      ])("that ends the file: %j", check);
+
+      it.each([
+        ["for (;;) { break y; }", [['There is no containing label named "y"', "y"]]],
+        ["for (;;) { break \\u0079; }", [['There is no containing label named "y"', "\\u0079"]]],
+        ["for (;;) { break a\\u{62}c; }", [['There is no containing label named "abc"', "a\\u{62}c"]]],
+        ["for (;;) break a\\u{62}", [['There is no containing label named "ab"', "a\\u{62}"]]],
+        ["export { if };", [['Expected identifier but found "if"', "if"]]],
+        ["new import('x')", [['Cannot use an "import" expression here without parentheses', "import"]]],
+      ])("in a spelling that was already right: %j", check);
+    });
+
     it("for-in and for-of loop initializers", () => {
       // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
       expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");

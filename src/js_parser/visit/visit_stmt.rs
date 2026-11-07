@@ -201,7 +201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // those likely correspond to type-only exports. But report exports of
                     // non-local symbols as errors in JavaScript.
                     if !TYPESCRIPT {
-                        let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
+                        let r = p.source.range_of_identifier(items[i].name.loc);
                         p.log().add_range_error_fmt(
                             Some(p.source),
                             r,
@@ -231,7 +231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // those likely correspond to type-only exports. But report exports of
                     // non-local symbols as errors in JavaScript.
                     if !TYPESCRIPT {
-                        let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
+                        let r = p.source.range_of_identifier(items[i].name.loc);
                         p.log().add_range_error_fmt(
                             Some(p.source),
                             r,
@@ -1380,7 +1380,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if !p.fn_or_arrow_data_visit.is_inside_loop
             && !p.fn_or_arrow_data_visit.is_inside_switch
         {
-            let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+            let r = p.source.range_of_identifier(stmt.loc);
             p.log()
                 .add_range_error(Some(p.source), r, b"Cannot use \"break\" here");
         }
@@ -1400,7 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let res = p.find_label_symbol(label.loc, name);
             label.ref_ = res.r#ref;
             if res.found && !res.is_loop {
-                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                let r = p.source.range_of_identifier(stmt.loc);
                 p.log().add_range_error_fmt(
                     Some(p.source),
                     r,
@@ -1408,7 +1408,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
         } else if !p.fn_or_arrow_data_visit.is_inside_loop {
-            let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+            let r = p.source.range_of_identifier(stmt.loc);
             p.log()
                 .add_range_error(Some(p.source), r, b"Cannot use \"continue\" here");
         }

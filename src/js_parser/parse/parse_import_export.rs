@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::lexer::{self as js_lexer, T};
+use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
 use bun_alloc::ArenaVecExt as _;
@@ -18,7 +18,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
+            p.esm_import_keyword = bun_ast::Range {
+                loc,
+                len: b"import".len() as i32,
+            };
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
                 p.lexer.next()?;
@@ -30,7 +33,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if level.gt(Level::Call) {
-            let r = js_lexer::range_of_identifier(p.source, loc);
+            let r = p.source.range_of_identifier(loc);
             p.log().add_range_error(
                 Some(p.source),
                 r,
@@ -238,7 +241,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Reject forbidden names
                 if is_eval_or_arguments(original_name) {
-                    let r = js_lexer::range_of_identifier(p.source, name.loc);
+                    let r = p.source.range_of_identifier(name.loc);
                     p.log().add_range_error_fmt(
                         Some(p.source),
                         r,
@@ -452,7 +455,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Throw an error here if we found a keyword earlier and this isn't an
         // "export from" statement after all
         if first_non_identifier_loc.start != 0 && !p.lexer.is_contextual_keyword(b"from") {
-            let r = js_lexer::range_of_identifier(p.source, first_non_identifier_loc);
+            let r = p.source.range_of_identifier(first_non_identifier_loc);
             p.lexer.add_range_error(
                 r,
                 format_args!(

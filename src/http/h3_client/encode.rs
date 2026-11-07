@@ -18,7 +18,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 /// for this stream (not `on_stream_open`; see the comment there for why no
 /// `lsquic_stream_write` may happen before lsquic's priority iterator has
 /// served the HSK crypto stream).
-pub fn write_request(
+pub(crate) fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
     qs: &mut quic::Stream,
@@ -28,8 +28,6 @@ pub fn write_request(
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // `build_request` returns a `Request<'_>`
-    // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
@@ -163,10 +161,11 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             unreachable!()
         };
         let ended = body.ended;
-        let Some(sb) = body.buffer_mut() else {
+        let Some(sb) = body.buffer_ref() else {
             return;
         };
-        let buffer = sb.acquire();
+        let mut locked = sb.lock();
+        let buffer = &mut locked.buffer;
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
         while written < data_len {
@@ -188,9 +187,9 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         } else if !drained {
             qs.want_write(true);
         } else if data_len > 0 {
-            sb.report_drain();
+            locked.report_drain();
         }
-        sb.release();
+        drop(locked);
         if stream.request_body_done {
             body.detach();
         }

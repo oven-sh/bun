@@ -5,14 +5,14 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
-use bun_threading::{Mutex, Semaphore, UnboundedQueue};
+use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
 // are fine in Rust, so import the real shapes instead of mirroring them.
 use super::node_fs_watcher::Event;
 use super::node_fs_watcher::WatchEventKind;
 
-pub(crate) type CFAbsoluteTime = f64;
+type CFAbsoluteTime = f64;
 pub(crate) type CFTimeInterval = f64;
 
 pub(crate) type FSEventStreamEventFlags = c_int;
@@ -39,24 +39,24 @@ pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
 
 // we only care about info and perform
 #[repr(C)]
-pub struct CFRunLoopSourceContext {
-    pub version: CFIndex,
-    pub info: *mut c_void,
-    pub retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
-    pub release: Option<unsafe extern "C" fn(*const c_void)>,
-    pub copy_description: Option<unsafe extern "C" fn(*const c_void) -> *mut c_void>,
-    pub equal: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> u8>,
-    pub hash: Option<unsafe extern "C" fn(*const c_void) -> usize>,
-    pub schedule: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
-    pub cancel: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
-    pub perform: unsafe extern "C" fn(*mut c_void),
+pub(crate) struct CFRunLoopSourceContext {
+    pub(crate) version: CFIndex,
+    pub(crate) info: *mut c_void,
+    pub(crate) retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
+    pub(crate) release: Option<unsafe extern "C" fn(*const c_void)>,
+    pub(crate) copy_description: Option<unsafe extern "C" fn(*const c_void) -> *mut c_void>,
+    pub(crate) equal: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> u8>,
+    pub(crate) hash: Option<unsafe extern "C" fn(*const c_void) -> usize>,
+    pub(crate) schedule: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
+    pub(crate) cancel: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
+    pub(crate) perform: unsafe extern "C" fn(*mut c_void),
 }
 
 #[repr(C)]
-pub struct FSEventStreamContext {
-    pub version: CFIndex,
-    pub info: *mut c_void,
-    pub pad: [*mut c_void; 3],
+pub(crate) struct FSEventStreamContext {
+    pub(crate) version: CFIndex,
+    pub(crate) info: *mut c_void,
+    pub(crate) pad: [*mut c_void; 3],
 }
 
 impl Default for FSEventStreamContext {
@@ -69,35 +69,33 @@ impl Default for FSEventStreamContext {
     }
 }
 
-pub(crate) const K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER: c_int = 2;
-pub(crate) const K_FS_EVENT_STREAM_CREATE_FLAG_FILE_EVENTS: c_int = 16;
+const K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER: c_int = 2;
+const K_FS_EVENT_STREAM_CREATE_FLAG_FILE_EVENTS: c_int = 16;
 
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER: c_int = 0x4000;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED: c_int = 0x100;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD: c_int = 0x2000;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_INODE_META_MOD: c_int = 0x400;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR: c_int = 0x20000;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_MODIFIED: c_int = 0x1000;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED: c_int = 0x200;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED: c_int = 0x800;
-pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_XATTR_MOD: c_int = 0x8000;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER: c_int = 0x4000;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED: c_int = 0x100;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD: c_int = 0x2000;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_INODE_META_MOD: c_int = 0x400;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR: c_int = 0x20000;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_MODIFIED: c_int = 0x1000;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED: c_int = 0x200;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED: c_int = 0x800;
+const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_XATTR_MOD: c_int = 0x8000;
 
-pub(crate) const K_FS_EVENTS_MODIFIED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER
+const K_FS_EVENTS_MODIFIED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_INODE_META_MOD
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_MODIFIED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_XATTR_MOD;
 
-pub(crate) const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
+const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
 
-#[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
@@ -110,69 +108,63 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // (or pointer-sized data symbol) declared by CoreFoundation/CoreServices; the const
     // assert above enforces size parity, and the null check rules out the absent-symbol
     // case so the resulting fn pointer is always non-null. Not expressible via
-    // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
+    // `as`, which can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
-#[cfg(not(unix))]
-fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
-    // FSEvents is macOS-only; CoreFoundation/CoreServices loaders below are
-    // gated behind `target_os = "macos"`, so this body is unreachable on
-    // Windows but must still type-check.
-    None
-}
 
-// Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
-// process lifetime (never dlclosed); the rest are resolved fn pointers.
+// Clone/Copy: bitwise OK — resolved fn pointers plus a framework-static
+// `*const CFStringRef`; the dlopen handle they came from is leaked (never
+// dlclosed), so copies stay valid for the process lifetime.
 #[derive(Clone, Copy)]
-pub struct CoreFoundation {
-    pub handle: *mut c_void,
-    pub array_create: unsafe extern "C" fn(
+pub(crate) struct CoreFoundation {
+    pub(crate) array_create: unsafe extern "C" fn(
         CFAllocatorRef,
         *mut *mut c_void,
         CFIndex,
         *const c_void,
     ) -> CFArrayRef,
-    pub retain: unsafe extern "C" fn(CFTypeRef) -> CFTypeRef,
-    pub release: unsafe extern "C" fn(CFTypeRef),
+    pub(crate) retain: unsafe extern "C" fn(CFTypeRef) -> CFTypeRef,
+    pub(crate) release: unsafe extern "C" fn(CFTypeRef),
 
-    pub run_loop_add_source: unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
-    pub run_loop_get_current: unsafe extern "C" fn() -> CFRunLoopRef,
-    pub run_loop_remove_source: unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
-    pub run_loop_run: unsafe extern "C" fn(),
-    pub run_loop_source_create: unsafe extern "C" fn(
+    pub(crate) run_loop_add_source:
+        unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
+    pub(crate) run_loop_get_current: unsafe extern "C" fn() -> CFRunLoopRef,
+    pub(crate) run_loop_remove_source:
+        unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
+    pub(crate) run_loop_run: unsafe extern "C" fn(),
+    pub(crate) run_loop_source_create: unsafe extern "C" fn(
         CFAllocatorRef,
         CFIndex,
         *mut CFRunLoopSourceContext,
     ) -> CFRunLoopSourceRef,
-    pub run_loop_source_signal: unsafe extern "C" fn(CFRunLoopSourceRef),
-    pub run_loop_stop: unsafe extern "C" fn(CFRunLoopRef),
-    pub run_loop_wake_up: unsafe extern "C" fn(CFRunLoopRef),
-    pub string_create_with_file_system_representation:
+    pub(crate) run_loop_source_signal: unsafe extern "C" fn(CFRunLoopSourceRef),
+    pub(crate) run_loop_stop: unsafe extern "C" fn(CFRunLoopRef),
+    pub(crate) run_loop_wake_up: unsafe extern "C" fn(CFRunLoopRef),
+    pub(crate) string_create_with_file_system_representation:
         unsafe extern "C" fn(CFAllocatorRef, *const u8) -> CFStringRef,
-    pub run_loop_default_mode: *const CFStringRef,
+    pub(crate) run_loop_default_mode: *const CFStringRef,
 }
 
-// SAFETY: `handle` is a leaked dlopen handle (never dlclosed) and `run_loop_default_mode` points at a process-static CFStringRef
-// inside the loaded framework. Everything else is a resolved fn pointer.
-// Sharing/sending bitwise copies across threads is sound.
+// SAFETY: `run_loop_default_mode` points at a process-static CFStringRef
+// inside the loaded (never-dlclosed) framework; every other field is a
+// resolved fn pointer. Sharing/sending bitwise copies across threads is sound.
 unsafe impl Send for CoreFoundation {}
-// SAFETY: all fields are immutable process-lifetime data (leaked dlopen handle,
-// framework-static `*const CFStringRef`, resolved fn pointers); none provide
-// interior mutability, so concurrent `&CoreFoundation` access is sound.
+// SAFETY: all fields are immutable process-lifetime data (framework-static
+// `*const CFStringRef`, resolved fn pointers); none provide interior
+// mutability, so concurrent `&CoreFoundation` access is sound.
 unsafe impl Sync for CoreFoundation {}
 
 impl CoreFoundation {
-    pub fn get() -> CoreFoundation {
+    pub(crate) fn get() -> CoreFoundation {
         *FSEVENTS_CF.get_or_init(init_core_foundation)
     }
 }
 
-// Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
-// process lifetime (never dlclosed); the rest are resolved fn pointers.
+// Clone/Copy: bitwise OK — resolved fn pointers (from a leaked, never-dlclosed
+// dlopen handle) plus a `u64` sentinel.
 #[derive(Clone, Copy)]
-pub struct CoreServices {
-    pub handle: *mut c_void,
-    pub fs_event_stream_create: unsafe extern "C" fn(
+pub(crate) struct CoreServices {
+    pub(crate) fs_event_stream_create: unsafe extern "C" fn(
         CFAllocatorRef,
         FSEventStreamCallback,
         *mut FSEventStreamContext,
@@ -181,27 +173,18 @@ pub struct CoreServices {
         CFTimeInterval,
         FSEventStreamCreateFlags,
     ) -> FSEventStreamRef,
-    pub fs_event_stream_invalidate: unsafe extern "C" fn(FSEventStreamRef),
-    pub fs_event_stream_release: unsafe extern "C" fn(FSEventStreamRef),
-    pub fs_event_stream_schedule_with_run_loop:
+    pub(crate) fs_event_stream_invalidate: unsafe extern "C" fn(FSEventStreamRef),
+    pub(crate) fs_event_stream_release: unsafe extern "C" fn(FSEventStreamRef),
+    pub(crate) fs_event_stream_schedule_with_run_loop:
         unsafe extern "C" fn(FSEventStreamRef, CFRunLoopRef, CFStringRef),
-    pub fs_event_stream_start: unsafe extern "C" fn(FSEventStreamRef) -> c_int,
-    pub fs_event_stream_stop: unsafe extern "C" fn(FSEventStreamRef),
+    pub(crate) fs_event_stream_start: unsafe extern "C" fn(FSEventStreamRef) -> c_int,
+    pub(crate) fs_event_stream_stop: unsafe extern "C" fn(FSEventStreamRef),
     // libuv set it to -1 so the actual value is this
-    pub k_fs_event_stream_event_id_since_now: FSEventStreamEventId,
+    pub(crate) k_fs_event_stream_event_id_since_now: FSEventStreamEventId,
 }
 
-// SAFETY: `handle` is a leaked dlopen handle (never dlclosed); the rest are
-// resolved fn pointers and a u64 sentinel. Sharing/sending across threads is
-// sound.
-unsafe impl Send for CoreServices {}
-// SAFETY: all fields are immutable process-lifetime data (leaked dlopen handle,
-// resolved fn pointers, a `u64` constant); none provide interior mutability, so
-// concurrent `&CoreServices` access is sound.
-unsafe impl Sync for CoreServices {}
-
 impl CoreServices {
-    pub fn get() -> CoreServices {
+    pub(crate) fn get() -> CoreServices {
         *FSEVENTS_CS.get_or_init(init_core_services)
     }
 }
@@ -221,7 +204,6 @@ fn init_core_foundation() -> CoreFoundation {
     };
 
     CoreFoundation {
-        handle: fsevents_cf_handle,
         array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         retain: dlsym(fsevents_cf_handle, c"CFRetain")
@@ -264,7 +246,6 @@ fn init_core_services() -> CoreServices {
     };
 
     CoreServices {
-        handle: fsevents_cs_handle,
         fs_event_stream_create: dlsym(fsevents_cs_handle, c"FSEventStreamCreate")
             .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
         fs_event_stream_invalidate: dlsym(fsevents_cs_handle, c"FSEventStreamInvalidate")
@@ -284,14 +265,13 @@ fn init_core_services() -> CoreServices {
     }
 }
 
-pub struct FSEventsLoop {
+pub(crate) struct FSEventsLoop {
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
-    mutex: Mutex,
+    mutex: Guarded<FSEventsLoopState>,
     sem: Semaphore,
     tasks: UnboundedQueue<ConcurrentTask>,
     thread: UnsafeCell<Option<std::thread::JoinHandle<()>>>,
-    state: UnsafeCell<FSEventsLoopState>,
 }
 
 struct FSEventsLoopState {
@@ -303,46 +283,27 @@ struct FSEventsLoopState {
     cf_paths: CFArrayRef,
 }
 
-// SAFETY: cross-thread pointers are `AtomicPtr`; `state` is only accessed under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
+// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
 unsafe impl Sync for FSEventsLoop {}
-// SAFETY: no thread-affine data; the loop is a leaked `&'static` singleton and all shared access is synchronized per the `Sync` impl above.
-unsafe impl Send for FSEventsLoop {}
 
-impl FSEventsLoop {
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn state(&self) -> &mut FSEventsLoopState {
-        // SAFETY: the caller holds `self.mutex`, so this is the only live reference to `state`.
-        unsafe { &mut *self.state.get() }
-    }
-}
-
-pub struct Task {
-    pub ctx: *mut (),
-    pub callback: fn(*mut ()),
+pub(crate) struct Task {
+    pub ctx: &'static FSEventsLoop,
+    pub callback: fn(&FSEventsLoop),
 }
 
 impl Task {
-    pub fn run(&mut self) {
-        let callback = self.callback;
-        let ctx = self.ctx;
-        debug_assert!(!ctx.is_null());
-        callback(ctx);
+    pub(crate) fn run(&mut self) {
+        (self.callback)(self.ctx);
     }
 
-    pub fn new<T>(ctx: &'static T, callback: fn(&T)) -> Task {
-        Task {
-            // SAFETY: `fn(&T)` and `fn(*mut ())` have identical single-pointer ABI, and `ctx` is a valid `&T` at call time.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&T), fn(*mut ())>(callback) },
-            ctx: core::ptr::from_ref::<T>(ctx).cast_mut().cast::<()>(),
-        }
+    pub(crate) fn new(ctx: &'static FSEventsLoop, callback: fn(&FSEventsLoop)) -> Task {
+        Task { ctx, callback }
     }
 }
 
-pub struct ConcurrentTask {
+pub(crate) struct ConcurrentTask {
     pub task: Task,
-    pub next: bun_threading::Link<ConcurrentTask>,
-    pub auto_delete: bool,
+    pub(crate) next: bun_threading::Link<ConcurrentTask>,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
@@ -351,21 +312,6 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
-
-impl ConcurrentTask {
-    pub(crate) fn from(
-        this: &mut ConcurrentTask,
-        task: Task,
-        auto_delete: bool,
-    ) -> &mut ConcurrentTask {
-        *this = ConcurrentTask {
-            task,
-            next: bun_threading::Link::new(),
-            auto_delete,
-        };
-        this
     }
 }
 
@@ -413,27 +359,22 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue
-            let task = unsafe { &mut *task };
-            task.task.run();
-            if task.auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent
-                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
-            }
+            // SAFETY: heap-allocated in `enqueue_task_concurrent`; this thread
+            // owns it exclusively once popped.
+            unsafe { bun_core::heap::take(task) }.task.run();
         }
     }
 
-    pub fn init() -> crate::Result<&'static FSEventsLoop> {
+    pub(crate) fn init() -> crate::Result<&'static FSEventsLoop> {
         // Owning raw pointer first, shared view second: the error paths below reclaim
         // through `this_ptr`, which must not be derived from a shared reference.
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
-            mutex: Mutex::new(),
             sem: Semaphore::default(),
             tasks: UnboundedQueue::default(),
             thread: UnsafeCell::new(None),
-            state: UnsafeCell::new(FSEventsLoopState {
+            mutex: Guarded::new(FSEventsLoopState {
                 watchers: Vec::new(),
                 watcher_count: 0,
                 has_scheduled_watchers: false,
@@ -499,19 +440,10 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
-            task: Task {
-                ctx: ptr::null_mut(),
-                callback: |_| {},
-            },
+        self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
+            task,
             next: bun_threading::Link::new(),
-            auto_delete: false,
         }));
-        // SAFETY: concurrent is a valid freshly-boxed non-null pointer
-        unsafe {
-            ConcurrentTask::from(&mut *concurrent, task, true);
-            self.tasks.push(NonNull::new_unchecked(concurrent));
-        }
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
         // SAFETY: CF fn pointers loaded via dlsym; handles valid per above.
@@ -524,7 +456,7 @@ impl FSEventsLoop {
     // Runs in CF thread, when there're events in FSEventStream. Body discharges
     // its own preconditions; safe `extern "C" fn` coerces to the
     // `FSEventStreamCallback` pointer type.
-    extern "C" fn _events_cb(
+    extern "C" fn events_cb(
         _: FSEventStreamRef,
         info: *mut c_void,
         num_events: usize,
@@ -535,7 +467,7 @@ impl FSEventsLoop {
         let paths_ptr = event_paths as *const *const c_char;
         // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
-        // SAFETY: `info` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `_schedule()`.
+        // SAFETY: `info` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `schedule()`.
         let loop_: &FSEventsLoop = unsafe { &*info.cast::<FSEventsLoop>() };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
@@ -546,9 +478,7 @@ impl FSEventsLoop {
         // so without this lock we can read `handle.path` / call `handle.emit`
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
-        let _guard = loop_.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { loop_.state() };
+        let state = loop_.mutex.lock();
 
         for watcher in state.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -620,10 +550,8 @@ impl FSEventsLoop {
     }
 
     // Runs on CF Thread
-    fn _schedule(&self) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+    fn schedule(&self) {
+        let mut state = self.mutex.lock();
         state.has_scheduled_watchers = false;
         let watcher_count = state.watcher_count;
 
@@ -717,7 +645,7 @@ impl FSEventsLoop {
             //
             let r#ref = (cs.fs_event_stream_create)(
                 ptr::null_mut(),
-                Self::_events_cb,
+                Self::events_cb,
                 &raw mut ctx,
                 cf_paths,
                 cs.k_fs_event_stream_event_id_since_now,
@@ -762,9 +690,7 @@ impl FSEventsLoop {
     }
 
     fn register_watcher(&'static self, watcher: *mut FSEventsWatcher) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         if state.watcher_count as usize == state.watchers.len() {
             state.watcher_count += 1;
             state.watchers.push(NonNull::new(watcher));
@@ -783,13 +709,11 @@ impl FSEventsLoop {
         } else {
             return;
         }
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_schedule));
+        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::schedule));
     }
 
     fn unregister_watcher(&'static self, watcher: *mut FSEventsWatcher) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         let len = state.watchers.len() as usize;
         for i in 0..len {
             if let Some(item) = state.watchers.slice_mut()[i] {
@@ -808,31 +732,30 @@ impl FSEventsLoop {
         // Rebuild the FSEventStream on the CF thread so it stops firing for
         // the path we just removed. Without this the stream keeps delivering
         // events for freed paths until another register happens to
-        // reschedule. `_events_cb` tolerates the interim (it sees `null` and
+        // reschedule. `events_cb` tolerates the interim (it sees `null` and
         // skips) because both sides hold `this.mutex`.
         if !state.has_scheduled_watchers {
             state.has_scheduled_watchers = true;
         } else {
             return;
         }
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_schedule));
+        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::schedule));
     }
 
     // Runs on CF loop to close the loop
-    fn _stop(&self) {
+    fn stop(&self) {
         let cf = CoreFoundation::get();
         // SAFETY: runs on the CF thread — this is our own run loop.
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn shutdown(&'static self) {
         // SAFETY: `thread` is only touched here and in `init()`, always on the JS thread under `FSEVENTS_DEFAULT_LOOP_MUTEX`.
         let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
             return; // already shut down
         };
         // signal close and wait
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_stop));
+        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::stop));
         let _ = thread.join();
 
         let cf = CoreFoundation::get();
@@ -846,9 +769,7 @@ impl FSEventsLoop {
         // SAFETY: signal_source is a valid CF object until released here
         unsafe { (cf.release)(signal_source) };
 
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         if state.watcher_count > 0 {
             while let Some(watcher) = state.watchers.pop() {
                 if let Some(w) = watcher {
@@ -862,27 +783,26 @@ impl FSEventsLoop {
     }
 }
 
-pub struct FSEventsWatcher {
+pub(crate) struct FSEventsWatcher {
     /// Borrowed from the owning `PathWatcher`. The
     /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
     /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
-    /// `_events_cb` / `_schedule` — `RawSlice` invariant. The backing buffer is
+    /// `events_cb` / `schedule` — `RawSlice` invariant. The backing buffer is
     /// a `ZBox`, so `path.slice().as_ptr()` is NUL-terminated (required by
     /// `CFStringCreateWithFileSystemRepresentation`).
     pub path: bun_ptr::RawSlice<u8>,
     pub callback: Callback,
-    pub flush_callback: UpdateEndCallback,
-    pub loop_: core::cell::Cell<Option<&'static FSEventsLoop>>,
-    pub recursive: bool,
+    pub(crate) flush_callback: UpdateEndCallback,
+    pub(crate) loop_: core::cell::Cell<Option<&'static FSEventsLoop>>,
+    pub(crate) recursive: bool,
     pub ctx: *mut c_void,
 }
 
-pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
+pub(crate) type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn init(
+    fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
         recursive: bool,
@@ -903,11 +823,11 @@ impl FSEventsWatcher {
         this
     }
 
-    pub(crate) fn emit(&self, event: Event, is_file: bool) {
+    fn emit(&self, event: Event, is_file: bool) {
         (self.callback)(self.ctx, event, is_file);
     }
 
-    pub(crate) fn flush(&self) {
+    fn flush(&self) {
         (self.flush_callback)(self.ctx);
     }
 }
@@ -920,7 +840,7 @@ impl Drop for FSEventsWatcher {
     }
 }
 
-pub fn watch(
+pub(crate) fn watch(
     path: &[u8],
     recursive: bool,
     callback: Callback,
@@ -951,8 +871,7 @@ extern "C" fn close_and_wait_on_exit() {
     close_and_wait()
 }
 
-pub(crate) fn close_and_wait() {
-    #[cfg(target_os = "macos")]
+fn close_and_wait() {
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
         loop_.shutdown();

@@ -369,7 +369,7 @@ macro_rules! thread_local_ast_store {
             /// always restores the previous value before its frame returns.
             #[thread_local]
             pub(crate) static MEMORY_ALLOCATOR: Cell<
-                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
+                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator, ::bun_ptr::Mut>>,
             > = Cell::new(None);
             #[thread_local]
             pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
@@ -398,7 +398,9 @@ macro_rules! thread_local_ast_store {
             }
             #[inline]
             pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
-                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_ptr::BackRef::from));
+                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(|nn|
+                    // SAFETY: `p` is the caller's live allocator with write provenance.
+                    unsafe { ::bun_ptr::BackRef::from_raw_mut(nn.as_ptr()) }));
             }
 
             pub fn create() {

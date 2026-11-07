@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("console depth", () => {
   const deepObject = {
@@ -32,7 +32,7 @@ describe("console depth", () => {
   }
 
   test("default console depth should be 2", async () => {
-    const dir = tempDirWithFiles("console-depth-default", {
+    await using dir = tempDir("console-depth-default", {
       "test.js": testScript,
     });
 
@@ -62,7 +62,7 @@ describe("console depth", () => {
   });
 
   test("--console-depth flag sets custom depth", async () => {
-    const dir = tempDirWithFiles("console-depth-cli", {
+    await using dir = tempDir("console-depth-cli", {
       "test.js": testScript,
     });
 
@@ -94,7 +94,7 @@ describe("console depth", () => {
   });
 
   test("--console-depth with higher value shows deeper nesting", async () => {
-    const dir = tempDirWithFiles("console-depth-high", {
+    await using dir = tempDir("console-depth-high", {
       "test.js": testScript,
     });
 
@@ -138,7 +138,7 @@ describe("console depth", () => {
   });
 
   test("bunfig.toml console.depth configuration", async () => {
-    const dir = tempDirWithFiles("console-depth-bunfig", {
+    await using dir = tempDir("console-depth-bunfig", {
       "test.js": testScript,
       "bunfig.toml": `[console]\ndepth = 4`,
     });
@@ -173,7 +173,7 @@ describe("console depth", () => {
   });
 
   test("CLI flag overrides bunfig.toml", async () => {
-    const dir = tempDirWithFiles("console-depth-override", {
+    await using dir = tempDir("console-depth-override", {
       "test.js": testScript,
       "bunfig.toml": `[console]\ndepth = 6`,
     });
@@ -204,7 +204,7 @@ describe("console depth", () => {
   });
 
   test("invalid --console-depth value shows error", async () => {
-    const dir = tempDirWithFiles("console-depth-invalid", {
+    await using dir = tempDir("console-depth-invalid", {
       "test.js": testScript,
     });
 
@@ -230,7 +230,7 @@ describe("console depth", () => {
   });
 
   test("edge case: depth 0 should show infinite depth", async () => {
-    const dir = tempDirWithFiles("console-depth-zero", {
+    await using dir = tempDir("console-depth-zero", {
       "test.js": testScript,
     });
 
@@ -274,7 +274,7 @@ describe("console depth", () => {
   });
 
   test("bunfig.toml depth=0 should show infinite depth", async () => {
-    const dir = tempDirWithFiles("console-depth-bunfig-zero", {
+    await using dir = tempDir("console-depth-bunfig-zero", {
       "test.js": testScript,
       "bunfig.toml": `[console]\ndepth = 0`,
     });
@@ -326,7 +326,7 @@ describe("console depth", () => {
       console.warn("WARN:", obj);
     `;
 
-    const dir = tempDirWithFiles("console-depth-multiple", {
+    await using dir = tempDir("console-depth-multiple", {
       "test.js": testScriptMultiple,
     });
 

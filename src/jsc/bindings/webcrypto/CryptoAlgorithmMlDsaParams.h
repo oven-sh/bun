@@ -54,15 +54,6 @@ public:
         return m_contextVector;
     }
 
-    CryptoAlgorithmMlDsaParams isolatedCopy() const
-    {
-        CryptoAlgorithmMlDsaParams result;
-        result.identifier = identifier;
-        result.m_contextVector = contextVector();
-
-        return result;
-    }
-
 private:
     mutable Vector<uint8_t> m_contextVector;
 };

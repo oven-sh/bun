@@ -1,0 +1,40 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+      peer-deps-fixed:
+        specifier: ^1.0.0
+        version: 1.0.0(no-deps@1.0.1)
+
+  packages/a:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==}
+
+  peer-deps-fixed@1.0.0:
+    resolution: {integrity: sha512-gVs9cSdy6TAQIEWu1tVEK1mAspCQxYziTGQlv4a2XQpzOBZvoQ/y6lOeu3tqNNrNQnLwdvwAQTlvazV5+HfV7g==}
+    peerDependencies:
+      no-deps: ^1.0.0
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  peer-deps-fixed@1.0.0(no-deps@1.0.1):
+    dependencies:
+      no-deps: 1.0.1

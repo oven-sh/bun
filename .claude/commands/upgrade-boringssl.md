@@ -45,7 +45,7 @@ In the bun repo:
 
 - `scripts/build/deps/boringssl.ts` — set `BORINGSSL_COMMIT` to `$NEW_SHA`.
 - `test/js/node/process/process.test.js` — update the `boringssl:` entry in `expectedVersions` to `$NEW_SHA`.
-- `src/js/node/tls.ts` — two hand-maintained mirrors of BoringSSL tables must be re-derived from the new pin (a test pins the current set, but cannot see upstream additions on its own): `_VALID_CIPHERS_SET` ← `ssl/ssl_cipher.cc` `kCiphers`, `CIPHER_LIST_SELECTORS` ← `ssl/ssl_cipher.cc` `kCipherAliases`.
+- `src/js/node/tls.ts` — three hand-maintained mirrors of BoringSSL tables must be re-derived from the new pin (a test pins the current set, but cannot see upstream additions on its own): `SUPPORTED_ECDH_GROUPS` ← `ssl/ssl_key_share.cc` `kNamedGroups` (every `name` and non-empty `alias`), `_VALID_CIPHERS_SET` ← `ssl/ssl_cipher.cc` `kCiphers`, `CIPHER_LIST_SELECTORS` ← `ssl/ssl_cipher.cc` `kCipherAliases`.
 - Regenerate the source lists (the file's header comment has the exact one-liner). Only `gen/sources.json` is authoritative — diff old vs new and apply the delta:
 
   ```sh
@@ -90,6 +90,7 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **`EVP_PBE_validate_scrypt_params`** — `crypto/evp/scrypt.cc`, `include/openssl/evp.h`
 - **Electron `SSL_want` / `EVP_CIPHER_do_all_sorted`** — `ssl/ssl_lib.cc` (return `rwstate` directly), `ssl/ssl_test.cc` (drops the corresponding test block), `decrepit/evp/evp_do_all.cc`, `crypto/cipher/get_cipher.cc`, `include/openssl/cipher.h`
 - **MLDSA stack-frame pragma** — `crypto/fipsmodule/mldsa/mldsa.cc.inc`
+- **PKCS#1 v1.5 signature prefixes for the digests above** — `crypto/fipsmodule/rsa/rsa.cc.inc` (`kPKCS1SigPrefixes` rows for SHA-512/224, SHA-512/256, SHA3-\* and RIPEMD-160), `crypto/rsa/rsa_test.cc`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 

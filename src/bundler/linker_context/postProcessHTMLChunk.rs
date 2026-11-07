@@ -4,7 +4,7 @@ use crate::Chunk;
 use crate::linker_context_mod::GenerateChunkCtx;
 use crate::thread_pool;
 
-pub fn post_process_html_chunk(
+pub(crate) fn post_process_html_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,

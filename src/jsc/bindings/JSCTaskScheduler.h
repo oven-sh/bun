@@ -5,6 +5,7 @@ class JSVMClientData;
 }
 
 #include <JavaScriptCore/DeferredWorkTimer.h>
+#include "BunLoopKind.h"
 
 namespace Bun {
 
@@ -20,12 +21,16 @@ public:
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket& ticket);
 
+    // After marking, before the sweep. Only its realm marks a ticket's cells, so the sweep frees
+    // those of a realm that died. DeferredWorkTimer::cancelPendingWork(VM&) cancels such tickets
+    // in the set it keeps, which is empty here: onAddPendingWork takes them.
+    static void cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientData, JSC::VM&);
+
     // Set once the owning VM's event loop has taken its last tick. After this,
-    // onScheduleWorkSoon drops the task instead of enqueueing a ConcurrentTask
-    // that can never be drained (~VM -> WaiterListManager::unregister reaches
-    // it for every still-pending Atomics.waitAsync ticket). Guarded by m_lock
-    // so the check+enqueue in onScheduleWorkSoon is atomic with respect to this
-    // transition (a cross-thread Atomics.notify may race a worker's shutdown).
+    // onScheduleWorkSoon drops the task up front instead of posting it (~VM ->
+    // WaiterListManager::unregister reaches it for every still-pending
+    // Atomics.waitAsync ticket). An early-out, not a fence: a post that races
+    // this is handled by the VM handle (released unrun by the teardown, or refused).
     void markShuttingDown()
     {
         Locker<Lock> holder { m_lock };
@@ -33,10 +38,19 @@ public:
     }
 
 public:
+    // What was current when JSC registered the work.
+    struct PendingWork {
+        // Its completion is posted to this loop.
+        BunLoopKind loopKind { BunLoopKind::Regular };
+        // The identifier of the Bun.ModuleGraph context whose script asked for the work, or 0 for
+        // the realm's own: the completion of a stopped one is dropped.
+        uint32_t graphContext { 0 };
+    };
+
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
-    UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::Ticket>> m_pendingTicketsKeepingEventLoopAlive;
-    UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::Ticket>> m_pendingTicketsOther;
+    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;
+    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsOther;
 };
 
 }

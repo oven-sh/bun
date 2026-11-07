@@ -9,7 +9,7 @@ use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
-pub fn post_process_css_chunk(
+pub(crate) fn post_process_css_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
@@ -105,9 +105,7 @@ pub fn post_process_css_chunk(
             if c.options.source_maps != options::SourceMapOption::None {
                 bun_core::handle_oom(compile_results_for_source_map.append(
                     CompileResultForSourceMap {
-                        // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                        // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
-                        source_map_chunk: unsafe { source_map_chunk.alias() },
+                        source_map_chunk,
                         // Guaranteed `Value` here
                         // because `source_maps != None` implies `line_offset` was
                         // initialised to `Value(_)` above.
@@ -128,21 +126,12 @@ pub fn post_process_css_chunk(
 
     // Make sure the file ends with a newline
     j.ensure_newline_at_end();
-    // if c.options.UnsupportedCSSFeatures.Has(compat.InlineStyle) {
-    //    slashTag = ""
-    // }
-    // c.maybeAppendLegalComments(c.options.LegalComments, legalCommentList, chunk, &j, slashTag)
-
-    // if len(c.options.CSSFooter) > 0 {
-    //     j.AddString(c.options.CSSFooter)
-    //     j.AddString("\n")
-    // }
 
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (filled in place before post-processing, never reassigned afterwards), graph
-    // source paths (`Path<'static>`), or `'static` literals; `watcher.input` is
+    // source paths, or `'static` literals; `watcher.input` is
     // `chunk.unique_key` (`&'static`). All of these outlive the joiner stored in
     // `chunk.intermediate_output`, which is only read while the chunk and the linker
     // graph are alive.

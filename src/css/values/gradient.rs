@@ -5,7 +5,7 @@ use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
 use crate::values::number::{CSSNumber, CSSNumberFns};
-use crate::values::percentage::{DimensionPercentage, NumberOrPercentage, Percentage};
+use crate::values::percentage::{NumberOrPercentage, Percentage};
 use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
@@ -28,9 +28,6 @@ use bun_alloc::Arena;
 pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-    /// `true` iff this is `DimensionPercentage::Percentage(p)` with `p.v == v`.
-    /// Used by `serialize_items` to skip the useless `50%` interpolation hint.
-    fn is_percentage_with_value(&self, v: f32) -> bool;
 }
 
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
@@ -40,14 +37,12 @@ macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
             #[inline]
-            fn parse(input: &mut Parser) -> Result<Self> { <$ty>::parse(input) }
+            fn parse(input: &mut Parser) -> Result<Self> {
+                <$ty>::parse(input)
+            }
             #[inline]
             fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
                 <$ty>::to_css(self, dest)
-            }
-            #[inline]
-            fn is_percentage_with_value(&self, v: f32) -> bool {
-                matches!(self, DimensionPercentage::Percentage(p) if p.v == v)
             }
         }
     };
@@ -114,7 +109,7 @@ pub enum Gradient {
 impl Gradient {
     pub(crate) fn parse(input: &mut css::Parser) -> Result<Gradient> {
         let location = input.current_source_location();
-        let func = input.expect_function_cloned()?;
+        let func = input.expect_function()?;
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
             crate::match_ignore_ascii_case! { func, {
                 b"linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::NONE)?)),
@@ -235,16 +230,10 @@ impl Gradient {
     /// Returns a copy of the gradient with the given vendor prefix.
     pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
         match self {
-            Gradient::Linear(linear) => Gradient::Linear({
-                let mut x = linear.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
-            Gradient::RepeatingLinear(linear) => Gradient::RepeatingLinear({
-                let mut x = linear.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
+            Gradient::Linear(linear) => Gradient::Linear(linear.get_prefixed(bump, prefix)),
+            Gradient::RepeatingLinear(linear) => {
+                Gradient::RepeatingLinear(linear.get_prefixed(bump, prefix))
+            }
             Gradient::Radial(radial) => Gradient::Radial({
                 let mut x = radial.deep_clone(bump);
                 x.vendor_prefix = prefix;
@@ -304,25 +293,22 @@ impl Gradient {
 #[derive(PartialEq)]
 pub struct LinearGradient {
     /// The vendor prefixes for the gradient.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The direction of the gradient.
-    pub direction: LineDirection,
+    pub(crate) direction: LineDirection,
     /// The color stops and transition hints for the gradient.
-    pub items: Vec<GradientItem<LengthPercentage>>,
+    pub(crate) items: Vec<GradientItem<LengthPercentage>>,
 }
 
 impl LinearGradient {
-    pub(crate) fn parse(
-        input: &mut css::Parser,
-        vendor_prefix: VendorPrefix,
-    ) -> Result<LinearGradient> {
+    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<LinearGradient> {
         let direction: LineDirection = if let Ok(dir) =
             input.try_parse(|i| LineDirection::parse(i, vendor_prefix != VendorPrefix::NONE))
         {
             input.expect_comma()?;
             dir
         } else {
-            LineDirection::Vertical(VerticalPositionKeyword::Bottom)
+            LineDirection::default(vendor_prefix != VendorPrefix::NONE)
         };
         let items = parse_items::<LengthPercentage>(input)?;
         Ok(LinearGradient {
@@ -332,99 +318,22 @@ impl LinearGradient {
         })
     }
 
-    pub(crate) fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_prefixed: bool,
-    ) -> core::result::Result<(), PrintErr> {
-        let angle: f32 = match &self.direction {
-            LineDirection::Vertical(v) => match v {
-                VerticalPositionKeyword::Bottom => 180.0,
-                VerticalPositionKeyword::Top => 0.0,
-            },
-            LineDirection::Angle(a) => a.to_degrees(),
-            _ => -1.0,
-        };
-
-        // We can omit `to bottom` or `180deg` because it is the default.
-        if angle == 180.0 {
-            // todo_stuff.depth
-            serialize_items::<LengthPercentage>(&self.items, dest)?;
+    fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> LinearGradient {
+        let mut x = self.deep_clone(bump);
+        if self.vendor_prefix == VendorPrefix::NONE {
+            x.direction = self.direction.to_prefixed();
         }
-        // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
-        // we can flip the gradient the other direction and omit the direction.
-        else if angle == 0.0
-            && dest.minify
-            && 'brk: {
-                for item in self.items.iter() {
-                    match item {
-                        GradientItem::Hint(h) if !matches!(h, LengthPercentage::Percentage(_)) => {
-                            break 'brk false;
-                        }
-                        GradientItem::ColorStop(cs)
-                            if cs
-                                .position
-                                .as_ref()
-                                .is_some_and(|p| !matches!(p, LengthPercentage::Percentage(_))) =>
-                        {
-                            break 'brk false;
-                        }
-                        _ => {}
-                    }
-                }
-                true
-            }
-        {
-            let mut flipped_items: Vec<GradientItem<LengthPercentage>> =
-                Vec::with_capacity(self.items.len());
+        x.vendor_prefix = prefix;
+        x
+    }
 
-            let mut i: usize = self.items.len();
-            while i > 0 {
-                i -= 1;
-                let item = &self.items[i];
-                match item {
-                    GradientItem::Hint(h) => match h {
-                        LengthPercentage::Percentage(p) => flipped_items.push(GradientItem::Hint(
-                            LengthPercentage::Percentage(Percentage { v: 1.0 - p.v }),
-                        )),
-                        _ => unreachable!(),
-                    },
-                    GradientItem::ColorStop(cs) => {
-                        flipped_items.push(GradientItem::ColorStop(ColorStop {
-                            color: cs.color.clone(),
-                            position: if let Some(p) = &cs.position {
-                                match p {
-                                    LengthPercentage::Percentage(perc) => {
-                                        Some(LengthPercentage::Percentage(Percentage {
-                                            v: 1.0 - perc.v,
-                                        }))
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            } else {
-                                None
-                            },
-                        }))
-                    }
-                }
-            }
-
-            if serialize_items::<LengthPercentage>(&flipped_items, dest).is_err() {
-                return Err(dest.add_fmt_error());
-            }
-        } else {
-            if self.direction != LineDirection::Vertical(VerticalPositionKeyword::Bottom)
-                && self.direction != LineDirection::Angle(Angle::Deg(180.0))
-            {
-                self.direction.to_css(dest, is_prefixed)?;
-                dest.delim(b',', false)?;
-            }
-
-            if serialize_items::<LengthPercentage>(&self.items, dest).is_err() {
-                return Err(dest.add_fmt_error());
-            }
+    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+        if !self.direction.is_default(is_prefixed) {
+            self.direction.to_css(dest, is_prefixed)?;
+            dest.delim(b',', false)?;
         }
-        Ok(())
+        // todo_stuff.depth
+        serialize_items::<LengthPercentage>(&self.items, dest)
     }
 
     pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -448,7 +357,7 @@ impl LinearGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
         let fallback_items: Vec<_> = self
             .items
             .iter()
@@ -467,20 +376,17 @@ impl LinearGradient {
 #[derive(PartialEq)]
 pub struct RadialGradient {
     /// The vendor prefixes for the gradient.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The shape of the gradient.
-    pub shape: EndingShape,
+    pub(crate) shape: EndingShape,
     /// The position of the gradient.
-    pub position: Position,
+    pub(crate) position: Position,
     /// The color stops and transition hints for the gradient.
-    pub items: Vec<GradientItem<LengthPercentage>>,
+    pub(crate) items: Vec<GradientItem<LengthPercentage>>,
 }
 
 impl RadialGradient {
-    pub(crate) fn parse(
-        input: &mut css::Parser,
-        vendor_prefix: VendorPrefix,
-    ) -> Result<RadialGradient> {
+    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<RadialGradient> {
         // todo_stuff.depth
         let shape = input.try_parse(EndingShape::parse).ok();
         let position = input
@@ -505,7 +411,7 @@ impl RadialGradient {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.shape != EndingShape::default() {
             self.shape.to_css(dest)?;
             if self.position.is_center() {
@@ -533,7 +439,7 @@ impl RadialGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -566,15 +472,15 @@ impl RadialGradient {
 #[derive(PartialEq)]
 pub struct ConicGradient {
     /// The angle of the gradient.
-    pub angle: Angle,
+    pub(crate) angle: Angle,
     /// The position of the gradient.
-    pub position: Position,
+    pub(crate) position: Position,
     /// The color stops and transition hints for the gradient.
-    pub items: Vec<GradientItem<AnglePercentage>>,
+    pub(crate) items: Vec<GradientItem<AnglePercentage>>,
 }
 
 impl ConicGradient {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<ConicGradient> {
+    fn parse(input: &mut css::Parser) -> Result<ConicGradient> {
         let angle = input.try_parse(|i: &mut css::Parser| -> Result<Angle> {
             i.expect_ident_matching(b"from")?;
             // Spec allows unitless zero angles for gradients.
@@ -599,7 +505,7 @@ impl ConicGradient {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if !self.angle.is_zero() {
             dest.write_str(b"from ")?;
             self.angle.to_css(dest)?;
@@ -629,7 +535,7 @@ impl ConicGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -660,11 +566,11 @@ impl ConicGradient {
 #[derive(PartialEq)]
 pub struct WebKitGradientLinear {
     /// The starting point of the gradient.
-    pub from: WebKitGradientPoint,
+    pub(crate) from: WebKitGradientPoint,
     /// The ending point of the gradient.
-    pub to: WebKitGradientPoint,
+    pub(crate) to: WebKitGradientPoint,
     /// The color stops in the gradient.
-    pub stops: Vec<WebKitColorStop>,
+    pub(crate) stops: Vec<WebKitColorStop>,
 }
 
 impl WebKitGradientLinear {
@@ -685,15 +591,15 @@ impl WebKitGradientLinear {
 #[derive(PartialEq)]
 pub struct WebKitGradientRadial {
     /// The starting point of the gradient.
-    pub from: WebKitGradientPoint,
+    pub(crate) from: WebKitGradientPoint,
     /// The starting radius of the gradient.
-    pub r0: CSSNumber,
+    pub(crate) r0: CSSNumber,
     /// The ending point of the gradient.
-    pub to: WebKitGradientPoint,
+    pub(crate) to: WebKitGradientPoint,
     /// The ending radius of the gradient.
-    pub r1: CSSNumber,
+    pub(crate) r1: CSSNumber,
     /// The color stops in the gradient.
-    pub stops: Vec<WebKitColorStop>,
+    pub(crate) stops: Vec<WebKitColorStop>,
 }
 
 impl WebKitGradientRadial {
@@ -722,9 +628,9 @@ pub enum WebKitGradient {
 }
 
 impl WebKitGradient {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
+    fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         input.expect_comma()?;
 
         crate::match_ignore_ascii_case! { ident, {
@@ -760,7 +666,7 @@ impl WebKitGradient {
         }}
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             WebKitGradient::Linear(linear) => {
                 dest.write_str(b"linear")?;
@@ -793,7 +699,7 @@ impl WebKitGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
                 let stops: Vec<_> = linear
@@ -824,7 +730,7 @@ impl WebKitGradient {
         }
     }
 
-    pub(crate) fn from_standard(gradient: &Gradient, bump: &Arena) -> Option<WebKitGradient> {
+    fn from_standard(gradient: &Gradient, bump: &Arena) -> Option<WebKitGradient> {
         match gradient {
             Gradient::Linear(linear) => {
                 // Convert from line direction to a from and to point, if possible.
@@ -921,9 +827,9 @@ impl WebKitGradient {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
-    pub horizontal: HorizontalPositionKeyword,
+    pub(crate) horizontal: HorizontalPositionKeyword,
     /// A vertical position keyword, e.g. `top` or `bottom`.
-    pub vertical: VerticalPositionKeyword,
+    pub(crate) vertical: VerticalPositionKeyword,
 }
 
 /// The direction of a CSS `linear-gradient()`.
@@ -942,7 +848,7 @@ pub enum LineDirection {
 }
 
 impl LineDirection {
-    pub(crate) fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
+    fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
         if let Ok(angle) = input.try_parse(Angle::parse_with_unitless_zero) {
@@ -973,15 +879,53 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
-    pub(crate) fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_prefixed: bool,
-    ) -> core::result::Result<(), PrintErr> {
+    /// `to bottom`. The prefixed syntax names the side a gradient starts from: there it is `top`.
+    fn default(is_prefixed: bool) -> LineDirection {
+        LineDirection::Vertical(if is_prefixed {
+            VerticalPositionKeyword::Top
+        } else {
+            VerticalPositionKeyword::Bottom
+        })
+    }
+
+    /// Whether the direction can be left out. A prefixed angle stays as written.
+    fn is_default(&self, is_prefixed: bool) -> bool {
+        match self {
+            LineDirection::Angle(angle) => !is_prefixed && angle.to_degrees() == 180.0,
+            _ => *self == Self::default(is_prefixed),
+        }
+    }
+
+    /// A standard direction in the prefixed syntax: the opposite side, or the angle measured
+    /// counterclockwise from `to right`.
+    fn to_prefixed(&self) -> LineDirection {
+        let flip_x = |x: HorizontalPositionKeyword| match x {
+            HorizontalPositionKeyword::Left => HorizontalPositionKeyword::Right,
+            HorizontalPositionKeyword::Right => HorizontalPositionKeyword::Left,
+        };
+        let flip_y = |y: VerticalPositionKeyword| match y {
+            VerticalPositionKeyword::Top => VerticalPositionKeyword::Bottom,
+            VerticalPositionKeyword::Bottom => VerticalPositionKeyword::Top,
+        };
+        match self {
+            _ if self.is_default(false) => Self::default(true),
+            LineDirection::Angle(angle) => {
+                LineDirection::Angle(Angle::Deg((90.0 - angle.to_degrees()).rem_euclid(360.0)))
+            }
+            LineDirection::Horizontal(x) => LineDirection::Horizontal(flip_x(*x)),
+            LineDirection::Vertical(y) => LineDirection::Vertical(flip_y(*y)),
+            LineDirection::Corner(corner) => LineDirection::Corner(LineDirectionCorner {
+                horizontal: flip_x(corner.horizontal),
+                vertical: flip_y(corner.vertical),
+            }),
+        }
+    }
+
+    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
             LineDirection::Horizontal(k) => {
-                if dest.minify {
+                if dest.minify && !is_prefixed {
                     dest.write_str(match k {
                         HorizontalPositionKeyword::Left => &b"270deg"[..],
                         HorizontalPositionKeyword::Right => &b"90deg"[..],
@@ -994,7 +938,7 @@ impl LineDirection {
                 }
             }
             LineDirection::Vertical(k) => {
-                if dest.minify {
+                if dest.minify && !is_prefixed {
                     dest.write_str(match k {
                         VerticalPositionKeyword::Top => &b"0deg"[..],
                         VerticalPositionKeyword::Bottom => &b"180deg"[..],
@@ -1031,18 +975,18 @@ pub enum GradientItem<D> {
 }
 
 impl<D: GradientPosition> GradientItem<D> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             GradientItem::ColorStop(c) => c.to_css(dest),
             GradientItem::Hint(h) => h.to_css(dest),
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
+    fn deep_clone(&self, _bump: &Arena) -> Self {
         self.clone()
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             GradientItem::ColorStop(c) => c.color.is_compatible(browsers),
             GradientItem::Hint(_) => {
@@ -1052,7 +996,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns a fallback gradient item for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> GradientItem<D> {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> GradientItem<D> {
         match self {
             GradientItem::ColorStop(stop) => GradientItem::ColorStop(ColorStop {
                 color: stop.color.get_fallback(bump, kind),
@@ -1063,10 +1007,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub(crate) fn get_necessary_fallbacks(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> ColorFallbackKind {
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
             GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(targets),
             GradientItem::Hint(_) => ColorFallbackKind::empty(),
@@ -1088,7 +1029,7 @@ pub enum EndingShape {
 impl EndingShape {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
 
-    pub(crate) fn default() -> EndingShape {
+    fn default() -> EndingShape {
         EndingShape::Ellipse(Ellipse::Extent(ShapeExtent::FarthestCorner))
     }
 }
@@ -1097,19 +1038,19 @@ impl EndingShape {
 #[derive(Clone, PartialEq)]
 pub struct WebKitGradientPoint {
     /// The x-position.
-    pub x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
+    pub(crate) x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
     /// The y-position.
-    pub y: WebKitGradientPointComponent<VerticalPositionKeyword>,
+    pub(crate) y: WebKitGradientPointComponent<VerticalPositionKeyword>,
 }
 
 impl WebKitGradientPoint {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<WebKitGradientPoint> {
+    fn parse(input: &mut css::Parser) -> Result<WebKitGradientPoint> {
         let x = WebKitGradientPointComponent::<HorizontalPositionKeyword>::parse(input)?;
         let y = WebKitGradientPointComponent::<VerticalPositionKeyword>::parse(input)?;
         Ok(WebKitGradientPoint { x, y })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.x.to_css(dest)?;
         dest.write_char(b' ')?;
         self.y.to_css(dest)
@@ -1128,7 +1069,7 @@ pub enum WebKitGradientPointComponent<S> {
 }
 
 impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
+    fn parse(input: &mut css::Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"center"))
             .is_ok()
@@ -1144,7 +1085,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
         Ok(WebKitGradientPointComponent::Side(keyword))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             WebKitGradientPointComponent::Center => {
                 if dest.minify {
@@ -1172,7 +1113,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
     }
 
     /// Attempts to convert a standard position to a webkit gradient point.
-    pub(crate) fn from_position(
+    fn from_position(
         this: &PositionComponent<S>,
         _bump: &Arena,
     ) -> Option<WebKitGradientPointComponent<S>> {
@@ -1201,15 +1142,15 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
 #[derive(Clone, PartialEq)]
 pub struct WebKitColorStop {
     /// The color of the color stop.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The position of the color stop.
-    pub position: CSSNumber,
+    pub(crate) position: CSSNumber,
 }
 
 impl WebKitColorStop {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
+    fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
         let location = input.current_source_location();
-        let function = input.expect_function_cloned()?;
+        let function = input.expect_function()?;
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
             let position: f32 = crate::match_ignore_ascii_case! { function, {
                 b"color-stop" => {
@@ -1226,7 +1167,7 @@ impl WebKitColorStop {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.position == 0.0 {
             dest.write_str(b"from(")?;
             self.color.to_css(dest)?;
@@ -1242,14 +1183,14 @@ impl WebKitColorStop {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitColorStop {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitColorStop {
         WebKitColorStop {
             color: self.color.get_fallback(bump, kind),
             position: self.position,
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
+    fn deep_clone(&self, _bump: &Arena) -> Self {
         self.clone()
     }
 }
@@ -1261,19 +1202,19 @@ impl WebKitColorStop {
 #[derive(Clone, PartialEq)]
 pub struct ColorStop<D> {
     /// The color of the color stop.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The position of the color stop.
-    pub position: Option<D>,
+    pub(crate) position: Option<D>,
 }
 
 impl<D: GradientPosition> ColorStop<D> {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
+    fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
         let color = CssColor::parse(input)?;
         let position = input.try_parse(D::parse).ok();
         Ok(ColorStop { color, position })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.color.to_css(dest)?;
         if let Some(position) = &self.position {
             dest.write_char(b' ')?;
@@ -1287,9 +1228,9 @@ impl<D: GradientPosition> ColorStop<D> {
 #[derive(Clone, PartialEq)]
 pub struct EllipseSize {
     /// The x-radius of the ellipse.
-    pub x: LengthPercentage,
+    pub(crate) x: LengthPercentage,
     /// The y-radius of the ellipse.
-    pub y: LengthPercentage,
+    pub(crate) y: LengthPercentage,
 }
 
 /// An ellipse ending shape for a `radial-gradient()`.
@@ -1304,7 +1245,7 @@ pub enum Ellipse {
 }
 
 impl Ellipse {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Ellipse> {
+    fn parse(input: &mut css::Parser) -> Result<Ellipse> {
         if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
             // If it is, then we'll re-parse as a circle.
@@ -1345,7 +1286,7 @@ impl Ellipse {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // The `ellipse` keyword is optional, so we don't emit it.
         match self {
             Ellipse::Size(s) => {
@@ -1382,7 +1323,7 @@ pub enum Circle {
 }
 
 impl Circle {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Circle> {
+    fn parse(input: &mut css::Parser) -> Result<Circle> {
         if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `circle` keyword is required. If it's not there, then it's an ellipse.
             input.expect_ident_matching(b"circle")?;
@@ -1415,7 +1356,7 @@ impl Circle {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Circle::Radius(r) => r.to_css(dest),
             Circle::Extent(extent) => {
@@ -1449,7 +1390,9 @@ crate::css_eql_partialeq!(
     Circle,
 );
 
-pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<GradientItem<D>>> {
+pub(crate) fn parse_items<D: GradientPosition>(
+    input: &mut css::Parser,
+) -> Result<Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();
     let mut seen_stop = false;
 
@@ -1493,20 +1436,13 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
     Ok(items)
 }
 
-pub(crate) fn serialize_items<D: GradientPosition>(
+fn serialize_items<D: GradientPosition>(
     items: &[GradientItem<D>],
     dest: &mut Printer,
 ) -> core::result::Result<(), PrintErr> {
     let mut first = true;
     let mut last: Option<&GradientItem<D>> = None;
     for item in items.iter() {
-        // Skip useless hints
-        if let GradientItem::Hint(h) = item {
-            if h.is_percentage_with_value(0.5) {
-                continue;
-            }
-        }
-
         // Use double position stop if the last stop is the same color and all targets support it.
         if let Some(prev) = last {
             if !dest.targets.should_compile(
@@ -1539,7 +1475,7 @@ pub(crate) fn serialize_items<D: GradientPosition>(
     Ok(())
 }
 
-pub(crate) fn convert_stops_to_webkit(
+fn convert_stops_to_webkit(
     bump: &Arena,
     items: &[GradientItem<LengthPercentage>],
 ) -> Option<Vec<WebKitColorStop>> {

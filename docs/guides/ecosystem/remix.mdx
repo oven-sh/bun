@@ -4,94 +4,95 @@ sidebarTitle: Remix with Bun
 mode: center
 ---
 
-<Note>
-  The Remix development server (`remix dev`) relies on Node.js APIs that Bun does not implement. This guide uses Bun to
-  initialize the project and install dependencies, and Node.js to run the dev server.
-</Note>
+[Remix 3](https://github.com/remix-run/remix) is a web framework built from standalone packages: a router, HTML rendering, sessions, form parsing, and more. These packages are distributed together as the `remix` package. Remix 3 is published under the `next` tag on npm while it is in beta. Its server runs on Bun as-is.
+
+<Note>This guide covers Remix 3. To create a Remix 2 project, use `create-remix` instead.</Note>
 
 ---
 
-Initialize a Remix app with `create-remix`.
+Scaffold a new project with the Remix CLI.
 
 ```sh terminal icon="terminal"
-bun create remix
+bunx remix@next new my-remix-app
 ```
 
 ```txt
- remix   v1.19.3 💿 Let's build a better website...
+• Prepare target directory...
+✓ Prepare target directory
+• Generate scaffold files...
+✓ Generate scaffold files
+• Finalize package.json...
+✓ Finalize package.json
 
-   dir   Where should we create your new project?
-         ./my-app
+Created My Remix App at my-remix-app
+```
 
-      ◼  Using basic template See https://remix.run/docs/en/main/guides/templates#templates for more
-      ✔  Template copied
+Then install its dependencies.
 
-   git   Initialize a new git repository?
-         Yes
-
-  deps   Install dependencies with bun?
-         Yes
-
-      ✔  Dependencies installed
-      ✔  Git initialized
-
-  done   That's it!
-         Enter your project directory using cd ./my-app
-         Check out README.md for development and deploy instructions.
+```sh terminal icon="terminal"
+cd my-remix-app
+bun install
 ```
 
 ---
 
-To start the dev server, run `bun run dev` from the project root. This runs the `remix dev` command with Node.js.
+The generated `server.ts` creates a `node:http` server that hands every request to the app's router. Bun runs it directly; pass `--watch` to restart the server whenever a file it imports changes.
 
 ```sh terminal icon="terminal"
-cd my-app
+bun --watch server.ts
+```
+
+```txt
+Server listening on http://localhost:44100
+```
+
+Open [http://localhost:44100](http://localhost:44100) to see the starter page. The routes live in `app/routes.ts` and `app/router.ts`. `app/actions/home-page.tsx` renders the starter home page.
+
+---
+
+The `scripts` generated in `package.json` run the server with Node.js and the `remix/node-tsx` TypeScript loader. Bun runs TypeScript itself, so point the scripts at `bun` instead.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "dev": "NODE_ENV=development node --watch --import remix/node-tsx server.ts", // [!code --]
+    "dev": "bun --watch server.ts", // [!code ++]
+    "start": "NODE_ENV=production node --import remix/node-tsx server.ts", // [!code --]
+    "start": "NODE_ENV=production bun server.ts" // [!code ++]
+  }
+}
+```
+
+```sh terminal icon="terminal"
 bun run dev
 ```
 
 ```txt
-$ remix dev
+$ bun --watch server.ts
+Server listening on http://localhost:44100
+```
 
-💿  remix dev
+<Note>
+  The generated `hmr` script (`hmr.ts`) also loads `remix/node-tsx`, which relies on `module.registerHooks()`. Bun does
+  not implement that API yet, so the script fails under Bun. See [Node.js
+  compatibility](/runtime/nodejs-compat#node-module). `bun --watch` restarts the server on changes instead.
+</Note>
 
-info  building...
-info  built (263ms)
-Remix App Server started at http://localhost:3000 (http://172.20.0.143:3000)
+---
+
+The router is a `fetch` handler, so you can also serve the app with [`Bun.serve()`](/runtime/http/server) instead of `node:http`.
+
+```ts server.ts icon="/icons/typescript.svg"
+import { router } from "./app/router.ts";
+
+const server = Bun.serve({
+  port: 44100,
+  fetch: request => router.fetch(request),
+});
+
+console.log(`Server listening on ${server.url}`);
 ```
 
 ---
 
-Open [http://localhost:3000](http://localhost:3000) to see the app. Changes you make to `app/routes/_index.tsx` are hot-reloaded in the browser.
-
-<Frame>
-  ![Remix app running on localhost](https://github.com/oven-sh/bun/assets/3084745/c26f1059-a5d4-4c0b-9a88-d9902472fd77)
-</Frame>
-
----
-
-To build your app, run `bun run build`.
-
-```sh terminal icon="terminal"
-bun run build
-```
-
-```txt
-$ remix build
-info  building... (NODE_ENV=production)
-info  built (158ms)
-```
-
-Then start the app from the project root.
-
-```sh terminal icon="terminal"
-bun start
-```
-
-```txt
-$ remix-serve ./build/index.js
-[remix-serve] http://localhost:3000 (http://192.168.86.237:3000)
-```
-
----
-
-See the [Remix docs](https://remix.run/) to learn more.
+See the Remix [documentation](https://github.com/remix-run/remix/tree/main/docs) to learn more.

@@ -21,7 +21,7 @@
 
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, tls as tlsCerts } from "harness";
+import { isASAN, isDebug, rss, tls as tlsCerts } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { Transform } from "node:stream";
@@ -152,7 +152,7 @@ function snapshot() {
   Bun.gc(true);
   const t = heapStats().objectTypeCounts;
   return {
-    rss: process.memoryUsage.rss(),
+    rss: rss(),
     Timeout: t.Timeout || 0,
     Promise: t.Promise || 0,
     AsyncGenerator: t.AsyncGenerator || 0,

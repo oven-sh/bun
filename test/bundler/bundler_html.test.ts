@@ -226,6 +226,29 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
     },
   });
 
+  // A script that is also an entry point still runs in its place on the page.
+  itBundled("html/script-that-is-also-an-entry-point", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./first.js"></script>
+    <script type="module" src="./second.js"></script>
+  </head>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/second.js": `console.log("second");`,
+    },
+    entryPoints: ["/index.html", "/second.js"],
+    onAfterBundle(api) {
+      const jsMatch = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + jsMatch![1])).toMatch(/"first"[\s\S]*"second"/);
+      api.expectFile("out/second.js").toContain('console.log("second")');
+    },
+  });
+
   // Test CSS imports
   itBundled("html/css-imports", {
     outdir: "out/",
@@ -418,6 +441,44 @@ export const initNav = () => console.log('Navigation initialized');`,
     });
   }
 
+  // With splitting, each page preloads the chunks its entry chunk statically
+  // imports (here lib.js's chunk, shared by both pages, and through it
+  // deep.js's, shared by all three) but not chunks it only import()s.
+  itBundled("html/modulepreload-links", {
+    outdir: "out/",
+    files: {
+      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head><body></body></html>`,
+      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head><body></body></html>`,
+      "/c.html": `<!DOCTYPE html><html><head><script type="module" src="./c.js"></script></head><body></body></html>`,
+      "/a.js": `import { lib } from "./lib.js"; console.log("a", lib()); import("./lazy.js");`,
+      "/b.js": `import { lib } from "./lib.js"; console.log("b", lib());`,
+      "/c.js": `import { deep } from "./deep.js"; console.log("c", deep());`,
+      "/lib.js": `import { deep } from "./deep.js"; export const lib = () => "lib" + deep();`,
+      "/deep.js": `export const deep = () => "deep";`,
+      "/lazy.js": `console.log("lazy");`,
+    },
+    entryPoints: ["/a.html", "/b.html", "/c.html"],
+    splitting: true,
+    onAfterBundle(api) {
+      const preloads = (page: string) =>
+        [
+          ...api.readFile(`out/${page}.html`).matchAll(/<link rel="modulepreload" crossorigin href="\.\/([^"]+)">/g),
+        ].map(m => api.readFile("out/" + m[1]));
+      const [a, b, c] = ["a", "b", "c"].map(preloads);
+      expect(a).toHaveLength(2);
+      expect(a[0]).toContain('"lib"');
+      expect(a[1]).toContain('"deep"');
+      expect(a.some(chunk => chunk.includes('"lazy"'))).toBe(false);
+      expect(b).toStrictEqual(a);
+      expect(c).toStrictEqual([a[1]]);
+      for (const page of ["a", "b", "c"]) {
+        expect(api.readFile(`out/${page}.html`)).toMatch(
+          /<script type="module" crossorigin src="[^"]+"><\/script><link rel="modulepreload"/,
+        );
+      }
+    },
+  });
+
   // Test multiple HTML entries with shared chunks
   itBundled("html/shared-chunks", {
     outdir: "out/",
@@ -492,8 +553,8 @@ export const largeModule = {
       const page1Html = api.readFile("out/page1.html");
       const page2Html = api.readFile("out/page2.html");
 
-      const page1JsPath = page1Html.match(/src="(.*\.js)"/)?.[1];
-      const page2JsPath = page2Html.match(/src="(.*\.js)"/)?.[1];
+      const page1JsPath = page1Html.match(/src="([^"]*\.js)"/)?.[1];
+      const page2JsPath = page2Html.match(/src="([^"]*\.js)"/)?.[1];
 
       expect(page1JsPath).toBeDefined();
       expect(page2JsPath).toBeDefined();
@@ -505,9 +566,15 @@ export const largeModule = {
       expect(page2Js).toContain("import{sharedUtil}");
       expect(page1Js).toContain("import{sharedUtil}");
 
+      // ... and that each page preloads the shared chunk its entry imports
+      const sharedChunkPath = page1Js.match(/from"\.\/([^"]*\.js)"/)?.[1];
+      expect(sharedChunkPath).toBeDefined();
+      expect(page1Html).toContain(`<link rel="modulepreload" crossorigin href="./${sharedChunkPath}">`);
+      expect(page2Html).toContain(`<link rel="modulepreload" crossorigin href="./${sharedChunkPath}">`);
+
       // Check CSS bundles
-      const page1CssPath = page1Html.match(/href="(.*\.css)"/)?.[1];
-      const page2CssPath = page2Html.match(/href="(.*\.css)"/)?.[1];
+      const page1CssPath = page1Html.match(/href="([^"]*\.css)"/)?.[1];
+      const page2CssPath = page2Html.match(/href="([^"]*\.css)"/)?.[1];
 
       expect(page1CssPath).toBeDefined();
       expect(page2CssPath).toBeDefined();
@@ -787,6 +854,21 @@ body {
     },
   });
 
+  itBundled("html/image-inlined-by-stylesheet", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<link rel="stylesheet" href="./style.css"><img src="./logo.png">`,
+      "/style.css": `body { background: url("./logo.png"); }`,
+      "/logo.png": "png bytes",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/<img src="(.*?)">/)![1];
+      expect(src).toMatch(/^\.\/logo-\w+\.png$/);
+      expect(api.readFile("out/" + src)).toBe("png bytes");
+    },
+  });
+
   // Test that sourcemap comments are not included in HTML and CSS files
   itBundled("html/no-sourcemap-comments", {
     outdir: "out/",
@@ -941,6 +1023,114 @@ body {
     },
   });
 
+  const stylesheetOf = (api: { readFile(path: string): string }, page: string) =>
+    api.readFile("out/" + api.readFile("out/" + page).match(/href="(.*?\.css)"/)![1]);
+
+  // The import orders of the two pages differ only in the media query of a layer list.
+  itBundled("html/SeparateCSSWhenImportConditionsDiffer", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./r0.css" />
+    <link rel="stylesheet" href="./r1.css" />
+  </head>
+  <body><div class="x"></div></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./f1.css" />
+    <link rel="stylesheet" href="./r0.css" />
+    <link rel="stylesheet" href="./r1.css" />
+  </head>
+  <body><div class="x"></div></body>
+</html>`,
+      "/r0.css": `@import "./f1.css" screen;\n@layer a { .x { color: green } }`,
+      "/r1.css": `@import "./f1.css";\n.r1 { color: blue }`,
+      "/f1.css": `@layer b { .x { color: red } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const rest = `@layer a{.x{color:green}}@layer b{.x{color:red}}.r1{color:#00f}\n`;
+      // Without screen media the layer order is a, b on the first page. It is b, a on the second page.
+      expect({ first: stylesheetOf(api, "first.html"), second: stylesheetOf(api, "second.html") }).toEqual({
+        first: `@media screen{@layer b;}` + rest,
+        second: `@layer b;` + rest,
+      });
+    },
+  });
+
+  // The import orders of the two pages differ only in the names of a layer list: "x.y, z" and "x, yz".
+  itBundled("html/SeparateCSSWhenLayerNamesDiffer", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" />
+    <link rel="stylesheet" href="./d.css" />
+    <link rel="stylesheet" href="./c.css" />
+  </head>
+  <body><div class="box"></div></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./b.css" />
+    <link rel="stylesheet" href="./d.css" />
+    <link rel="stylesheet" href="./c.css" />
+  </head>
+  <body><div class="box"></div></body>
+</html>`,
+      "/a.css": `@layer x.y, z;\n.a { color: blue }`,
+      "/b.css": `@layer x, yz;\n.b { color: blue }`,
+      "/c.css": `@import "./a.css";\n@import "./b.css";\n.c { color: blue }`,
+      "/d.css": `@layer z { .box { color: red } }\n@layer yz { .box { color: green } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const rest =
+        `@layer z{.box{color:red}}@layer yz{.box{color:green}}` +
+        `@layer x.y,z;.a{color:#00f}@layer x,yz;.b{color:#00f}.c{color:#00f}\n`;
+      // The layer "yz" wins on the first page. The layer "z" wins on the second page.
+      expect({ first: stylesheetOf(api, "first.html"), second: stylesheetOf(api, "second.html") }).toEqual({
+        first: `@layer x.y,z;` + rest,
+        second: `@layer x,yz;` + rest,
+      });
+    },
+  });
+
+  // With CSS chunking on, a CSS entry point and the stylesheet of a page get the same hash for different import orders.
+  itBundled("html/SeparateCSSForCSSEntryPointProduction", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/page.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./r.css" />
+    <link rel="stylesheet" href="./s.css" />
+  </head>
+  <body><div class="s"></div></body>
+</html>`,
+      "/r.css": `@layer a { .r { color: red } }`,
+      "/m.css": `@layer b { .m { color: blue } }`,
+      "/s.css": `@import "./r.css" print;\n@import "./m.css";\n@import "./r.css";\n.s { color: green }`,
+    },
+    entryPoints: ["/page.html", "/s.css"],
+    onAfterBundle(api) {
+      const rest = `@layer b{.m{color:#00f}}@layer a{.r{color:red}}.s{color:green}\n`;
+      expect({ page: stylesheetOf(api, "page.html"), entry: api.readFile("out/s.css") }).toEqual({
+        page: `@layer a;` + rest,
+        entry: `@media print{@layer a;}` + rest,
+      });
+    },
+  });
+
   // Test manifest.json is copied as an asset and link href is rewritten
   itBundled("html/manifest-json", {
     outdir: "out/",
@@ -1009,6 +1199,31 @@ body {
       // The webmanifest reference should be rewritten to a hashed filename
       expect(htmlContent).not.toContain("site.webmanifest");
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
+    },
+  });
+
+  // lol-html doesn't infer end tags, so every <p> is open until </body>.
+  itBundled("html/many-unclosed-elements", {
+    outdir: "out/",
+    backend: "cli",
+    files: {
+      "/index.html": Buffer.concat([
+        Buffer.from(`<!DOCTYPE html><html><head><script src="./script.js"></script></head><body>\n`),
+        Buffer.alloc(70_000 * "<p>x".length, "<p>x"),
+        Buffer.from(`\n</body></html>`),
+      ]),
+      "/script.js": "console.log('Hello World')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const pieces = api.readFile("out/index.html").split("<p>x");
+      // Check the count first. If elements are missing, the diff below is huge.
+      expect(pieces.length - 1).toBe(70_000);
+      expect({ head: pieces[0], between: pieces.slice(1, -1).join(""), tail: pieces.at(-1)!.trim() }).toEqual({
+        head: expect.stringMatching(/<script type="module" crossorigin src="\.\/index-[a-z0-9]+\.js">/),
+        between: "",
+        tail: "</body></html>",
+      });
     },
   });
 });

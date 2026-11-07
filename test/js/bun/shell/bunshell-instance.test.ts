@@ -1,6 +1,40 @@
 import { describe, expect, test } from "bun:test";
 
 import { $ } from "bun";
+import { bunEnv, bunExe } from "harness";
+
+test("new $.Shell() inherits process.env and throws on non-zero exit by default", async () => {
+  // Run in a subprocess so other tests mutating $.env / $.throws don't interfere.
+  const src = `
+    import { $ } from "bun";
+    const inst = new $.Shell();
+
+    const fromDefault = (await $\`echo \$BUN_SHELL_INSTANCE_MARKER\`.quiet()).stdout.toString().trim();
+    const fromFresh = (await inst\`echo \$BUN_SHELL_INSTANCE_MARKER\`.quiet()).stdout.toString().trim();
+
+    let threwDefault, threwFresh;
+    try { await $\`false\`.quiet(); } catch (e) { threwDefault = { isShellError: e instanceof $.ShellError, exitCode: e.exitCode }; }
+    try { await inst\`false\`.quiet(); } catch (e) { threwFresh = { isShellError: e instanceof $.ShellError, exitCode: e.exitCode }; }
+
+    console.log(JSON.stringify({ fromDefault, fromFresh, threwDefault, threwFresh }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, BUN_SHELL_INSTANCE_MARKER: "hello" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fromDefault: "hello",
+    fromFresh: "hello",
+    threwDefault: { isShellError: true, exitCode: 1 },
+    threwFresh: { isShellError: true, exitCode: 1 },
+  });
+  expect(exitCode).toBe(0);
+});
 
 test("$$", async () => {
   const $$ = new $.Shell();
@@ -19,6 +53,21 @@ test("$$", async () => {
   expect((await $`echo $BUN`).stdout.toString()).toBe("bun2\n");
 });
 
+test("new (class extends $.Shell) returns an instance of the subclass", async () => {
+  class GreetingShell extends $.Shell {
+    greet(name: string) {
+      return this`echo $GREETING ${name}`.text();
+    }
+  }
+
+  const $$ = new GreetingShell();
+  expect(Object.getPrototypeOf($$)).toBe(GreetingShell.prototype);
+  expect($$).toBeInstanceOf($.Shell);
+
+  $$.env({ GREETING: "hello" });
+  expect(await $$.greet("bun")).toBe("hello bun\n");
+});
+
 test("$.text", async () => {
   expect(await $`echo hello`.text()).toBe("hello\n");
 });
@@ -34,7 +83,7 @@ test("$.json", async () => {
 test("$.lines", async () => {
   expect(await Array.fromAsync(await $`echo hello`.lines())).toEqual(["hello", ""]);
 
-  const lines = [];
+  const lines: string[] = [];
   for await (const line of $`echo hello`.lines()) {
     lines.push(line);
   }
@@ -47,14 +96,14 @@ test("$.arrayBuffer", async () => {
 });
 
 test("$.bytes", async () => {
-  expect(await $`echo hello`.bytes()).toEqual(new TextEncoder().encode("hello\n"));
+  expect(await ($`echo hello` as any).bytes()).toEqual(new TextEncoder().encode("hello\n"));
 });
 
 test("$.blob", async () => {
   expect(await $`echo hello`.blob()).toEqual(new Blob([new TextEncoder().encode("hello\n")]));
 });
 
-function make(expected: unknown) {
+function make(expected: string) {
   const inputType = [
     new Blob([expected]),
     Buffer.from(expected),

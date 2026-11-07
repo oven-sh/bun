@@ -72,16 +72,8 @@ const _: () = assert!(
 // SAFETY: all-zero is a valid SocketGroup — every field is a raw pointer
 // (null), `Option<&'static _>` (None via NPO), or an integer (0).
 unsafe impl bun_core::ffi::Zeroable for SocketGroup {}
-// SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
-unsafe impl bun_core::ffi::Zeroable for VTable {}
 
 impl Default for SocketGroup {
-    fn default() -> Self {
-        bun_core::ffi::zeroed()
-    }
-}
-
-impl Default for VTable {
     fn default() -> Self {
         bun_core::ffi::zeroed()
     }
@@ -146,13 +138,6 @@ impl SocketGroup {
         self.ext.cast::<T>()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.head_sockets.is_null()
-            && self.head_connecting_sockets.is_null()
-            && self.head_listen_sockets.is_null()
-            && self.low_prio_count == 0
-    }
-
     pub fn listen(
         &mut self,
         kind: SocketKind,
@@ -195,6 +180,31 @@ impl SocketGroup {
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 path.as_ptr(),
                 path.len(),
+                options,
+                socket_ext_size,
+                err,
+            )
+        }
+    }
+
+    pub fn listen_fd(
+        &mut self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        backlog: c_int,
+        options: c_int,
+        socket_ext_size: c_int,
+        err: &mut c_int,
+    ) -> *mut ListenSocket {
+        // SAFETY: forwarding to C; all pointers are valid or null as documented.
+        unsafe {
+            us_socket_group_listen_fd(
+                self,
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                fd,
+                backlog,
                 options,
                 socket_ext_size,
                 err,
@@ -270,6 +280,7 @@ impl SocketGroup {
         ssl_ctx: Option<*mut SslCtx>,
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
         ipc: bool,
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C.
@@ -280,19 +291,10 @@ impl SocketGroup {
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 socket_ext_size,
                 fd,
+                options,
                 ipc as c_int,
             )
         }
-    }
-
-    pub fn pair(
-        &mut self,
-        kind: SocketKind,
-        ext_size: c_int,
-        fds: &mut [LIBUS_SOCKET_DESCRIPTOR; 2],
-    ) -> *mut us_socket_t {
-        // SAFETY: forwarding to C; `fds` is a valid 2-element array.
-        unsafe { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
     }
 }
 
@@ -329,6 +331,16 @@ unsafe extern "C" {
         socket_ext_size: c_int,
         err: *mut c_int,
     ) -> *mut ListenSocket;
+    fn us_socket_group_listen_fd(
+        group: *mut SocketGroup,
+        kind: u8,
+        ssl_ctx: *mut SslCtx,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        backlog: c_int,
+        options: c_int,
+        socket_ext_size: c_int,
+        err: *mut c_int,
+    ) -> *mut ListenSocket;
     /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
     /// path), discriminated by `*is_connecting`. The public `connect()` method
     /// turns this into the typed `ConnectResult` enum — call that, not this.
@@ -359,12 +371,7 @@ unsafe extern "C" {
         ssl_ctx: *mut SslCtx,
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
         ipc: c_int,
-    ) -> *mut us_socket_t;
-    fn us_socket_pair(
-        group: *mut SocketGroup,
-        kind: u8,
-        ext_size: c_int,
-        fds: *mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t;
 }

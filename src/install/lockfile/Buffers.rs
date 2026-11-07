@@ -1,23 +1,20 @@
 use core::mem::size_of;
 
-use bun_collections::DynamicBitSet as Bitset;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
-// `use super::{self as lockfile, ...}` and bare `use super as lockfile;` are both
-// rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067), so the
-// parent-module alias is spelled via its crate path instead.
+use super::bun_lockb::StreamType;
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
-    StringBuffer, Tree, assert_no_uninitialized_padding, tree,
+    StringBuffer, Tree, tree,
 };
-use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
 use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use bun_io::Write as _;
 
 #[derive(Default)]
 pub struct Buffers {
-    pub trees: tree::List,
+    pub(crate) trees: tree::List,
     pub hoisted_dependencies: DependencyIDList,
     /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
     /// Should be the same length as `dependencies`
@@ -30,32 +27,19 @@ pub struct Buffers {
     pub string_bytes: StringBuffer,
 }
 
-// The Vec-backed field types drop automatically; no explicit `Drop` impl is
-// needed.
-
 impl Buffers {
-    pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
-        self.trees
-            .reserve(that.trees.len().saturating_sub(self.trees.len()));
-        self.resolutions.reserve(
-            that.resolutions
-                .len()
-                .saturating_sub(self.resolutions.len()),
-        );
-        self.dependencies.reserve(
-            that.dependencies
-                .len()
-                .saturating_sub(self.dependencies.len()),
-        );
-        self.extern_strings.reserve(
-            that.extern_strings
-                .len()
-                .saturating_sub(self.extern_strings.len()),
-        );
-        self.string_bytes.reserve(
-            that.string_bytes
-                .len()
-                .saturating_sub(self.string_bytes.len()),
+    pub(crate) fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
+        macro_rules! reserve {
+            ($($field:ident),*) => {
+                $(self.$field.reserve(that.$field.len().saturating_sub(self.$field.len()));)*
+            };
+        }
+        reserve!(
+            trees,
+            resolutions,
+            dependencies,
+            extern_strings,
+            string_bytes
         );
         Ok(())
     }
@@ -74,51 +58,29 @@ mod sizes {
     ///
     /// This is the alignment of a slice descriptor (a `(*T, usize)` fat
     /// pointer) — i.e. pointer alignment, not element alignment. This 8-byte
-    /// boundary is load-bearing for on-disk parity AND for
-    /// `read_array::<ExternalString>` (which has a `u64` field) to produce an aligned `&[T]`.
+    /// boundary is load-bearing for on-disk parity, and `read_array` rejects a payload off its element's alignment.
     pub(super) const ALIGN_TYPE_0: usize = align_of::<usize>();
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 }
 
-pub fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
+pub(crate) fn read_array<T: bun_core::AnyBitPattern>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
-    // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
-    if start_pos == 0xDEAD_BEEF {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // These are absolute numbers, it shouldn't be zero.
-    // There's a prefix before any of the arrays, so it can never be zero here.
-    if start_pos == 0 {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // We shouldn't be going backwards.
-    if start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64) {
+    // 0xDEADBEEF: never written. Positions are absolute, follow a prefix and do not go backwards.
+    if start_pos == 0xDEAD_BEEF
+        || start_pos == 0
+        || start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64)
+    {
         return Err(crate::Error::CorruptLockfile);
     }
 
     let end_pos = stream.read_int_le::<u64>()?;
 
-    // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
-    // That shouldn't happen.
-    if end_pos == 0xDEAD_BEEF {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // These are absolute numbers, it shouldn't be zero.
-    if end_pos == 0 {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // Prevent integer overflow.
-    if start_pos > end_pos {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // Prevent buffer overflow.
-    if end_pos > stream.buffer.len() as u64 {
+    if end_pos == 0xDEAD_BEEF
+        || end_pos == 0
+        || start_pos > end_pos
+        || end_pos > stream.buffer.len() as u64
+    {
         return Err(crate::Error::CorruptLockfile);
     }
 
@@ -127,49 +89,33 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     stream.pos = end_pos as usize;
 
     if byte_len == 0 {
-        // Empty arrays are written by `write_array`'s else-branch without an
-        // `Aligner::write_with_align` pad, so their recorded start offset need not
-        // be aligned.
+        // `write_array` doesn't pad before an empty array, so its start may be unaligned.
         return Ok(Vec::new());
     }
 
-    if start_pos % core::mem::align_of::<T>() as u64 != 0 || byte_len % size_of::<T>() as u64 != 0 {
+    // The copy below does not need it, but the writer aligns every payload.
+    if start_pos % core::mem::align_of::<T>() as u64 != 0 {
         return Err(crate::Error::CorruptLockfile);
     }
 
-    let start_pos = start_pos as usize;
-    let end_pos = end_pos as usize;
-    // SAFETY: `start_pos..end_pos` is in-bounds (checked above) and the lockfile
-    // writer aligned the payload to `align_of::<T>()` via `Aligner::write`.
-    let misaligned: &[T] = unsafe {
-        bun_core::ffi::slice(
-            stream.buffer.as_ptr().add(start_pos).cast::<T>(),
-            (end_pos - start_pos) / size_of::<T>(),
-        )
-    };
-
-    Ok(misaligned.to_vec())
+    bun_core::vec_from_bytes(&stream.buffer[start_pos as usize..end_pos as usize])
+        .ok_or(crate::Error::CorruptLockfile)
 }
 
-pub fn write_array<S, T>(stream: &mut S, array: &[T], prefix: &'static str) -> crate::Result<()>
-where
-    // One type plays both the positional-stream and append-writer roles —
-    // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
-    // `bun_io::Write` (append) — so there are never two `&mut` to one buffer.
-    S: lockfile::PositionalStream + bun_io::Write,
-{
-    // This call is a zero-cost intent marker only — it carries no trait bound (see the
-    // doc comment on `assert_no_uninitialized_padding`). The actual compile-time
-    // enforcement is the per-type `const` field-offset asserts and the
-    // `layout_asserts` size/align pins in src/install/padding_checker.rs; any new
-    // `T` serialized through here must be added to that audit.
-    assert_no_uninitialized_padding(array);
+/// `NoUninit` is what keeps garbage out of the lockfile: see `padding_checker.rs`.
+pub(crate) fn write_array<T: bun_core::NoUninit>(
+    stream: &mut StreamType<'_>,
+    array: &[T],
+    prefix: &'static str,
+) -> crate::Result<()> {
+    write_array_bytes(stream, bun_core::slice_as_bytes(array), prefix)
+}
 
-    // SAFETY: `T` has no uninitialized padding (audited via the per-type layout
-    // asserts in padding_checker.rs); reading its bytes is sound.
-    let bytes: &[u8] =
-        unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
-
+fn write_array_bytes(
+    stream: &mut StreamType<'_>,
+    bytes: &[u8],
+    prefix: &'static str,
+) -> crate::Result<()> {
     let start_pos = stream.get_pos()?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
@@ -180,48 +126,27 @@ where
     // type-name string (including its sizeof/alignof suffix) as a literal.
     stream.write_all(prefix.as_bytes())?;
 
+    let mut real_start_pos = stream.get_pos()? as u64;
     if !bytes.is_empty() {
-        let pos = stream.get_pos()? as u64;
-        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, &mut *stream, pos)?;
-
-        let real_start_pos = stream.get_pos()? as u64;
+        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, &mut *stream, real_start_pos)?;
+        real_start_pos = stream.get_pos()? as u64;
         stream.write_all(bytes)?;
-        let real_end_pos = stream.get_pos()? as u64;
-        let positioned: [u64; 2] = [real_start_pos, real_end_pos];
-        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
-        // gives the byte view without `unsafe`.
-        let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
-        let mut written: usize = 0;
-        while written < 16 {
-            written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
-        }
-    } else {
-        let real_end_pos = stream.get_pos()? as u64;
-        let positioned: [u64; 2] = [real_end_pos, real_end_pos];
-        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
-        // gives the byte view without `unsafe`.
-        let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
-        let mut written: usize = 0;
-        while written < 16 {
-            written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
-        }
+    }
+    let positioned: [u64; 2] = [real_start_pos, stream.get_pos()? as u64];
+    let positioned_bytes = bun_core::bytes_of(&positioned);
+    let mut written: usize = 0;
+    while written < 16 {
+        written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
     }
     Ok(())
 }
 
-pub fn save<S>(
+pub(crate) fn save(
     lockfile: &Lockfile,
     options: &PackageManagerOptions,
-    stream: &mut S,
-) -> crate::Result<()>
-where
-    // See `write_array` — a single bound avoids two `&mut` to the same object.
-    S: lockfile::PositionalStream + bun_io::Write,
-{
+    stream: &mut StreamType<'_>,
+) -> crate::Result<()> {
     let buffers = &lockfile.buffers;
-
-    // The fields are saved unrolled in declaration order (see `sizes` module
-    // note).
 
     macro_rules! save_generic_field {
         ($field:ident, $name:literal, $elem:ty, $prefix:literal) => {{
@@ -232,10 +157,6 @@ where
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
             write_array(stream, clone.as_slice(), $prefix)?;
-            #[cfg(debug_assertions)]
-            {
-                // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, pos, stream.get_pos()?));
-            }
         }};
     }
 
@@ -260,10 +181,6 @@ where
             // reader ignores this string; only the exact bytes matter.
             "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
         )?;
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "trees", pos, stream.get_pos()?));
-        }
     }
 
     // -- hoisted_dependencies --
@@ -295,41 +212,20 @@ where
         #[cfg(debug_assertions)]
         {
             use bun_install::dependency::version::Tag;
-            const SEP_WINDOWS: u8 = b'\\';
             for dep in remaining {
-                // SAFETY: `dep.version.value` is a tag-discriminated union; each
-                // arm reads only the field corresponding to `dep.version.tag`.
-                match dep.version.tag {
-                    Tag::Folder => {
-                        let folder = lockfile.str(dep.version.folder());
-                        if strings::contains_char(folder, SEP_WINDOWS) {
-                            panic!("workspace windows separator: {}\n", bstr::BStr::new(folder));
-                        }
-                    }
-                    Tag::Tarball => {
-                        if let crate::dependency::URI::Local(local) = dep.version.tarball().uri {
-                            let tarball = lockfile.str(&local);
-                            if strings::contains_char(tarball, SEP_WINDOWS) {
-                                panic!("tarball windows separator: {}", bstr::BStr::new(tarball));
-                            }
-                        }
-                    }
-                    Tag::Workspace => {
-                        let workspace = lockfile.str(dep.version.workspace());
-                        if strings::contains_char(workspace, SEP_WINDOWS) {
-                            panic!(
-                                "workspace windows separator: {}\n",
-                                bstr::BStr::new(workspace)
-                            );
-                        }
-                    }
-                    Tag::Symlink => {
-                        let symlink = lockfile.str(dep.version.symlink());
-                        if strings::contains_char(symlink, SEP_WINDOWS) {
-                            panic!("symlink windows separator: {}\n", bstr::BStr::new(symlink));
-                        }
-                    }
-                    _ => {}
+                let path = match dep.version.tag {
+                    Tag::Folder => dep.version.folder(),
+                    Tag::Workspace => dep.version.workspace(),
+                    Tag::Symlink => dep.version.symlink(),
+                    Tag::Tarball => match &dep.version.tarball().uri {
+                        crate::dependency::URI::Local(local) => local,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                let path = lockfile.str(path);
+                if strings::contains_char(path, b'\\') {
+                    panic!("windows separator in a path: {}", bstr::BStr::new(path));
                 }
             }
         }
@@ -345,11 +241,6 @@ where
             to_clone.as_slice(),
             "\n<[26]u8> 26 sizeof, 1 alignof\n",
         )?;
-
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "dependencies", pos, stream.get_pos()?));
-        }
     }
 
     // -- extern_strings --
@@ -372,70 +263,44 @@ where
 }
 
 impl Buffers {
-    pub fn legacy_package_to_dependency_id(
+    pub(crate) fn legacy_package_to_dependency_id(
         &self,
-        dependency_visited: Option<&mut Bitset>,
         package_id: PackageID,
     ) -> crate::Result<DependencyID> {
         match package_id {
-            0 => return Ok(tree::ROOT_DEP_ID),
-            id if id == invalid_package_id => return Ok(invalid_package_id),
-            _ => {
-                // `dependency_visited` is captured once outside the loop
-                // instead of re-matched per iteration (borrowck).
-                let mut visited = dependency_visited;
-                for (dep_id, &pkg_id) in self.resolutions.iter().enumerate() {
-                    if pkg_id == package_id {
-                        if let Some(visited) = visited.as_deref_mut() {
-                            if visited.is_set(dep_id) {
-                                continue;
-                            }
-                            visited.set(dep_id);
-                        }
-                        return Ok(dep_id as DependencyID);
-                    }
-                }
-            }
+            0 => Ok(tree::ROOT_DEP_ID),
+            id if id == invalid_package_id => Ok(invalid_package_id),
+            _ => (self.resolutions.iter())
+                .position(|&pkg_id| pkg_id == package_id)
+                .map(|dep_id| dep_id as DependencyID)
+                .ok_or(crate::Error::LockfileIsMissingResolutionData),
         }
-        Err(crate::Error::LockfileIsMissingResolutionData)
     }
 }
 
 pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
-    pm_: Option<&mut PackageManager>,
+    pm_: Option<&PackageManager>,
+    packages_len: usize,
 ) -> crate::Result<Buffers> {
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
 
-    // The fields are loaded unrolled in declaration order (see `sizes` module
-    // note).
-
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
-            #[cfg(debug_assertions)]
-            let _pos: usize = stream.pos;
-
             this.$field = read_array::<$elem>(stream)?;
-            if let Some(pm) = pm_.as_deref() {
+            if let Some(pm) = pm_ {
                 if pm.options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
-            // #[cfg(debug_assertions)]
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, _pos, stream.get_pos()?));
         }};
     }
 
     // -- trees --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         let tree_list: Vec<tree::External> = read_array(stream)?;
-        // `set_len` then `iter_mut()` would form `&mut Tree` to uninitialized
-        // memory (UB), so we push into the reserved capacity instead.
         this.trees = tree::List::with_capacity(tree_list.len());
         for from in &tree_list {
             this.trees.push(Tree::to_tree(*from));
@@ -451,11 +316,8 @@ pub(crate) fn load(
 
     // -- dependencies --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
-        if let Some(pm) = pm_.as_deref() {
+        if let Some(pm) = pm_ {
             if pm.options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "Loaded {} {}",
@@ -479,13 +341,8 @@ pub(crate) fn load(
     let string_buf = this.string_bytes.as_slice();
     let mut extern_context = dependency::Context {
         log,
-        // allocator dropped — global mimalloc
         buffer: string_buf,
-        package_manager: pm_,
     };
-    // `set_len` then `as_mut_slice()` would form `&mut Dependency` to
-    // uninitialized memory (UB even when write-only), so we push into the
-    // reserved capacity instead.
     for ext in external_dependency_list {
         this.dependencies
             .push(dependency::to_dependency(*ext, &mut extern_context));
@@ -494,28 +351,55 @@ pub(crate) fn load(
 
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
-        let mut visited = Bitset::init_empty(this.dependencies.len())?;
-        // Iterate by index so
-        // `legacy_package_to_dependency_id` can borrow `&self` while we hold
-        // `&mut this.trees[i]`.
-        for i in 0..this.trees.len() {
-            let package_id = this.trees[i].dependency_id;
-            this.trees[i].dependency_id =
-                this.legacy_package_to_dependency_id(Some(&mut visited), package_id)?;
+        // Each mention of a package is the next dependency that resolves to it.
+        let mut first: Vec<DependencyID> = vec![invalid_package_id; packages_len];
+        let mut next: Vec<DependencyID> = vec![invalid_package_id; this.resolutions.len()];
+        for (dependency_id, &package_id) in this.resolutions.iter().enumerate().rev() {
+            if let Some(head) = first.get_mut(package_id as usize) {
+                next[dependency_id] = *head;
+                *head = dependency_id as DependencyID;
+            }
         }
-        visited.set_range_value(
-            bun_collections::bit_set::Range {
-                start: 0,
-                end: this.dependencies.len(),
-            },
-            false,
-        );
-        for i in 0..this.hoisted_dependencies.len() {
-            let pid = this.hoisted_dependencies[i];
-            this.hoisted_dependencies[i] =
-                this.legacy_package_to_dependency_id(Some(&mut visited), pid)?;
+        let take = |heads: &mut [DependencyID], id: &mut u32| -> crate::Result<()> {
+            if *id == 0 {
+                *id = tree::ROOT_DEP_ID;
+            } else if *id != invalid_package_id {
+                let head = (heads.get_mut(*id as usize))
+                    .filter(|head| **head != invalid_package_id)
+                    .ok_or(crate::Error::LockfileIsMissingResolutionData)?;
+                *id = *head;
+                *head = next[*id as usize];
+            }
+            Ok(())
+        };
+        let mut heads = first.clone();
+        for tree in &mut this.trees {
+            take(&mut heads, &mut tree.dependency_id)?;
         }
-        // `visited` drops here.
+        for id in &mut this.hoisted_dependencies {
+            take(&mut first, id)?;
+        }
+
+        // Those writers (before v0.5.7) also left unused slots in the list and gave the root no id.
+        let mut kept: tree::Id = 0;
+        let new_ids: Vec<tree::Id> = (this.trees.iter())
+            .map(|tree| {
+                let id = kept;
+                kept += tree::Id::from(tree.id != tree::INVALID_ID);
+                id
+            })
+            .collect();
+        this.trees.retain(|tree| tree.id != tree::INVALID_ID);
+        for tree in &mut this.trees {
+            for id in [&mut tree.id, &mut tree.parent] {
+                if *id != tree::INVALID_ID {
+                    *id = *(new_ids.get(*id as usize)).ok_or(crate::Error::InvalidLockfile)?;
+                }
+            }
+        }
+        if let Some(root) = this.trees.first_mut() {
+            root.dependency_id = tree::ROOT_DEP_ID;
+        }
     }
 
     Ok(this)

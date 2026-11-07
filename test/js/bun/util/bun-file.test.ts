@@ -1,19 +1,19 @@
 import { expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
-  const dir = tempDirWithFiles("delete-stat-unicode-path", {
+  await using dir = tempDir("delete-stat-unicode-path", {
     "another-file.txt": "HEY",
   });
   const filename = join(dir, "🌟.txt");
 
-  expect(async () => {
+  await expect(async () => {
     await Bun.file(filename).delete();
   }).toThrow(`ENOENT: no such file or directory, unlink '${filename}'`);
 
-  expect(async () => {
+  await expect(async () => {
     await Bun.file(filename).stat();
   }).toThrow(`ENOENT: no such file or directory, stat '${filename}'`);
 
@@ -26,7 +26,7 @@ test("delete() and stat() should work with unicode paths", async () => {
 });
 
 test("writer.end() should not close the fd if it does not own the fd", async () => {
-  const dir = tempDirWithFiles("writer-end-fd", {
+  await using dir = tempDir("writer-end-fd", {
     "tmp.txt": "HI",
   });
   const filename = join(dir, "tmp.txt");
@@ -66,7 +66,7 @@ test("Bun.write() errors include async stack frames", async () => {
   // Use a file-as-directory-component path so it fails on both POSIX and
   // Windows. Bun.write recursively creates directories, so a plain
   // /nonexistent-path/ would succeed on Windows where / is the drive root.
-  const dir = tempDirWithFiles("bun-write-async-stack", { "blocker.txt": "x" });
+  await using dir = tempDir("bun-write-async-stack", { "blocker.txt": "x" });
   const badPath = join(dir, "blocker.txt", "cannot-write.txt");
   // Bun.write uses a sync fast path for inputs under 256KB on POSIX — use
   // 512KB to force the async (threadpool) path so we're actually testing the
@@ -117,7 +117,7 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   // In debug builds this surfaces as "mimalloc: error: mi_free: invalid
   // (unaligned) pointer" on stderr; in release it silently corrupts the heap.
   const bom = Buffer.from([0xef, 0xbb, 0xbf]);
-  const dir = tempDirWithFiles("bun-file-json-bom", {
+  await using dir = tempDir("bun-file-json-bom", {
     // pure-ASCII body: exercises the direct ZigString path
     "ascii.json": Buffer.concat([bom, Buffer.from(JSON.stringify({ a: 1, b: "two" }))]),
     // non-ASCII body: exercises the toUTF16Alloc path
@@ -153,5 +153,48 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     utf8: { s: "wörld" },
     emptyErr: "Unexpected end of JSON input",
   });
+  expect(exitCode).toBe(0);
+});
+
+test("Bun.file() copies a Uint8Array path", async () => {
+  using dir = tempDir("bun-file-buffer-path", { "a.txt": "a", "b.txt": "b" });
+  const path = new TextEncoder().encode(join(String(dir), "a.txt"));
+  const file = Bun.file(path);
+  path[path.length - "a.txt".length] = "b".charCodeAt(0);
+  expect({ name: file.name, text: await file.text() }).toEqual({ name: join(String(dir), "a.txt"), text: "a" });
+});
+
+test("a Uint8Array path can still be transferred after Bun.file()", async () => {
+  using dir = tempDir("bun-file-buffer-path", { "a.txt": "a" });
+  const path = new TextEncoder().encode(join(String(dir), "a.txt"));
+  const file = Bun.file(path);
+  path.buffer.transfer();
+  expect({ byteLength: path.byteLength, text: await file.text() }).toEqual({ byteLength: 0, text: "a" });
+});
+
+test.concurrent.each([
+  "Bun.file(path.slice())",
+  "s3.file(path.slice())",
+  'await Bun.write(path.slice(), new Blob(["x"]))',
+])("%s doesn't keep the Uint8Array path alive", async call => {
+  using dir = tempDir("bun-file-buffer-path", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = new TextEncoder().encode(require("path").join(process.argv[1], "x"));
+        const s3 = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "c" });
+        for (let i = 0; i < 200; i++) ${call};
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array, path.length > 0);`,
+      String(dir),
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [live, pathIsAlive] = stdout.trim().split(" ");
+  expect(pathIsAlive).toBe("true");
+  expect(Number(live)).toBeWithin(1, 50);
   expect(exitCode).toBe(0);
 });

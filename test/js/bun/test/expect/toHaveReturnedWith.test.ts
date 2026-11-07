@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Example functions for testing toHaveReturnedWith
 export function add(a: number, b: number): number {
@@ -208,6 +209,73 @@ describe("toHaveReturnedWith Examples", () => {
 
       expect(mockFunctionFactory).toHaveReturnedWith(expect.any(Function));
       expect(result(5)).toBe(10);
+    });
+
+    test("failure message should not crash when mock.results contains non-objects", () => {
+      const fn = jest.fn((causeError: boolean) => {
+        if (causeError) {
+          throw new Error("boom");
+        }
+        return 1;
+      });
+
+      try {
+        fn(true);
+      } catch {
+        // ignore error
+      }
+      fn(false);
+      (fn.mock.results as unknown[]).push(undefined);
+
+      // The "Some calls errored" failure message walks mock.results again;
+      // it must throw a matcher error, not crash on the non-object entry.
+      expect(() => {
+        expect(fn).toHaveReturnedWith(42);
+      }).toThrow();
+    });
+
+    test.concurrent("failure message lists the compared return values after mock.results is emptied", async () => {
+      const script = `
+        import { expect, mock } from "bun:test";
+
+        const m = mock(i => ({ tag: "ret-" + i, payload: [i] }));
+        for (let i = 0; i < 50; i++) m(i);
+
+        let reads = 0;
+        const expected = {
+          get tag() {
+            if (++reads === 45) {
+              m.mock.results.length = 0;
+              Bun.gc(true);
+            }
+            return "no match";
+          },
+          payload: [],
+        };
+
+        let message = "";
+        try {
+          expect(m).toHaveReturnedWith(expected);
+        } catch (e) {
+          message = e.message;
+        }
+        console.log(message);
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const tags = Array.from(stdout.matchAll(/tag: "(ret-\d+)"/g), match => match[1]);
+      expect({ tags, stderr, exitCode }).toEqual({
+        tags: Array.from({ length: 45 }, (_, i) => `ret-${i}`),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

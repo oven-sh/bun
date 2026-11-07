@@ -53,10 +53,7 @@ type Length = usize;
 
 impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_CAPACITY> {
     fn default() -> Self {
-        Self {
-            buffer: [const { MaybeUninit::uninit() }; BUFFER_CAPACITY],
-            len: 0,
-        }
+        Self::new()
     }
 }
 
@@ -67,9 +64,16 @@ impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAP
 }
 
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            buffer: [const { MaybeUninit::uninit() }; BUFFER_CAPACITY],
+            len: 0,
+        }
+    }
+
     /// Set the actual length of the slice.
     /// Returns error.Overflow if it exceeds the length of the backing array.
-    pub fn init(len: usize) -> Result<Self, OverflowError> {
+    pub(crate) fn init(len: usize) -> Result<Self, OverflowError> {
         if len > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }
@@ -125,21 +129,11 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     // If a non-`Copy` caller
     // appears, add a `from_slice_clone` or use `ptr::copy_nonoverlapping`.
 
-    /// Return the element at index `i` of the slice.
-    pub fn get(&self, i: usize) -> T
-    where
-        T: Copy,
-    {
-        self.const_slice()[i]
-    }
-
-    /// Set the value of the element at index `i` of the slice.
-    pub fn set(&mut self, i: usize, item: T) {
-        self.slice()[i] = item;
-    }
-
     /// Check that the slice can hold at least `additional_count` items.
-    pub fn ensure_unused_capacity(&self, additional_count: usize) -> Result<(), OverflowError> {
+    pub(crate) fn ensure_unused_capacity(
+        &self,
+        additional_count: usize,
+    ) -> Result<(), OverflowError> {
         if self.len + additional_count > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }
@@ -217,15 +211,11 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.len
     }
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    #[inline]
     pub fn as_slice(&self) -> &[T] {
         self.const_slice()
     }
     #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
         self.slice()
     }
     #[inline]
@@ -233,7 +223,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.append(item)
     }
     #[inline]
-    pub fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
+    pub(crate) fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
     where
         T: Copy,
     {

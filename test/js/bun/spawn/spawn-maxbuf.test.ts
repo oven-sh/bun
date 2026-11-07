@@ -1,8 +1,8 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 const { isWindows } = require("../../node/test/common");
 
-async function toUtf8(out: ReadableStream<Uint8Array>): Promise<string> {
+async function toUtf8(out: ReadableStream<Uint8Array<ArrayBuffer>>): Promise<string> {
   const stream = new TextDecoderStream();
   out.pipeTo(stream.writable);
   let result = "";
@@ -13,7 +13,13 @@ async function toUtf8(out: ReadableStream<Uint8Array>): Promise<string> {
 }
 
 describe("yes is killed", () => {
-  // TODO
+  // The wall-clock window below includes the child's startup (bunExe() has to
+  // boot before `yes` writes its first byte). On a debug/ASAN build that startup
+  // alone is ~150-250ms, so the release 100ms budget is spent before maxBuffer
+  // has anything to measure. Byte-level promptness is asserted by the "caps the
+  // buffer" tests below; this is the coarse "didn't wait a full tick" sanity check.
+  const killWindow = isDebug || isASAN ? 1000 : 100;
+
   test("Bun.spawn", async () => {
     const timeStart = Date.now();
     const proc = Bun.spawn([bunExe(), "exec", "yes"], {
@@ -25,7 +31,7 @@ describe("yes is killed", () => {
     expect(proc.exitCode).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(100); // make sure it's not waiting a full tick
+    expect(timeEnd - timeStart).toBeLessThan(killWindow);
     const result = await toUtf8(proc.stdout);
     expect(result).toStartWith("y\n".repeat(128));
     const stderr = await toUtf8(proc.stderr);
@@ -40,10 +46,10 @@ describe("yes is killed", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     expect(proc.exitedDueToMaxBuffer).toBe(true);
-    expect(proc.exitCode).toBe(null);
+    expect(proc.exitCode as number | null).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(100); // make sure it's not waiting a full tick
+    expect(timeEnd - timeStart).toBeLessThan(killWindow);
     const result = proc.stdout.toString("utf-8");
     expect(result).toStartWith("y\n".repeat(128));
     const stderr = proc.stderr.toString("utf-8");
@@ -228,10 +234,13 @@ describe("timeout kills the process", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     expect(proc.exitedDueToTimeout).toBe(true);
-    expect(proc.exitCode).toBe(null);
+    expect(proc.exitCode as number | null).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeGreaterThan(100); // make sure it actually waits
+    // The timeout deadline is CLOCK_MONOTONIC at nanosecond precision, so by the
+    // time spawnSync returns at least 100ms have elapsed. Date.now() truncates to
+    // whole milliseconds, so floor(end) - floor(start) can equal exactly 100.
+    expect(timeEnd - timeStart).toBeGreaterThanOrEqual(100); // make sure it actually waits
     expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
     const result = proc.stdout.toString("utf-8");
     expect(result).toBe("");

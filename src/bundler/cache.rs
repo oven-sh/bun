@@ -24,7 +24,7 @@ use bun_ast::RuntimeTranspilerCache;
 /// Written by CLI argument parsing and `VirtualMachine` init, and flipped
 /// lazily on cache-dir resolution failure. Module-level so those writers can
 /// reach it; `disabled()` reads it.
-pub static DISABLED: AtomicBool = AtomicBool::new(false);
+pub(crate) static DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
 /// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
@@ -68,26 +68,30 @@ impl JavaScript {
 impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
-    pub fn parse<'a>(
+    pub(crate) fn parse<'a>(
         &self,
         bump: &'a Bump,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
         let result = match parser.parse() {
-            Ok(r) => r,
+            Ok(r) => {
+                // The parser halts on every logged error.
+                debug_assert_eq!(temp_log.errors, 0);
+                r
+            }
             Err(err) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
                 // arm. The `&'a mut temp_log` it held is released, so read
@@ -99,23 +103,23 @@ impl JavaScript {
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         Ok(Some(result))
     }
 
     pub fn scan<'a>(
         &mut self,
         bump: &'a Bump,
-        scan_pass_result: &mut js_parser::ScanPassResult,
+        scan_pass_result: &mut js_parser::ScanPassResult<'a>,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
     ) -> Result<(), crate::Error> {
         if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
             return Ok(());
@@ -123,19 +127,19 @@ impl JavaScript {
 
         let mut temp_log = bun_ast::Log::init();
         // scopeguard cannot capture &mut temp_log while it's used below;
-        // explicit `append_to_maybe_recycled` calls at each exit.
+        // explicit `append_to` calls at each exit.
 
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                temp_log.append_to(log);
                 return Ok(());
             }
         };
 
         let res = parser.scan_imports(scan_pass_result);
         drop(parser);
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         res.map_err(Into::into)
     }
 }

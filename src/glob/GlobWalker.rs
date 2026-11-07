@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+use crate::matcher::{Dots, Shape};
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
@@ -41,27 +42,20 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 }
 
 #[cfg(windows)]
-pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
     // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
     // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
     // and this is called from deep inside `Iterator::next()` (via `lstatat`
-    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB, zero-
-    // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
-    // worker-thread stacks. Draw both from the per-thread heap pool instead
-    // (uninit, RAII-returned) — zero stack footprint, no zero-fill.
+    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB) risk
+    // overflowing the smaller worker-thread stacks.
     let mut dir_buf = bun_paths::path_buffer_pool::get();
     let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
     let mut join_buf = bun_paths::path_buffer_pool::get();
     let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
     Syscall::stat(statpath)
-}
-
-#[cfg(not(windows))]
-pub fn statat_windows(_fd: Fd, _path: &ZStr) -> Maybe<Stat> {
-    unreachable!("oi don't use this");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +117,7 @@ pub struct SyscallAccessor;
 
 #[derive(Clone, Copy)]
 pub struct SyscallHandle {
-    pub value: Fd,
+    pub(crate) value: Fd,
 }
 
 impl AccessorHandle for SyscallHandle {
@@ -230,7 +224,7 @@ impl Accessor for SyscallAccessor {
 // include a trailing NUL byte when `SENTINEL == true`.
 pub type MatchedPath = Box<[u8]>;
 
-pub type IgnoreFilterFn = fn(&[u8]) -> bool;
+type IgnoreFilterFn = fn(&[u8]) -> bool;
 
 /// Set of active component indices during traversal. At `**/X`
 /// boundaries the walker needs to both advance past X and keep the
@@ -245,25 +239,29 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     // PERF: per-walk allocations (paths, workbuf, matchedPaths) use the
     // global allocator; an arena could bulk-free them — profile if hot.
     /// not owned by this struct
-    pub pattern: Box<[u8]>,
+    pub(crate) pattern: Box<[u8]>,
 
-    pub end_byte_of_basename_excluding_special_syntax: u32,
-    pub basename_excluding_special_syntax_component_idx: u32,
+    pub(crate) end_byte_of_basename_excluding_special_syntax: u32,
+    pub(crate) basename_excluding_special_syntax_component_idx: u32,
 
-    pub pattern_components: Vec<Component>,
+    pub(crate) pattern_components: Vec<Component>,
+    /// `Shape::of` each component's pattern, so matching an entry doesn't parse the groups again.
+    component_shapes: Vec<Shape>,
     pub matched_paths: MatchedMap,
 
-    pub dot: bool,
-    pub absolute: bool,
+    pub(crate) dot: bool,
+    pub(crate) absolute: bool,
 
-    pub cwd: Box<[u8]>,
-    pub follow_symlinks: bool,
-    pub error_on_broken_symlinks: bool,
-    pub only_files: bool,
+    pub(crate) cwd: Box<[u8]>,
+    pub(crate) follow_symlinks: bool,
+    /// Without `follow_symlinks`: a link that a component other than `**` matches is followed, not only one that is named.
+    follow_matched_symlinks: bool,
+    pub(crate) error_on_broken_symlinks: bool,
+    pub(crate) only_files: bool,
 
-    pub path_buf: Box<PathBuffer>,
+    pub(crate) path_buf: bun_paths::path_buffer_pool::Guard,
     // iteration state
-    pub workbuf: Vec<WorkItem<A>>,
+    pub(crate) workbuf: Vec<WorkItem<A>>,
 
     followed_links: Vec<FollowedLink>,
 
@@ -295,7 +293,7 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 // while its stored keys come from `dupe_z` (NUL included), so in SENTINEL
 // mode symlink-match probes never hit and symlink dedupe silently misses —
 // a known quirk deliberately left as-is.
-pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
+type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 /// The glob walker references the .directory.path so its not safe to
 /// copy/move this
@@ -322,19 +320,19 @@ pub enum IterState<A: Accessor> {
 }
 
 pub struct Directory<A: Accessor> {
-    pub fd: A::Handle,
-    pub iter: A::DirIter,
-    pub path: Box<PathBuffer>,
+    pub(crate) fd: A::Handle,
+    pub(crate) iter: A::DirIter,
+    pub(crate) path: bun_paths::path_buffer_pool::Guard,
     // The dir path is a prefix of `path` (self-referential).
     // Store the length and reconstruct on demand.
-    pub dir_path_len: usize,
+    pub(crate) dir_path_len: usize,
 
     /// Active component indices. Multiple indices mean one readdir
     /// evaluates all of them instead of revisiting the directory.
-    pub active: ComponentSet,
+    pub(crate) active: ComponentSet,
 
-    pub iter_closed: bool,
-    pub at_cwd: bool,
+    pub(crate) iter_closed: bool,
+    pub(crate) at_cwd: bool,
 }
 
 impl<A: Accessor> Directory<A> {
@@ -350,17 +348,17 @@ impl<A: Accessor> Directory<A> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
-    pub walker: &'a mut GlobWalker<A, SENTINEL>,
-    pub iter_state: IterState<A>,
-    pub cwd_fd: A::Handle,
+    pub(crate) walker: &'a mut GlobWalker<A, SENTINEL>,
+    pub(crate) iter_state: IterState<A>,
+    pub(crate) cwd_fd: A::Handle,
     /// This is to make sure in debug/tests that we are closing file descriptors
     /// We should only have max 2 open at a time. One for the cwd, and one for the
     /// directory being iterated on.
     #[cfg(debug_assertions)]
-    pub fds_open: usize,
+    pub(crate) fds_open: usize,
 
     #[cfg(windows)]
-    pub nt_filter_buf: [u16; 256],
+    pub(crate) nt_filter_buf: [u16; 256],
 }
 
 #[inline]
@@ -513,7 +511,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    pub fn close_cwd_fd(&mut self) {
+    pub(crate) fn close_cwd_fd(&mut self) {
         if self.cwd_fd.is_empty() {
             return;
         }
@@ -526,7 +524,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
-    pub fn close_disallowing_cwd(&mut self, fd: A::Handle) {
+    pub(crate) fn close_disallowing_cwd(&mut self, fd: A::Handle) {
         if fd.is_empty() || fd.eql(self.cwd_fd) {
             return;
         }
@@ -539,7 +537,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
-    pub fn bump_open_fds(&mut self) {
+    pub(crate) fn bump_open_fds(&mut self) {
         if count_fds::<A>() {
             #[cfg(debug_assertions)]
             {
@@ -560,7 +558,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         log!("transition => {}", bstr::BStr::new(work_item_path));
         // Build the Directory in a local and assign at the end (borrowck:
         // mutating `iter_state` in place would overlap the `self.walker` borrow).
-        let mut dir_path_buf = Box::new(PathBuffer::uninit());
+        let mut dir_path_buf = bun_paths::path_buffer_pool::get();
         let mut dir_path_len: usize = 'dir_path: {
             if ROOT {
                 if !self.walker.absolute {
@@ -680,10 +678,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             self.iter_state = IterState::GetNext;
                             return Ok(Ok(()));
                         }
-                        return Ok(Err(e.with_path(
-                            self.walker.pattern_components[idx as usize]
-                                .pattern_slice(&self.walker.pattern),
-                        )));
+                        let full_path = self.walker.join(&[dir_path.as_bytes(), &pat_slice])?;
+                        return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&full_path))));
                     }
                     Ok(stat) => stat,
                 };
@@ -770,17 +766,23 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
 
         // Only `*` and literals are safe to lower. Reject anything NT cannot
-        // express (`[` `{` `\` `!`) or where NT semantics under-match glob
+        // express (`[` `{` `\` `!`, and `(` `|` for groups like `@(a|b)`) or where
+        // NT semantics under-match glob
         // (`?` matches one UTF-16 code unit, glob matches one codepoint).
         // `<` `>` `"` are NT wildcards; treating them as literals would over-match,
         // but they are invalid in Windows filenames so such a pattern never matches
         // anyway.
-        if strings::index_of_any(slice, b"?[{\\!<>\"").is_some() {
+        if strings::index_of_any(slice, b"?[{\\!<>\"(|").is_some() {
             return None;
         }
 
         let wide = strings::convert_utf8_to_utf16_in_buffer(&mut self.nt_filter_buf, slice);
         Some(wide)
+    }
+
+    /// Whether the walk followed a symlink to reach the directory that contains the latest match.
+    pub fn followed_link(&self) -> bool {
+        !self.walker.followed_links.is_empty()
     }
 
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
@@ -1269,12 +1271,12 @@ impl FollowedLink {
 }
 
 pub struct WorkItem<A: Accessor> {
-    pub path: Box<[u8]>,
+    pub(crate) path: Box<[u8]>,
     /// Bitmask of active component indices.
-    pub active: ComponentSet,
-    pub kind: WorkItemKind,
-    pub entry_start: u32,
-    pub fd: Option<A::Handle>,
+    pub(crate) active: ComponentSet,
+    pub(crate) kind: WorkItemKind,
+    pub(crate) entry_start: u32,
+    pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
     followed_links_len: usize,
@@ -1331,11 +1333,13 @@ impl<A: Accessor> WorkItem<A> {
 /// `src/**/*.ts` -> `src`, `**`, `*.ts`
 #[derive(Clone, Copy)]
 pub struct Component {
-    pub start: u32,
-    pub len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+    /// Position in `pattern_components`.
+    index: u32,
 
-    pub syntax_hint: SyntaxHint,
-    pub trailing_sep: bool,
+    pub(crate) syntax_hint: SyntaxHint,
+    pub(crate) trailing_sep: bool,
 }
 
 impl Default for Component {
@@ -1343,6 +1347,7 @@ impl Default for Component {
         Self {
             start: 0,
             len: 0,
+            index: 0,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
         }
@@ -1350,7 +1355,7 @@ impl Default for Component {
 }
 
 impl Component {
-    pub fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
         let end = (self.start + self.len - u32::from(self.trailing_sep)) as usize;
         &pattern[self.start as usize..end]
     }
@@ -1409,7 +1414,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         )
     }
 
-    pub fn debug_pattern_components(&self) {
+    pub(crate) fn debug_pattern_components(&self) {
         let pattern = &self.pattern;
         let components = &self.pattern_components;
         let ptr = std::ptr::from_ref(self) as usize;
@@ -1454,9 +1459,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             basename_excluding_special_syntax_component_idx: 0,
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
+            component_shapes: Vec::new(),
             matched_paths: MatchedMap::default(),
-            path_buf: Box::new(PathBuffer::uninit()),
+            path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
+            follow_matched_symlinks: false,
             followed_links: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
@@ -1468,6 +1475,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
+        for (index, component) in this.pattern_components.iter_mut().enumerate() {
+            component.index = index as u32;
+            this.component_shapes
+                .push(Shape::of(component.pattern_slice(&this.pattern)));
+        }
 
         // copy arena after all allocations are successful
 
@@ -1478,7 +1490,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(this))
     }
 
-    pub fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
+    pub(crate) fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
         let src = path_buf.as_bytes();
         let copy_len = src.len().min(self.path_buf.len());
         // Several callers pass a `path_buf` that is itself a slice of
@@ -1515,7 +1527,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             log!("walker: matched path: {}", bstr::BStr::new(&path));
             // The paths are already put into self.matched_paths, which we use for the output,
             // so we don't need to do anything here
-            let _ = path;
         }
 
         Ok(Ok(()))
@@ -1596,7 +1607,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         component_idx
     }
 
-    pub fn skip_special_components(
+    pub(crate) fn skip_special_components(
         &self,
         work_item_idx: u32,
         dir_path_len: &mut usize,
@@ -1616,7 +1627,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// directly so callers can split-borrow it from `&mut self.path_buf`
     /// (the symlink branch in `Iterator::next` passes `self.path_buf` as
     /// `scratch_path_buf` while reading `pattern_components`).
-    pub fn skip_special_components_disjoint(
+    pub(crate) fn skip_special_components_disjoint(
         pattern_components: &[Component],
         work_item_idx: u32,
         dir_path_len: &mut usize,
@@ -1790,7 +1801,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     fn match_pattern_slow(&self, pattern_component: &Component, filepath: &[u8]) -> bool {
-        crate::r#match(pattern_component.pattern_slice(&self.pattern), filepath).matches()
+        crate::matcher::match_prepared::<{ cfg!(windows) }>(
+            pattern_component.pattern_slice(&self.pattern),
+            &self.component_shapes[pattern_component.index as usize],
+            filepath,
+            Dots::Match,
+        )
+        .matches()
     }
 
     /// Create an empty ComponentSet sized for this pattern.
@@ -1898,12 +1915,21 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut it = active.iterator::<true, true>();
         while let Some(idx) = it.next() {
             let comp = &self.pattern_components[idx];
-            if comp.syntax_hint == SyntaxHint::Literal && self.match_pattern_impl(comp, entry_name)
-            {
+            let may_follow = match comp.syntax_hint {
+                SyntaxHint::Literal => true,
+                SyntaxHint::Double => false,
+                _ => self.follow_matched_symlinks,
+            };
+            if may_follow && self.match_pattern_impl(comp, entry_name) {
                 subset.set(idx);
             }
         }
         subset
+    }
+
+    /// As npm's workspaces: `packages/*` has a member that is a link, `packages/**` does not go through one.
+    pub fn follow_matched_symlinks(&mut self) {
+        self.follow_matched_symlinks = true;
     }
 
     #[inline]
@@ -2061,6 +2087,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn check_special_syntax(pattern: &[u8]) -> bool {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
+            || crate::has_extglob_prefix(pattern)
     }
 
     fn make_component(pattern: &[u8], start_byte: u32, end_byte: u32) -> Option<Component> {
@@ -2129,7 +2156,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                             // We also don't need to look for the `!` token,
                             // because that only applies negation if at the
                             // beginning of the string.
-                            b'[' | b'{' | b'?' | b'*' => break 'out_of_check_wildcard_filepath,
+                            b'[' | b'{' | b'?' | b'*' | b'(' => {
+                                break 'out_of_check_wildcard_filepath;
+                            }
                             _ => {}
                         }
                     }
@@ -2197,7 +2226,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             // TODO: Support other escaping glob syntax
             i += 1;
         }
-        let _ = prev_is_backslash;
         debug_assert!(i == 0 || i as usize == pattern.len());
         i = i.saturating_sub(1);
 
@@ -2234,7 +2262,7 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 // Free functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
+pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];
     let needle_len: u32 = u32::try_from(needle.len()).expect("int cast");
     if path.len() < needle_len as usize {
@@ -2243,7 +2271,7 @@ pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     needle == &path[path.len() - needle_len as usize..]
 }
 
-pub fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
+pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
 }
 

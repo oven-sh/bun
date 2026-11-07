@@ -6,7 +6,7 @@
 //! This is the single source of truth for "split a path into prefix slices and
 //! never yield the Windows root (`C:`, `C:\`, `\\server\share\`) as a component".
 //! Replaces the four hand-rolled copies in `bun_sys` (posix+windows),
-//! `bun_libarchive` (u16) and `bun` (`make_path`, which already called the
+//! `bun_archive` (u16) and `bun` (`make_path`, which already called the
 //! `component_iterator` free fn below before it existed).
 
 use crate::PathChar;
@@ -24,7 +24,7 @@ pub enum PathFormat {
 
 impl PathFormat {
     #[inline(always)]
-    pub fn is_sep<T: PathChar>(self, c: T) -> bool {
+    pub(crate) fn is_sep<T: PathChar>(self, c: T) -> bool {
         match self {
             Self::Posix => c == T::from_u8(b'/'),
             Self::Windows => c == T::from_u8(b'/') || c == T::from_u8(b'\\'),
@@ -38,10 +38,10 @@ impl PathFormat {
 #[derive(Clone, Copy, Debug)]
 pub struct Component<'a, T> {
     /// The current component's name, e.g. `b`. Never contains separators.
-    pub name: &'a [T],
+    pub(crate) name: &'a [T],
     /// The full path up to and including the current component, e.g. `/a/b`.
     /// Never has a trailing separator.
-    pub path: &'a [T],
+    pub(crate) path: &'a [T],
 }
 
 /// A bidirectional
@@ -87,18 +87,8 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         self.fmt.is_sep(c)
     }
 
-    /// The root prefix (`/`, `C:\`, `\\server\share\`, …) or `None` if relative.
-    #[inline]
-    pub fn root(&self) -> Option<&'a [T]> {
-        if self.root_end == 0 {
-            None
-        } else {
-            Some(&self.path[..self.root_end])
-        }
-    }
-
     /// Returns the last component and seeks to it.
-    pub fn last(&mut self) -> Option<Component<'a, T>> {
+    pub(crate) fn last(&mut self) -> Option<Component<'a, T>> {
         self.end = self.path.len();
         loop {
             if self.end == self.root_end {
@@ -124,7 +114,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Advances forward; returns the component to the right of the current one.
-    pub fn next(&mut self) -> Option<Component<'a, T>> {
+    pub(crate) fn next(&mut self) -> Option<Component<'a, T>> {
         let p = self.peek_next()?;
         self.start = p.path.len() - p.name.len();
         self.end = p.path.len();
@@ -132,7 +122,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Like `next` but does not advance.
-    pub fn peek_next(&self) -> Option<Component<'a, T>> {
+    pub(crate) fn peek_next(&self) -> Option<Component<'a, T>> {
         let mut start = self.end;
         while start < self.path.len() && self.is_sep(self.path[start]) {
             start += 1;
@@ -151,7 +141,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Advances backward; returns the component to the left of the current one.
-    pub fn previous(&mut self) -> Option<Component<'a, T>> {
+    pub(crate) fn previous(&mut self) -> Option<Component<'a, T>> {
         let p = self.peek_previous()?;
         self.start = p.path.len() - p.name.len();
         self.end = p.path.len();
@@ -159,7 +149,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Like `previous` but does not advance.
-    pub fn peek_previous(&self) -> Option<Component<'a, T>> {
+    pub(crate) fn peek_previous(&self) -> Option<Component<'a, T>> {
         let mut end = self.start;
         loop {
             if end == self.root_end {
@@ -217,6 +207,8 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
+    // `NotFound` again once its parent exists (a dangling symlink) can never succeed.
+    let mut last_not_found: Option<usize> = None;
     loop {
         match mkdir(comp.path)? {
             MakePathStep::Created | MakePathStep::Exists => {
@@ -226,6 +218,9 @@ pub fn make_path_with<'a, T: PathChar, E>(
                 };
             }
             MakePathStep::NotFound(e) => {
+                if last_not_found.replace(comp.path.len()) == Some(comp.path.len()) {
+                    return Err(e);
+                }
                 comp = match it.previous() {
                     Some(c) => c,
                     None => return Err(e),
@@ -324,20 +319,18 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
 mod tests {
     use super::*;
 
-    fn collect(path: &[u8], fmt: PathFormat) -> (Option<&[u8]>, Vec<(&[u8], &[u8])>) {
+    fn collect(path: &[u8], fmt: PathFormat) -> Vec<(&[u8], &[u8])> {
         let mut it = ComponentIterator::init(path, fmt).unwrap();
-        let root = it.root();
         let mut out = vec![];
         while let Some(c) = it.next() {
             out.push((c.name, c.path));
         }
-        (root, out)
+        out
     }
 
     #[test]
     fn posix_basic() {
-        let (root, parts) = collect(b"/a/b/c", PathFormat::Posix);
-        assert_eq!(root, Some(&b"/"[..]));
+        let parts = collect(b"/a/b/c", PathFormat::Posix);
         assert_eq!(
             parts,
             vec![
@@ -347,8 +340,7 @@ mod tests {
             ]
         );
 
-        let (root, parts) = collect(b"a//b/", PathFormat::Posix);
-        assert_eq!(root, None);
+        let parts = collect(b"a//b/", PathFormat::Posix);
         assert_eq!(
             parts,
             vec![(&b"a"[..], &b"a"[..]), (&b"b"[..], &b"a//b"[..])]
@@ -360,21 +352,53 @@ mod tests {
 
     #[test]
     fn windows_roots() {
-        let (root, parts) = collect(b"C:\\Users\\foo", PathFormat::Windows);
-        assert_eq!(root, Some(&b"C:\\"[..]));
+        let parts = collect(b"C:\\Users\\foo", PathFormat::Windows);
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].1, &b"C:\\Users"[..]);
 
-        let (root, _) = collect(b"C:foo", PathFormat::Windows);
-        assert_eq!(root, Some(&b"C:"[..]));
-
-        let (root, parts) = collect(b"\\\\server\\share\\dir", PathFormat::Windows);
-        assert_eq!(root, Some(&b"\\\\server\\share\\"[..]));
+        let parts = collect(b"\\\\server\\share\\dir", PathFormat::Windows);
         assert_eq!(parts, vec![(&b"dir"[..], &b"\\\\server\\share\\dir"[..])]);
+
+        // Drive-relative root: the first component's `.path` starts at byte 2,
+        // i.e. `windows_root_end` returned 2 for the bare `C:` prefix.
+        let parts = collect(b"C:foo", PathFormat::Windows);
+        assert_eq!(parts, vec![(&b"foo"[..], &b"C:foo"[..])]);
 
         assert!(ComponentIterator::<u8>::init(b"\\\\?\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\??\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\\\\\x", PathFormat::Windows).is_err());
+    }
+
+    #[test]
+    fn make_path_terminates_on_uncreatable_component() {
+        let it = ComponentIterator::init(&b"/t/dangling/x"[..], PathFormat::Posix).unwrap();
+        let mut calls = 0usize;
+        let result = make_path_with(it, |p| {
+            calls += 1;
+            assert!(calls < 100, "make_path_with did not terminate");
+            match p {
+                b"/t" | b"/t/dangling" => Ok(MakePathStep::Exists),
+                b"/t/dangling/x" => Ok(MakePathStep::NotFound("enoent")),
+                _ => panic!("unexpected prefix"),
+            }
+        });
+        assert_eq!(result, Err("enoent"));
+
+        // A NotFound that resolves after the parent is created still succeeds.
+        let it = ComponentIterator::init(&b"/t/a/b"[..], PathFormat::Posix).unwrap();
+        let mut created = std::collections::HashSet::new();
+        let result: Result<(), &str> = make_path_with(it, |p| {
+            Ok(if p == b"/t" || created.contains(p) {
+                MakePathStep::Exists
+            } else if p == b"/t/a" || created.contains(b"/t/a".as_slice()) {
+                created.insert(p);
+                MakePathStep::Created
+            } else {
+                MakePathStep::NotFound("enoent")
+            })
+        });
+        assert_eq!(result, Ok(()));
+        assert!(created.contains(b"/t/a/b".as_slice()));
     }
 
     #[test]

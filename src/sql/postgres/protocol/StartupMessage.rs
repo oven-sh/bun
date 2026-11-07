@@ -12,16 +12,6 @@ pub struct StartupMessage {
     pub options: Data,
 }
 
-impl Default for StartupMessage {
-    fn default() -> Self {
-        Self {
-            user: Data::default(),
-            database: Data::default(),
-            options: Data::Empty,
-        }
-    }
-}
-
 impl StartupMessage {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
@@ -39,7 +29,7 @@ impl StartupMessage {
             + options.len()
             + 1;
 
-        let header = int32(count as u32);
+        let header = int32(count)?;
         writer.write(&header)?;
         writer.int4(196608)?;
 

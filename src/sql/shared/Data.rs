@@ -19,10 +19,10 @@ pub enum Data {
 }
 
 impl Data {
-    pub const EMPTY: Data = Data::Empty;
+    pub(crate) const EMPTY: Data = Data::Empty;
 
     #[inline]
-    pub const fn empty() -> Data {
+    pub(crate) const fn empty() -> Data {
         Data::Empty
     }
 
@@ -51,13 +51,11 @@ impl Data {
 
     /// Zero bytes before deinit
     /// Generally, for security reasons.
-    pub fn zdeinit(&mut self) {
+    pub(crate) fn zdeinit(&mut self) {
         match self {
             Data::Owned(owned) => {
                 // Zero bytes before freeing.
-                let s = owned.slice_mut();
-                // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
-                unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
+                bun_alloc::secure_zero(owned.slice_mut());
                 owned.clear_and_free();
             }
             Data::Temporary(_) => {}

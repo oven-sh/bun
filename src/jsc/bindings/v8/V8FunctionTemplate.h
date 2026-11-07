@@ -14,6 +14,8 @@
 namespace v8 {
 
 class Function;
+class String;
+class ObjectTemplate;
 
 namespace shim {
 class Function;
@@ -22,12 +24,6 @@ class Function;
 enum class ConstructorBehavior {
     kThrow,
     kAllow,
-};
-
-enum class SideEffectType {
-    kHasSideEffect,
-    kHasNoSideEffect,
-    kHasSideEffectToReceiver,
 };
 
 // Only used by v8 fast API calls, which Node.js doesn't seem to intend to support
@@ -54,6 +50,22 @@ public:
         uint16_t allowed_receiver_instance_type_range_end = 0);
 
     BUN_EXPORT MaybeLocal<Function> GetFunction(Local<Context> context);
+
+    /** Get the InstanceTemplate. */
+    BUN_EXPORT Local<ObjectTemplate> InstanceTemplate();
+
+    /**
+     * A PrototypeTemplate is the template used to create the prototype object
+     * of the function created by this template.
+     */
+    BUN_EXPORT Local<ObjectTemplate> PrototypeTemplate();
+
+    /**
+     * Set the class name of the FunctionTemplate.  This is used for
+     * printing objects created with the function created from the
+     * FunctionTemplate as its constructor.
+     */
+    BUN_EXPORT void SetClassName(Local<String> name);
 
 private:
     shim::FunctionTemplate* localToObjectPointer()

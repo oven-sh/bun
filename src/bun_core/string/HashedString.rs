@@ -7,7 +7,7 @@ use bun_wyhash::hash;
 pub struct HashedString {
     pub ptr: *const u8,
     pub len: u32,
-    pub hash: u32,
+    pub(crate) hash: u32,
 }
 
 impl HashedString {

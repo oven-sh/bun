@@ -1,18 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv as harnessEnv, isRoot, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { startNpmjs } from "./migration-harness";
+
+const npmjs = await startNpmjs();
+afterAll(() => npmjs.stop());
+const bunEnv = { ...harnessEnv, ...npmjs.env };
 
 describe("pnpm-lock.yaml migration", () => {
+  // The one test here that installs: the versions and integrities are those of the test registry's tarballs.
   test("simple pnpm lockfile migration produces correct bun.lock", async () => {
-    const tempDir = tempDirWithFiles("pnpm-migrate-simple", {
+    await using tmpDir = tempDir("pnpm-migrate-simple", {
       "package.json": JSON.stringify(
         {
           name: "simple-pnpm-test",
           version: "1.0.0",
           dependencies: {
-            "is-number": "^7.0.0",
-            "left-pad": "^1.3.0",
+            "is-number": "^2.0.0",
+            "left-pad": "^1.0.0",
           },
         },
         null,
@@ -29,34 +35,34 @@ importers:
   .:
     dependencies:
       is-number:
-        specifier: ^7.0.0
-        version: 7.0.0
+        specifier: ^2.0.0
+        version: 2.0.0
       left-pad:
-        specifier: ^1.3.0
-        version: 1.3.0
+        specifier: ^1.0.0
+        version: 1.0.0
 
 packages:
 
-  is-number@7.0.0:
-    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==}
+  is-number@2.0.0:
+    resolution: {integrity: sha512-BUFNwemjM+kyrOa4KeXh4B3ay3Sh7HnmxWp+uRrGMJXuzc8vp/MsCyPX08NxfZvWWy0pOTj6tkJ3kgTqUUkN3w==}
     engines: {node: '>=0.12.0'}
 
-  left-pad@1.3.0:
-    resolution: {integrity: sha512-XI5MPzVNApjAyhQzphX8BkmKsKUxD4LdyK24iZeQGinBN9yTQT3bFlCBy/aVx2HrNcqQGsdot8ghrjyrvMCoEA==}
+  left-pad@1.0.0:
+    resolution: {integrity: sha512-+4x+fPUv96e+piHW2kG7BY7sTzd1MfANrsWt1zvG+91BjS+/aOvQSzqrsL9kYgPnwBqN/COQOCKxc9f2jPPwOw==}
     deprecated: use String.prototype.padStart()
 
 snapshots:
 
-  is-number@7.0.0: {}
+  is-number@2.0.0: {}
 
-  left-pad@1.3.0: {}
+  left-pad@1.0.0: {}
 `,
     });
 
     // Run bun pm migrate
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -74,16 +80,16 @@ snapshots:
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
     // Check that bun.lock was created
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
     // Read and snapshot the migrated lockfile
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("simple-pnpm-migration");
 
     // Verify install works with migrated lockfile
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -103,12 +109,12 @@ snapshots:
     expect(installExitCode).toBe(0);
 
     // Verify packages were installed
-    expect(fs.existsSync(join(tempDir, "node_modules/is-number"))).toBe(true);
-    expect(fs.existsSync(join(tempDir, "node_modules/left-pad"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "node_modules/is-number"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "node_modules/left-pad"))).toBe(true);
   });
 
   test("pnpm workspace lockfile migration", async () => {
-    const tempDir = tempDirWithFiles("pnpm-migrate-workspace", {
+    await using tmpDir = tempDir("pnpm-migrate-workspace", {
       "package.json": JSON.stringify(
         {
           name: "monorepo-root",
@@ -236,7 +242,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -253,16 +259,61 @@ snapshots:
     // Check migration message in stderr
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-pnpm-migration");
-    const packageJson = JSON.parse(fs.readFileSync(join(tempDir, "package.json"), "utf8"));
+    const packageJson = JSON.parse(fs.readFileSync(join(tmpDir, "package.json"), "utf8"));
     expect(packageJson).toMatchSnapshot("workspace-pnpm-migration-package-json");
   });
 
+  // pnpm writes `link:../utils` relative to the importer; bun.lock stores it relative to the
+  // project, otherwise the install below looks for <project>/../utils.
+  test.each(["file:../utils", "link:../utils"])("%s of a workspace that pnpm linked stays a link", async specifier => {
+    await using tmpDir = tempDir("pnpm-migrate-importer-link", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/app"] }),
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { utils: specifier } }),
+      "packages/utils/package.json": JSON.stringify({ name: "utils", version: "1.0.0", main: "index.js" }),
+      "packages/utils/index.js": `module.exports = "utils";`,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  packages/app:
+    dependencies:
+      utils:
+        specifier: ${specifier}
+        version: link:../utils
+`,
+    });
+    const run = async (cwd: string, ...args: string[]) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const migrate = await run(String(tmpDir), "pm", "migrate");
+    expect(migrate.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(migrate.exitCode).toBe(0);
+    const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    expect(bunLock).toContain(`"utils": "${specifier}"`);
+    expect(bunLock).toContain('"utils@link:./packages/utils"');
+
+    const install = await run(String(tmpDir), "install", "--frozen-lockfile");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+
+    expect(await run(join(tmpDir, "packages", "app"), "-e", `console.log(require("utils"))`)).toEqual({
+      stdout: "utils\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("pnpm with npm protocol aliases", async () => {
-    const tempDir = tempDirWithFiles("pnpm-migrate-npm-aliases", {
+    await using tmpDir = tempDir("pnpm-migrate-npm-aliases", {
       "package.json": JSON.stringify(
         {
           name: "alias-test",
@@ -324,7 +375,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -341,15 +392,15 @@ snapshots:
     // Check migration message in stderr
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("npm-aliases-pnpm-migration");
   });
 
   test("handles different pnpm lockfile versions", async () => {
     // Test version 8
-    const v8Dir = tempDirWithFiles("pnpm-v8", {
+    await using v8Dir = tempDir("pnpm-v8", {
       "package.json": JSON.stringify({ name: "v8-test", dependencies: { "lodash": "^4.17.21" } }),
       "pnpm-lock.yaml": `lockfileVersion: '8.0'
 importers:
@@ -379,7 +430,7 @@ snapshots:
   });
 
   test("handles missing pnpm-lock.yaml gracefully", async () => {
-    const tempDir = tempDirWithFiles("pnpm-migrate-missing", {
+    await using tmpDir = tempDir("pnpm-migrate-missing", {
       "package.json": JSON.stringify({
         name: "test",
         version: "1.0.0",
@@ -388,7 +439,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -400,5 +451,411 @@ snapshots:
     expect(exitCode).toBe(1);
     expect(stderr).toContain("could not find any other lockfile");
     expect(stderr).not.toContain("migrated lockfile from pnpm-lock.yaml");
+  });
+
+  // `a` depends on `b` through a workspace link, so every lookup of an importer's directory runs.
+  const linkedWorkspaces = {
+    "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+    "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "workspace:*" } }),
+    "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+  };
+
+  async function installWithImporters(dir: string, importerA: string, importerB: string) {
+    fs.writeFileSync(
+      join(dir, "pnpm-lock.yaml"),
+      `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  '${importerA}':
+    dependencies:
+      b:
+        specifier: workspace:*
+        version: link:../b
+
+  '${importerB}': {}
+`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  const bunLock = (dir: string) => fs.readFileSync(join(dir, "bun.lock"), "utf8");
+
+  test.concurrent("an absolute importer path migrates like the relative one", async () => {
+    using relativeDir = tempDir("pnpm-migrate-relative-importer", linkedWorkspaces);
+    using absoluteDir = tempDir("pnpm-migrate-absolute-importer", linkedWorkspaces);
+    const root = String(absoluteDir).replaceAll("\\", "/");
+
+    const [relative, absolute] = await Promise.all([
+      installWithImporters(String(relativeDir), "packages/a", "packages/b"),
+      installWithImporters(String(absoluteDir), `${root}/packages/a`, `${root}/packages/b`),
+    ]);
+
+    expect(absolute.stderr).not.toContain("error:");
+    expect(absolute.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(relative.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(bunLock(String(absoluteDir))).toContain('"a": ["a@workspace:packages/a"]');
+    expect(bunLock(String(absoluteDir))).toBe(bunLock(String(relativeDir)));
+    expect(absolute.exitCode).toBe(0);
+  });
+
+  test.concurrent("an importer path that does not fit a path buffer fails the migration", async () => {
+    using dir = tempDir("pnpm-migrate-long-importer", linkedWorkspaces);
+    const longPath = Buffer.alloc(100_000, "a").toString();
+
+    const { stderr, exitCode } = await installWithImporters(String(dir), longPath, "packages/b");
+
+    expect(stderr).toContain(
+      `pnpm-lock.yaml lists importer '${longPath}' but '${longPath}/package.json' does not exist`,
+    );
+    expect(stderr).toContain("failed to migrate lockfile: 'pnpm-lock.yaml'");
+    expect(bunLock(String(dir))).toContain('"a": ["a@workspace:packages/a"]');
+    expect(exitCode).toBe(0);
+  });
+
+  test("workspace bin entries whose value is not a string are skipped, the others are kept", async () => {
+    // npm (normalize-package-bin) drops an entry whose value is not a string and keeps the rest.
+    await using tmpDir = tempDir("pnpm-migrate-mixed-bin", {
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+      "packages/tool/package.json": JSON.stringify({
+        name: "tool",
+        version: "1.0.0",
+        bin: { "tool-a": "a.js", "tool-b": 5, "tool-c": "c.js" },
+      }),
+      "packages/tool/a.js": "",
+      "packages/tool/c.js": "",
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies: {}
+
+  packages/tool:
+    dependencies: {}
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+
+    const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    expect(bunLock).toContain(`"bin": {
+        "tool-a": "a.js",
+        "tool-c": "c.js",
+      },`);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Everything below resolves only workspace packages, so it never touches a registry.
+describe.concurrent("pnpm-workspace.yaml is imported into package.json", () => {
+  const rootPackageJson = { name: "root", private: true };
+  const workspaceYaml = `packages:\n  - "packages/*"\n`;
+  const workspacePackages = {
+    "packages/a/package.json": JSON.stringify({ name: "@w/a", version: "1.2.3" }),
+    "packages/b/package.json": JSON.stringify({
+      name: "@w/b",
+      version: "0.0.1",
+      dependencies: { "@w/a": "workspace:*" },
+    }),
+  };
+  const movedWorkspaces = "copied pnpm-workspace.yaml to workspaces in package.json";
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function readPackageJson(dir: string) {
+    return JSON.parse(fs.readFileSync(join(dir, "package.json"), "utf8"));
+  }
+
+  // `@w/b` can only see `@w/a` if the install knew `packages/*` were workspaces.
+  async function versionOfAResolvedFromB(dir: string) {
+    const { stdout, stderr, exitCode } = await runBun(
+      join(dir, "packages/b"),
+      "-e",
+      `console.log(require("@w/a/package.json").version)`,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1.2.3\n", stderr: "", exitCode: 0 });
+  }
+
+  // Quoted yaml scalars are stored differently from plain ones by the parser; cover both.
+  const catalogFixture = {
+    "package.json": JSON.stringify({ ...rootPackageJson, pnpm: { overrides: { "from-package-json": "1.0.0" } } }),
+    "pnpm-workspace.yaml": `packages:
+  - 'packages/*'
+catalog:
+  "@w/a": "workspace:*"
+  left-pad: ^1.3.0
+catalogs:
+  build:
+    '@scope/quoted': '~2.0.0'
+overrides:
+  "@scope/quoted": "2.0.1"
+  plain: 3.0.0
+`,
+    ...workspacePackages,
+    "packages/b/package.json": JSON.stringify({
+      name: "@w/b",
+      version: "0.0.1",
+      dependencies: { "@w/a": "catalog:" },
+    }),
+  };
+  const catalogFixtureMoved =
+    "copied pnpm.overrides to overrides, copied pnpm-workspace.yaml to workspaces, copied pnpm-workspace.yaml overrides to overrides in package.json";
+  // The `pnpm` block is kept, because pnpm itself keeps reading it.
+  const catalogFixtureImported = {
+    ...rootPackageJson,
+    workspaces: {
+      packages: ["packages/*"],
+      catalog: { "@w/a": "workspace:*", "left-pad": "^1.3.0" },
+      catalogs: { build: { "@scope/quoted": "~2.0.0" } },
+    },
+    overrides: { "from-package-json": "1.0.0", "@scope/quoted": "2.0.1", plain: "3.0.0" },
+    pnpm: { overrides: { "from-package-json": "1.0.0" } },
+  };
+
+  test("by bun install when there is no lockfile at all", async () => {
+    await using dir = tempDir("pnpm-workspace-yaml-no-lockfile", {
+      "package.json": JSON.stringify(rootPackageJson, null, 2) + "\n",
+      "pnpm-workspace.yaml": workspaceYaml,
+      ...workspacePackages,
+    });
+
+    const first = await runBun(dir, "install");
+    expect(first.stderr).toContain(movedWorkspaces);
+    expect(first.exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual({ ...rootPackageJson, workspaces: ["packages/*"] });
+    const lockfile = fs.readFileSync(join(dir, "bun.lock"), "utf8");
+    expect(lockfile).toContain(`"@w/a": ["@w/a@workspace:packages/a"]`);
+    expect(lockfile).toContain(`"@w/b": ["@w/b@workspace:packages/b"]`);
+    await versionOfAResolvedFromB(dir);
+
+    // package.json now declares the workspaces and bun.lock exists: nothing left to import.
+    const second = await runBun(dir, "install");
+    expect(second.stderr).not.toContain("copied pnpm");
+    expect(second.exitCode).toBe(0);
+    expect(readPackageJson(dir)).toEqual({ ...rootPackageJson, workspaces: ["packages/*"] });
+  });
+
+  test("with its catalogs and overrides when there is no lockfile", async () => {
+    await using dir = tempDir("pnpm-workspace-yaml-catalog", catalogFixture);
+
+    const { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).toContain(catalogFixtureMoved);
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual(catalogFixtureImported);
+    expect(fs.readFileSync(join(dir, "bun.lock"), "utf8")).toContain(`"@w/b": ["@w/b@workspace:packages/b"]`);
+    await versionOfAResolvedFromB(dir);
+  });
+
+  test("with its catalogs and overrides while migrating pnpm-lock.yaml", async () => {
+    await using dir = tempDir("pnpm-workspace-yaml-catalog-lockfile", {
+      ...catalogFixture,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    '@w/a':
+      specifier: workspace:*
+      version: link:packages/a
+
+importers:
+
+  .: {}
+
+  packages/a: {}
+
+  packages/b:
+    dependencies:
+      '@w/a':
+        specifier: 'catalog:'
+        version: link:../a
+`,
+    });
+
+    const { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).toContain(catalogFixtureMoved);
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual(catalogFixtureImported);
+    await versionOfAResolvedFromB(dir);
+  });
+
+  test("when pnpm-lock.yaml is too old to migrate", async () => {
+    await using dir = tempDir("pnpm-workspace-yaml-old-lockfile", {
+      "package.json": JSON.stringify(rootPackageJson),
+      "pnpm-workspace.yaml": workspaceYaml,
+      "pnpm-lock.yaml": `lockfileVersion: '6.0'\n\nimporters:\n\n  .: {}\n`,
+      ...workspacePackages,
+    });
+
+    const { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).toContain("cannot migrate pnpm-lock.yaml: unsupported lockfileVersion 6.0");
+    expect(stderr).toContain(movedWorkspaces);
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual({ ...rootPackageJson, workspaces: ["packages/*"] });
+    await versionOfAResolvedFromB(dir);
+  });
+
+  test("by bun add, alongside the added dependency", async () => {
+    await using dir = tempDir("pnpm-workspace-yaml-add", {
+      "package.json": JSON.stringify(rootPackageJson),
+      "pnpm-workspace.yaml": workspaceYaml,
+      "lib/c/package.json": JSON.stringify({ name: "c", version: "0.0.1" }),
+      ...workspacePackages,
+    });
+
+    const { stderr, exitCode } = await runBun(dir, "add", "file:lib/c");
+    expect(stderr).toContain(movedWorkspaces);
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual({
+      ...rootPackageJson,
+      dependencies: { c: "file:lib/c" },
+      workspaces: ["packages/*"],
+    });
+    await versionOfAResolvedFromB(dir);
+  });
+
+  test("by bun remove, surviving its package.json write-back", async () => {
+    await using dir = tempDir("pnpm-workspace-yaml-remove", {
+      "package.json": JSON.stringify({ ...rootPackageJson, dependencies: { c: "file:lib/c" } }),
+      "pnpm-workspace.yaml": workspaceYaml,
+      "lib/c/package.json": JSON.stringify({ name: "c", version: "0.0.1" }),
+      ...workspacePackages,
+    });
+
+    const { stderr, exitCode } = await runBun(dir, "remove", "c");
+    expect(stderr).toContain(movedWorkspaces);
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual({ ...rootPackageJson, workspaces: ["packages/*"] });
+    await versionOfAResolvedFromB(dir);
+  });
+
+  test("not when package.json already declares workspaces", async () => {
+    const declared = { ...rootPackageJson, workspaces: ["packages/a"] };
+    await using dir = tempDir("pnpm-workspace-yaml-declared", {
+      "package.json": JSON.stringify(declared),
+      "pnpm-workspace.yaml": workspaceYaml,
+      ...workspacePackages,
+    });
+
+    const { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).not.toContain("copied pnpm");
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual(declared);
+    const lockfile = fs.readFileSync(join(dir, "bun.lock"), "utf8");
+    expect(lockfile).toContain(`"@w/a": ["@w/a@workspace:packages/a"]`);
+    expect(lockfile).not.toContain("@w/b");
+  });
+
+  test("not when a bun.lock exists", async () => {
+    const single = { ...rootPackageJson, dependencies: { c: "file:lib/c" } };
+    await using dir = tempDir("pnpm-workspace-yaml-has-bun-lock", {
+      "package.json": JSON.stringify(single),
+      "lib/c/package.json": JSON.stringify({ name: "c", version: "0.0.1" }),
+      ...workspacePackages,
+    });
+    expect((await runBun(dir, "install")).exitCode).toBe(0);
+    expect(fs.existsSync(join(dir, "bun.lock"))).toBe(true);
+
+    fs.writeFileSync(join(dir, "pnpm-workspace.yaml"), workspaceYaml);
+    const { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).not.toContain("copied pnpm");
+    expect(exitCode).toBe(0);
+
+    expect(readPackageJson(dir)).toEqual(single);
+    expect(fs.readFileSync(join(dir, "bun.lock"), "utf8")).not.toContain("@w/a");
+  });
+
+  // A 0444 package.json does not stop root from writing it, and the mode bits mean something else on Windows.
+  test.skipIf(isWindows || isRoot).each([
+    ["without a lockfile", {}],
+    [
+      "while migrating pnpm-lock.yaml",
+      {
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  packages/a: {}
+
+  packages/b:
+    dependencies:
+      '@w/a':
+        specifier: workspace:*
+        version: link:../a
+`,
+      },
+    ],
+  ])("and the install fails when package.json cannot be written back, %s", async (_, lockfile) => {
+    const original = JSON.stringify(rootPackageJson);
+    await using dir = tempDir("pnpm-workspace-yaml-readonly", {
+      "package.json": original,
+      "pnpm-workspace.yaml": workspaceYaml,
+      ...workspacePackages,
+      ...lockfile,
+    });
+    fs.chmodSync(join(dir, "package.json"), 0o444);
+
+    // The migrated package.json is written just before the lockfile, so nothing is saved that depends on it.
+    let { stderr, exitCode } = await runBun(dir, "install");
+    expect(stderr).toContain("error: failed to write package.json: EACCES");
+    expect(stderr).not.toContain("copied pnpm");
+    expect(exitCode).toBe(1);
+    expect(fs.readFileSync(join(dir, "package.json"), "utf8")).toBe(original);
+    expect(fs.existsSync(join(dir, "bun.lock"))).toBe(false);
+
+    // Once it is writable again the same install completes the move.
+    fs.chmodSync(join(dir, "package.json"), 0o644);
+    ({ stderr, exitCode } = await runBun(dir, "install"));
+    expect(stderr).toContain(movedWorkspaces);
+    expect(exitCode).toBe(0);
+    expect(readPackageJson(dir).workspaces).toEqual(["packages/*"]);
+    await versionOfAResolvedFromB(dir);
   });
 });

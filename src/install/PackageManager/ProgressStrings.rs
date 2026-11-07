@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_core::Output;
+use bun_core::{Output, strings};
 use const_format::concatcp;
 
 use crate::bun_progress::Node as ProgressNode;
@@ -12,7 +12,7 @@ pub struct ProgressStrings;
 impl ProgressStrings {
     // The base *_NO_EMOJI_ / *_EMOJI consts stay &str because concatcp! requires str
     // inputs; derived consts and fn returns are &[u8].
-    pub const DOWNLOAD_NO_EMOJI_: &'static str = "Resolving";
+    pub(crate) const DOWNLOAD_NO_EMOJI_: &'static str = "Resolving";
     const DOWNLOAD_NO_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::DOWNLOAD_NO_EMOJI_, "\n").as_bytes();
     const DOWNLOAD_WITH_EMOJI: &'static [u8] = concatcp!(
@@ -20,19 +20,11 @@ impl ProgressStrings {
         ProgressStrings::DOWNLOAD_NO_EMOJI_
     )
     .as_bytes();
-    pub const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
+    pub(crate) const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
 
-    const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
-    const EXTRACT_NO_EMOJI: &'static [u8] =
-        concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n").as_bytes();
-    const EXTRACT_WITH_EMOJI: &'static [u8] = concatcp!(
-        ProgressStrings::EXTRACT_EMOJI,
-        ProgressStrings::EXTRACT_NO_EMOJI_
-    )
-    .as_bytes();
-    pub const EXTRACT_EMOJI: &'static str = "  🚚 ";
+    pub(crate) const EXTRACT_EMOJI: &'static str = "  🚚 ";
 
-    pub const INSTALL_NO_EMOJI_: &'static str = "Installing";
+    pub(crate) const INSTALL_NO_EMOJI_: &'static str = "Installing";
     const INSTALL_NO_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::INSTALL_NO_EMOJI_, "\n").as_bytes();
     const INSTALL_WITH_EMOJI: &'static [u8] = concatcp!(
@@ -40,15 +32,15 @@ impl ProgressStrings {
         ProgressStrings::INSTALL_NO_EMOJI_
     )
     .as_bytes();
-    pub const INSTALL_EMOJI: &'static str = "  📦 ";
+    pub(crate) const INSTALL_EMOJI: &'static str = "  📦 ";
 
-    pub const SAVE_NO_EMOJI_: &'static str = "Saving lockfile";
+    pub(crate) const SAVE_NO_EMOJI_: &'static str = "Saving lockfile";
     const SAVE_NO_EMOJI: &'static [u8] = ProgressStrings::SAVE_NO_EMOJI_.as_bytes();
     const SAVE_WITH_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::SAVE_EMOJI, ProgressStrings::SAVE_NO_EMOJI_).as_bytes();
-    pub const SAVE_EMOJI: &'static str = "  🔒 ";
+    pub(crate) const SAVE_EMOJI: &'static str = "  🔒 ";
 
-    pub const SCRIPT_NO_EMOJI_: &'static str = "Running script";
+    pub(crate) const SCRIPT_NO_EMOJI_: &'static str = "Running script";
     const SCRIPT_NO_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::SCRIPT_NO_EMOJI_, "\n").as_bytes();
     const SCRIPT_WITH_EMOJI: &'static [u8] = concatcp!(
@@ -56,10 +48,10 @@ impl ProgressStrings {
         ProgressStrings::SCRIPT_NO_EMOJI_
     )
     .as_bytes();
-    pub const SCRIPT_EMOJI: &'static str = "  ⚙️  ";
+    pub(crate) const SCRIPT_EMOJI: &'static str = "  ⚙️  ";
 
     #[inline]
-    pub fn download() -> &'static [u8] {
+    pub(crate) fn download() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::DOWNLOAD_WITH_EMOJI
         } else {
@@ -68,7 +60,7 @@ impl ProgressStrings {
     }
 
     #[inline]
-    pub fn save() -> &'static [u8] {
+    pub(crate) fn save() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::SAVE_WITH_EMOJI
         } else {
@@ -77,16 +69,7 @@ impl ProgressStrings {
     }
 
     #[inline]
-    pub fn extract() -> &'static [u8] {
-        if Output::enable_ansi_colors_stderr() {
-            Self::EXTRACT_WITH_EMOJI
-        } else {
-            Self::EXTRACT_NO_EMOJI
-        }
-    }
-
-    #[inline]
-    pub fn install() -> &'static [u8] {
+    pub(crate) fn install() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {
             Self::INSTALL_WITH_EMOJI
         } else {
@@ -105,30 +88,31 @@ impl ProgressStrings {
 }
 
 impl PackageManager {
-    pub fn set_node_name<const IS_FIRST: bool>(
+    pub(crate) fn set_node_name<const IS_FIRST: bool>(
         &mut self,
         node: &mut ProgressNode,
         name: &[u8],
         emoji: &[u8],
     ) {
+        let emoji_len = if Output::enable_ansi_colors_stderr() {
+            if IS_FIRST {
+                self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
+            }
+            emoji.len()
+        } else {
+            0
+        };
+        // Display-only, so a name longer than the buffer is simply cut short.
+        let name =
+            strings::truncate_to_char_boundary(name, self.progress_name_buf.len() - emoji_len);
+        self.progress_name_buf[emoji_len..][..name.len()].copy_from_slice(name);
+        let len = emoji_len + name.len();
         // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
         // which point at storage owned by (or outliving) this `PackageManager`
         // singleton; `progress_name_buf` is an inline field of that same
         // singleton, so the buffer outlives every node that references it and
         // erasing the slice lifetime to `'static` is sound.
-        unsafe {
-            let len = if Output::enable_ansi_colors_stderr() {
-                if IS_FIRST {
-                    self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
-                }
-                self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
-                emoji.len() + name.len()
-            } else {
-                self.progress_name_buf[..name.len()].copy_from_slice(name);
-                name.len()
-            };
-            node.name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
-        }
+        node.name = unsafe { bun_ptr::detach_lifetime(&self.progress_name_buf[..len]) };
     }
 
     pub fn start_progress_bar_if_none(&mut self) {
@@ -137,7 +121,7 @@ impl PackageManager {
         }
     }
 
-    pub fn start_progress_bar(&mut self) {
+    pub(crate) fn start_progress_bar(&mut self) {
         self.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         // `Progress::start` returns `&mut Node` borrowing `self.progress`;
         // decay to a raw ptr immediately so the exclusive borrow ends before we

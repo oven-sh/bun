@@ -20,7 +20,6 @@ SEL Ref::s_alloc;
 SEL Ref::s_init;
 SEL Ref::s_release;
 SEL Ref::s_retain;
-SEL Ref::s_description;
 SEL Ref::s_isKindOfClass;
 
 Class NSString::cls;
@@ -117,15 +116,32 @@ SEL WKWebView::s_callAsyncJavaScript;
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
+Class WKWebViewConfiguration::cls_WKProcessPool;
 SEL WKWebViewConfiguration::s_nonPersistentDataStore;
 SEL WKWebViewConfiguration::s_initWithDirectory;
+bool WKWebViewConfiguration::s_hasInitWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
+SEL WKWebViewConfiguration::s_setProcessPool;
+
+// One pool shared by every view, retained for process lifetime. A private
+// pool per view spends one CVDisplayLink each (CoreVideo allows 64 per
+// process), so the 65th lifetime view wedged (oven-sh/bun#40951).
+id WKWebViewConfiguration::sharedProcessPool()
+{
+    static id pool;
+    if (!pool) {
+        Ref p(msgCls<id>(cls_WKProcessPool, s_alloc));
+        pool = p.msg<id>(s_init);
+    }
+    return pool;
+}
 
 // Keyed by directory path. Stores live for the process: each WKWebsiteDataStore
 // runs its own NetworkProcess session, so two instances at the same path don't
 // share committed state. Retained once on insert, never released.
 id WKWebViewConfiguration::persistentStoreForDirectory(const WTF::String& directory)
 {
+    ASSERT(s_hasInitWithDirectory);
     static NeverDestroyed<HashMap<WTF::String, id>> cache;
     auto it = cache->find(directory);
     if (it != cache->end()) return it->value;
@@ -165,7 +181,6 @@ SEL WKWebView::s_canGoBack;
 SEL WKWebView::s_canGoForward;
 SEL WKWebView::s_goBack;
 SEL WKWebView::s_goForward;
-SEL WKWebView::s_isLoading;
 SEL WKWebView::s_URL;
 SEL WKWebView::s_title;
 SEL WKWebView::s_setAfterScreenUpdates;
@@ -319,6 +334,7 @@ bool ObjCRuntime::load()
     SEL (*sel)(const char*);
     Class (*allocateClassPair)(Class, const char*, size_t);
     BOOL (*addMethod)(Class, SEL, IMP, const char*);
+    BOOL (*respondsToSelector)(Class, SEL);
     BOOL (*addProtocol)(Class, Protocol*);
     Protocol* (*getProtocol)(const char*);
     void (*registerClassPair)(Class);
@@ -327,6 +343,7 @@ bool ObjCRuntime::load()
     SYM(sel, libobjc, "sel_registerName");
     SYM(allocateClassPair, libobjc, "objc_allocateClassPair");
     SYM(addMethod, libobjc, "class_addMethod");
+    SYM(respondsToSelector, libobjc, "class_respondsToSelector");
     SYM(addProtocol, libobjc, "class_addProtocol");
     SYM(getProtocol, libobjc, "objc_getProtocol");
     SYM(registerClassPair, libobjc, "objc_registerClassPair");
@@ -347,7 +364,6 @@ bool ObjCRuntime::load()
     Ref::s_init = sel("init");
     Ref::s_release = sel("release");
     Ref::s_retain = sel("retain");
-    Ref::s_description = sel("description");
     Ref::s_isKindOfClass = sel("isKindOfClass:");
 
     // --- populate wrapper classes -----------------------------------------
@@ -446,10 +462,13 @@ bool ObjCRuntime::load()
     CLS(WKWebViewConfiguration::cls, "WKWebViewConfiguration");
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStore, "WKWebsiteDataStore");
     // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
-    // initWithDirectory: is 15.2+.
+    // initWithDirectory: ships with macOS 15.2+, but a Safari update can also install that WebKit, so ask the class.
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
+    CLS(WKWebViewConfiguration::cls_WKProcessPool, "WKProcessPool");
+    WKWebViewConfiguration::s_setProcessPool = sel("setProcessPool:");
     WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
+    WKWebViewConfiguration::s_hasInitWithDirectory = respondsToSelector(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, WKWebViewConfiguration::s_initWithDirectory);
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");
     WKWebViewConfiguration::s_setWebsiteDataStore = sel("setWebsiteDataStore:");
     WKWebViewConfiguration::s_userContentController = sel("userContentController");
@@ -476,7 +495,6 @@ bool ObjCRuntime::load()
     WKWebView::s_canGoForward = sel("canGoForward");
     WKWebView::s_goBack = sel("goBack");
     WKWebView::s_goForward = sel("goForward");
-    WKWebView::s_isLoading = sel("isLoading");
     WKWebView::s_URL = sel("URL");
     WKWebView::s_title = sel("title");
     WKWebView::s_setAfterScreenUpdates = sel("setAfterScreenUpdates:");

@@ -85,3 +85,19 @@ expectType(new Blob([]).bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
 expectType(new Blob([]).json()).is<Promise<any>>();
 expectType(new Blob([]).formData()).is<Promise<FormData>>();
 expectType(new Blob([]).stream()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+
+Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream("utf-16le", { fatal: true, ignoreBOM: true }));
+
+new ReadableStream({
+  type: "bytes",
+  autoAllocateChunkSize: 1024,
+  pull(controller) {
+    expectType(controller).is<ReadableByteStreamController>();
+    controller.enqueue(new Uint8Array(1));
+    controller.byobRequest?.respond(1);
+    controller.close();
+  },
+});
+expectType(new ReadableStream({ type: "bytes" })).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(new ReadableStream<Uint8Array>({ type: "bytes" })).is<ReadableStream<Uint8Array>>();
+expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();

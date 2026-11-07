@@ -45,9 +45,6 @@
 #define JSC_API_AVAILABLE(...)
 #define JSC_CLASS_AVAILABLE(...) JS_EXPORT
 #define JSC_API_DEPRECATED(...)
-// Use zero since it will be less than any possible version number.
-#define JSC_MAC_VERSION_TBA 0
-#define JSC_IOS_VERSION_TBA 0
 
 #include <wtf/ExportMacros.h>
 
@@ -81,9 +78,11 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/HandleSet.h>
+#include <JavaScriptCore/StrongSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include "RemovableFeatures.h"
+#include "BunWithoutAOT.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1
@@ -96,6 +95,12 @@
 #else
 #define BUN_DECLARE_HOST_FUNCTION(name) extern "C" JSC_DECLARE_HOST_FUNCTION(name)
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
+#endif
+
+#ifdef __cplusplus
+namespace Bun {
+void putDirectNamed(JSC::VM&, JSC::JSObject*, WTF::ASCIILiteral name, JSC::JSValue);
+}
 #endif
 
 // can be nothrow | zero_is_throw | check_slow

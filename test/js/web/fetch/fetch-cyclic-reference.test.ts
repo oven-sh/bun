@@ -1,8 +1,16 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 
+// In CI these files run under `bun test --parallel --isolate`, where one
+// worker process runs several test files against the same JSC VM. heapStats()
+// is VM-wide, so assert on the delta rather than an absolute count to avoid
+// counting objects left over from the previous file in this worker.
+const countOf = (name: string) => (heapStats().objectTypeCounts[name] as number) || 0;
+
 describe("FetchTasklet cyclic reference", () => {
   test("fetch with request body stream should not leak with cyclic reference", async () => {
+    const baselineRequest = countOf("Request");
+    const baselineStream = countOf("ReadableStream");
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -45,13 +53,12 @@ describe("FetchTasklet cyclic reference", () => {
     await Bun.sleep(10);
     Bun.gc(true);
 
-    const requestCount = heapStats().objectTypeCounts.Request || 0;
-    const readableStreamCount = heapStats().objectTypeCounts.ReadableStream || 0;
-    expect(requestCount).toBeLessThanOrEqual(100);
-    expect(readableStreamCount).toBeLessThanOrEqual(100);
+    expect(countOf("Request") - baselineRequest).toBeLessThanOrEqual(100);
+    expect(countOf("ReadableStream") - baselineStream).toBeLessThanOrEqual(100);
   });
 
   test("fetch with ReadableStream body should not leak streams", async () => {
+    const baselineStream = countOf("ReadableStream");
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -87,8 +94,7 @@ describe("FetchTasklet cyclic reference", () => {
     await Bun.sleep(10);
     Bun.gc(true);
 
-    const readableStreamCount = heapStats().objectTypeCounts.ReadableStream || 0;
     // This currently fails with ~502 streams leaked
-    expect(readableStreamCount).toBeLessThanOrEqual(100);
+    expect(countOf("ReadableStream") - baselineStream).toBeLessThanOrEqual(100);
   });
 });

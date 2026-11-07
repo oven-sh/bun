@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "abbrev": "^1.0.4"
+  },
+  "workspaces": ["a", "b"]
+}

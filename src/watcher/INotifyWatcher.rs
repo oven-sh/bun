@@ -11,6 +11,7 @@ use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
 
@@ -25,7 +26,7 @@ const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 
 /// Aligned to `align_of::<Event>()` so casts from the buffer base are sound.
 #[repr(C, align(4))]
-pub struct EventListBytes(pub [u8; EVENTLIST_BYTES_SIZE]);
+pub struct EventListBytes(pub(crate) [u8; EVENTLIST_BYTES_SIZE]);
 const _: () = assert!(align_of::<Event>() == 4);
 // SAFETY: EventListBytes is a `[u8; N]` newtype; the all-zero bit pattern is valid.
 unsafe impl bun_core::Zeroable for EventListBytes {}
@@ -39,22 +40,22 @@ struct ReadPtr {
 pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
-    pub fd: Fd,
-    pub loaded: bool,
+    pub(crate) fd: Fd,
+    pub(crate) loaded: bool,
 
     // Avoid statically allocating because it increases the binary size.
-    pub eventlist_bytes: Box<EventListBytes>,
+    pub(crate) eventlist_bytes: Box<EventListBytes>,
     /// pointers into the next chunk of events
     // BACKREF: raw pointers into `eventlist_bytes`; self-referential, never freed individually.
-    pub eventlist_ptrs: [*const Event; max_count],
+    pub(crate) eventlist_ptrs: [*const Event; max_count],
     /// if defined, it means `read` should continue from this offset before asking
     /// for more bytes. this is only hit under high watching load.
     /// see `test-fs-watch-recursive-linux-parallel-remove.js`
     read_ptr: Option<ReadPtr>,
 
-    pub watch_count: AtomicU32,
+    pub(crate) watch_count: AtomicU32,
     /// nanoseconds
-    pub coalesce_interval: isize,
+    pub(crate) coalesce_interval: isize,
 }
 
 impl Default for INotifyWatcher {
@@ -102,7 +103,7 @@ impl Event {
     // unaligned reads are ever observed, switch these to take `*const Event`
     // + read_unaligned.
 
-    pub fn name(&self) -> &ZStr {
+    pub(crate) fn name(&self) -> &ZStr {
         debug_assert!(
             self.name_len > 0,
             "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function."
@@ -119,7 +120,7 @@ impl Event {
         }
     }
 
-    pub fn size(&self) -> u32 {
+    pub(crate) fn size(&self) -> u32 {
         u32::try_from(size_of::<Event>()).expect("int cast") + self.name_len
     }
 }
@@ -131,10 +132,7 @@ impl INotifyWatcher {
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_file_mask =
             IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
-        // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
-        let rc = unsafe {
-            bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
-        };
+        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_file_mask);
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
             Err(
@@ -162,10 +160,7 @@ impl INotifyWatcher {
             | IN::ONLYDIR
             | IN::MOVED_TO
             | IN::MODIFY;
-        // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
-        let rc = unsafe {
-            bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_dir_mask)
-        };
+        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_dir_mask);
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
             Err(
@@ -204,7 +199,7 @@ impl INotifyWatcher {
         })
     }
 
-    pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
+    fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
         debug_assert!(self.loaded);
         // This is what replit does as of Jaunary 2023.
         // 1) CREATE .http.ts.3491171321~
@@ -228,14 +223,7 @@ impl INotifyWatcher {
             'outer: loop {
                 Futex::wait_forever(&self.watch_count, 0);
 
-                // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
-                let rc = unsafe {
-                    system::read(
-                        self.fd.native(),
-                        self.eventlist_bytes.0.as_mut_ptr(),
-                        self.eventlist_bytes.0.len(),
-                    )
-                };
+                let rc = system::read(self.fd.native(), &mut self.eventlist_bytes.0);
                 let errno = get_errno(rc);
                 match errno {
                     E::SUCCESS => {
@@ -258,27 +246,12 @@ impl INotifyWatcher {
                                 tv_sec: 0,
                                 tv_nsec: self.coalesce_interval as _,
                             };
-                            // SAFETY: fds and timespec are valid stack locals; sigmask is null.
-                            let poll_n = unsafe {
-                                system::ppoll(
-                                    fds.as_mut_ptr(),
-                                    fds.len(),
-                                    &raw const timespec,
-                                    core::ptr::null(),
-                                )
-                            };
+                            let poll_n = system::ppoll(&mut fds, Some(&timespec), None);
                             if poll_n > 0 {
                                 'inner: loop {
                                     let rest = &mut self.eventlist_bytes.0[read_len..];
                                     debug_assert!(!rest.is_empty());
-                                    // SAFETY: fd valid; rest is a valid mutable buffer.
-                                    let new_rc = unsafe {
-                                        system::read(
-                                            self.fd.native(),
-                                            rest.as_mut_ptr(),
-                                            rest.len(),
-                                        )
-                                    };
+                                    let new_rc = system::read(self.fd.native(), rest);
                                     let e = get_errno(new_rc);
                                     match e {
                                         E::SUCCESS => {
@@ -487,7 +460,7 @@ fn process_inotify_event_batch(
 
     let mut name_off: u8 = 0;
     let watch_events = &mut this.watch_events[..event_count];
-    watch_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
+    index_sort::sort_slice_unstable_by(watch_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
     let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
@@ -523,7 +496,7 @@ fn process_inotify_event_batch(
     Ok(())
 }
 
-pub(crate) fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
+fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
     use bun_sys::linux::IN;
     let mut op = Op::empty();
     if (event.mask & IN::DELETE_SELF) > 0 || (event.mask & IN::DELETE) > 0 {

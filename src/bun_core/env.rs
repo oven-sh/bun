@@ -3,13 +3,12 @@ pub use crate::build_options;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum BuildTarget {
+enum BuildTarget {
     Native,
     Wasm,
-    Wasi,
 }
 
-pub(crate) const BUILD_TARGET: BuildTarget = {
+const BUILD_TARGET: BuildTarget = {
     if cfg!(target_family = "wasm") {
         BuildTarget::Wasm
     } else {
@@ -17,11 +16,10 @@ pub(crate) const BUILD_TARGET: BuildTarget = {
     }
 };
 
-pub(crate) const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
+const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
 pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
-pub(crate) const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
-pub(crate) const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
-pub(crate) const IS_BROWSER: bool = !IS_WASI && IS_WASM;
+const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
+pub(crate) const IS_BROWSER: bool = IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// `true` only for the `dev` cargo profile (Debug buildtype). Keyed on
@@ -34,17 +32,17 @@ pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// semantics; that matches a bare `cargo build` landing in `release`-like
 /// behaviour and keeps IDE diagnostics closer to what ships.
 pub const IS_DEBUG: bool = cfg!(bun_debug);
-pub(crate) const IS_TEST: bool = cfg!(test);
+const IS_TEST: bool = cfg!(test);
 // Android is a Linux kernel target, but Rust splits the two into separate
 // `target_os` values, so this const has to OR them — otherwise `OS` (below)
 // panics at const-eval on the `*-linux-android` cross targets and Linux-only
 // code paths are skipped.
 pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
-pub(crate) const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
+const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;
-pub(crate) const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
-pub(crate) const IS_X64: bool = cfg!(target_arch = "x86_64");
+const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+const IS_X64: bool = cfg!(target_arch = "x86_64");
 pub const IS_MUSL: bool = cfg!(target_env = "musl");
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
 pub const ALLOW_ASSERT: bool = IS_DEBUG || IS_TEST || build_options::RELEASE_SAFE;
@@ -55,7 +53,7 @@ pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
-    const_str_slice(build_options::SHA, 0, 9)
+    build_options::SHA.split_at(9).0
 } else {
     ""
 };
@@ -99,7 +97,7 @@ pub enum OperatingSystem {
 
 impl OperatingSystem {
     /// user-facing name with capitalization
-    pub const fn display_string(self) -> &'static str {
+    pub(crate) const fn display_string(self) -> &'static str {
         match self {
             Self::Mac => "macOS",
             Self::Linux => "Linux",
@@ -110,7 +108,7 @@ impl OperatingSystem {
     }
 
     /// same format as `process.platform`
-    pub const fn name_string(self) -> &'static str {
+    pub(crate) const fn name_string(self) -> &'static str {
         match self {
             Self::Mac => "darwin",
             Self::Linux => "linux",
@@ -211,22 +209,3 @@ pub const ARCH: Architecture = if IS_WASM {
 } else {
     panic!("Please add your architecture to the Architecture enum")
 };
-
-// Helper for const &str slicing (Rust stable lacks const range indexing on str).
-const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static str {
-    // `[u8]::split_at` and `str::from_utf8` are both `const` on stable, so the
-    // sub-slice + UTF-8 check happens entirely at compile time without raw
-    // pointer arithmetic.
-    //
-    // ALLOWED `core::str::from_utf8`: this is the ONE permitted call site in
-    // the codebase. simdutf is the runtime validator (`bun_core::strings::
-    // {is_valid_utf8, str_utf8}`); `const fn` cannot call FFI, and this body
-    // const-evals at compile time only (git-SHA slicing).
-    let (head, _) = s.as_bytes().split_at(end);
-    let (_, sub) = head.split_at(start);
-    match core::str::from_utf8(sub) {
-        Ok(s) => s,
-        // Unreachable for git-SHA inputs (hex ASCII); fail the const-eval if not.
-        Err(_) => panic!("const_str_slice: not at a UTF-8 boundary"),
-    }
-}

@@ -1,4 +1,10 @@
 // Hardcoded module "node:_tls_common"
+// Deprecated shim mirroring node's lib/_tls_common.js: re-exports the real
+// implementations and warns on load.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_common.js
+const { SecureContext, createSecureContext } = require("node:tls");
+
+process.emitWarning("The _tls_common module is deprecated. Use `node:tls` instead.", "DeprecationWarning", "DEP0192");
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
 // javascript object representations before passing them back to the user.  Can
@@ -11,10 +17,10 @@ function translatePeerCertificate(c) {
   }
   if (c.infoAccess != null) {
     const info = c.infoAccess;
-    const parsed = (c.infoAccess = Object.create(null));
+    const parsed: Record<string, unknown[]> = (c.infoAccess = Object.create(null));
 
     // XXX: More key validation?
-    info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all, key, val) => {
+    info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all: string, key: string, val: string) => {
       if (val.charCodeAt(0) === 0x22) {
         // The translatePeerCertificate function is only
         // used on internally created legacy certificate
@@ -31,5 +37,7 @@ function translatePeerCertificate(c) {
 }
 
 export default {
+  SecureContext,
+  createSecureContext,
   translatePeerCertificate,
 };

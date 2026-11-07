@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, toTOMLString } from "harness";
 import { join as pathJoin } from "node:path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
@@ -18,7 +18,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
         },
       });
 
-      const cwd = tempDirWithFiles("run.where.node", {
+      await using cwd = tempDir("run.where.node", {
         "bunfig.toml": bunfig,
         "package.json": JSON.stringify(
           {
@@ -68,7 +68,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
         },
       });
 
-      const cwd = tempDirWithFiles(Bun.hash(bunfig).toString(36), {
+      using cwd = tempDir(Bun.hash(bunfig).toString(36), {
         "bunfig.toml": bunfig,
         "package.json": JSON.stringify(
           {
@@ -104,7 +104,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
         },
       });
 
-      const cwd = tempDirWithFiles("run.shell.system-" + Bun.hash(bunfig).toString(32), {
+      await using cwd = tempDir("run.shell.system-" + Bun.hash(bunfig).toString(32), {
         "bunfig.toml": bunfig,
         "package.json": JSON.stringify(
           {
@@ -142,7 +142,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       },
     });
 
-    const cwd = tempDirWithFiles("run.where.node", {
+    await using cwd = tempDir("run.where.node", {
       "bunfig.toml": bunfig,
       "package.json": JSON.stringify(
         {
@@ -181,7 +181,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       },
     });
 
-    const cwd = tempDirWithFiles("run.where.node", {
+    await using cwd = tempDir("run.where.node", {
       "bunfig.toml": bunfig,
       "package.json": JSON.stringify(
         {
@@ -218,7 +218,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       },
     });
 
-    const cwd = tempDirWithFiles("run.where.node", {
+    await using cwd = tempDir("run.where.node", {
       "my-home/.bunfig.toml": bunfig,
       "package.json": JSON.stringify(
         {

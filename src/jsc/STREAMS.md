@@ -31,7 +31,8 @@ construction. Bun does not store closures. Instead:
   `switch` over the kind — user `underlyingSource` methods, tee branches, transform halves,
   cross-realm transfers, and Bun's native sources are all arms of the same switch.
 - Promise reactions and deferred jobs go through **`JSStreamsRuntime`**
-  (`JSStreamsRuntime.{h,cpp}`), a single per-global cell reached via
+  (`JSStreamsRuntime.{h,cpp}`), a plain per-global struct held by value on
+  `Zig::GlobalObject` and reached via
   `globalObject->streamsRuntime()`. It lazily materializes one shared `JSFunction` per
   reaction handler; handlers are registered with
   `promise->performPromiseThenWithContext(vm, global, onFulfilled, onRejected, result, contextCell)`
@@ -61,13 +62,13 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
   for a read loop.
 - **The extern "C" surface** (`WebStreamsExports.cpp`). Every function the Rust runtime
   calls into the streams subsystem (creating/cancelling/draining streams, attaching sinks,
-  querying tags) is declared here and only here. `GlobalObject::assignToStream` and the
-  generated `*JSSink` classes (`src/codegen/generate-jssink.ts`) enter through it.
+  querying tags) is declared here and only here. The native sinks
+  (`src/runtime/webcore/Sink.rs`) enter through it.
 
 ## Working on this code
 
 - Edit the `.cpp`/`.h` directly and rebuild with `bun bd`. There is no codegen step for the
-  stream classes themselves (only the JSSink classes are generated). For a fast per-TU
+  stream classes themselves (only the sink classes of `Sink.bind.ts` are generated). For a fast per-TU
   syntax check without a full build, look up the TU's compile command in
   `build/debug/compile_commands.json` and re-run it with `-fsyntax-only`.
 - Each TU compiles standalone (see `noUnifyDirs` in `scripts/build/unified.ts`): file-local

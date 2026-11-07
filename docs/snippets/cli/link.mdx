@@ -7,7 +7,7 @@ bun link <packages>
 ### Installation Scope
 
 <ParamField path="--global" type="boolean">
-  Install globally. Alias: <code>-g</code>
+  Has no effect: `bun link` always registers packages in the global folder. Alias: <code>-g</code>
 </ParamField>
 
 ### Dependency Management
@@ -39,11 +39,11 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--no-save" type="boolean">
-  Don't update <code>package.json</code> or save a lockfile
+  Don't update <code>package.json</code> or save a lockfile (the default)
 </ParamField>
 
-<ParamField path="--save" type="boolean" default="true">
-  Save to <code>package.json</code>
+<ParamField path="--save" type="boolean">
+  Update <code>package.json</code> and save a lockfile (false by default)
 </ParamField>
 
 <ParamField path="--trust" type="boolean">
@@ -60,7 +60,7 @@ bun link <packages>
   Skip verifying integrity of newly downloaded packages
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
+<ParamField path="--backend" type="string">
   Platform-specific optimizations for installing dependencies. One of <code>clonefile</code>, <code>hardlink</code>,{" "}
   <code>symlink</code>, or <code>copyfile</code>
 </ParamField>
@@ -70,11 +70,12 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  With <code>bun link &lt;package&gt;</code>, resolve but don't install packages, update <code>package.json</code>, or
+  save a lockfile. Has no effect on bare <code>bun link</code>, which still registers the current package
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 ### Network &amp; Registry
@@ -87,12 +88,24 @@ bun link <packages>
   Same as <code>--ca</code>, but as a file path to the certificate
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <ParamField path="--registry" type="string">
   Use a specific registry by default, overriding <code>.npmrc</code>, <code>bunfig.toml</code>, and environment
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
+<ParamField path="--network-concurrency" type="number" default="64">
   Maximum number of concurrent network requests
 </ParamField>
 
@@ -119,7 +132,7 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--quiet" type="boolean">
-  Only show tarball name when packing
+  Disable the progress bar
 </ParamField>
 
 <ParamField path="--verbose" type="boolean">
@@ -146,6 +159,10 @@ bun link <packages>
   all)
 </ParamField>
 
+<ParamField path="--libc" type="string">
+  Override libc for optional dependencies (e.g., <code>glibc</code>, <code>musl</code>, <code>*</code> for all)
+</ParamField>
+
 ### Global Configuration &amp; Context
 
 <ParamField path="--config" type="string">
@@ -154,6 +171,14 @@ bun link <packages>
 
 <ParamField path="--cwd" type="string">
   Set a specific current working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
 </ParamField>
 
 ### Help

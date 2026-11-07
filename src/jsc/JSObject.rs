@@ -1,8 +1,8 @@
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 use core::mem::ManuallyDrop;
 
-use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_core::{String as BunString, ZigString};
+use crate::{JSCell, JSGlobalObject, JSValue, JsResult};
+use bun_core::String as BunString;
 
 unsafe extern "C" {
     // safe: read-only `const unsigned` exported by C++ (link-time constant).
@@ -19,15 +19,6 @@ unsafe extern "C" {
         owner: *mut JSCell,
         length: u32,
         names: *mut ExternColumnIdentifier,
-    ) -> JSValue;
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
-    // C++ only forwards to `initializer` (never dereferenced as Rust data).
-    safe fn JSC__JSObject__create(
-        global_object: &JSGlobalObject,
-        length: usize,
-        ctx: *mut c_void,
-        initializer: InitializeCallback,
     ) -> JSValue;
 }
 
@@ -120,25 +111,6 @@ impl JSObject {
         Ok(obj)
     }
 
-    pub fn get(
-        &self,
-        global: &JSGlobalObject,
-        prop: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        self.to_js().get(global, prop.as_ref())
-    }
-
-    #[inline]
-    pub fn put(
-        &self,
-        global: &JSGlobalObject,
-        key: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.to_js().put(global, key.as_ref(), value);
-        Ok(())
-    }
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
@@ -163,21 +135,6 @@ impl JSObject {
         unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
     }
 
-    pub fn create_with_initializer<Ctx: ObjectInitializer>(
-        creator: &mut Ctx,
-        global: &JSGlobalObject,
-        length: usize,
-    ) -> JSValue {
-        // `ctx` is the `&mut Ctx` round-tripped through `*mut c_void`;
-        // `initializer_call::<Ctx>` casts it back. C++ only forwards it.
-        JSC__JSObject__create(
-            global,
-            length,
-            std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
-            initializer_call::<Ctx>,
-        )
-    }
-
     #[track_caller]
     pub fn get_index(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         // we don't use `call_zero_is_throw`, because it would assert that if there is an
@@ -191,28 +148,11 @@ impl JSObject {
         Ok(value)
     }
 
-    #[track_caller]
-    pub fn put_record(
+    /// This will not call getters or be observable from JavaScript.
+    pub(crate) fn get_code_property_vm_inquiry(
         &mut self,
         global: &JSGlobalObject,
-        key: &mut ZigString,
-        values: &mut [ZigString],
-    ) -> JsResult<()> {
-        // SAFETY: pointers are valid for the duration of the call; C++ does not
-        // retain them.
-        unsafe {
-            crate::cpp::JSC__JSObject__putRecord(
-                self,
-                global,
-                key,
-                values.as_mut_ptr(),
-                values.len(),
-            )
-        }
-    }
-
-    /// This will not call getters or be observable from JavaScript.
-    pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    ) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;
@@ -242,55 +182,11 @@ impl Default for ExternColumnIdentifier {
     }
 }
 
-impl ExternColumnIdentifier {
-    pub fn string(&mut self) -> Option<&mut BunString> {
-        match self.tag {
-            // SAFETY: tag == 2 means `value.name` is the active union field.
-            2 => Some(unsafe { &mut *self.value.name }),
-            _ => None,
-        }
-    }
-}
-
 impl Drop for ExternColumnIdentifier {
     fn drop(&mut self) {
-        if let Some(str) = self.string() {
-            str.deref();
-        }
-    }
-}
-
-pub(crate) type InitializeCallback =
-    extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
-
-/// Object-initializer contract: implement `create` on your context type and
-/// pass it to `JSObject::create_with_initializer`.
-pub trait ObjectInitializer {
-    fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()>;
-}
-
-extern "C" fn initializer_call<Ctx: ObjectInitializer>(
-    this: *mut c_void,
-    obj: *mut JSObject,
-    global: &JSGlobalObject,
-) {
-    // SAFETY: `this` was produced from `&mut Ctx` in `create_with_initializer`;
-    // `obj` is a live JSC pointer for the duration of the callback. `global` is
-    // taken by reference at the C ABI (`&T` ≡ non-null `*const T`).
-    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, global) };
-    if let Err(err) = result {
-        // Mirrors `host_fn::void_from_js_error` — OOM throws,
-        // anything else asserts an exception is already pending.
-        match err {
-            JsError::OutOfMemory => {
-                global.throw_out_of_memory_value();
-            }
-            _ => {
-                debug_assert!(
-                    global.has_exception(),
-                    "ObjectInitializer: JsError without pending exception"
-                );
-            }
+        if self.tag == 2 {
+            // SAFETY: tag == 2 means `value.name` is the active union field.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) };
         }
     }
 }

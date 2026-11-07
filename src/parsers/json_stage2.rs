@@ -17,7 +17,7 @@ type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext
 
 pub(crate) struct Parser<'a, 's, 'i> {
     contents: &'s [u8],
-    source: &'s Source,
+    source: &'s Source<'s>,
     log: &'a mut Log,
     idx: &'i mut StructuralIndex<'s>,
     pub cursor: usize,
@@ -44,7 +44,7 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
         self.log
     }
     #[inline]
-    fn source(&self) -> &'s Source {
+    fn source(&self) -> &'s Source<'s> {
         self.source
     }
     #[inline]
@@ -87,7 +87,7 @@ pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
 
 impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
-        source: &'s Source,
+        source: &'s Source<'s>,
         log: &'a mut Log,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
@@ -196,7 +196,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let _ = self.add_range_error(r, format_args!("Unexpected end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
-            let _ = self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
+            let raw = bun_core::fmt::escape_control_chars(raw);
+            let _ = self.add_range_error(r, format_args!("Unexpected {raw}"));
         }
         crate::Error::ParserError
     }
@@ -209,10 +210,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let _ = self.add_range_error(r, format_args!("Expected {what} but found end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
-            let _ = self.add_range_error(
-                r,
-                format_args!("Expected {what} but found \"{}\"", bstr::BStr::new(raw)),
-            );
+            let raw = bun_core::fmt::escape_control_chars(raw);
+            let _ = self.add_range_error(r, format_args!("Expected {what} but found \"{raw}\""));
         }
     }
 
@@ -333,18 +332,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let b = self.contents[q];
             let run = self.run(j);
             if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
-                if self.contents[q..hi]
-                    .iter()
-                    .any(|&b| matches!(b, b'\n' | b'\r'))
-                {
+                if strings::contains_any(&self.contents[q..hi], b"\n\r") {
                     return true;
                 }
                 hi = q;
                 continue;
             }
-            return self.contents[q + 1..hi]
-                .iter()
-                .any(|&b| matches!(b, b'\n' | b'\r'));
+            return strings::contains_any(&self.contents[q + 1..hi], b"\n\r");
         }
         false
     }
@@ -603,12 +597,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 b'/' => match rest.get(i + 1) {
                     Some(b'/') => {
                         i += 2;
-                        while i < rest.len() && !matches!(rest[i], b'\n' | b'\r') {
-                            i += 1;
-                        }
+                        i += strings::index_of_any(&rest[i..], b"\n\r").unwrap_or(rest.len() - i);
                     }
                     Some(b'*') => {
-                        let Some(close) = rest[i + 2..].windows(2).position(|w| w == b"*/") else {
+                        let Some(close) = strings::index_of(&rest[i + 2..], b"*/") else {
                             return false;
                         };
                         i += 2 + close + 2;
@@ -889,7 +881,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             key_range,
             format_args!(
                 "Duplicate key \"{}\" in object literal",
-                bstr::BStr::new(key_text)
+                bun_core::fmt::escape_control_chars(key_text)
             ),
         );
     }
@@ -1074,11 +1066,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     ) -> PResult<(f64, usize)> {
         let n = t.len();
         let mut i = prefix_len;
-        let mut value: f64 = 0.0;
+        let mut integer = bun_core::fmt::RadixInteger::default();
         let mut is_first = true;
         let mut is_invalid_legacy_octal = false;
         let mut last_underscore_end: usize = usize::MAX;
-        let base = radix as f64;
+        let bits_per_digit = radix.trailing_zeros();
         while i < n {
             let c = t[i];
             let digit: u32 = match c {
@@ -1122,7 +1114,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
                 _ => break,
             };
-            value = value * base + digit as f64;
+            integer.push_digit(bits_per_digit, digit);
             i += 1;
             is_first = false;
         }
@@ -1132,6 +1124,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
             return Err(self.syntax_err_at(pos));
         }
+        let mut value = integer.to_f64();
         if is_invalid_legacy_octal {
             let text = &t[..i];
             let s = core::str::from_utf8(text).expect("ascii");
@@ -1395,7 +1388,7 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
 
 struct MiniLog<'a, 's> {
     log: &'a mut Log,
-    source: &'s Source,
+    source: &'s Source<'s>,
     prev_error_loc: Loc,
 }
 
@@ -1404,7 +1397,7 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     fn log_mut(&mut self) -> &mut Log {
         self.log
     }
-    fn source(&self) -> &'s Source {
+    fn source(&self) -> &'s Source<'s> {
         self.source
     }
     fn prev_error_loc_mut(&mut self) -> &mut Loc {

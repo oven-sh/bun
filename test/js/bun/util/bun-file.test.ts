@@ -110,6 +110,117 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
+// Runs in a child process: each change takes JSC off its promise fast paths for
+// the rest of the process.
+test.concurrent.each([
+  "with nothing changed",
+  "after defining Object.prototype.then",
+  "after replacing Promise.prototype.then",
+  "after freezing Promise.prototype",
+  "after deleting Promise.prototype.constructor",
+])("native rejections have their async stack %s", async state => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.ts"), state],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const shapes = [
+    "fsPromises",
+    "asyncFunctionReturn",
+    "resolveWithPromise",
+    "race",
+    "thenChain",
+    "promiseSubclass",
+    "forwardingThenable",
+    "otherRealmAwait",
+    "otherRealmThen",
+    "otherRealmResolve",
+    "thenResolveReject",
+    "thenResolveWrappedReject",
+    "awaitedThenableWrappedReject",
+    "resolvedThenableWrappedReject",
+    "thenResolveRejectResult",
+  ];
+  // Promise.any() leaves its fast path in these states. Only then can the walk read its reaction.
+  const anyIsALink = [
+    "after defining Object.prototype.then",
+    "after replacing Promise.prototype.then",
+    "after freezing Promise.prototype",
+  ].includes(state);
+  const frames = {
+    ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
+    // The function that waits for what `resolve` settles, also if another handler takes the rejection.
+    thenResolveOtherHandler: ["bystander"],
+    bothAwaited: ["starter", "bothAwaited", "asyncFramesOf"],
+    // One frame for worker(), although the chain leads back to it.
+    failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
+    cycleThroughThen: ["worker"],
+    cycleThroughResolveReject: ["worker"],
+    // A link is a then() with a resolve function that was not called and a reject handler. These have none.
+    catchReject: [],
+    handledBeforeRejectFunction: [],
+    thenResolveOnly: [],
+    calledWithResolversPair: [],
+    calledThenableJobPair: [],
+    calledAwaitPair: [],
+    promiseAllAfterThen: [],
+    promiseAny: anyIsALink ? ["promiseAny", "asyncFramesOf"] : [],
+    // The async context of a reaction is not the promise that then() returned.
+    asyncContextOfReaction: [],
+    asyncContextOfInlineReaction: [],
+  };
+  // The raw stdout if it is not JSON, so that a crash shows what the fixture printed.
+  let result: unknown = stdout;
+  try {
+    result = JSON.parse(stdout);
+  } catch {}
+  expect({ result, stderr, exitCode }).toEqual({
+    result: { "outside AsyncLocalStorage.run()": frames, "in AsyncLocalStorage.run()": frames },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Not concurrent: the runner kills the child of a test that times out only if the test runs alone.
+test("the async stack of a native rejection ends at a cycle of awaits", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-await-cycle-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A child that never leaves the walk (the bug) is killed rather than left behind.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  let result: unknown = stdout;
+  try {
+    result = JSON.parse(stdout);
+  } catch {}
+  expect({ result, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    result: {
+      "Array.fromAsync() has no frame": ["caller"],
+      "a builtin awaits a race with its own promise": [],
+      "a function before a cycle of builtins": ["reader"],
+      "a function awaits a thenable race with its then() result": ["worker"],
+      "two functions await each other": ["inner", "first", "second"],
+      "a builtin awaits its own promise": [],
+      "a function awaits its own promise": ["selfAwait"],
+      "Error.stackTraceLimit = 2": ["level3", "level2"],
+      "Error.stackTraceLimit = Infinity, a function awaits its own promise": ["selfAwait"],
+      "Error.stackTraceLimit = Infinity, a function awaits a race with its then() result": ["worker"],
+      "a builtin awaits a race with its then() result, in a capability record": [],
+    },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {
   // When a file starts with EF BB BF, the BOM is stripped before parsing and
   // the temporary read buffer is freed. Previously the *post-strip* slice was

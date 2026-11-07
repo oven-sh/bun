@@ -56,3 +56,48 @@ expectType(connectedSocket.setMulticastTTL(1)).is<number>();
 expectType(connectedSocket.setMulticastLoopback(false)).is<boolean>();
 
 connectedSocket.close();
+
+await Bun.udpSocket({
+  socket: {
+    error(error) {
+      expectType(this).is<Bun.udp.Socket<"buffer">>();
+      expectType(error).is<Bun.udp.SocketError>();
+      expectType(error.code).is<string | undefined>();
+      expectType(error.errno).is<number | undefined>();
+      expectType(error.syscall).is<string | undefined>();
+      expectType(error.path).is<string | undefined>();
+      expectType(error.errqueue).is<boolean | undefined>();
+      this.close();
+    },
+  },
+});
+
+await Bun.udpSocket({
+  binaryType: "uint8array",
+  socket: {
+    error: error => {
+      expectType(error).is<Bun.udp.SocketError>();
+    },
+  },
+});
+
+await Bun.udpSocket({
+  connect: {
+    hostname: "127.0.0.1",
+    port: 9,
+  },
+  socket: {
+    error(error) {
+      expectType(this).is<Bun.udp.ConnectedSocket<"buffer">>();
+      expectType(error).is<Bun.udp.SocketError>();
+    },
+  },
+});
+
+await Bun.udpSocket({
+  socket: {
+    // The failure is the only argument. A second parameter is not the error.
+    // @ts-expect-error Target signature provides too few arguments. Expected 2 or more, but got 1.
+    error(_socket, _err) {},
+  },
+});

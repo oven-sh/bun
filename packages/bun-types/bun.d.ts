@@ -7876,6 +7876,22 @@ declare module "bun" {
       ipv6: boolean;
     }
 
+    /**
+     * Failure passed to a UDP socket's `error` handler.
+     *
+     * A receive failure is a {@link SystemError} (`code`, `errno`, `syscall`).
+     * On Linux, an ICMP report drained from `MSG_ERRQUEUE` also sets `errqueue`.
+     * An exception thrown by `data` or `drain` is forwarded here as well.
+     */
+    export interface SocketError extends SystemError {
+      /**
+       * `true` when this errno was drained from Linux's `MSG_ERRQUEUE`
+       * (an ICMP report about an earlier send) rather than a failed receive.
+       * Absent on other platforms and for other failures.
+       */
+      errqueue?: boolean;
+    }
+
     export interface SocketHandler<DataBinaryType extends BinaryType> {
       data?(
         socket: Socket<DataBinaryType>,
@@ -7885,7 +7901,12 @@ declare module "bun" {
         flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
-      error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
+      /**
+       * Called when a receive fails, or when `data` or `drain` throws.
+       *
+       * The socket is `this`. The failure is the only argument.
+       */
+      error?(this: Socket<DataBinaryType>, error: SocketError): void | Promise<void>;
     }
 
     export interface ConnectedSocketHandler<DataBinaryType extends BinaryType> {
@@ -7897,7 +7918,12 @@ declare module "bun" {
         flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
-      error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
+      /**
+       * Called when a receive fails, or when `data` or `drain` throws.
+       *
+       * The socket is `this`. The failure is the only argument.
+       */
+      error?(this: ConnectedSocket<DataBinaryType>, error: SocketError): void | Promise<void>;
     }
 
     export interface SocketOptions<DataBinaryType extends BinaryType> {
@@ -8016,12 +8042,15 @@ declare module "bun" {
    *
    * @category HTTP & Networking
    */
-  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
-    options: udp.SocketOptions<DataBinaryType>,
-  ): Promise<udp.Socket<DataBinaryType>>;
+  // The connected overload is first. Overload contextual typing uses the first
+  // match, and `connect` is required here, so a connected literal types its
+  // handlers as `ConnectedSocket`. An unconnected literal skips this overload.
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
     options: udp.ConnectSocketOptions<DataBinaryType>,
   ): Promise<udp.ConnectedSocket<DataBinaryType>>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.SocketOptions<DataBinaryType>,
+  ): Promise<udp.Socket<DataBinaryType>>;
 
   /**
    * @deprecated use {@link Bun.Spawn} instead

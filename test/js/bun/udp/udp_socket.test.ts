@@ -774,7 +774,7 @@ describe("udpSocket()", () => {
                       bytes: data == null ? null : [...new Uint8Array(data.buffer, data.byteOffset, data.byteLength)],
                     });
                   },
-                  error(socket, err) { reject(err); },
+                  error(err) { reject(err); },
                 },
               });
               const client = await Bun.udpSocket({});

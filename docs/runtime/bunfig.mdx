@@ -28,7 +28,7 @@ Top-level fields in `bunfig.toml` configure Bun's runtime behavior.
 
 ### `preload`
 
-An array of scripts/plugins to execute before running a file or script.
+An array of scripts/plugins to execute before running a file or script. `bun test` does not read this field. To run a script before your tests, use [`test.preload`](#test-preload).
 
 ```toml title="bunfig.toml" icon="settings"
 # scripts to run before `bun run`-ing a file or script
@@ -187,7 +187,7 @@ root = "./__tests__"
 
 ### `test.preload`
 
-Same as the top-level `preload` field, but only applies to `bun test`.
+Same as the top-level `preload` field, but for `bun test`. Of the two fields, `bun test` reads only `test.preload`. `bun run` and `bun <file>` read only the top-level `preload`. To load a script for both, add it to both fields.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

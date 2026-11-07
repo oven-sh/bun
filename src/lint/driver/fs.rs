@@ -7,7 +7,6 @@ use bun_paths::{MAX_PATH_BYTES, PathBuffer, path_buffer_pool};
 use bun_sema::util::FxHashSet;
 use bun_sys::{EntryKind, Fd, File, O};
 use bun_threading::Guarded;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// `ENOENT: No such file or directory`
 pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
@@ -290,12 +289,9 @@ pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Returns a name for a temporary file. It's short and doesn't reuse any of the target file's name, which may already
-/// be at the maximum length. The counter makes names unique within a run. The random number doesn't: every thread
-/// generates the same sequence, and two threads can write the same file if they reached it by different paths.
+/// be at the maximum length.
 fn temporary_name() -> String {
-    static COUNT: AtomicU32 = AtomicU32::new(0);
-    let count = COUNT.fetch_add(1, Ordering::Relaxed);
-    format!(".{:016x}{count:x}.tmp", bun_core::fast_random())
+    format!(".{:016x}.tmp", bun_core::fast_random())
 }
 
 /// Renames the file at `from` to `to`, replacing any file there.

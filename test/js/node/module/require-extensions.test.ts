@@ -258,7 +258,7 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
         require(id);
         console.log("no error");
       } catch (e) {
-        const message = e.message.replaceAll(id, "<id>");
+        const message = e.message.replaceAll(id, "<id>").replaceAll(__filename, "<requirer>");
         const inGraph = Bun.ModuleGraph.current !== undefined;
         console.log(JSON.stringify({ name: e.name, message, cached: id in require.cache, calls, inGraph }));
       }
@@ -317,7 +317,11 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     [
       "top-level-await.js",
       "wrap",
-      { name: "TypeError", message: 'require() async module "<id>" is unsupported. use "await import()" instead.' },
+      {
+        name: "Error",
+        message:
+          "require() cannot be used on an ESM graph with top-level await. Use import() instead.\n  From <requirer>\n  Requiring <id>",
+      },
     ],
     // The module._compile wrapper deletes the require.cache entry before the CommonJS file runs.
     ["cjs-throws.js", "pirates-evict", { name: "Error", message: "boom" }],

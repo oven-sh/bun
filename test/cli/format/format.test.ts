@@ -1524,6 +1524,43 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("rejects a `?` or `!` after an object literal property name with an oxfmt config", async () => {
+    // TypeScript's parser accepts `{ a? }` and leaves the error to its checker. oxfmt 0.75 rejects the file, so the
+    // file has to stay as it is instead of losing the `?`.
+    const files = {
+      "a.ts": "instant(page, callback, { baseURL? })\n",
+      "b.ts": "f({ a! })\n",
+      "c.ts": "f({ a?: 1 })\n",
+      "d.ts": "f({ 1? })\n",
+    };
+    const names = Object.keys(files);
+    const result = await format({ ".oxfmtrc.json": "{}", ...files }, names, { reads: names });
+    expect(result.files).toEqual(files);
+    const expected = [
+      problem("a.ts", "Expected `,` or `}` but found `?`", [1, 34, files["a.ts"]]),
+      problem("b.ts", "Expected `,` or `}` but found `!`", [1, 6, files["b.ts"]]),
+      problem("c.ts", "Expected `,` or `}` but found `?`", [1, 6, files["c.ts"]]),
+      problem("d.ts", "Expected `:` but found `?`", [1, 6, files["d.ts"]]),
+      "Error occurred when checking code style in the above files.",
+    ];
+    expect(result.stderr.split("\n\n").sort()).toEqual(expected.sort());
+    expect(result.exitCode).toBe(2);
+    // Without the config, the file is rejected with TypeScript's wording.
+    const prettier = await format({ "a.ts": files["a.ts"] }, ["a.ts"], { reads: ["a.ts"] });
+    expect(prettier.files).toEqual({ "a.ts": files["a.ts"] });
+    expect(prettier.stderr).toBe(
+      problem("a.ts", "A shorthand property assignment cannot have a question token.", [1, 34, files["a.ts"]]) +
+        "\n\nFormatted 0 files, 0 unchanged",
+    );
+    expect(prettier.exitCode).toBe(2);
+    // In Markdown, oxfmt leaves such a code block as it is and formats the rest of the file.
+    const markdown = "# Title\n\n```ts\ninstant(page, callback, { baseURL? })\n```\n\n```ts\nf(  1  )\n```\n";
+    const inMarkdown = await format({ ".oxfmtrc.json": "{}", "e.md": markdown }, ["e.md"], { reads: ["e.md"] });
+    expect(inMarkdown.files["e.md"]).toBe(markdown.replace("f(  1  )", "f(1);"));
+    expect(inMarkdown.stderr).toBe("");
+    expect(inMarkdown.exitCode).toBe(0);
+  });
+
   test("formats `<!--` and `-->` comments in a script", async () => {
     // This is oxfmt 0.72's output unless noted otherwise. Prettier 3.9.9 can't parse these files.
     const rows = [

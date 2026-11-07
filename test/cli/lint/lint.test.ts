@@ -13693,6 +13693,27 @@ describe("TypeScript grammar errors with an .oxlintrc.json", () => {
         "class A { a!; }",
         "TS(1264) Declarations with definite assignment assertions must also have type annotations. @11+1",
       ],
+      // `?` or `!` after the name of an object literal member. tsc reports 1162 or 1255 from its checker.
+      ["f({ a? })", 'Expected `,` or `}` but found `?` @5+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ a! })", 'Expected `,` or `}` but found `!` @5+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ a?: 1 })", 'Expected `,` or `}` but found `?` @5+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ a!: 1 })", 'Expected `,` or `}` but found `!` @5+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ a?() {} })", 'Expected `,` or `}` but found `?` @5+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ a?<T>() {} })", 'Expected `,` or `}` but found `?` @5+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ async? })", 'Expected `,` or `}` but found `?` @9+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["f({ get? })", 'Expected `,` or `}` but found `?` @7+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      ["({ a? } = x);", 'Expected `,` or `}` but found `?` @4+1 "`,` or `}` expected", 1+1 "Opened here"'],
+      ["f({\n  b,\n  a? });", 'Expected `,` or `}` but found `?` @12+1 "`,` or `}` expected", 2+1 "Opened here"'],
+      [
+        "f({ a?: 1 }); g({ b? }); class A { c?: 1 }",
+        'Expected `,` or `}` but found `?` @5+1 "`,` or `}` expected", 2+1 "Opened here"',
+      ],
+      ["f({ 1? })", 'Expected `:` but found `?` @5+1 "`:` expected"'],
+      ['f({ "a"?: 1 })', 'Expected `:` but found `?` @7+1 "`:` expected"'],
+      ["f({ [a]? })", 'Expected `:` but found `?` @7+1 "`:` expected"'],
+      ["f({ if? })", 'Expected `:` but found `?` @6+1 "`:` expected"'],
+      ["f({ *a? })", 'Expected `(` but found `?` @6+1 "`(` expected"'],
+      ["f({ *a?() {} })", 'Expected `(` but found `?` @6+1 "`(` expected"'],
       [
         "class A { static a!: number; }",
         "TS(1255) A definite assignment assertion '!' is not permitted in this context. @18+1",
@@ -22266,6 +22287,10 @@ describe("TypeScript grammar errors with an .oxlintrc.json", () => {
     ["tsx", "await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
     // A `<` that no type parameter follows.
     ["ts", "declare function <;", "Unexpected token @18+1"],
+    // `yield` before the `?` is a name to oxc. Bun prints `Unexpected token` in a .js file too.
+    ["ts", "f({ yield? })", 'Expected `,` or `}` but found `?` @9+1 "`,` or `}` expected", 2+1 "Opened here"'],
+    // Bun reports the modifier and then the `?`.
+    ["ts", "f({ async a?() {} })", "'async' modifier cannot be used here. @4+5 help: No modifiers are allowed here."],
   ];
   test.todo.each(knownDifferences)("prints oxlint's errors for a .%s file: %j", async (extension, code, ...errors) => {
     const name = `a.${extension}`;

@@ -23,17 +23,22 @@ test.describe("plan capture at first t.assert access", () => {
 // t.test() after the parent finished: Node fails the late subtest with
 // parentAlreadyFinished but resolves the returned promise (undefined); it must
 // not reject or fall through to bun:test's internal-phase throw.
+// bun only: on Node v26.3.0 this await does not settle, so the test does not finish there.
 test("late subtest after parent finished", async t => {
   let saved;
   await t.test("parent", pt => {
     saved = pt;
   });
   let outcome;
+  let ran = false;
   await saved
-    .test("late", () => {})
+    .test("late", () => {
+      ran = true;
+    })
     .then(
       v => (outcome = { resolved: true, value: v }),
       e => (outcome = { rejected: true, code: e?.code }),
     );
   assert.deepStrictEqual(outcome, { resolved: true, value: undefined });
+  assert.strictEqual(ran, false);
 });

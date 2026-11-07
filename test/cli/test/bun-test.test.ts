@@ -4035,6 +4035,22 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
             test.concurrent("h", () => hold(${due1}), 0);`,
           results: ["(pass) h", "(fail) a", "(fail) x", "(pass) b"],
         },
+        // The timer of `b` is due in the timer pass of the fire, so the runner has the result of `b` when `a` fails. The timer is then armed for `e`, not for `b`.
+        "the afterEach of a concurrent test that timed out, when another test ended in the timer pass of the fire": {
+          source: `
+            let calls = 0;
+            afterEach(() => {
+              if (++calls === 2) holdUntil(start + ${over});
+            });
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => void setTimeout(done, ${due1}), ${2 * short});
+            test.concurrent("e", done => {
+              start = performance.now();
+              setTimeout(done, ${2 * short + 100});
+            }, ${limit});
+            test.concurrent("h", () => hold(${due1 + 20}), 0);`,
+          results: ["(pass) h", "(fail) a", "(pass) b", "(pass) e"],
+        },
         "control: the afterEach of a concurrent test that timed out, declared after the other test": {
           source: `
             let calls = 0;

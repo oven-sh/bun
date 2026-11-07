@@ -68,6 +68,15 @@ void us_fault_clear_all(void) {
     Bun__unlock(&us_fault_lock);
 }
 
+int us_fault_targets(int sc, int fd) {
+    if ((unsigned)sc >= US_FAULT_COUNT) return 0;
+    Bun__lock(&us_fault_lock);
+    const struct us_fault_rule *rule = &us_fault_state[sc].rule;
+    int targets = rule->action != US_FAULT_NONE && rule->target_fd == fd;
+    Bun__unlock(&us_fault_lock);
+    return targets;
+}
+
 int us_fault_hit(int sc, int fd, ssize_t *out, int *clamp) {
     if ((unsigned)sc >= US_FAULT_COUNT) return 0;
     Bun__lock(&us_fault_lock);

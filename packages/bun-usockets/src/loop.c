@@ -1116,6 +1116,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                  * `recvmsg <code>` and keeps the socket open.
                                  * Only a genuine poll error still closes below. */
                                 int recv_err = errno;
+#if LIBUS_UDP_RECV_PER_MESSAGE
+                                /* A per-message batch read these before the
+                                 * receive that failed (see bsd_recvmmsg).
+                                 * Deliver them before the report, as Node
+                                 * does. on_data runs JS, so errno is already
+                                 * saved above. */
+                                const int received = recvbuf.received_before_error;
+                                if (received > 0) {
+                                    u->on_data(u, &recvbuf, received);
+                                    if (u->closed) break;
+                                }
+#endif
                                 if (u->on_recv_error) {
 #if defined(__linux__)
                                     recv_error_surfaced = 1;

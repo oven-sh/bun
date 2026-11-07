@@ -864,6 +864,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     ctx->max_header_set_size = max_header_size > 0xffffff ? 0xffffff : (unsigned) max_header_size;
     ctx->settings.es_max_header_list_size = ctx->max_header_set_size;
     ctx->settings.es_init_max_streams_bidi = 100;
+    ctx->settings.es_max_crypto_stash = US_QUIC_MAX_CRYPTO_STASH;
     /* Static-table-only response encoding: skips the per-header dynamic
      * table search (lsqpack_enc_encode + XXH32 + header_out_dynamic_entry
      * were ~8% of a hello-world profile). Clients still get correct

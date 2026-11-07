@@ -255,6 +255,25 @@ describe("bundler", async () => {
       },
     });
 
+    // `export { x as "\uD800" }` does not parse: an export name must be
+    // well-formed Unicode. A key with a lone surrogate stays a property of the
+    // default export only, and the file still loads.
+    itBundled("bun/loader-json-lone-surrogate-key-entry-point", {
+      target: "bun",
+      format: "esm",
+      entryPoints: ["/data.json"],
+      files: {
+        "/data.json": '{"\\ud800": 1, "a b": 2}',
+      },
+      runtimeFiles: {
+        "/test.js": /* js */ `
+          import * as ns from "./out.js";
+          console.log(JSON.stringify([Object.keys(ns).sort(), ns.default["\\ud800"], ns["a b"]]));
+        `,
+      },
+      run: { file: "/test.js", stdout: '[["a b","default"],1,2]' },
+    });
+
     // A named re-export from a barrel sees the same keys.
     itBundled("bun/loader-json-non-identifier-keys-re-export", {
       target: "bun",

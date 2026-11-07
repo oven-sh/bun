@@ -597,7 +597,7 @@ extern "C" fn Bun__FakeTimers__fakeOf(
         return JSValue::ZERO;
     };
     *original = replaced.original.get();
-    *layers = replaced.layers.get().unwrap_or(JSValue::ZERO);
+    *layers = replaced.layers.get().unwrap_or_default();
     replaced.fake.get()
 }
 
@@ -1041,7 +1041,7 @@ impl FakeTimers {
                 .find(|replaced| replaced.api == api);
             // `install` replaces this marker by the record the new fake shares.
             let layers = replaced_now.map_or_else(StrongOptional::empty, |replaced| {
-                StrongOptional::create(replaced.layers.get().unwrap_or(JSValue::ZERO), global)
+                StrongOptional::create(replaced.layers.get().unwrap_or_default(), global)
             });
             let original = match replaced_now {
                 Some(replaced) => match replaced.layers.get() {

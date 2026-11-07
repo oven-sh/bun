@@ -51,14 +51,16 @@ pub(crate) struct TestContext {
     count_check: Cell<Option<CountCheck>>,
 }
 
-/// What the checks of `expect.assertions()` and `expect.hasAssertions()` found for one attempt.
+/// What the check of `expect.assertions()` and `expect.hasAssertions()` found for one attempt.
 #[derive(Copy, Clone)]
 struct CountCheck {
     attempt: u32,
     /// The check after the hooks of the test is done. The deferred callbacks read the result, so nothing is checked later.
     is_last: bool,
-    /// The expectation and the number of `expect()` calls that the check which failed the attempt compared.
-    failed: Option<(ExpectAssertions, u32)>,
+    /// The check failed the attempt.
+    failed: bool,
+    /// The expectation and the number of `expect()` calls that the check compared.
+    compared: (ExpectAssertions, u32),
 }
 
 pub(crate) use crate::generated_bindgen::test_context::js_TestContext as js;
@@ -190,12 +192,16 @@ impl TestContext {
     }
 
     pub(crate) fn failed_count(&self, attempt: u32) -> Option<(ExpectAssertions, u32)> {
-        self.count_check(attempt)?.failed
+        self.count_check(attempt).filter(|check| check.failed).map(|check| check.compared)
     }
 
-    pub(crate) fn count_checked(&self, attempt: u32, is_last: bool, failed: Option<(ExpectAssertions, u32)>) {
-        let earlier = self.count_check(attempt).and_then(|check| check.failed);
-        self.count_check.set(Some(CountCheck { attempt, is_last, failed: earlier.or(failed) }));
+    /// The expectation that a test that is called as in Vitest had at its one check, when its callback ended.
+    pub(crate) fn count_at_callback_end(&self, attempt: u32) -> Option<ExpectAssertions> {
+        self.count_check(attempt).filter(|check| !check.is_last).map(|check| check.compared.0)
+    }
+
+    pub(crate) fn count_checked(&self, attempt: u32, is_last: bool, compared: (ExpectAssertions, u32), failed: bool) {
+        self.count_check.set(Some(CountCheck { attempt, is_last, failed, compared }));
     }
 
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {

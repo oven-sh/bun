@@ -3182,6 +3182,12 @@ impl CommandLineReporter {
                         Output::flush();
                     }
                 }
+                bun_test::Execution::Result::Pass if sequence.has_unmet_late_count() => {
+                    bun_core::note!(
+                        "an assertion count was set after the test callback and was not met. It is not checked there, as in Vitest. Set it in the test or in a beforeEach hook."
+                    );
+                    Output::flush();
+                }
                 _ => {}
             }
 

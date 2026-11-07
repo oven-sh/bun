@@ -45,19 +45,27 @@ CryptoAlgorithmIdentifier CryptoAlgorithmPBKDF2::identifier() const
     return s_identifier;
 }
 
+ExceptionOr<void> CryptoAlgorithmPBKDF2::validateDeriveBits(const CryptoAlgorithmPbkdf2Params& parameters, std::optional<size_t> length)
+{
+    if (!length)
+        return Exception { OperationError, "length cannot be null"_s };
+    if (*length % 8)
+        return Exception { OperationError, "length must be a multiple of 8"_s };
+    if (!parameters.iterations)
+        return Exception { OperationError, "iterations cannot be zero"_s };
+    return {};
+}
+
 void CryptoAlgorithmPBKDF2::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    if (!length) {
-        exceptionCallback(OperationError, "length cannot be null"_s);
-        return;
-    }
-    if (*length % 8) {
-        exceptionCallback(OperationError, "length must be a multiple of 8"_s);
+    auto& pbkdf2Parameters = downcast<CryptoAlgorithmPbkdf2Params>(parameters);
+    if (auto result = validateDeriveBits(pbkdf2Parameters, length); result.hasException()) {
+        exceptionCallback(result.exception().code(), result.exception().message());
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmPbkdf2Params>(parameters)), baseKey = WTF::move(baseKey), length = *length] {
+        [parameters = crossThreadCopy(pbkdf2Parameters), baseKey = WTF::move(baseKey), length = *length] {
             return platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length);
         });
 }

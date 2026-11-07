@@ -40,6 +40,9 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::PBKDF2;
     static Ref<CryptoAlgorithm> create();
 
+    // The keyless checks of deriveBits, shared with SubtleCrypto::supports.
+    static ExceptionOr<void> validateDeriveBits(const CryptoAlgorithmPbkdf2Params&, std::optional<size_t> length);
+
 private:
     CryptoAlgorithmPBKDF2() = default;
     CryptoAlgorithmIdentifier identifier() const final;

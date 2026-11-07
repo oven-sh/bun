@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+class CryptoAlgorithmX25519Params;
 class CryptoKeyOKP;
 
 class CryptoAlgorithmX25519 final : public CryptoAlgorithm {
@@ -32,6 +33,9 @@ public:
     static constexpr ASCIILiteral s_name = "X25519"_s;
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::X25519;
     static Ref<CryptoAlgorithm> create();
+
+    // The keyless checks of deriveBits, shared with SubtleCrypto::supports.
+    static ExceptionOr<void> validateDeriveBits(const CryptoAlgorithmX25519Params&);
 
 private:
     CryptoAlgorithmX25519() = default;

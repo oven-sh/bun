@@ -65,6 +65,16 @@ const cases: Record<string, () => Promise<unknown>> = {
 
   "deriveBits ok": () => crypto.subtle.deriveBits(pbkdf2, pb, 64),
   "deriveBits bogus": () => crypto.subtle.deriveBits(bad, pb, 64),
+  "deriveBits zero iterations": () => crypto.subtle.deriveBits({ ...pbkdf2, iterations: 0 }, pb, 64),
+  // SubtleCrypto.supports converts the length as deriveBits does, so the conversion can throw.
+  "supports deriveBits zero length": async () => (SubtleCrypto as any).supports("deriveBits", pbkdf2, 0),
+  "supports deriveBits undefined length": async () => (SubtleCrypto as any).supports("deriveBits", pbkdf2, undefined),
+  "supports deriveBits unconvertible length": async () =>
+    (SubtleCrypto as any).supports("deriveBits", pbkdf2, {
+      valueOf() {
+        throw new Error("boom");
+      },
+    }),
 
   "importKey ok": () =>
     crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]),

@@ -23,6 +23,7 @@ export type FixtureOptions = {
   http3?: boolean;
   idleTimeout?: number;
   execArgv?: string[];
+  env?: Record<string, string>;
 };
 
 // Not bunRun: that helper ignores stdin and awaits exit, and this server must
@@ -53,7 +54,7 @@ async function spawnFixture(opts: FixtureOptions, dir: ReturnType<typeof tempDir
       ...(opts.http1 === false ? ["--no-http1"] : []),
       ...(opts.http3 ? ["--http3"] : []),
     ],
-    env: bunEnv,
+    env: { ...bunEnv, ...opts.env },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

@@ -149,6 +149,15 @@ export const lsquic: Dependency = {
     // ClientHello after a Retry could then fail the connection while it
     // resized a packet that was one byte too large.
     "patches/lsquic/initial-token-length.patch",
+    // ls-qpack records every encoded field in a history that it reads only to
+    // fill the dynamic table, and grows that history 4 elements at a time with
+    // a full copy: quadratic in the fields of one header block. With a table
+    // capacity of 0 (Bun.serve, node:quic) nothing reads the history, so
+    // qeh_write_headers() tells the encoder not to record it. ls-qpack v2.7.0
+    // still works that way. Once a newer one does not, the "first block of a
+    // connection" test in serve-http3.test.ts passes without this patch, and
+    // the patch can go.
+    "patches/lsquic/qpack-no-history-without-table.patch",
     // send_headers_ietf() encoded every header block into 64 KB on the stack
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.

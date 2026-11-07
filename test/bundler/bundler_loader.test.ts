@@ -401,7 +401,7 @@ describe("bundler", async () => {
     },
   });
 
-  // The CSS-modules lazy export builds its object through `E::Object::put`.
+  // The linker builds the exports object of a CSS module, not a data-file parser.
   itBundled("bun/loader-css-module-proto-class-is-own-property", {
     target: "bun",
     outdir: "/out",

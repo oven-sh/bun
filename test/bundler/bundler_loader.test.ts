@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -150,6 +151,221 @@ describe("bundler", async () => {
       });
     });
   }
+
+  // The runtime exposes every top-level string key of a JSON/TOML/YAML module as
+  // a named export, so a bundle must too: `import * as ns` and
+  // `import { "a b" as x }` see the same keys after `bun build` as under `bun run`.
+  describe("every top-level key of a data file is a named export", () => {
+    // Keys that are not identifiers, plus keywords, `default`, and a key that
+    // collides with the mangled name of another (`a b` becomes `a_b`).
+    const keysJson = `{
+      "a b": 1, "foo-bar": 2, "café": 3, "日本": 4, "🔥": 5, "": 6, "123": 7, "1e3": 8,
+      "let": 9, "class": 10, "if": 11, "default": 12, "a_b": 13
+    }`;
+    const keysEntry = /* js */ `
+      import * as ns from "./data.json";
+      import def from "./data.json";
+      import {
+        "a b" as ab, "foo-bar" as fooBar, "café" as cafe, "日本" as jp, "🔥" as fire, "" as empty,
+        "123" as n123, "1e3" as n1e3, "let" as let_, "class" as class_, "if" as if_, a_b,
+      } from "./data.json";
+      console.log(JSON.stringify([ab, fooBar, cafe, jp, fire, empty, n123, n1e3, let_, class_, if_, a_b]));
+      console.log(JSON.stringify([
+        ns["a b"], ns["foo-bar"], ns["café"], ns["日本"], ns["🔥"], ns[""], ns["123"], ns["1e3"],
+        ns.let, ns.class, ns.if, ns.a_b,
+      ]));
+      console.log(JSON.stringify(Object.keys(ns).sort()));
+      console.log(JSON.stringify(def), def.default, ns.default === def);
+    `;
+    const keysStdout = [
+      "[1,2,3,4,5,6,7,8,9,10,11,13]",
+      "[1,2,3,4,5,6,7,8,9,10,11,13]",
+      '["","123","1e3","a b","a_b","café","class","default","foo-bar","if","let","日本","🔥"]',
+      '{"123":7,"a b":1,"foo-bar":2,"café":3,"日本":4,"🔥":5,"":6,"1e3":8,"let":9,"class":10,"if":11,"default":12,"a_b":13} 12 true',
+    ].join("\n");
+
+    for (const format of ["esm", "cjs", "iife"] as const) {
+      for (const minify of [false, true]) {
+        itBundled(`bun/loader-json-non-identifier-keys-${format}${minify ? "-minify" : ""}`, {
+          target: "bun",
+          format,
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          files: {
+            "/entry.js": keysEntry,
+            "/data.json": keysJson,
+          },
+          run: { stdout: keysStdout },
+        });
+      }
+    }
+
+    // YAML plain keys and TOML quoted keys work like JSON keys, and a named
+    // export is the same object as the property of the default export.
+    for (const minify of [false, true]) {
+      itBundled(`bun/loader-yaml-toml-non-identifier-keys${minify ? "-minify" : ""}`, {
+        target: "bun",
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        files: {
+          "/entry.ts": /* js */ `
+            import * as j from './data.json';
+            import { "a b" as ab } from './data.json';
+            import * as y from './data.yaml';
+            import { "x y" as yxy } from './data.yaml';
+            import * as t from './data.toml';
+            import { "x-y" as txy } from './data.toml';
+            console.write(JSON.stringify([
+              ab === j["a b"], j["a b"] === j.default["a b"], j.obj === j.default.obj,
+              Object.keys(y).sort(), y["x y"], yxy, y.nested === y.default.nested,
+              Object.keys(t).sort(), t["a b"], txy, t.tbl === t.default.tbl,
+            ]));
+          `,
+          "/data.json": JSON.stringify({ "a b": { n: 1 }, obj: {}, ok: 7 }),
+          "/data.yaml": `x y: xy\nnested:\n  k: v\n`,
+          "/data.toml": `"a b" = 1\n"x-y" = 2\n[tbl]\nk = "v"\n`,
+        },
+        run: {
+          stdout: '[true,true,true,["default","nested","x y"],"xy","xy",true,["a b","default","tbl","x-y"],1,2,true]',
+        },
+      });
+    }
+
+    // A JSON entry point exports every key, with a string alias where the key
+    // is not an identifier.
+    itBundled("bun/loader-json-non-identifier-keys-entry-point", {
+      target: "bun",
+      format: "esm",
+      entryPoints: ["/data.json"],
+      files: {
+        "/data.json": keysJson,
+      },
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        // One specifier per key plus `default`. The output is ASCII only, so a
+        // name that is not ASCII is written with escapes.
+        expect(code.slice(code.indexOf("export {"))).toBe(
+          [
+            "export {",
+            '  _ as "",',
+            '  _123 as "123",',
+            '  _1e3 as "1e3",',
+            '  a_b as "a b",',
+            "  a_b2 as a_b,",
+            "  caf\\u{e9},",
+            "  class2 as class,",
+            "  data_default as default,",
+            '  foo_bar as "foo-bar",',
+            "  if2 as if,",
+            "  _let as let,",
+            "  \\u{65e5}\\u{672c},",
+            '  __ as "\\uD83D\\uDD25"',
+            "};",
+            "",
+          ].join("\n"),
+        );
+      },
+    });
+
+    // `export { x as "\uD800" }` does not parse: an export name must be
+    // well-formed Unicode. A key with a lone surrogate stays a property of the
+    // default export only, and the file still loads.
+    itBundled("bun/loader-json-lone-surrogate-key-entry-point", {
+      target: "bun",
+      format: "esm",
+      entryPoints: ["/data.json"],
+      files: {
+        "/data.json": '{"\\ud800": 1, "a b": 2}',
+      },
+      runtimeFiles: {
+        "/test.js": /* js */ `
+          import * as ns from "./out.js";
+          console.log(JSON.stringify([Object.keys(ns).sort(), ns.default["\\ud800"], ns["a b"]]));
+        `,
+      },
+      run: { file: "/test.js", stdout: '[["a b","default"],1,2]' },
+    });
+
+    // A named re-export from a barrel sees the same keys.
+    itBundled("bun/loader-json-non-identifier-keys-re-export", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import * as barrel from "./barrel.js";
+          import { renamed, "" as empty, "日本" as jp } from "./barrel.js";
+          console.log(JSON.stringify([barrel.renamed, barrel[""], barrel["日本"], barrel.if, renamed, empty, jp]));
+          console.log(JSON.stringify(Object.keys(barrel).sort()));
+        `,
+        "/barrel.js": /* js */ `
+          export { "a b" as renamed, "" as "", "日本", if } from "./data.json";
+        `,
+        "/data.json": keysJson,
+      },
+      run: {
+        stdout: ["[1,6,4,11,1,6,4]", '["","if","renamed","日本"]'].join("\n"),
+      },
+    });
+
+    // A translation file: the keys have dots and dashes, and the lookup key is
+    // only known at run time, so the namespace object must hold every key.
+    for (const minify of [false, true]) {
+      itBundled(`bun/loader-data-file-namespace-lookup-by-variable-key${minify ? "-minify" : ""}`, {
+        target: "bun",
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        files: {
+          "/entry.ts": /* js */ `
+            import * as json from "./en.json";
+            import * as toml from "./en.toml";
+            import * as yaml from "./en.yaml";
+            const keys = ["title", "home.title", "sign-in", "404", "a b"];
+            const show = (m: Record<string, unknown>) => keys.map(key => m[key] ?? "-").join("");
+            console.log(show(json), show(toml), show(yaml));
+            console.log(Object.keys(json).filter(key => key !== "default").length);
+          `,
+          "/en.json": `{ "title": "T", "home.title": "H", "sign-in": "S", "404": "N", "a b": "B" }`,
+          "/en.toml": `title = "T"\n"home.title" = "H"\n"sign-in" = "S"\n"404" = "N"\n"a b" = "B"\n`,
+          "/en.yaml": `title: T\nhome.title: H\nsign-in: S\n"404": N\na b: B\n`,
+        },
+        run: { stdout: "THSNB THSNB THSNB\n5" },
+      });
+    }
+
+    // The same source prints the same values under `bun run` and after `bun build`.
+    test("bun run and bun build agree on a JSON module", async () => {
+      using dir = tempDir("json-loader-runtime", {
+        "data.json": keysJson,
+        "entry.js": keysEntry,
+      });
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      const runtime = await run("entry.js");
+      expect(runtime.stderr).toBe("");
+      expect(runtime.stdout).toBe(keysStdout + "\n");
+      expect(runtime.exitCode).toBe(0);
+
+      const build = await run("build", "entry.js", "--outfile=out.js");
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+      const bundled = await run("out.js");
+      expect(bundled.stderr).toBe("");
+      expect(bundled.stdout).toBe(runtime.stdout);
+      expect(bundled.exitCode).toBe(0);
+    });
+  });
 
   itBundled("bun/loader-text-file", {
     target: "bun",

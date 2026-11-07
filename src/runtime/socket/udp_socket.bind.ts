@@ -7,7 +7,7 @@ export const dgramIsFdAdopted = b.fn({ args: { fd: b.i32 }, returns: b.bool });
 export const dgramNewSocketFd = b.fn({ args: { isIPv6: b.bool, isStream: b.bool }, returns: b.i32, throws: true });
 export const dgramAdoptFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramBindFd = b.fn({
-  args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap },
+  args: { fd: b.i32, address: b.string.loose.utf8, port: b.u16, flags: b.i32.wrap },
   throws: true,
 });
 export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: b.any, capability: "js", throws: true });

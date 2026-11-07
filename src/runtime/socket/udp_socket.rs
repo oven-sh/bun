@@ -1999,15 +1999,10 @@ pub(crate) fn dgram_adopt_fd(fd: i32) -> bun_sys::Result<()> {
 /// `(fd, address, port, flags)` → binds a raw datagram descriptor created by
 /// `dgram_new_socket_fd`. `address` must be a numeric IPv4/IPv6 literal.
 /// flags bit 4 is UV_UDP_REUSEADDR.
-pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: i32, flags: i32) -> bun_sys::Result<()> {
+pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: u16, flags: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
         let fd = dgram_owned_fd(fd)?;
-        let port: u16 = if (0..=0xffff).contains(&port) {
-            port as u16
-        } else {
-            0
-        };
         // Numeric literals only — the JS layer resolves names before calling.
         let Some(ip) = ip_address::to_ip_address(address) else {
             return Err(bun_sys::Error::from_code_int(

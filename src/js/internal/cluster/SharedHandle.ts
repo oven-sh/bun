@@ -44,7 +44,8 @@ export default class SharedHandle {
       }
       return;
     }
-    const rval = clusterRawBind(addressType, address, typeof port === "number" ? port : 0, flags | 0);
+    // A worker sends the port of node:dgram's bind() as it is: read it as bind() does there.
+    const rval = clusterRawBind(addressType, address, (port || 0) & 0xffff, flags | 0);
     if (typeof rval === "number") this.errno = rval;
     else {
       this.handle = rval;

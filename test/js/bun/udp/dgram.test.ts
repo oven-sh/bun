@@ -261,6 +261,21 @@ describe.skipIf(isWindows)("cluster", () => {
     expect(stdout).toStartWith("ok: all 4 workers adopted and released the shared descriptor ");
     expect(exitCode).toBe(0);
   }, 40_000);
+
+  // The primary binds for the worker, so the primary reads the port that the
+  // worker's bind() got. Node's handle reads it there (see "bind()" below).
+  test("the primary reads the port of a worker's bind() as Node's handle does", async () => {
+    const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-bind-port-fixture.ts", 20_000);
+    const bound = {
+      "String(port)": "port",
+      'port + ".5"': "port",
+      "port + 0.25": "port",
+      "port + 2 ** 32": "port",
+      "String(port - 65536)": "port",
+      "a port that the primary holds": "EADDRINUSE",
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${JSON.stringify(bound)}\n`, stderr: "", exitCode: 0 });
+  });
 });
 
 describe("after close()", () => {
@@ -359,6 +374,117 @@ describe("bind()", () => {
     await listening;
     expect(onError).not.toHaveBeenCalled();
   });
+
+  // Node does not validate the port of bind(). Its handle reads it with
+  // ToUint32 and keeps the low 16 bits (UDPWrap::DoBind in src/udp_wrap.cc).
+
+  // The port the socket listens on. Rejects with what 'error' carries.
+  function listen(socket: ReturnType<typeof createSocket>, ...args: unknown[]) {
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    socket.once("error", reject);
+    (socket.bind as (...args: unknown[]) => void)(...args, () => resolve(socket.address().port));
+    return promise;
+  }
+
+  describe.each([
+    ["udp4", "127.0.0.1"],
+    ["udp6", "::1"],
+  ] as const)("%s", (type, address) => {
+    test.each([
+      ["port + 0.5", (port: number) => port + 0.5],
+      ['port + ".5"', (port: number) => port + ".5"],
+      ["port + 65536", (port: number) => port + 65536],
+      ["port - 65536", (port: number) => port - 65536],
+      ["port + 2 ** 32", (port: number) => port + 2 ** 32],
+      // Node 26 binds a port that the system picks here: V8 before 15.8 reads a string
+      // that is a negative integer as 0 (v8/v8@42bc03b82e). Not mirrored.
+      ["String(port - 65536)", (port: number) => String(port - 65536)],
+    ])("%s listens on port", async (_, spell) => {
+      // With reuseAddr on each socket the port is never free for another process to take.
+      await using first = createSocket({ type, reuseAddr: true });
+      const port = await listen(first, 0, address);
+      await using positional = createSocket({ type, reuseAddr: true });
+      await using inOptions = createSocket({ type, reuseAddr: true });
+      expect({
+        positional: await listen(positional, spell(port), address),
+        inOptions: await listen(inOptions, { port: spell(port), address }),
+      }).toEqual({ positional: port, inOptions: port });
+    });
+  });
+
+  test.each(["x", Infinity, -Infinity, 0.5, -0.5, 65536, "65536", 2 ** 53, () => {}])(
+    "{ port: %p } listens on a port that the system picks",
+    async port => {
+      // No reuseAddr: a reader that gives this spelling any one port fails the second bind with EADDRINUSE.
+      await using first = createSocket("udp4");
+      await using second = createSocket("udp4");
+      const firstPort = await listen(first, { port, address: "127.0.0.1" });
+      expect(await listen(second, { port, address: "127.0.0.1" })).not.toBe(firstPort);
+    },
+  );
+
+  // Node reads the port inside the lookup callback, with no try around it.
+  const throwingPorts: [string, unknown, string][] = [
+    ["a Symbol", Symbol("port"), "TypeError"],
+    ["a BigInt", 1n, "TypeError"],
+    [
+      "an object whose valueOf() throws a RangeError",
+      {
+        valueOf() {
+          throw new RangeError("valueOf");
+        },
+      },
+      "RangeError",
+    ],
+  ];
+  test.each(throwingPorts)(
+    "a port that is %s throws through a synchronous lookup and emits no 'error'",
+    async (_, port, name) => {
+      await using socket = createSocket({
+        type: "udp4",
+        lookup: (_hostname, _family, callback) => callback(null, "127.0.0.1", 4),
+      });
+      const onError = jest.fn();
+      socket.on("error", onError);
+      let thrown: any;
+      try {
+        // Not an IP literal: Node 27 resolves a literal itself and never calls a custom lookup (nodejs/node#64131).
+        socket.bind({ port: port as number, address: "localhost" });
+      } catch (error) {
+        thrown = error;
+      }
+      // What the conversion throws. An error of Bun.udpSocket carries a code.
+      expect({ name: thrown?.name, code: thrown?.code }).toEqual({ name, code: undefined });
+      // The socket is still binding, as it is in Node.
+      expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_ALREADY_BOUND");
+      expect(onError).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a port that is a Symbol is an uncaught exception with the default lookup", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const socket = require("node:dgram").createSocket("udp4");
+        socket.on("error", error => console.log("'error':", error.name));
+        socket.on("listening", () => console.log("'listening'"));
+        process.on("uncaughtException", error => {
+          console.log("uncaughtException:", error.name);
+          socket.close();
+        });
+        socket.bind(Symbol("port"), "127.0.0.1");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("uncaughtException: TypeError\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // _createSocketHandle's three return shapes, from node's
@@ -389,6 +515,48 @@ test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the 
   const err = _createSocketHandle("localhost", 0, "udp4");
 
   expect(err).toBe(-22);
+});
+
+// The wrap stands in for Node's UDP handle, which reads the port with ToUint32
+// and keeps the low 16 bits (UDPWrap::DoBind in src/udp_wrap.cc).
+test.skipIf(isWindows)("_createSocketHandle() reads the port as Node's handle does", () => {
+  const { _createSocketHandle, UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const UV_UDP_REUSEADDR = 4;
+  const handles: InstanceType<typeof UDP>[] = [];
+  const bind = (port: unknown) => {
+    const handle = _createSocketHandle("127.0.0.1", port, "udp4", undefined, UV_UDP_REUSEADDR);
+    expect(handle).toBeInstanceOf(UDP);
+    handles.push(handle);
+    const name = {} as { port: number };
+    expect(handle.getsockname(name)).toBe(0);
+    return name.port;
+  };
+  try {
+    const port = bind(0);
+    expect({
+      "port + 65536": bind(port + 65536),
+      "port - 65536": bind(port - 65536),
+      // Node 26 binds a port that the system picks here (see "bind()" above). Not mirrored.
+      "String(port - 65536)": bind(String(port - 65536)),
+    }).toEqual({ "port + 65536": port, "port - 65536": port, "String(port - 65536)": port });
+
+    // Node's handle throws what the conversion throws. It does not answer with an errno.
+    const unbound = new UDP();
+    handles.push(unbound);
+    let thrown: any;
+    try {
+      unbound.bind("127.0.0.1", Symbol("port"), 0);
+    } catch (error) {
+      thrown = error;
+    }
+    expect({ name: thrown?.name, code: thrown?.code, fd: unbound.fd }).toEqual({
+      name: "TypeError",
+      code: undefined,
+      fd: -1,
+    });
+  } finally {
+    for (const handle of handles) handle.close();
+  }
 });
 
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST

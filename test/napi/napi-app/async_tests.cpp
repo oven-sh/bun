@@ -471,6 +471,77 @@ call_back_from_threadsafe_function(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// run_script_from_async_work(script, rethrow): `complete` runs `script` with
+// napi_run_script and returns with what it threw pending: as napi_run_script
+// left it, or, when `rethrow` is true, fetched and passed to napi_throw.
+// run_script_from_threadsafe_function(script, rethrow): the same from
+// `call_js`.
+struct RunScriptData {
+  std::string script;
+  bool rethrow = false;
+  napi_async_work work = nullptr;
+  napi_threadsafe_function tsfn = nullptr;
+};
+
+static void run_script_and_leave_it_pending(napi_env env,
+                                            const RunScriptData *data) {
+  napi_value script, result;
+  napi_create_string_utf8(env, data->script.c_str(), data->script.size(),
+                          &script);
+  napi_run_script(env, script, &result);
+  if (data->rethrow) {
+    napi_value thrown;
+    napi_get_and_clear_last_exception(env, &thrown);
+    napi_throw(env, thrown);
+  }
+}
+
+static void complete_by_running_script(napi_env env, napi_status status,
+                                       void *opaque) {
+  auto *data = reinterpret_cast<RunScriptData *>(opaque);
+  run_script_and_leave_it_pending(env, data);
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
+static void call_js_by_running_script(napi_env env, napi_value callback,
+                                      void *context, void *opaque) {
+  auto *data = reinterpret_cast<RunScriptData *>(context);
+  run_script_and_leave_it_pending(env, data);
+  napi_release_threadsafe_function(data->tsfn, napi_tsfn_release);
+  delete data;
+}
+
+static napi_value run_script_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new RunScriptData{info[0].As<Napi::String>().Utf8Value(),
+                                 info[1].ToBoolean()};
+  NODE_API_CALL(env, napi_create_async_work(
+                         env, nullptr,
+                         Napi::String::New(env, "run_script_from_async_work"),
+                         execute_nothing, complete_by_running_script, data,
+                         &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return ok(env);
+}
+
+static napi_value
+run_script_from_threadsafe_function(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new RunScriptData{info[0].As<Napi::String>().Utf8Value(),
+                                 info[1].ToBoolean()};
+  NODE_API_CALL(
+      env,
+      napi_create_threadsafe_function(
+          env, nullptr, nullptr,
+          Napi::String::New(env, "run_script_from_threadsafe_function"), 0, 1,
+          nullptr, nullptr, data, call_js_by_running_script, &data->tsfn));
+  std::thread([tsfn = data->tsfn]() {
+    napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+  }).detach();
+  return ok(env);
+}
+
 static napi_value completion_statuses(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Array statuses =
@@ -940,6 +1011,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, ref_that_function);
   REGISTER_FUNCTION(env, exports, unref_that_function);
   REGISTER_FUNCTION(env, exports, completion_statuses);
+  REGISTER_FUNCTION(env, exports, run_script_from_async_work);
+  REGISTER_FUNCTION(env, exports, run_script_from_threadsafe_function);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, create_leaked_threadsafe_functions);

@@ -2496,7 +2496,7 @@ bool Bun__deepMatch(
         }
     }
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
@@ -2508,13 +2508,14 @@ bool Bun__deepMatch(
     // arrays should match exactly
     bool objIsArray = isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+        // An array pattern needs an array. An object pattern can be satisfied by one.
+        if (!objIsArray || obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {

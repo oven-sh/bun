@@ -4285,9 +4285,13 @@ pub(crate) mod __gated_printer {
                         self.print_undefined(expr.loc, level);
                         did_print = true;
                     } else if let Some(namespace) = &symbol.namespace_alias {
+                        let mut is_lowered_import = false;
                         if (namespace.import_record_index as usize) < self.import_records.len() {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
+                            // Only `bun test` gives the record of an import statement this kind, when it lowers the
+                            // statement to `await import()` behind hoisted mocks.
+                            is_lowered_import = import_record.kind == ImportKind::Dynamic;
                             if namespace.was_originally_property_access {
                                 let mut wrap = false;
                                 did_print = true;
@@ -4329,12 +4333,21 @@ pub(crate) mod __gated_printer {
                         if !did_print {
                             did_print = true;
 
-                            let wrap = if let Some(target) = &self.call_target {
-                                e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
-                            } else {
-                                false
-                            };
+                            // The visit pass rewrites the callee of a call that the file wrote. A JSX call is built
+                            // later, so its callee is still the import here. `(0, ns.jsx)()` doesn't pass `ns` as `this`.
+                            let is_lowered_callee = is_lowered_import
+                                && e.was_originally_identifier()
+                                && matches!(&self.call_target, Some(ExprData::EImportIdentifier(id)) if id.ref_.eql(e.ref_));
+                            if is_lowered_callee {
+                                self.call_target = None;
+                            }
+                            let wrap = is_lowered_callee
+                                || if let Some(target) = &self.call_target {
+                                    e.was_originally_identifier()
+                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                } else {
+                                    false
+                                };
 
                             if wrap {
                                 self.print_whitespacer(ws!(b"(0, "));

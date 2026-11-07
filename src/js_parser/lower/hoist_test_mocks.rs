@@ -244,6 +244,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
         self.did_apply_test_feature = true;
 
+        for stmt in stmts {
+            if let StmtData::SExpr(expr) = stmt.data
+                && self.is_hoisted_mock_stmt(stmt)
+            {
+                self.note_hoisted_mock_paths(expr.value);
+            }
+        }
+
         let mut exported = RefMap::default();
         for stmt in stmts {
             if let StmtData::SExportClause(clause) = stmt.data {
@@ -270,9 +278,66 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Some(order.into_bump_slice())
     }
 
-    /// Aliases a lowered import's names to its namespace, so `a` prints as `ns.a`.
+    /// Records the paths that the `mock()` and `unmock()` calls of a hoisted statement name.
     #[optimize(size)]
-    pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
+    fn note_hoisted_mock_paths(&mut self, expr: Expr) {
+        let mut callee = match expr.data {
+            ExprData::EAwait(awaited) => awaited.value,
+            _ => expr,
+        };
+        while let ExprData::ECall(call) = callee.data {
+            let ExprData::EDot(dot) = call.target.data else {
+                return;
+            };
+            if matches!(dot.name.slice(), b"mock" | b"unmock")
+                && let Some(&path) = call.args.slice().first()
+            {
+                match Self::unvisited_mock_path(path) {
+                    Some(path) => self.hoisted_mock_paths.push(path),
+                    None => self.hoists_mock_of_unknown_path = true,
+                }
+            }
+            callee = dot.target;
+        }
+    }
+
+    /// `"./a"`, `import("./a")` or `await import("./a")`.
+    fn unvisited_mock_path(path: Expr) -> Option<js_ast::StoreStr> {
+        let path = match path.data {
+            ExprData::EAwait(awaited) => awaited.value,
+            _ => path,
+        };
+        let path = match path.data {
+            ExprData::EImport(import) => import.expr,
+            _ => path,
+        };
+        match path.data {
+            ExprData::EString(string) if string.is_utf8() && string.next.is_none() => {
+                Some(string.data)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_named_by_hoisted_mock(&self, path: &[u8]) -> bool {
+        self.hoists_mock_of_unknown_path
+            || self
+                .hoisted_mock_paths
+                .iter()
+                .any(|named| named.slice() == path)
+    }
+
+    fn import_bindings(import: &S::Import) -> impl Iterator<Item = (Ref, js_ast::StoreStr)> + '_ {
+        import
+            .default_name
+            .iter()
+            .map(|name| (name.ref_, js_ast::StoreStr::new(b"default")))
+            .chain(import.items.iter().map(|item| (item.name.ref_, item.alias)))
+    }
+
+    /// Where an import goes in a file that hoists.
+    #[optimize(size)]
+    fn import_order(&self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
         let record = &self.import_records.items()[import.import_record_index as usize];
         // An import of "bun" prints as `var`s that read `globalThis.Bun`.
         if is_test_module(record.path.text) || record.path.text == b"bun" {
@@ -284,18 +349,21 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         {
             return MockHoistOrder::InPlace;
         }
-
-        let bindings = || {
-            import
-                .default_name
-                .iter()
-                .map(|name| (name.ref_, js_ast::StoreStr::new(b"default")))
-                .chain(import.items.iter().map(|item| (item.name.ref_, item.alias)))
-        };
         // `export { a }` needs `a` to be a binding.
-        if bindings().any(|(ref_, _)| exported.contains_key(&ref_)) {
+        if Self::import_bindings(import).any(|(ref_, _)| exported.contains_key(&ref_)) {
             return MockHoistOrder::InPlace;
         }
+        MockHoistOrder::LoweredImport
+    }
+
+    /// Aliases a lowered import's names to its namespace, so `a` prints as `ns.a`.
+    #[optimize(size)]
+    pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
+        let order = self.import_order(import, exported);
+        if !matches!(order, MockHoistOrder::LoweredImport) {
+            return order;
+        }
+        let bindings = || Self::import_bindings(import);
 
         if import.star_name_loc.is_empty() && bindings().next().is_some() {
             self.temp_ref_count += 1;
@@ -320,7 +388,52 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     was_originally_property_access: false,
                 }));
         }
-        MockHoistOrder::LoweredImport
+        order
+    }
+
+    /// An import that the parser adds after the visit pass, like that of the JSX runtime, stays static and runs first.
+    /// If a hoisted mock names it, it runs behind the hoisted statements instead, ahead of the imports the file wrote.
+    #[optimize(size)]
+    fn lower_mocked_generated_imports(
+        &mut self,
+        before: &mut BumpVec<'a, js_ast::Part>,
+        imports: &mut BumpVec<'a, js_ast::Part>,
+    ) {
+        let not_exported = RefMap::default();
+        let mut lowered = BumpVec::new_in(self.arena);
+        let mut index = 0;
+        while index < before.len() {
+            let stmts = before[index].stmts;
+            let mut is_mocked = false;
+            let can_be_lowered = stmts.iter().all(|stmt| {
+                let StmtData::SImport(import) = stmt.data else {
+                    return true;
+                };
+                let record = &self.import_records.items()[import.import_record_index as usize];
+                is_mocked |= self.is_named_by_hoisted_mock(record.path.text);
+                // "chai" binds `assert` and `should` of "vitest", which a mock of "chai" doesn't reach in Vitest.
+                !record
+                    .flags
+                    .contains(js_ast::ImportRecordFlags::IS_INTERNAL)
+                    && record.path.text != b"chai"
+                    && matches!(
+                        self.import_order(&import, &not_exported),
+                        MockHoistOrder::LoweredImport
+                    )
+            });
+            if !(can_be_lowered && is_mocked) {
+                index += 1;
+                continue;
+            }
+            for stmt in stmts.iter() {
+                if let StmtData::SImport(import) = stmt.data {
+                    self.plan_import(&import, &not_exported);
+                }
+            }
+            lowered.push(before.remove(index));
+        }
+        lowered.append(imports);
+        *imports = lowered;
     }
 
     /// `ImportKind::Dynamic` on an `S::Import`'s record tells `ImportScanner` to lower it.
@@ -333,6 +446,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         exports_kind: js_ast::ExportsKind,
     ) {
         if exports_kind != js_ast::ExportsKind::Cjs {
+            if self.hoists_mock_of_unknown_path || !self.hoisted_mock_paths.is_empty() {
+                self.lower_mocked_generated_imports(before, imports);
+            }
             for stmt in imports.iter().flat_map(|part| part.stmts.iter()) {
                 if let StmtData::SImport(import) = stmt.data {
                     self.import_records.items_mut()[import.import_record_index as usize].kind =

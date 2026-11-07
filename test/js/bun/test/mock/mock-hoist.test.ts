@@ -26,6 +26,35 @@ const modules = {
 };
 const print = `test("print", () => console.log(JSON.stringify(globalThis.events ?? [])));`;
 
+// Each module says when it is evaluated, and each function whether a call passes it a `this`.
+const withoutThis = (value: string) => `(this === undefined ? ${value} : "has this")`;
+const memoCache = `new Array(size).fill(Symbol.for("react.memo_cache_sentinel"))`;
+const react = {
+  "node_modules/react/package.json": `{ "name": "react", "type": "module" }`,
+  "node_modules/react/index.js": `
+    (globalThis.events ??= []).push("load react");
+    export function createElement(type) { return ${withoutThis("type")}; }
+  `,
+  "node_modules/react/jsx-dev-runtime.js": `
+    (globalThis.events ??= []).push("load runtime");
+    export function jsxDEV(type) { return ${withoutThis("type")}; }
+    export const Fragment = "fragment";
+  `,
+  "node_modules/react/jsx-runtime.js": `
+    (globalThis.events ??= []).push("load production runtime");
+    export function jsx(type) { return ${withoutThis("type")}; }
+    export const jsxs = jsx, Fragment = "fragment";
+  `,
+  "node_modules/react/compiler-runtime.js": `
+    (globalThis.events ??= []).push("load compiler runtime");
+    export function c(size) { events.push(${withoutThis(`"cache"`)}); return ${memoCache}; }
+  `,
+};
+const mockedRuntime = `() => {
+  (globalThis.events ??= []).push("factory");
+  return { jsxDEV: type => "mocked " + type, Fragment: "fragment of the mock" };
+}`;
+
 async function run(
   files: Record<string, string>,
   args: string[] = ["hoist.test.ts"],
@@ -442,6 +471,294 @@ describe.concurrent("hoisting", () => {
       ),
     ).toEqual([["mocked", "mocked name", "fragment"]]);
   });
+
+  test.each([
+    [`import { test, vi } from "vitest";`, `vi.mock("react/jsx-dev-runtime"`],
+    [`import { test, vi } from "bun:test";`, `vi.mock("react/jsx-dev-runtime"`],
+    [``, `vi.mock("react/jsx-dev-runtime"`],
+    [`import { test, jest } from "bun:test";`, `jest.mock("react/jsx-dev-runtime"`],
+    [`import { test, vi } from "vitest";`, `await vi.mock(import("react/jsx-dev-runtime")`],
+    [`import { test, vi } from "vitest"; const runtime = "react/jsx-dev-runtime";`, `vi.mock(runtime`],
+  ])("%s %s, factory) reaches the JSX of the file", async (header, call) => {
+    expect(
+      await events(
+        {
+          ...react,
+          "hoist.test.tsx": `
+            ${header}
+            ${call}, ${mockedRuntime});
+            (globalThis.events ??= []).push(<b />, <></>);
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+      // The real runtime is never evaluated.
+    ).toEqual([["factory", "mocked b", "mocked fragment of the mock"]]);
+  });
+
+  // `"jsx": "react-jsx"` makes the file import "react/jsx-runtime", and a mock of the other runtime names nothing it imports.
+  test.each([
+    ["react/jsx-runtime", ["mocked b", "mocked many a", "mocked fragment of the mock"]],
+    ["react/jsx-dev-runtime", ["load production runtime", "b", "a", "fragment"]],
+  ])(`with "jsx": "react-jsx", a mock of %s`, async (runtime, expected) => {
+    expect(
+      await events(
+        {
+          ...react,
+          "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }`,
+          "hoist.test.tsx": `
+            import { test, vi } from "vitest";
+            vi.mock("${runtime}", () => ({
+              jsx: type => "mocked " + type,
+              jsxs: type => "mocked many " + type,
+              jsxDEV: type => "mocked " + type,
+              Fragment: "fragment of the mock",
+            }));
+            (globalThis.events ??= []).push(<b />, <a><i /><i /></a>, <></>);
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+    ).toEqual([expected]);
+  });
+
+  test("a hand-written import of the JSX runtime gets the same mock as the file's JSX", async () => {
+    expect(
+      await events(
+        {
+          ...react,
+          "hoist.test.tsx": `
+            import { test, vi } from "vitest";
+            import { jsxDEV as byHand } from "react/jsx-dev-runtime";
+            vi.mock("react/jsx-dev-runtime", ${mockedRuntime});
+            (globalThis.events ??= []).push(byHand("u"), <b />);
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+    ).toEqual([["factory", "mocked u", "mocked b"]]);
+  });
+
+  // The factory that public suites write: it wraps the real runtime.
+  test.each([
+    [[], ["load runtime", "factory", "load other", "b", 1, "other"]],
+    [
+      ["--preload", "./preload.jsx"],
+      ["load runtime", "preloaded i", "factory", "load other", "b", 1, "other"],
+    ],
+  ])("a factory that wraps the real JSX runtime sees the JSX of the file: %j", async (flags, expected) => {
+    expect(
+      await events(
+        {
+          ...react,
+          "preload.jsx": `(globalThis.events ??= []).push("preloaded " + <i />);`,
+          "hoist.test.tsx": `
+            import { test, vi } from "vitest";
+            import { jsxDEV } from "react/jsx-dev-runtime";
+            import { other } from "./other";
+            vi.mock("react/jsx-dev-runtime", async importOriginal => {
+              const actual = await importOriginal();
+              (globalThis.events ??= []).push("factory");
+              return { ...actual, jsxDEV: vi.fn(actual.jsxDEV) };
+            });
+            events.push(<b />, jsxDEV.mock.calls.length, other);
+            ${print}
+          `,
+        },
+        [...flags, "hoist.test.tsx"],
+      ),
+    ).toEqual([expected]);
+  });
+
+  test("a mocked JSX runtime loads behind the hoisted statements and ahead of the file's imports", async () => {
+    expect(
+      await events(
+        {
+          ...react,
+          "hoist.test.tsx": `
+            import { test, vi } from "vitest";
+            import { other } from "./other";
+            vi.hoisted(() => (globalThis.events ??= []).push("hoisted"));
+            vi.unmock("react/jsx-dev-runtime");
+            events.push(<b />, other);
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+    ).toEqual([["hoisted", "load runtime", "load other", "b", "other"]]);
+  });
+
+  test("a hoisted mock of the JSX runtime loads nothing in a file without JSX", async () => {
+    expect(
+      await events(
+        {
+          ...react,
+          "hoist.test.tsx": `
+            import { test, vi } from "vitest";
+            vi.mock("react/jsx-dev-runtime", ${mockedRuntime});
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+    ).toEqual([[]]);
+  });
+
+  test("JSX in a function that vi.hoisted() returns uses the mocked JSX runtime", async () => {
+    expect(
+      await events(
+        {
+          ...react,
+          "hoist.test.tsx": `
+            import { test, vi } from "vitest";
+            const mocks = vi.hoisted(() => ({ icon: () => <i /> }));
+            vi.mock("react/jsx-dev-runtime", ${mockedRuntime});
+            (globalThis.events ??= []).push(mocks.icon());
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+    ).toEqual([["factory", "mocked i"]]);
+  });
+
+  // The factory runs where vi.mock() is written, to update the module that "reader" is linked to. The JSX runtime is
+  // loaded by then, because no hoisted call names it.
+  test("a hoisted factory with JSX updates a module that is already linked", async () => {
+    expect(
+      await events({
+        ...react,
+        "reader.ts": `import { value } from "./mod"; export const read = () => value;`,
+        "mocks.tsx": `
+          import { vi } from "bun:test";
+          vi.mock("./mod", () => ({ value: <i /> }));
+        `,
+        "hoist.test.ts": `
+          import { test } from "bun:test";
+          import "./mocks";
+          import { read } from "./reader";
+          (globalThis.events ??= []).push(read());
+          ${print}
+        `,
+      }),
+    ).toEqual([["load runtime", "load mod", "i"]]);
+  });
+
+  // The visit pass can't drop the namespace of these callees: the parser and the React Compiler write the calls later.
+  test.each([
+    ["a classic JSX factory", [], `/** @jsxRuntime classic @jsx h */`, `<b />`, ["b"]],
+    [
+      "a call that the React Compiler writes again",
+      ["--react-compiler"],
+      ``,
+      `useLast("b")[0]`,
+      ["load compiler runtime", "cache", "b"],
+    ],
+  ])("%s that the file imports has no this", async (_, flags, pragma, use, expected) => {
+    expect(
+      await events(
+        {
+          ...react,
+          "h.ts": `export function h(this: unknown, type: string) { return ${withoutThis("type")}; }`,
+          "view.jsx": `
+            ${pragma}
+            import { h } from "./h";
+            vi.mock("./mod", () => ({ value: "mocked" }));
+            function useOne() { return 1; }
+            function useLast(type) { const one = useOne(); return [h(type), one]; }
+            export const view = () => ${use};
+          `,
+          "hoist.test.ts": `
+            import { test } from "bun:test";
+            import { view } from "./view.jsx";
+            (globalThis.events ??= []).push(view());
+            ${print}
+          `,
+        },
+        [...flags, "hoist.test.ts"],
+      ),
+    ).toEqual([expected]);
+  });
+});
+
+// An import that stays static in a file that hoists: the ones that Bun adds for JSX and for the React Compiler. It runs
+// behind the hoisted statements once one of them names its path.
+describe.concurrent.each([
+  {
+    kind: "the JSX runtime",
+    path: "react/jsx-dev-runtime",
+    file: "node_modules/react/jsx-dev-runtime.js",
+    head: ``,
+    use: `<b />`,
+    mock: `{ jsxDEV: () => "mocked" }`,
+    real: ["load runtime", "b"],
+    flags: [],
+  },
+  {
+    kind: "createElement of the JSX package",
+    path: "react",
+    file: "node_modules/react/index.js",
+    head: `const props = {};`,
+    use: `<b {...props} key="k" />`,
+    mock: `{ createElement: () => "mocked" }`,
+    real: ["load react", "b"],
+    flags: [],
+  },
+  {
+    kind: "the runtime of the React Compiler",
+    path: "react/compiler-runtime",
+    file: "node_modules/react/compiler-runtime.js",
+    head: `function useOne() { return 1; } function useLast(value) { const one = useOne(); return [value, one]; }`,
+    use: `(useLast(1), events.pop())`,
+    mock: `{ c(size) { events.push("mocked"); return ${memoCache}; } }`,
+    real: ["load compiler runtime", "cache"],
+    flags: ["--react-compiler"],
+  },
+])("$kind", ({ path, file, head, use, mock, real, flags }) => {
+  async function eventsOf(hoisted: string, body = `events.push(result());`, files: Record<string, string> = react) {
+    return await events(
+      {
+        ...files,
+        "module.jsx": `
+          import { vi } from "bun:test";
+          ${head}
+          ${hoisted}
+          export const result = () => ${use};
+        `,
+        "hoist.test.ts": `
+          import { test, mock } from "bun:test";
+          import { result } from "./module.jsx";
+          globalThis.events ??= [];
+          ${body}
+          ${print}
+        `,
+      },
+      [...flags, "hoist.test.ts"],
+    );
+  }
+
+  test("gets a hoisted mock of its path, and the real module is not evaluated", async () => {
+    expect(await eventsOf(`vi.mock("${path}", () => (${mock}));`)).toEqual([["mocked"]]);
+  });
+
+  test("needs no real module once it is mocked", async () => {
+    const { [file]: _, ...notInstalled } = react;
+    expect(await eventsOf(`vi.mock("${path}", () => (${mock}));`, undefined, notInstalled)).toEqual([["mocked"]]);
+  });
+
+  test("is called without a this and read through its namespace, so a later mock.module() reaches it", async () => {
+    const body = `events.push(result()); mock.module("${path}", () => (${mock})); events.push(result());`;
+    expect(await eventsOf(`vi.unmock("${path}");`, body)).toEqual([[...real, "mocked"]]);
+  });
+
+  test("stays static while no hoisted call names its path", async () => {
+    const hoisted = `vi.mock("./mod", () => ({})); vi.hoisted(() => (globalThis.events ??= []).push("hoisted"));`;
+    expect(await eventsOf(hoisted)).toEqual([[real[0], "hoisted", real[1]]]);
+  });
 });
 
 describe.concurrent("imports that stay static", () => {
@@ -653,6 +970,26 @@ describe.concurrent("not hoisted", () => {
     ).toEqual([
       [[true, true, true], "function calls() { return [Registry.isThis(), Registry.isThis``, Registry.isThis?.()]; }"],
     ]);
+  });
+
+  // The JSX transform of esbuild puts its import there too. The one of Vite 8 puts it behind the imports that lead the file.
+  test("without a hoisted call the JSX runtime loads ahead of the file's imports", async () => {
+    expect(
+      await events(
+        {
+          ...react,
+          "mocks.ts": `import { vi } from "vitest"; vi.mock("react/jsx-dev-runtime", ${mockedRuntime});`,
+          "hoist.test.tsx": `
+            import { test } from "vitest";
+            import "./mocks";
+            import { other } from "./other";
+            events.push(<b />, other);
+            ${print}
+          `,
+        },
+        ["hoist.test.tsx"],
+      ),
+    ).toEqual([["load runtime", "load other", "b", "other"]]);
   });
 
   test("without a hoisted statement the module has no top-level await", async () => {
@@ -986,6 +1323,33 @@ describe.concurrent("errors", () => {
       `,
     });
     expect(stderr).toContain("ReferenceError: Cannot access 'later' before initialization");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    [
+      "JSX that vi.hoisted() evaluates",
+      `vi.mock("react/jsx-dev-runtime", () => ({})); const element = vi.hoisted(() => <b />);`,
+      /ReferenceError: Cannot access 'jsx_dev_runtime\$\d+' before initialization/,
+    ],
+    [
+      "a factory that reads a later const",
+      `const later = () => "mocked"; vi.mock("react/jsx-dev-runtime", () => ({ jsxDEV: later }));`,
+      /ReferenceError: Cannot access 'later' before initialization/,
+    ],
+  ])("a mocked JSX runtime is imported behind the hoisted statements: %s", async (_, statements, error) => {
+    const { stderr, exitCode } = await run(
+      {
+        ...react,
+        "hoist.test.tsx": `
+          import { test, vi } from "vitest";
+          ${statements}
+          test("unreachable", () => { <b />; });
+        `,
+      },
+      ["hoist.test.tsx"],
+    );
+    expect(stderr).toMatch(error);
     expect(exitCode).toBe(1);
   });
 

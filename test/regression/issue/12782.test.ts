@@ -21,7 +21,20 @@ test("12782", async () => {
   const stderr = await result.stderr.text();
 
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "test/regression/issue/12782.foo.fixture.ts:
+    "(fail) test/regression/issue/12782.foo.fixture.ts:
+    (fail) (unnamed)
+
+    test/regression/issue/12782.bar.fixture.ts:
+
+    (pass) test/regression/issue/12782.bar.fixture.ts:
+    (pass) bar
+      (pass) should not run
+      (pass) inner describe
+        (pass) should not run
+
+    1 test failed:
+
+    (fail) test/regression/issue/12782.foo.fixture.ts:6 > (unnamed)
     1 | import { beforeAll } from "bun:test";
     2 | 
     3 | const FOO = process.env.FOO ?? "";
@@ -31,11 +44,6 @@ test("12782", async () => {
                                                                          ^
     error: Environment variable FOO is not set
         at <anonymous> (file:NN:NN)
-    (fail) (unnamed)
-
-    test/regression/issue/12782.bar.fixture.ts:
-    (pass) bar > should not run
-    (pass) bar > inner describe > should not run
 
      2 pass
      1 fail

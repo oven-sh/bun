@@ -286,6 +286,7 @@ pub(crate) fn run_as_coordinator(
         },
         coverage_files: Default::default(),
         last_header_idx: None,
+        blocks: Vec::new(),
         header_printed_by_worker: None,
         frame: Frame::default(),
         files_done: 0,
@@ -1119,7 +1120,6 @@ fn worker_flush_aggregates(
     }
 
     cmds.emit(frame::Kind::RepeatBufs, |wf| {
-        wf.str(reporter.failures_to_repeat_buf.as_slice());
         wf.str(reporter.skips_to_repeat_buf.as_slice());
         wf.str(reporter.todos_to_repeat_buf.as_slice());
     });
@@ -1171,10 +1171,10 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 // pointee outlives all callers (process exits before it's dropped).
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
-/// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
-/// codes), which the coordinator prints verbatim so output matches serial, and,
-/// when the coordinator asked for it (`--reporter`), the structured result it
-/// replays into its own reporters.
+/// fully-formatted status line (✓/✗ + indent + name + duration, including ANSI
+/// codes) and, when the coordinator asked for it (`--reporter`) or needs the
+/// status and describe scopes to place the line in the file's buffered block,
+/// the structured result.
 #[optimize(size)]
 pub(crate) fn worker_emit_test_done(
     file_idx: u32,
@@ -1194,6 +1194,21 @@ pub(crate) fn worker_emit_test_done(
         if let Some(test) = test {
             encode_test_case(wf, test);
         }
+    });
+}
+
+/// Ships a failing test's rendered diagnostic to the coordinator, which owns
+/// the end-of-run failure report.
+pub(crate) fn worker_emit_failure_diagnostic(file_idx: u32, entry: &[u8]) {
+    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
+    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
+    // SAFETY: as in `worker_emit_test_done`.
+    let cmds = unsafe { &mut *cmds_ptr };
+    cmds.emit(frame::Kind::FailureDiagnostic, |wf| {
+        wf.u32(file_idx);
+        wf.str(entry);
     });
 }
 

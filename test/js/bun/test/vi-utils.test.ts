@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, jest, mock, setSystemTime, test, vi } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 async function run(args: string[], files: Record<string, string>, env: Record<string, string | undefined> = {}) {
@@ -12,7 +12,11 @@ async function run(args: string[], files: Record<string, string>, env: Record<st
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   return { stdout, stderr, exitCode };
 }
 
@@ -679,8 +683,8 @@ describe.concurrent("vi.setConfig", () => {
           exitCode,
         }).toEqual({
           seen: [calls, "started: 2"],
-          // After more than 20 passes, what failed is listed again at the end.
-          failed: runsOfEachFile === 2 ? ["(fail) c-does-not-load.test.ts"] : [],
+          // The end-of-run failure report lists the file that does not load, but its header isn't a result.
+          failed: [],
           passed: (1 + 5 + 5) * runsOfEachFile,
           exitCode: 1,
         });

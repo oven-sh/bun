@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -29,7 +29,11 @@ test("Jest's globals aren't available in every file", async () => {
 
 async function run(cwd, args, env = bunEnv) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   return { stdout, stderr, exitCode };
 }
 

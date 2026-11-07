@@ -29,8 +29,12 @@ test("snapshot", () => {
     <parent afterAll>
 
     test/cli/test/test-filter-lifecycle.js:
-    (pass) parent > should run > test
-    (pass) parent > should run > test 2
+
+    (pass) test/cli/test/test-filter-lifecycle.js:
+    (pass) parent
+      (pass) should run
+        (pass) test
+        (pass) test 2
 
      2 pass
      4 filtered out

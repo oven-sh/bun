@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -74,7 +74,7 @@ async function runTests(folder: string, flags: string[], words = ""): Promise<Re
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], folder, env);
   const byFile: Record<string, string[]> = {};
   let file = "";
-  for (const line of stderr.replaceAll(folder, ".").split("\n")) {
+  for (const line of flattenNestedTestOutput(stderr).replaceAll(folder, ".").split("\n")) {
     if (/^\S+\.test\.mjs:$/.test(line)) byFile[(file = line)] = [];
     else if (file && /^(\((pass|fail)\)|\w*[Ee]rror:)/.test(line))
       byFile[file].push(line.replace(/ \[[\d.]+ms\]$/, ""));

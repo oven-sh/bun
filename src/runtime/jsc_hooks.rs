@@ -1301,7 +1301,12 @@ fn print_exception(
     // (the `had_errors` save/restore lives in the low-tier caller). Route via
     // the buffered error writer; `defer writer.flush()` becomes a tail call —
     // no early returns below.
-    let writer = bun_core::Output::error_writer_buffered();
+    let writer = match vm_ref.error_writer_override {
+        // SAFETY: installed around a single `run_error_handler` by a caller
+        // that owns the sink for that window; single-threaded JS thread.
+        Some(w) => unsafe { &mut *w.as_ptr() },
+        None => bun_core::Output::error_writer_buffered(),
+    };
 
     let global = vm_ref.global();
 

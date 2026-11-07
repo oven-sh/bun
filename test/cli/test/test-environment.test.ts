@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -117,7 +117,10 @@ function summary(stderr: string) {
 
 function verdicts(stderr: string) {
   return Object.fromEntries(
-    Array.from(stderr.matchAll(/^\((pass|fail)\) (.+?)(?: \[[\d.]+ms\])?$/gm), ([, verdict, name]) => [name, verdict]),
+    Array.from(
+      flattenNestedTestOutput(stderr).matchAll(/^\((pass|fail)\) (.+?)(?: \[[\d.]+ms\])?$/gm),
+      ([, verdict, name]) => [name, verdict],
+    ),
   );
 }
 

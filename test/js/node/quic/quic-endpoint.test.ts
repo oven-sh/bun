@@ -162,7 +162,9 @@ describe("node:quic under --isolate", () => {
         .filter(l => l.includes("pass") || l.includes("fail")),
     ).toMatchInlineSnapshot(`
       [
+        "(pass) a.test.ts:",
         "(pass) quic session opens (a)",
+        "(pass) b.test.ts:",
         "(pass) quic session opens (b)",
         " 2 pass",
         " 0 fail",

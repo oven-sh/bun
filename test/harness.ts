@@ -2423,6 +2423,59 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     },
   };
 }
+/**
+ * Rewrites `bun test`'s buffered tree (`(pass) file:` headers, `(pass) describe`
+ * headers, indented result lines) to the flat `file:` / `(pass) outer > name`
+ * form. Other lines pass through unchanged.
+ */
+export function flattenNestedTestOutput(output: string): string {
+  const glyph = /^((?:  )*)(\((?:pass|fail|skip|todo|pending)\)) (.*)$/;
+  const lines = output.split("\n");
+  const out: string[] = [];
+  const scopes: string[] = [];
+  let lastIndent = "";
+  let inReport = false;
+  let lastHeader = "";
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (/^\d+ tests? failed:$/.test(line)) inReport = true;
+    const m = line.match(glyph);
+    // Headers naming a batched failure's file and test, not results.
+    if (inReport && m && m[1] === "" && m[2] === "(fail)") continue;
+    if (!m) {
+      if (/^\S+:(?: \(run #\d+\))?$/.test(line)) lastHeader = line;
+      // `  ^ this test …` explanations are indented with their result line.
+      if (lastIndent && line.startsWith(lastIndent + "  ^ ")) line = line.slice(lastIndent.length);
+      out.push(line);
+      continue;
+    }
+    const depth = m[1].length / 2;
+    const next = lines[i + 1]?.match(glyph);
+    // A file header: `(pass) path:` at depth 0.
+    if (
+      depth === 0 &&
+      /^\S+:(?: \(run #\d+\))?$/.test(m[3]) &&
+      (next || lines[i + 1] === undefined || lines[i + 1] === "")
+    ) {
+      scopes.length = 0;
+      // Output streamed ahead of the block already printed a bare header for this file.
+      if (lastHeader !== m[3]) out.push(m[3]);
+      lastHeader = m[3];
+      continue;
+    }
+    // A describe header sits directly above a line one level deeper.
+    if (next && next[1].length / 2 === depth + 1) {
+      scopes.length = depth;
+      scopes[depth] = m[3];
+      continue;
+    }
+    lastIndent = m[1];
+    scopes.length = depth;
+    out.push([m[2], [...scopes, m[3]].join(" > ")].join(" "));
+  }
+  return out.join("\n");
+}
+
 export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
   if (optionalDir) {
     snapshot = snapshot

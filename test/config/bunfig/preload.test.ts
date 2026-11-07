@@ -67,6 +67,8 @@ describe.concurrent("Given a bunfig.toml with both universal and test-only prelo
     const [out, err, code] = await run("./index.fixture-test.ts", { args: ["test"], cwd: dir });
     expect(err).toMatchInlineSnapshot(`
       "index.fixture-test.ts:
+
+      (pass) index.fixture-test.ts:
       (pass) the correct file was preloaded
 
        1 pass

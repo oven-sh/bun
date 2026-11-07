@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
 
@@ -12,7 +12,11 @@ async function runTests(files: Record<string, string>, args: string[] = []) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   const results = stderr
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))
@@ -186,7 +190,7 @@ describe("modifiers", () => {
         stdout: "ignore",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text().then(flattenNestedTestOutput), proc.exited]);
       const cases = (await Bun.file(`${dir}/junit.xml`).text())
         .split("<testcase ")
         .slice(1)

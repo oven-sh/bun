@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 
 async function testFailureSkip(failurePoints: string[]): Promise<string> {
   const result = await Bun.spawn({
@@ -93,7 +93,7 @@ describe("an error that throws while the runner prints it", () => {
       stderr: "pipe",
     });
     const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const stderr = rawStderr.replaceAll("\r\n", "\n");
+    const stderr = flattenNestedTestOutput(rawStderr.replaceAll("\r\n", "\n"));
     return {
       markers: [...stdout.matchAll(/%%<([^>]+)>%%/g)].map(([, marker]) => marker).join(","),
       verdicts: [...stderr.matchAll(/\((pass|fail)\) (.+?)(?: \[[^\]]+\])?$/gm)].map(

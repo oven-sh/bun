@@ -2,7 +2,7 @@
 // The test files are one side and the files they share are the other, whether one image holds both or the shared files have an image of their own.
 // Every project runs in every way. A way has test files of its own, test/aot/modules-in-a-test-run*.test.ts: all of them in one file took six minutes.
 import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { test } from "../supported";
@@ -930,7 +930,9 @@ const projects: Record<string, Record<string, string>> = {
 async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
+  const results = [...flattenNestedTestOutput(stderr).matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(
+    match => `${match[1]} ${match[2]}`,
+  );
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
@@ -986,7 +988,7 @@ async function runFolders(directory: string, words: string | undefined, ...flags
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const results = new Map<string, string[]>();
   let folder = "";
-  for (const line of stderr.split("\n")) {
+  for (const line of flattenNestedTestOutput(stderr).split("\n")) {
     const [, file] = line.match(/^(\S+\.test\.\w+):$/) ?? [];
     if (file) folder = file.split("/")[0];
     const [, result, name] = line.match(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/) ?? [];

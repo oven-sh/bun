@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { expectLayers } from "./harness/layers";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -80,7 +80,7 @@ async function printed(...flags: string[]) {
       .split("\n")
       .filter(line => !/^(AOT test run \||bun test v)/.test(line))
       .map(line => line.replace(/ *\[[\d.]+ ?m?s\]/, "").trimEnd());
-  return { stdout: lines(stdout), stderr: lines(stderr), exitCode };
+  return { stdout: lines(stdout), stderr: lines(flattenNestedTestOutput(stderr)), exitCode };
 }
 
 async function end(...flags: string[]) {
@@ -143,14 +143,14 @@ test.concurrent.each([
     ],
     inOrder: [
       "z-fails.test.ts:",
-      "error: expect(received).toBe(expected)",
       "(fail) fails first",
-      "error: thrown in a test",
       "(fail) fails last",
       "no-tests.ts:",
       "other-names.test.ts:",
       "a-adds.test.ts:",
       "(pass) adds",
+      "error: expect(received).toBe(expected)",
+      "error: thrown in a test",
     ],
   },
   {

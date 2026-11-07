@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, flattenNestedTestOutput } from "harness";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
 
@@ -21,7 +21,11 @@ async function run(cmd: string[], files: Record<string, string>, written: string
     // A matcher that blocks on a never-settling promise can't be stopped by the child's own test timeout.
     timeout: 60_000,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text().then(flattenNestedTestOutput),
+    proc.exited,
+  ]);
   const results = stderr
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))
@@ -280,20 +284,20 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(stdout).toEqual(["passes: checked", "handled later: caught"]);
     expect(report).toEqual([
       "(pass) passes",
-      "error: expect(received).toBe(expected)",
       "(fail) fails",
       "(pass) next",
-      "error: expect(received).toBe(expected)",
       "(fail) async",
-      "error: expect(received).toBe(expected)",
       "(fail) done",
-      "error: expect(received).toBe(expected)",
-      "error: expect(received).rejects.toBe(expected)",
       "(fail) several",
       "(pass) failing",
       "(fail) failing, but it passes",
-      "error: expect(received).toBe(expected)",
       "(fail) handled later",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).rejects.toBe(expected)",
+      "error: expect(received).toBe(expected)",
     ]);
     expect(failingLines(stderr, source)).toEqual([
       'expect(later(1)).resolves.toBe("not awaited");',
@@ -336,9 +340,9 @@ describe.concurrent(".resolves and .rejects", () => {
     ]);
     expect(report).toEqual([
       "(pass) passing > test",
-      "error: expect(received).toBe(expected)",
       "(fail) failing > test",
       "(pass) last",
+      "error: expect(received).toBe(expected)",
     ]);
     expect(exitCode).toBe(1);
   });
@@ -462,16 +466,16 @@ describe.concurrent(".resolves and .rejects", () => {
       "(fail) an asymmetric matcher",
       "(fail) toThrow()",
       "(fail) expect.poll()",
-      "error: early",
       "(fail) a test that fails",
-      "error: early, too",
       "(fail) keeps the promise",
-      "error: The test that called this matcher has ended",
       "(fail) another test that awaits it fails",
       "(pass) the next attempt finds what the first one took released (attempt 2)",
       "(pass) concurrent > beside it",
       "(fail) concurrent > after an await",
       "(pass) afterwards",
+      "error: early",
+      "error: early, too",
+      "error: The test that called this matcher has ended",
     ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
@@ -483,7 +487,7 @@ describe.concurrent(".resolves and .rejects", () => {
         throw new Error("thrown by the test");
       });
     `);
-    expect(report).toEqual(["error: thrown by the test", "(fail) throws"]);
+    expect(report).toEqual(["(fail) throws", "error: thrown by the test"]);
     expect(exitCode).toBe(1);
   });
 
@@ -1098,15 +1102,14 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         });
       }
     `);
-    expect(report.filter(line => line.startsWith("(") || line === "error: second")).toEqual(
-      ["reportError", "listenerThrows"].flatMap(name => [
+    expect(report.filter(line => line.startsWith("(") || line === "error: second")).toEqual([
+      ...["reportError", "listenerThrows"].flatMap(name => [
         `(pass) ${name}: one`,
-        "error: second",
         `(fail) ${name}: the second one would match`,
-        "error: second",
         `(fail) ${name}: the first one matches`,
       ]),
-    );
+      ...Array(4).fill("error: second"),
+    ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
@@ -1133,12 +1136,12 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     expect(stdout).toEqual(["true undefined 1", "undefined"]);
     expect(report).toEqual([
       "(pass) passes",
-      "error: expect(received).toThrow()",
       "(fail) fails",
-      "error: expect(received).not.toThrow()",
       "(fail) fails, not awaited",
       "(fail) times out",
       "  ^ this test timed out after 50ms.",
+      "error: expect(received).toThrow()",
+      "error: expect(received).not.toThrow()",
     ]);
     expect(failingLines(stderr, source)).toEqual([
       "await expect(async () => { await later(); }).toThrow();",
@@ -1207,9 +1210,9 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     expect(stderr).toContain("|false|1|2");
     expect(stderr).toMatch(/error: thrown on 1\n\s+at toThrowNow \(.*\n\s+at <anonymous> \(.*a\.test\.js:\d+:\d+\)/);
     expect(failingLines(stderr, source)).toEqual([
+      'throw new Error("rejected later");',
       "await expect(later(1)).resolves.not.toBeLater(1);",
       "expect(1).toBeLater(2);",
-      'throw new Error("rejected later");',
       'throw new Error("thrown on " + received);',
     ]);
     expect(exitCode).toBe(1);
@@ -1689,19 +1692,19 @@ describe.concurrent("expect.soft()", () => {
     const { stdout, stderr, report, exitCode } = await runTests(source);
     expect(stdout).toEqual(["undefined", "several: end", "undefined", "on its own: end"]);
     expect(report).toEqual([
+      "(fail) several",
+      "(pass) passes",
+      "(fail) then one that is not soft",
+      "(fail) on its own",
       "error: expect(received).toBe(expected)",
       "error: my label",
       "error: expect(received).not.toBe(expected)",
       "error: expected bar to be foo",
       "error: Expected value must be a function",
       "error: expect(received).toMatchInlineSnapshot(expected)",
-      "(fail) several",
-      "(pass) passes",
       "error: expect(received).toBe(expected)",
       "error: expect(received).toBe(expected)",
-      "(fail) then one that is not soft",
       "error: expect(received).toBe(expected)",
-      "(fail) on its own",
     ]);
     expect(failingLines(stderr, source)).toEqual([
       'console.log(expect.soft(1).toBe("first"));',

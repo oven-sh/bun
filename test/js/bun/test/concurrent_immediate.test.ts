@@ -41,6 +41,7 @@ test("concurrent immediate", async () => {
 
 function filterImportantLines(stderr: string) {
   return normalizeBunSnapshot(stderr)
+    .replaceAll(/concurrent_immediate_error(_promise)?\.fixture/g, "concurrent_immediate_error*.fixture")
     .split("\n")
     .filter(l => l.startsWith("(pass)") || l.startsWith("(fail)") || l.startsWith("error:"))
     .join("\n");
@@ -58,10 +59,12 @@ test("concurrent immediate error", async () => {
   const stderr = await result.stderr.text();
   expect(exitCode).toBe(1);
   expect(filterImportantLines(stderr)).toMatchInlineSnapshot(`
-    "(pass) test 1
-    error: test 2 error
+    "(fail) test/js/bun/test/concurrent_immediate_error*.fixture.ts:
+    (pass) test 1
     (fail) test 2
-    (pass) test 3"
+    (pass) test 3
+    (fail) test/js/bun/test/concurrent_immediate_error*.fixture.ts:11 > test 2
+    error: test 2 error"
   `);
 
   const result2 = await Bun.spawn({

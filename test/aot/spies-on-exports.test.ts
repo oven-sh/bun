@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, flattenNestedTestOutput, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -27,7 +27,9 @@ const imports = `
 
 async function runTests(directory: string, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
+  const results = [...flattenNestedTestOutput(stderr).matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(
+    match => `${match[1]} ${match[2]}`,
+  );
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   return { stdout, results, exitCode };

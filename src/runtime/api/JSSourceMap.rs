@@ -257,7 +257,7 @@ impl JSSourceMap {
             return Ok(JSValue::create_empty_object(global, 0));
         }
 
-        let Some(mapping) = self.sourcemap.find_mapping(
+        let Some(mapping) = self.sourcemap.find_segment(
             Ordinal::from_zero_based(line_offset),
             Ordinal::from_zero_based(column_offset),
         ) else {
@@ -266,12 +266,20 @@ impl JSSourceMap {
 
         let name = self.mapping_name_to_js(global, &mapping)?;
         let source = self.source_name_to_js(global, &mapping)?;
+        // In Node's entry for a segment that has no source, everything but the generated position is undefined.
+        let original = |position: Ordinal| {
+            if mapping.has_source() {
+                JSValue::js_number(position.zero_based() as f64)
+            } else {
+                JSValue::UNDEFINED
+            }
+        };
         Ok(Bun__createNodeModuleSourceMapEntryObject(
             global,
             JSValue::js_number(mapping.generated.lines.zero_based() as f64),
             JSValue::js_number(mapping.generated.columns.zero_based() as f64),
-            JSValue::js_number(mapping.original.lines.zero_based() as f64),
-            JSValue::js_number(mapping.original.columns.zero_based() as f64),
+            original(mapping.original.lines),
+            original(mapping.original.columns),
             source,
             name,
         ))

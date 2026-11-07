@@ -206,7 +206,13 @@ impl List {
         both_lists!(&self.r#impl, |list| list.len())
     }
 
+    /// The mapping that covers `line:column`. `None` in a segment that has no source.
     pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
+        self.find_segment(line, column).filter(Mapping::has_source)
+    }
+
+    /// `find`, except that a position in a segment that has no source finds the row of that segment.
+    pub(crate) fn find_segment(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         match &self.r#impl {
             ListValue::WithoutNames(list) => {
                 if let Some(i) =
@@ -412,6 +418,25 @@ impl Mapping {
     pub fn original_column(&self) -> i32 {
         self.original.columns.zero_based()
     }
+
+    /// False for the row of a one-field segment: generated code that comes from no source.
+    #[inline]
+    pub fn has_source(&self) -> bool {
+        self.source_index >= 0
+    }
+
+    /// The row of a one-field segment. No mapping has -1 as its source index, line or column.
+    fn without_source(generated: LineColumnOffset) -> Mapping {
+        Mapping {
+            generated,
+            original: LineColumnOffset {
+                lines: Ordinal::INVALID,
+                columns: Ordinal::INVALID,
+            },
+            source_index: -1,
+            name_index: -1,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -428,6 +453,21 @@ const SEMICOLON_RUN: [u8; HALF_USIZE] = [b';'; HALF_USIZE];
 /// handles the tail / anomalies. One block is 16–64 bytes depending on the
 /// runtime-dispatched ISA; 128 bytes guarantees at least two full blocks.
 const SIMD_THRESHOLD: usize = 128;
+
+// PERF: not through `List::append`. With one caller, the loop of `parse`, rustc inlines it there. With two it is a call that costs each mapped row 41 instructions.
+#[cold]
+#[inline(never)]
+fn append_without_source(mapping: &mut List, generated: LineColumnOffset) {
+    let row = Mapping::without_source(generated);
+    bun_core::handle_oom(match &mut mapping.r#impl {
+        ListValue::WithoutNames(list) => list.append(MappingWithoutName {
+            generated: row.generated,
+            original: row.original,
+            source_index: row.source_index,
+        }),
+        ListValue::WithNames(list) => list.append(row),
+    });
+}
 
 pub fn parse(
     bytes: &[u8],
@@ -547,20 +587,20 @@ pub fn parse(
 
         remain = &remain[generated_column_delta.start..];
 
-        // According to the specification, it's valid for a mapping to have 1,
-        // 4, or 5 variable-length fields. Having one field means there's no
-        // original location information, which is pretty useless. Just ignore
-        // those entries.
+        // A segment with one field. Node.js through v26.13.0 reads the one that ends the string as mapped, which ECMA-426 does not: https://github.com/nodejs/node/pull/66264
         if remain.len() == 0 {
+            append_without_source(&mut mapping, generated);
             break;
         }
 
         match remain[0] {
             b',' => {
+                append_without_source(&mut mapping, generated);
                 remain = &remain[1..];
                 continue;
             }
             b';' => {
+                append_without_source(&mut mapping, generated);
                 continue;
             }
             _ => {}

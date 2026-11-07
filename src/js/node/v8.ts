@@ -76,8 +76,8 @@ class Serializer {
 }
 // The two constructors are written out: a printed error gives the frame of an implicit one no source position.
 class DefaultDeserializer extends Deserializer {
-  constructor() {
-    super();
+  constructor(...args: []) {
+    super(...args);
   }
 }
 class DefaultSerializer extends Serializer {

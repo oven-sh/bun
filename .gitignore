@@ -210,6 +210,8 @@ core.[0-9]*
 # them on disk; keep ignored so they don't show as untracked).
 src/jsc/bindings/GeneratedJS2Native.zig
 src/jsc/bindings/GeneratedBindings.zig
+# What packages/h3blast's Makefile linked. The build graph writes build/<profile>/h3blast now.
+packages/h3blast/h3blast
 
 # Web Streams rewrite working notes (design docs, spec transcription, review logs).
 # Kept locally for the ongoing work; not part of the source tree.

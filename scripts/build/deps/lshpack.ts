@@ -18,8 +18,8 @@ const LSHPACK_COMMIT = "cf0f70dd10b352194c97448eb5d00b4aa484f531";
  * by default, which can't hold an HTTP/3 field of 64 KB. Everything that
  * includes lsxpack_header.h has to agree, so this is the only place that says
  * it: lshpack and lsquic (which compiles lsqpack.c) spread it into their
- * defines, and `provides.defines` below hands it to bun's sources, which
- * static_assert it. packages/h3blast has a Makefile of its own and repeats it.
+ * defines, and `provides.defines` below hands it to bun's sources and to
+ * packages/h3blast, which static_assert it.
  */
 export const lsxpackDefines = { LSXPACK_MAX_STRLEN: 0xffff_ffff }; // UINT32_MAX. A string would be quoted.
 

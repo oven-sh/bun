@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -1234,6 +1234,457 @@ describe("only block", () => {
     expect(stderr).toContain(" 1 pass");
     expect(stderr).toContain(`Failed to write JUnit report to ${outfile}`);
     expect(exitCode).toBe(0);
+  });
+
+  // Not concurrent: each test starts its `bun test` runs at once, and four tests at once make a run several times slower.
+  describe("a describe block is one <testsuite>", () => {
+    // Each test file says which process loaded it.
+    const sayPid = `require("node:fs").appendFileSync(process.env.PIDS, process.pid + "\\n");\n`;
+
+    async function report(files, args, env = bunEnv) {
+      const fixtures = { "package.json": "{}" };
+      for (const [name, source] of Object.entries(files)) fixtures[name] = source + sayPid;
+      using dir = tempDir("junit-blocks", fixtures);
+      const pids = join(String(dir), "pids");
+      await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml", ...args], {
+        cwd: String(dir),
+        env: { ...env, PIDS: pids },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+      const loadedIn = (await file(pids).text()).trim().split("\n").map(Number);
+      return {
+        xml: filterJunitXmlOutput(await file(join(String(dir), "junit.xml")).text()),
+        exitCode,
+        // With one test file, `bun test --parallel` loads the file itself and starts no worker.
+        usedWorkers: !loadedIn.includes(proc.pid),
+      };
+    }
+
+    // The <testsuite> and <testcase> elements of each file, one per line, indented as they are nested.
+    function outline(xml) {
+      const files = {};
+      let lines;
+      for (const [, indent, element, name, attributes] of xml.matchAll(
+        /^( *)<(testsuite|testcase) name="([^"]*)"([^>]*)>$/gm,
+      )) {
+        const attribute = key => attributes.match(new RegExp(` ${key}="([^"]*)"`))?.[1];
+        if (indent.length === 2) lines = files[name] = [];
+        const line = attribute("line") ? ` line=${attribute("line")}` : "";
+        lines.push(
+          indent.slice(2) +
+            (element === "testcase"
+              ? `case ${name.replaceAll("&gt;", ">")}`
+              : `suite ${name}${line} tests=${attribute("tests")} failures=${attribute("failures")}`),
+        );
+      }
+      return files;
+    }
+
+    // Attributes of <testsuites> and of each file's <testsuite>.
+    const totals = xml =>
+      Array.from(xml.matchAll(/^ {0,2}<testsuites? name="[^"]*"(?: file="[^"]*")? (.*)>$/gm), m => m[1]);
+
+    // Lets a concurrent test end after the runner has reported another one, without waiting for time to pass.
+    const turns = `const turn = () => new Promise(resolve => setImmediate(resolve));
+const turns = async () => { for (let i = 0; i < 5; i++) await turn(); };`;
+
+    // `endInOrder(order)(name)` is a test that ends after the runner has reported the tests before `name` in `order`.
+    const endInOrder = `function endInOrder(order) {
+  const ended = order.map(() => Promise.withResolvers());
+  return name => async () => {
+    const at = order.indexOf(name);
+    if (at > 0) {
+      await ended[at - 1].promise;
+      await turns();
+    }
+    ended[at].resolve();
+  };
+}`;
+
+    const noBlock = `import { test } from "bun:test";
+test("not in a block", () => {});
+`;
+
+    it("whatever the order of the tests and of the errors outside of a test", async () => {
+      const files = {
+        "hook-each.test.js": `import { afterEach, describe, test } from "bun:test";
+describe("d", () => {
+  afterEach(done => {
+    done(new Error("from afterEach"));
+  });
+  test("a", () => {});
+  test("b", () => {});
+});
+`,
+        "hook-all.test.js": `import { beforeAll, describe, test } from "bun:test";
+describe("outer", () => {
+  test("o1", () => {});
+  describe("inner", () => {
+    beforeAll(done => {
+      done(new Error("from beforeAll"));
+    });
+    test("i1", () => {});
+  });
+  test("o2", () => {});
+});
+`,
+        "timer.test.js": `import { describe, test } from "bun:test";
+${turns}
+describe("d", () => {
+  test.concurrent("a", async () => {});
+  test.concurrent("b", async () => {
+    await turns();
+    const thrown = Promise.withResolvers();
+    setImmediate(() => {
+      thrown.resolve();
+      throw new Error("from a timer");
+    });
+    await thrown.promise;
+    await turns();
+  });
+});
+`,
+        "concurrent.test.js": `import { describe, test } from "bun:test";
+${turns}
+${endInOrder}
+const end = endInOrder(["a1", "b1", "a2"]);
+describe("a", () => {
+  test.concurrent("a1", end("a1"));
+  test.concurrent("a2", end("a2"));
+});
+describe("b", () => {
+  test.concurrent("b1", end("b1"));
+});
+`,
+        // Both rows report before "third" does, and a row reports again after it.
+        "rows.test.js": `import { describe, test } from "bun:test";
+${turns}
+${endInOrder}
+const end = endInOrder(["a of 0", "a of 1", "in third", "b of 1", "b of 0"]);
+describe.each([0, 1])("row", row => {
+  test.concurrent("a of " + row, end("a of " + row));
+  test.concurrent("b of " + row, end("b of " + row));
+});
+describe("third", () => {
+  test.concurrent("in third", end("in third"));
+});
+`,
+        "same-name.test.js": `import { describe, test } from "bun:test";
+describe.each([1, 2])("each", row => {
+  test("of row " + row, () => {});
+});
+describe("twice", () => {
+  test("in the first", () => {});
+});
+describe("twice", () => {
+  test("in the second", () => {});
+});
+function helper(name) {
+  describe("helper", () => {
+    test(name, () => {});
+  });
+}
+helper("first call");
+describe("other", () => {
+  test("between", () => {});
+});
+helper("second call");
+`,
+      };
+      const [serial, parallel, flat] = await Promise.all([
+        report(files, []),
+        report(files, ["--parallel=2"]),
+        report(files, ["--reporter-junit-suites=flat"]),
+      ]);
+
+      // The flat form has the cases in the order reported.
+      expect(outline(flat.xml)).toEqual({
+        "concurrent.test.js": [
+          "suite concurrent.test.js tests=3 failures=0",
+          "  case a > a1",
+          "  case b > b1",
+          "  case a > a2",
+        ],
+        "hook-all.test.js": [
+          "suite hook-all.test.js tests=4 failures=1",
+          "  case outer > o1",
+          "  case (unhandled error)",
+          "  case outer > inner > i1",
+          "  case outer > o2",
+        ],
+        "hook-each.test.js": [
+          "suite hook-each.test.js tests=4 failures=2",
+          "  case (unhandled error)",
+          "  case d > a",
+          "  case (unhandled error)",
+          "  case d > b",
+        ],
+        "rows.test.js": [
+          "suite rows.test.js tests=5 failures=0",
+          "  case row > a of 0",
+          "  case row > a of 1",
+          "  case third > in third",
+          "  case row > b of 1",
+          "  case row > b of 0",
+        ],
+        "same-name.test.js": [
+          "suite same-name.test.js tests=7 failures=0",
+          "  case each > of row 1",
+          "  case each > of row 2",
+          "  case twice > in the first",
+          "  case twice > in the second",
+          "  case helper > first call",
+          "  case other > between",
+          "  case helper > second call",
+        ],
+        "timer.test.js": [
+          "suite timer.test.js tests=3 failures=1",
+          "  case d > a",
+          "  case (unhandled error)",
+          "  case d > b",
+        ],
+      });
+      // An error outside of a test stays a case of the file, where it was reported among the file's blocks and cases.
+      // Two blocks with one name share a <testsuite> when one reports just after the other, as before.
+      expect(outline(serial.xml)).toEqual({
+        "concurrent.test.js": [
+          "suite concurrent.test.js tests=3 failures=0",
+          "  suite a line=16 tests=2 failures=0",
+          "    case a1",
+          "    case a2",
+          "  suite b line=20 tests=1 failures=0",
+          "    case b1",
+        ],
+        "hook-all.test.js": [
+          "suite hook-all.test.js tests=4 failures=1",
+          "  suite outer line=2 tests=3 failures=0",
+          "    case o1",
+          "    suite inner line=4 tests=1 failures=0",
+          "      case i1",
+          "    case o2",
+          "  case (unhandled error)",
+        ],
+        "hook-each.test.js": [
+          "suite hook-each.test.js tests=4 failures=2",
+          "  case (unhandled error)",
+          "  suite d line=2 tests=2 failures=0",
+          "    case a",
+          "    case b",
+          "  case (unhandled error)",
+        ],
+        "rows.test.js": [
+          "suite rows.test.js tests=5 failures=0",
+          "  suite row line=16 tests=4 failures=0",
+          "    case a of 0",
+          "    case a of 1",
+          "    case b of 1",
+          "    case b of 0",
+          "  suite third line=20 tests=1 failures=0",
+          "    case in third",
+        ],
+        "same-name.test.js": [
+          "suite same-name.test.js tests=7 failures=0",
+          "  suite each line=2 tests=2 failures=0",
+          "    case of row 1",
+          "    case of row 2",
+          "  suite twice line=5 tests=2 failures=0",
+          "    case in the first",
+          "    case in the second",
+          "  suite helper line=12 tests=1 failures=0",
+          "    case first call",
+          "  suite other line=17 tests=1 failures=0",
+          "    case between",
+          "  suite helper line=12 tests=1 failures=0",
+          "    case second call",
+        ],
+        "timer.test.js": [
+          "suite timer.test.js tests=3 failures=1",
+          "  suite d line=4 tests=2 failures=0",
+          "    case a",
+          "    case b",
+          "  case (unhandled error)",
+        ],
+      });
+      expect(parallel.xml).toBe(serial.xml);
+      expect(totals(serial.xml)).toEqual(totals(flat.xml));
+      expect(totals(flat.xml)).toHaveLength(7);
+      expect([serial.usedWorkers, parallel.usedWorkers]).toEqual([false, true]);
+      expect([serial.exitCode, parallel.exitCode, flat.exitCode]).toEqual([1, 1, 1]);
+    });
+
+    it("in every order in which the tests of three blocks can end", async () => {
+      const orders = [["a1"]];
+      for (const name of ["i1", "a2", "b1"]) {
+        for (const order of orders.splice(0)) {
+          for (let at = 0; at <= order.length; at++) orders.push(order.toSpliced(at, 0, name));
+        }
+      }
+      const files = {
+        "orders.test.js": `import { describe, test } from "bun:test";
+${turns}
+${endInOrder}
+for (const order of ${JSON.stringify(orders)}) {
+  const end = endInOrder(order);
+  describe(order.join(" "), () => {
+    describe("a", () => {
+      test.concurrent("a1", end("a1"));
+      describe("inner", () => {
+        test.concurrent("i1", end("i1"));
+      });
+      test.concurrent("a2", end("a2"));
+    });
+    describe("b", () => {
+      test.concurrent("b1", end("b1"));
+    });
+  });
+}
+`,
+      };
+      const [nested, flat] = await Promise.all([report(files, []), report(files, ["--reporter-junit-suites=flat"])]);
+
+      // The flat form has the cases in the order reported.
+      const reported = outline(flat.xml)["orders.test.js"].slice(1);
+      expect(orders.map(order => reported.filter(line => line.startsWith(`  case ${order.join(" ")} > `)))).toEqual(
+        orders.map(order =>
+          order.map(name => `  case ${order.join(" ")} > ${name === "i1" ? "a > inner" : name[0]} > ${name}`),
+        ),
+      );
+      // Each <testsuite> with the names of those around it. Which block reports first decides the order of two blocks.
+      const around = [];
+      const suites = [];
+      for (const line of outline(nested.xml)["orders.test.js"].slice(1)) {
+        const [, indent, name, tests] = line.match(/^( *)suite (.*) line=\d+ (tests=\d+) /) ?? [];
+        if (name === undefined) continue;
+        around.length = indent.length / 2 - 1;
+        around.push(name);
+        suites.push(`${around.join(" > ")} ${tests}`);
+      }
+      const once = orders
+        .flatMap(order => {
+          const block = order.join(" ");
+          return [`${block} tests=4`, `${block} > a tests=3`, `${block} > a > inner tests=1`, `${block} > b tests=1`];
+        })
+        .sort();
+      expect(orders).toHaveLength(24);
+      expect(suites.sort()).toEqual(once);
+      expect([nested.exitCode, flat.exitCode]).toEqual([0, 0]);
+    });
+
+    it("with --rerun-each, when a block gets the address that a block of the run before had", async () => {
+      const files = {
+        "concurrent.test.js": `import { describe, test } from "bun:test";
+${turns}
+${endInOrder}
+const end = endInOrder(["a1", "b1", "a2"]);
+describe("a", () => {
+  test.concurrent("a1", end("a1"));
+  test.concurrent("a2", end("a2"));
+});
+describe("b", () => {
+  test.concurrent("b1", end("b1"));
+});
+`,
+        "many.test.js": `import { describe, test } from "bun:test";
+for (let block = 0; block < 50; block++) {
+  describe("block " + block, () => {
+    test("in block " + block, () => {});
+  });
+}
+`,
+        "wrapped.test.js": `import { describe, test } from "bun:test";
+describe("outer", () => {
+  describe("x", () => {
+    test("x1", () => {});
+  });
+  describe("y", () => {
+    test("y1", () => {});
+  });
+});
+`,
+      };
+      // Without ASAN's quarantine, a block of the second run can get the address that a block of the first run had.
+      const env = withoutAsanQuarantine(bunEnv);
+      const [serial, parallel] = await Promise.all([
+        report(files, ["--rerun-each=2"], env),
+        report(files, ["--rerun-each=2", "--parallel=2"], env),
+      ]);
+
+      const many = Array.from({ length: 50 }, (_, block) => [
+        `  suite block ${block} line=3 tests=1 failures=0`,
+        `    case in block ${block}`,
+      ]).flat();
+      // The block around a whole file is one <testsuite> for all the runs, as before.
+      expect(outline(serial.xml)).toEqual({
+        "concurrent.test.js": [
+          "suite concurrent.test.js tests=6 failures=0",
+          "  suite a line=16 tests=2 failures=0",
+          "    case a1",
+          "    case a2",
+          "  suite b line=20 tests=1 failures=0",
+          "    case b1",
+          "  suite a line=16 tests=2 failures=0",
+          "    case a1",
+          "    case a2",
+          "  suite b line=20 tests=1 failures=0",
+          "    case b1",
+        ],
+        "many.test.js": ["suite many.test.js tests=100 failures=0", ...many, ...many],
+        "wrapped.test.js": [
+          "suite wrapped.test.js tests=4 failures=0",
+          "  suite outer line=2 tests=4 failures=0",
+          "    suite x line=3 tests=1 failures=0",
+          "      case x1",
+          "    suite y line=6 tests=1 failures=0",
+          "      case y1",
+          "    suite x line=3 tests=1 failures=0",
+          "      case x1",
+          "    suite y line=6 tests=1 failures=0",
+          "      case y1",
+        ],
+      });
+      expect(parallel.xml).toBe(serial.xml);
+      expect([serial.usedWorkers, parallel.usedWorkers]).toEqual([false, true]);
+      expect([serial.exitCode, parallel.exitCode]).toEqual([0, 0]);
+    });
+
+    it("when --bail ends the run inside it", async () => {
+      const { xml, exitCode } = await report(
+        {
+          "a.test.js": `import { describe, test } from "bun:test";
+${turns}
+${endInOrder}
+const end = endInOrder(["a1", "b1", "a2 fails"]);
+describe("a", () => {
+  test.concurrent("a1", end("a1"));
+  test.concurrent("a2 fails", async () => {
+    await end("a2 fails")();
+    throw new Error("from the test");
+  });
+});
+describe("b", () => {
+  test.concurrent("b1", end("b1"));
+});
+test("never runs", () => {});
+`,
+          "b.test.js": noBlock,
+        },
+        ["--bail=1"],
+      );
+
+      expect(outline(xml)).toEqual({
+        "a.test.js": [
+          "suite a.test.js tests=3 failures=1",
+          "  suite a line=16 tests=2 failures=1",
+          "    case a1",
+          "    case a2 fails",
+          "  suite b line=23 tests=1 failures=0",
+          "    case b1",
+        ],
+      });
+      expect(exitCode).toBe(1);
+    });
   });
 });
 

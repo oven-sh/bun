@@ -2133,12 +2133,49 @@ pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
     }
 }
 
+/// Names one `describe` block of one run of a test file. Its name and line do
+/// not: the rows of a `describe.each` and the calls of a function that calls
+/// `describe` have the same.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BlockKey {
+    /// `BunTestRoot::file_generation`. Each `--rerun-each` repeat builds its blocks again, and can get the addresses of the repeat before.
+    run: u32,
+    /// Of the `DescribeScope`. Only a number: the report can outlive the scope, and a `--parallel` coordinator reads it in another process.
+    address: u64,
+}
+
+impl BlockKey {
+    fn of(scope: &bun_test::DescribeScope, run: u32) -> BlockKey {
+        BlockKey {
+            run,
+            address: core::ptr::from_ref(scope).addr() as u64,
+        }
+    }
+
+    /// What a `--parallel` worker sends on its `TestDone` frame.
+    pub(crate) fn to_wire(self) -> (u32, u64) {
+        (self.run, self.address)
+    }
+
+    pub(crate) fn from_wire(run: u32, address: u64) -> BlockKey {
+        BlockKey { run, address }
+    }
+}
+
+/// A named `describe` block around a finished test.
+#[derive(Clone, Copy)]
+pub(crate) struct ScopeReport<'a> {
+    pub name: &'a [u8],
+    pub line: u32,
+    pub block: BlockKey,
+}
+
 /// One finished test as structured reporters see it.
 pub(crate) struct TestCaseReport<'a> {
     /// Relative to the project root.
     pub file: &'a [u8],
-    /// Enclosing named `describe` blocks, outermost first: (name, line).
-    pub scopes: Vec<(&'a [u8], u32)>,
+    /// Enclosing named `describe` blocks, outermost first.
+    pub scopes: Vec<ScopeReport<'a>>,
     pub name: &'a [u8],
     pub status: bun_test::Execution::Result,
     pub assertions: u32,
@@ -2214,24 +2251,20 @@ pub(crate) struct JunitReporter {
     pub(crate) file_start_unix_ms: i64,
     pub(crate) properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
-    pub(crate) suite_stack: Vec<SuiteInfo>,
-    pub(crate) current_depth: u32,
+    /// The `<testsuite>` of `current_file`. Its opening tag is in `contents`.
+    file_suite: Option<FileSuite>,
+    /// The `describe` blocks of `current_file`, for the nested form.
+    blocks: DescribeBlocks,
     pub(crate) suites: JunitSuites,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
 
-#[derive(Default)]
-pub(crate) struct SuiteInfo {
-    pub name: Box<[u8]>,
-    pub(crate) offset_of_attributes: usize,
-    pub(crate) metrics: Metrics,
-    pub(crate) is_file_suite: bool,
-    pub(crate) started_ns: u64,
+struct FileSuite {
+    offset_of_attributes: usize,
+    metrics: Metrics,
+    started_ns: u64,
 }
-
-// We dupe the name unconditionally in begin_test_suite_with_line, so the
-// unconditional drop is correct.
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct Metrics {
@@ -2249,6 +2282,195 @@ impl Metrics {
         self.failures += other.failures;
         self.skipped += other.skipped;
     }
+}
+
+/// The `describe` blocks of the file whose `<testsuite>` is open. A block's
+/// `<testsuite>` is written when the file ends, because the cases of one block
+/// don't arrive together: concurrent tests of two blocks end in any order, and
+/// an error outside of a test is a case of the file.
+#[derive(Default)]
+struct DescribeBlocks {
+    suites: Vec<BlockSuite>,
+    by_key: bun_collections::HashMap<BlockKey, usize>,
+    /// The innermost block of the case before and its suite, which are most often those of the next case.
+    last: Option<(BlockKey, usize)>,
+    /// The `<testcase>` elements of the blocks, and those of the file itself that came after its first block.
+    cases: Vec<u8>,
+    /// What the file's `<testsuite>` holds from its first block on.
+    top_level: Vec<Child>,
+}
+
+struct BlockSuite {
+    name: Box<[u8]>,
+    line: u32,
+    parent: Option<usize>,
+    /// 1 for a block at the top level of the file.
+    depth: u32,
+    /// Of the suite's own cases, until `write` adds those of the blocks inside it.
+    metrics: Metrics,
+    /// In the order reported.
+    children: Vec<Child>,
+}
+
+enum Child {
+    /// A range of `DescribeBlocks::cases`.
+    Cases(core::ops::Range<usize>),
+    /// An index of `DescribeBlocks::suites`.
+    Suite(usize),
+}
+
+impl DescribeBlocks {
+    /// The suite of the innermost named block around the test. `None` for a case of the file itself.
+    fn suite_of(&mut self, t: &TestCaseReport<'_>) -> Option<usize> {
+        // Only the flat form includes describe blocks with an empty title, like Vitest.
+        let named = |scope: &&ScopeReport<'_>| !scope.name.is_empty();
+        let innermost = t.scopes.iter().rfind(named)?;
+        if let Some((block, suite)) = self.last
+            && block == innermost.block
+        {
+            return Some(suite);
+        }
+
+        // The innermost block that has a suite, then a suite for each block inside it.
+        let mut suite = None;
+        let mut first_without = t.scopes.len();
+        for (index, scope) in t.scopes.iter().enumerate().rev() {
+            if scope.name.is_empty() {
+                continue;
+            }
+            if let Some(&found) = self.by_key.get(&scope.block) {
+                suite = Some(found);
+                break;
+            }
+            first_without = index;
+        }
+        for scope in t.scopes[first_without..].iter().filter(named) {
+            // As in every release, a block shares the suite of a block with its name that reported just before it:
+            // the rows of a `describe.each` with one title, and the repeats of `--rerun-each`.
+            let before = match self.children_of(suite).last() {
+                Some(&Child::Suite(before)) => Some(before),
+                _ => None,
+            };
+            let inside = match before {
+                Some(before) if strings::eql(&self.suites[before].name, scope.name) => before,
+                _ => self.add(suite, scope),
+            };
+            self.by_key.insert(scope.block, inside);
+            suite = Some(inside);
+        }
+        self.last = suite.map(|suite| (innermost.block, suite));
+        suite
+    }
+
+    fn add(&mut self, parent: Option<usize>, scope: &ScopeReport<'_>) -> usize {
+        let added = self.suites.len();
+        self.suites.push(BlockSuite {
+            name: Box::from(scope.name),
+            line: scope.line,
+            parent,
+            depth: parent.map_or(1, |parent| self.suites[parent].depth + 1),
+            metrics: Metrics::default(),
+            children: Vec::new(),
+        });
+        self.children_of(parent).push(Child::Suite(added));
+        added
+    }
+
+    fn children_of(&mut self, parent: Option<usize>) -> &mut Vec<Child> {
+        match parent {
+            Some(suite) => &mut self.suites[suite].children,
+            None => &mut self.top_level,
+        }
+    }
+
+    /// Gives `parent` the `<testcase>` elements written to `cases` from `start` on.
+    fn append_cases(&mut self, parent: Option<usize>, start: usize) {
+        let end = self.cases.len();
+        let children = self.children_of(parent);
+        if let Some(Child::Cases(range)) = children.last_mut()
+            && range.end == start
+        {
+            range.end = end;
+        } else {
+            children.push(Child::Cases(start..end));
+        }
+    }
+
+    /// Writes the `<testsuite>` of each block around what it holds, adds the
+    /// counts of the blocks to those of the file, and forgets the file.
+    #[optimize(size)]
+    fn write(
+        &mut self,
+        out: &mut Vec<u8>,
+        file: &[u8],
+        file_metrics: &mut Metrics,
+        hostname: &[u8],
+        started_unix_ms: i64,
+    ) -> crate::Result<()> {
+        if self.suites.is_empty() {
+            return Ok(());
+        }
+
+        // A block is added after the block around it, so its counts are complete before they are added to the parent's.
+        for index in (0..self.suites.len()).rev() {
+            let metrics = self.suites[index].metrics;
+            match self.suites[index].parent {
+                Some(parent) => self.suites[parent].metrics.add(&metrics),
+                None => file_metrics.add(&metrics),
+            }
+        }
+
+        // The suites that are open, outermost first, each with the number of its children that are written.
+        let mut open: Vec<(Option<&BlockSuite>, usize)> = vec![(None, 0)];
+        while let Some((parent, written)) = open.last_mut() {
+            let children = parent.map_or(&self.top_level, |suite| &suite.children);
+            let Some(child) = children.get(*written) else {
+                if let Some(suite) = parent {
+                    out.extend_from_slice(JunitReporter::get_indent(suite.depth));
+                    out.extend_from_slice(b"</testsuite>\n");
+                }
+                open.pop();
+                continue;
+            };
+            *written += 1;
+            match child {
+                Child::Cases(range) => out.extend_from_slice(&self.cases[range.clone()]),
+                Child::Suite(index) => {
+                    let suite = &self.suites[*index];
+                    JunitReporter::write_suite_tag(
+                        out,
+                        suite.depth,
+                        &suite.name,
+                        file,
+                        suite.line,
+                    )?;
+                    JunitReporter::write_suite_attributes(
+                        out,
+                        &suite.metrics,
+                        suite.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64,
+                        hostname,
+                        started_unix_ms,
+                    );
+                    out.extend_from_slice(b">\n");
+                    open.push((Some(suite), 0));
+                }
+            }
+        }
+
+        self.suites.clear();
+        self.by_key.clear();
+        self.last = None;
+        self.cases.clear();
+        self.top_level.clear();
+        Ok(())
+    }
+}
+
+/// Where a `<testcase>` goes: the `<testsuite>` of a file, or that of a `describe` block.
+struct CaseWriter<'a> {
+    contents: &'a mut Vec<u8>,
+    metrics: &'a mut Metrics,
+    depth: u32,
 }
 
 impl JunitReporter {
@@ -2552,70 +2774,75 @@ impl JunitReporter {
         }
     }
 
-    pub(crate) fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
-        self.begin_test_suite_with_line(name, 0, true)
-    }
-
-    #[optimize(size)]
-    pub(crate) fn begin_test_suite_with_line(
-        &mut self,
+    /// Writes `<testsuite name="…" file="…" line="…" `. The counts follow, once they are known.
+    fn write_suite_tag(
+        out: &mut Vec<u8>,
+        depth: u32,
         name: &[u8],
+        file: &[u8],
         line_number: u32,
-        is_file_suite: bool,
     ) -> crate::Result<()> {
-        self.start_document();
-
-        let indent = Self::get_indent(self.current_depth);
-        self.contents.extend_from_slice(indent);
-        self.contents.extend_from_slice(b"<testsuite name=\"");
-        escape_xml(name, &mut self.contents)?;
-        self.contents.extend_from_slice(b"\"");
-
-        if is_file_suite {
-            self.contents.extend_from_slice(b" file=\"");
-            escape_xml(name, &mut self.contents)?;
-            self.contents.extend_from_slice(b"\"");
-        } else if !self.current_file.is_empty() {
-            self.contents.extend_from_slice(b" file=\"");
-            // Reshaped for borrowck — clone current_file slice before mutable borrow of contents
-            let cf = self.current_file.clone();
-            escape_xml(&cf, &mut self.contents)?;
-            self.contents.extend_from_slice(b"\"");
-        }
-
+        out.extend_from_slice(Self::get_indent(depth));
+        out.extend_from_slice(b"<testsuite name=\"");
+        escape_xml(name, out)?;
+        out.extend_from_slice(b"\" file=\"");
+        escape_xml(file, out)?;
+        out.extend_from_slice(b"\"");
         if line_number > 0 {
             // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
-            let _ = write!(&mut self.contents, " line=\"{}\"", line_number);
+            let _ = write!(out, " line=\"{}\"", line_number);
         }
+        out.extend_from_slice(b" ");
+        Ok(())
+    }
 
-        self.contents.extend_from_slice(b" ");
+    fn write_suite_attributes(
+        out: &mut Vec<u8>,
+        metrics: &Metrics,
+        elapsed_time_seconds: f64,
+        hostname: &[u8],
+        started_unix_ms: i64,
+    ) {
+        // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+        let _ = write!(
+            out,
+            "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\" timestamp=\"",
+            metrics.test_cases,
+            metrics.assertions,
+            metrics.failures,
+            metrics.skipped,
+            elapsed_time_seconds,
+            bstr::BStr::new(hostname),
+        );
+        write_iso_8601(out, started_unix_ms);
+        out.push(b'"');
+    }
+
+    /// Opens the `<testsuite>` of a test file.
+    #[optimize(size)]
+    pub(crate) fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
+        self.start_document();
+
+        Self::write_suite_tag(&mut self.contents, 0, name, name, 0)?;
         let offset_of_attributes = self.contents.len();
         self.contents.extend_from_slice(b">\n");
 
-        if is_file_suite {
-            if self.properties_list_to_repeat_in_every_test_suite.is_none() {
-                self.generate_properties_list()?;
-            }
+        if self.properties_list_to_repeat_in_every_test_suite.is_none() {
+            self.generate_properties_list()?;
+        }
 
-            if let Some(properties_list) = &self.properties_list_to_repeat_in_every_test_suite {
-                if !properties_list.is_empty() {
-                    self.contents.extend_from_slice(properties_list);
-                }
+        if let Some(properties_list) = &self.properties_list_to_repeat_in_every_test_suite {
+            if !properties_list.is_empty() {
+                self.contents.extend_from_slice(properties_list);
             }
         }
 
-        self.suite_stack.push(SuiteInfo {
-            name: Box::<[u8]>::from(name),
+        self.file_suite = Some(FileSuite {
             offset_of_attributes,
             metrics: Metrics::default(),
-            is_file_suite,
-            started_ns: if is_file_suite { self.file_start_ns } else { 0 },
+            started_ns: self.file_start_ns,
         });
-
-        self.current_depth += 1;
-        if is_file_suite {
-            self.current_file = Box::<[u8]>::from(name);
-        }
+        self.current_file = Box::<[u8]>::from(name);
         Ok(())
     }
 
@@ -2634,131 +2861,122 @@ impl JunitReporter {
             self.end_file(None, None)?;
             self.begin_test_suite(file)?;
         }
-        while !self.suite_stack.is_empty() {
-            self.end_test_suite(elapsed_ns)?;
-        }
+        self.end_test_suite(elapsed_ns)?;
         self.current_file = Box::default();
         Ok(())
     }
 
+    /// Writes the suites of the file's `describe` blocks, then closes the file's own.
     #[optimize(size)]
     fn end_test_suite(&mut self, file_elapsed_ns: Option<u64>) -> crate::Result<()> {
-        if self.suite_stack.is_empty() {
+        let Some(mut suite) = self.file_suite.take() else {
             return Ok(());
-        }
-
-        self.current_depth -= 1;
-        let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
-
-        let elapsed_time_seconds = if suite_info.is_file_suite
-            && let Some(ns) = file_elapsed_ns
-        {
-            ns as f64 / bun::time::NS_PER_S as f64
-        } else if suite_info.is_file_suite && suite_info.started_ns > 0 {
-            bun::Timespec::now(bun::TimespecMockMode::ForceRealTime)
-                .ns()
-                .saturating_sub(suite_info.started_ns) as f64
-                / bun::time::NS_PER_S as f64
-        } else {
-            suite_info.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64
         };
 
         // Reshaped for borrowck — get hostname first
         let hostname = self.get_hostname().map(|h| h.to_vec()).unwrap_or_default();
 
+        self.blocks.write(
+            &mut self.contents,
+            &self.current_file,
+            &mut suite.metrics,
+            &hostname,
+            self.file_start_unix_ms,
+        )?;
+
+        let elapsed_ns = file_elapsed_ns.unwrap_or_else(|| {
+            bun::Timespec::now(bun::TimespecMockMode::ForceRealTime)
+                .ns()
+                .saturating_sub(suite.started_ns)
+        });
+        let elapsed_time_seconds = elapsed_ns as f64 / bun::time::NS_PER_S as f64;
+
         // Insert the summary attributes
         let mut summary = Vec::new();
-        {
-            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
-            let _ = write!(
-                &mut summary,
-                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\" timestamp=\"",
-                suite_info.metrics.test_cases,
-                suite_info.metrics.assertions,
-                suite_info.metrics.failures,
-                suite_info.metrics.skipped,
-                elapsed_time_seconds,
-                bstr::BStr::new(&hostname),
-            );
-            write_iso_8601(&mut summary, self.file_start_unix_ms);
-            summary.push(b'"');
-        }
-
+        Self::write_suite_attributes(
+            &mut summary,
+            &suite.metrics,
+            elapsed_time_seconds,
+            &hostname,
+            self.file_start_unix_ms,
+        );
         self.contents.splice(
-            suite_info.offset_of_attributes..suite_info.offset_of_attributes,
+            suite.offset_of_attributes..suite.offset_of_attributes,
             summary.iter().copied(),
         );
 
-        let indent = Self::get_indent(self.current_depth);
-        self.contents.extend_from_slice(indent);
+        self.contents.extend_from_slice(Self::get_indent(0));
         self.contents.extend_from_slice(b"</testsuite>\n");
 
-        if !self.suite_stack.is_empty() {
-            let last = self.suite_stack.len() - 1;
-            self.suite_stack[last].metrics.add(&suite_info.metrics);
-        } else {
-            self.total_metrics.add(&suite_info.metrics);
-        }
+        self.total_metrics.add(&suite.metrics);
         Ok(())
     }
 
-    /// Open/close `<testsuite>` elements so the stack matches `t.file` and
-    /// `t.scopes`, then write the `<testcase>`.
+    /// Writes the `<testcase>` into the suite of `t.file`. In the nested form
+    /// a test inside a named `describe` block goes into the suite of that block.
     #[optimize(size)]
     pub(crate) fn record_test_case(&mut self, t: &TestCaseReport<'_>) -> crate::Result<()> {
-        if !strings::eql(&self.current_file, t.file) {
-            while let Some(top) = self.suite_stack.last()
-                && !top.is_file_suite
-            {
-                self.end_test_suite(None)?;
-            }
-            if !self.current_file.is_empty() {
-                self.end_test_suite(None)?;
-            }
+        if self.file_suite.is_none() || !strings::eql(&self.current_file, t.file) {
+            self.end_test_suite(None)?;
             self.begin_test_suite(t.file)?;
         }
+        let file_suite = self.file_suite.as_mut().expect("opened above");
 
         if self.suites == JunitSuites::Flat {
             let mut name: Vec<u8> = Vec::new();
-            for &(scope, _) in &t.scopes {
-                name.extend_from_slice(scope);
+            for scope in &t.scopes {
+                name.extend_from_slice(scope.name);
                 name.extend_from_slice(b" > ");
             }
             name.extend_from_slice(t.name);
-            return self.write_test_case(t, &name, t.file);
-        }
-
-        // Only the flat form includes describe blocks with an empty title, like Vitest.
-        let mut scopes = t.scopes.clone();
-        scopes.retain(|(name, _)| !name.is_empty());
-
-        // Keep the longest prefix of open describe suites that matches
-        // `scopes`; close the rest, then open what is missing.
-        let open = &self.suite_stack[1..];
-        let keep = open
-            .iter()
-            .zip(&scopes)
-            .take_while(|(suite, (name, _))| strings::eql(&suite.name, name))
-            .count();
-        for _ in keep..open.len() {
-            self.end_test_suite(None)?;
-        }
-        for &(name, line) in &scopes[keep..] {
-            self.begin_test_suite_with_line(name, line, false)?;
+            return CaseWriter {
+                contents: &mut self.contents,
+                metrics: &mut file_suite.metrics,
+                depth: 1,
+            }
+            .write_test_case(t, &name, t.file);
         }
 
         // Innermost scope first, matching what the serial reporter always did.
+        // Only the flat form includes describe blocks with an empty title, like Vitest.
         let mut class_name: Vec<u8> = Vec::new();
-        for (i, &(name, _)) in scopes.iter().rev().enumerate() {
-            if i > 0 {
+        for scope in t.scopes.iter().rev().filter(|scope| !scope.name.is_empty()) {
+            if !class_name.is_empty() {
                 class_name.extend_from_slice(b" > ");
             }
-            class_name.extend_from_slice(name);
+            class_name.extend_from_slice(scope.name);
         }
 
-        self.write_test_case(t, t.name, &class_name)
+        let suite = self.blocks.suite_of(t);
+        if suite.is_none() && self.blocks.suites.is_empty() {
+            // No block of the file has a suite yet, so this case comes before all of them.
+            return CaseWriter {
+                contents: &mut self.contents,
+                metrics: &mut file_suite.metrics,
+                depth: 1,
+            }
+            .write_test_case(t, t.name, &class_name);
+        }
+        let start = self.blocks.cases.len();
+        let (metrics, depth) = match suite {
+            Some(suite) => {
+                let suite = &mut self.blocks.suites[suite];
+                (&mut suite.metrics, suite.depth + 1)
+            }
+            None => (&mut file_suite.metrics, 1),
+        };
+        CaseWriter {
+            contents: &mut self.blocks.cases,
+            metrics,
+            depth,
+        }
+        .write_test_case(t, t.name, &class_name)?;
+        self.blocks.append_cases(suite, start);
+        Ok(())
     }
+}
 
+impl CaseWriter<'_> {
     /// Writes `<failure>`, or Surefire's `<flakyFailure>` / `<rerunFailure>` for a retried test.
     #[optimize(size)]
     fn write_failure(
@@ -2820,18 +3038,11 @@ impl JunitReporter {
         let elapsed_ns_f64: f64 = elapsed_ns as f64;
         let elapsed_ms = elapsed_ns_f64 / bun::time::NS_PER_MS as f64;
 
-        if !self.suite_stack.is_empty() {
-            let last = self.suite_stack.len() - 1;
-            let current_suite = &mut self.suite_stack[last];
-            current_suite.metrics.elapsed_time = current_suite
-                .metrics
-                .elapsed_time
-                .saturating_add(elapsed_ms as u64);
-            current_suite.metrics.test_cases += 1;
-            current_suite.metrics.assertions += assertions;
-        }
+        self.metrics.elapsed_time = self.metrics.elapsed_time.saturating_add(elapsed_ms as u64);
+        self.metrics.test_cases += 1;
+        self.metrics.assertions += assertions;
 
-        let indent = Self::get_indent(self.current_depth);
+        let indent = JunitReporter::get_indent(self.depth);
         self.contents.extend_from_slice(indent);
         self.contents.extend_from_slice(b"<testcase");
         self.contents.extend_from_slice(b" name=\"");
@@ -2871,10 +3082,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
             _ if status.is_fail() => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
+                self.metrics.failures += 1;
                 self.contents.extend_from_slice(b">\n");
                 let described = TestFailure::from_result(status, assertions);
                 self.write_failure(indent, b"failure", described.as_ref().or(failure))?;
@@ -2885,10 +3093,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
             R::SkippedBecauseLabel | R::Skip => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.skipped += 1;
-                }
+                self.metrics.skipped += 1;
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"  <skipped />\n");
@@ -2896,10 +3101,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
             R::Todo => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.skipped += 1;
-                }
+                self.metrics.skipped += 1;
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
                 self.contents
@@ -2911,7 +3113,9 @@ impl JunitReporter {
         }
         Ok(())
     }
+}
 
+impl JunitReporter {
     pub(crate) fn write_to_file(&mut self, path: &[u8]) -> crate::Result<()> {
         if self.contents.is_empty() {
             return Ok(());
@@ -3331,8 +3535,9 @@ impl CommandLineReporter {
         };
         let file = junit_file_name(file);
 
+        let run = buntest.bun_test_root.file_generation;
         // Innermost first while walking up; reversed below.
-        let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
+        let mut scopes: Vec<ScopeReport<'a>> = Vec::new();
         let mut parent = test_entry.base.parent.map(|p| p.cast_const());
         while let Some(scope) = parent {
             if scopes.len() == 64 {
@@ -3341,7 +3546,11 @@ impl CommandLineReporter {
             // SAFETY: describe scopes outlive the file's test run.
             let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
-                scopes.push((name, scope.base.line_no));
+                scopes.push(ScopeReport {
+                    name,
+                    line: scope.base.line_no,
+                    block: BlockKey::of(scope, run),
+                });
             }
             parent = scope.base.parent.map(|p| p.cast_const());
         }

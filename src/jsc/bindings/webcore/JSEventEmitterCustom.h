@@ -26,6 +26,8 @@ public:
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
         }
 
+        // `this._events` can be the only reference to the emitter, and user code in `operation` can drop it.
+        JSC::EnsureStillAliveScope keepEmitterAlive(thisObject);
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
     }
 };

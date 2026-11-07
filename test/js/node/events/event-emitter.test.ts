@@ -1145,6 +1145,66 @@ test("once() wrapper releases its target after firing", async () => {
   });
 });
 
+// `this._events` can be the only reference to the native emitter of a receiver, and the conversion of the
+// event name runs user code. In a subprocess because a collected emitter is a use after free.
+describe("native EventEmitter stays alive while a call drops the last reference to it", () => {
+  // [method, its result for one "x" listener, how often that listener runs]
+  test.concurrent.each([
+    ["listenerCount", 1, 0],
+    ["listeners", 1, 0],
+    ["rawListeners", 1, 0],
+    ["emit", true, 1],
+    ["removeAllListeners", "this", 0],
+  ] as const)("%s", async (method, result, fired) => {
+    const src = `
+      const proto = Object.getPrototypeOf(process);
+      const cases = [];
+      for (let i = 0; i < 5; i++) {
+        const holder = {};
+        const state = { fired: 0 };
+        proto.on.call(holder, "x", () => state.fired++);
+        state.emitter = holder._events;
+        state.ref = new WeakRef(state.emitter);
+        delete holder._events;
+        cases.push(state);
+      }
+      // In a later task no frame of this script holds an emitter, and a WeakRef no longer keeps its target.
+      setImmediate(() => {
+        const out = [];
+        for (const state of cases) {
+          const receiver = {
+            get _events() {
+              return state.emitter;
+            },
+          };
+          let alive;
+          const result = proto[${JSON.stringify(method)}].call(receiver, {
+            toString() {
+              state.emitter = undefined;
+              Bun.gc(true);
+              alive = state.ref.deref() !== undefined;
+              return "x";
+            },
+          });
+          out.push({
+            alive,
+            result: Array.isArray(result) ? result.length : result === receiver ? "this" : result,
+            fired: state.fired,
+          });
+        }
+        console.log(JSON.stringify(out));
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(Array.from({ length: 5 }, () => ({ alive: true, result, fired }))) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("native EventEmitter propagates an exception from a `_events` getter", () => {
   // The native EventEmitter prototype (process's) reads `this._events` when `this` is not a native
   // emitter; a throwing getter must propagate rather than become "invalid this".

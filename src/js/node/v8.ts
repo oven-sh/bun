@@ -1,7 +1,6 @@
 // Hardcoded module "node:v8"
 
-// This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
@@ -65,22 +64,27 @@ const DataViewPrototypeGetByteLength: ViewGetter<number> = ObjectGetOwnPropertyD
 )!.get!;
 const Uint8ArrayPrototypeSubarray = Uint8ArrayCtor.prototype.subarray;
 
-function notimpl(message) {
-  throwNotImplemented("node:v8 " + message);
-}
-
 class Deserializer {
   constructor() {
-    notimpl("Deserializer");
+    throwNotImplemented("node:v8 Deserializer");
   }
 }
 class Serializer {
   constructor() {
-    notimpl("Serializer");
+    throwNotImplemented("node:v8 Serializer");
   }
 }
-class DefaultDeserializer extends Deserializer {}
-class DefaultSerializer extends Serializer {}
+// The two constructors are written out: a printed error gives the frame of an implicit one no source position.
+class DefaultDeserializer extends Deserializer {
+  constructor(...args: []) {
+    super(...args);
+  }
+}
+class DefaultSerializer extends Serializer {
+  constructor() {
+    super();
+  }
+}
 // JSC manages one undivided heap, so a record carries a single space instead
 // of V8's thirteen, and counters JSC does not track are reported as 0 rather
 // than invented.
@@ -351,10 +355,10 @@ function deserialize(value) {
   return jsc.deserialize(value as ArrayBuffer);
 }
 function takeCoverage() {
-  notimpl("takeCoverage");
+  throwNotImplemented("node:v8 takeCoverage");
 }
 function stopCoverage() {
-  notimpl("stopCoverage");
+  throwNotImplemented("node:v8 stopCoverage");
 }
 function serialize(arg1) {
   const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
@@ -403,33 +407,39 @@ function writeHeapSnapshot(path, _options) {
   return path;
 }
 function setHeapSnapshotNearHeapLimit() {
-  notimpl("setHeapSnapshotNearHeapLimit");
+  throwNotImplemented("node:v8 setHeapSnapshotNearHeapLimit");
 }
-function throwNotBuildingSnapshot() {
+// A function per key, each with node's name and length: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/v8/startup_snapshot.js#L47
+function addDeserializeCallback(_callback, _data) {
   throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
+}
+function addSerializeCallback(_callback, _data) {
+  throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
+}
+function setDeserializeMainFunction(_callback, _data) {
+  throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
+}
+
+// A factory, as in node, so that the hooks have no name: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/promise_hooks.js#L90-L103
+function notImplementedHook(name) {
+  return _hook => {
+    throwNotImplemented("node:v8 " + name);
+  };
 }
 
 const promiseHooks = {
     createHook: () => {
-      notimpl("createHook");
+      throwNotImplemented("node:v8 createHook");
     },
-    onInit: () => {
-      notimpl("onInit");
-    },
-    onBefore: () => {
-      notimpl("onBefore");
-    },
-    onAfter: () => {
-      notimpl("onAfter");
-    },
-    onSettled: () => {
-      notimpl("onSettled");
-    },
+    onInit: notImplementedHook("onInit"),
+    onBefore: notImplementedHook("onBefore"),
+    onAfter: notImplementedHook("onAfter"),
+    onSettled: notImplementedHook("onSettled"),
   },
   startupSnapshot = {
-    addDeserializeCallback: throwNotBuildingSnapshot,
-    addSerializeCallback: throwNotBuildingSnapshot,
-    setDeserializeMainFunction: throwNotBuildingSnapshot,
+    addDeserializeCallback,
+    addSerializeCallback,
+    setDeserializeMainFunction,
     // Bun never builds a V8 startup snapshot, so this is always false, matching
     // Node's behavior during normal execution.
     isBuildingSnapshot: () => false,
@@ -458,25 +468,3 @@ export default {
   DefaultDeserializer,
   DefaultSerializer,
 };
-
-hideFromStack(
-  notimpl,
-  throwNotBuildingSnapshot,
-  cachedDataVersionTag,
-  getHeapSnapshot,
-  getHeapStatistics,
-  getHeapSpaceStatistics,
-  getHeapCodeStatistics,
-  getCppHeapStatistics,
-  setFlagsFromString,
-  deserialize,
-  takeCoverage,
-  stopCoverage,
-  serialize,
-  writeHeapSnapshot,
-  setHeapSnapshotNearHeapLimit,
-  Deserializer,
-  Serializer,
-  DefaultDeserializer,
-  DefaultSerializer,
-);

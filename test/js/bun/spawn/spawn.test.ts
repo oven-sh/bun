@@ -936,6 +936,111 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
   });
 });
 
+// Subprocess.unref() also covers the stdout and stderr pipes that the script has
+// not accessed yet: a stream first accessed after unref() holds no reference on
+// the event loop, and a stream accessed before it keeps its own. Programs use
+// both orders on purpose: unref() first for a reader in the background that must
+// not keep the process alive, the stream first for a read that must.
+describe("unref() and the first access to stdout or stderr", () => {
+  const reads = {
+    "stdout.getReader().read()": {
+      fd: 1,
+      stream: "child.stdout",
+      read: "stream.getReader().read().then(({ value }) => new TextDecoder().decode(value))",
+    },
+    "stdout.text()": { fd: 1, stream: "child.stdout", read: "stream.text()" },
+    "stderr.text()": { fd: 2, stream: "child.stderr", read: "stream.text()" },
+  };
+  const cases = [false, true].flatMap(lazy =>
+    Object.entries(reads).map(([name, read]) => ({ ...read, lazy, title: name + (lazy ? " (lazy)" : "") })),
+  );
+
+  // The child writes "pong" to `fd` once it gets "ping". If its parent exits
+  // first, its stdin ends and it writes nothing. `body` has no top-level await:
+  // an unsettled entry-module promise keeps the process running on its own.
+  function script(fd: number, lazy: boolean, body: string) {
+    const child = `const fs = require("fs"); if (fs.readSync(0, Buffer.alloc(4)) === 4) fs.writeSync(${fd}, "pong");`;
+    return `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: ${lazy},
+      });
+      ${body}
+    `;
+  }
+  const ping = `child.stdin.write("ping"); child.stdin.end();`;
+  const delivered = { stdout: "pong\n", stderr: "", exitCode: 0 };
+
+  describe("a stream accessed before unref() keeps the process alive", () => {
+    for (const { title, fd, stream, read, lazy } of cases) {
+      it.concurrent(title, async () => {
+        const body = `
+          const stream = ${stream};
+          child.unref();
+          // Only this read is left to wait for.
+          ${read}.then(text => console.log(text));
+          ${ping}
+        `;
+        expect(await runInFreshProcess(script(fd, lazy, body))).toEqual(delivered);
+      });
+    }
+  });
+
+  describe("a stream first accessed after unref() does not keep the process alive", () => {
+    for (const { title, fd, stream, read, lazy } of cases) {
+      it.concurrent(title, async () => {
+        // No "ping", so the child writes nothing: the process exits with the read pending.
+        const body = `
+          child.unref();
+          const stream = ${stream};
+          let settled = false;
+          ${read}.then(() => (settled = true));
+          process.on("exit", () => console.log(JSON.stringify({ settled })));
+        `;
+        const exited = { stdout: '{"settled":false}\n', stderr: "", exitCode: 0 };
+        expect(await runInFreshProcess(script(fd, lazy, body))).toEqual(exited);
+      });
+    }
+  });
+
+  describe("a stream first accessed after unref() delivers while a timer keeps the process alive", () => {
+    for (const { title, fd, stream, read, lazy } of cases) {
+      it.concurrent(title, async () => {
+        const body = `
+          child.unref();
+          const stream = ${stream};
+          const timer = setInterval(() => {}, 2 ** 30);
+          ${read}.then(text => {
+            console.log(text);
+            clearInterval(timer);
+          });
+          ${ping}
+        `;
+        expect(await runInFreshProcess(script(fd, lazy, body))).toEqual(delivered);
+      });
+    }
+  });
+
+  describe("ref() before the first access gives the stream its reference back", () => {
+    for (const { title, fd, stream, read, lazy } of cases) {
+      it.concurrent(title, async () => {
+        const body = `
+          child.unref();
+          child.ref();
+          const stream = ${stream};
+          child.unref();
+          ${read}.then(text => console.log(text));
+          ${ping}
+        `;
+        expect(await runInFreshProcess(script(fd, lazy, body))).toEqual(delivered);
+      });
+    }
+  });
+});
+
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
   // body and never dequeue the IOCP exit packet, so these children busy-spun

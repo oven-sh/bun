@@ -28,12 +28,10 @@ fn posix_dirname(path: &[u8]) -> &[u8] {
     if end == 0 {
         return if path.is_empty() { b"." } else { b"/" };
     }
-    while end > 0 && path[end - 1] != b'/' {
-        end -= 1;
-    }
-    if end == 0 {
+    let Some(slash) = bun_core::strings::last_index_of_char(&path[..end], b'/') else {
         return b".";
-    }
+    };
+    end = slash + 1;
     while end > 0 && path[end - 1] == b'/' {
         end -= 1;
     }

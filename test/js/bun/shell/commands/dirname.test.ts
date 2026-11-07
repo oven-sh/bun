@@ -52,9 +52,9 @@ describe("dirname", async () => {
     .runAsTest("dot components");
 
   // POSIX dirname step 7: strip every trailing slash of the remaining prefix (issue #48111).
-  TestBuilder.command`dirname a//b /a//b a///b a//b/ a//b// ///a///b///`
+  TestBuilder.command`dirname a//b /a//b a///b a//b/ a//b// ///a///b/// a//b/c`
     .exitCode(0)
-    .stdout("a\n/a\na\na\na\n///a\n")
+    .stdout("a\n/a\na\na\na\n///a\na//b\n")
     .stderr("")
     .runAsTest("strips the run of slashes before the last component");
 });

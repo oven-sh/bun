@@ -761,11 +761,11 @@ const mapLookupAll = (res: LookupAddress) => {
 
 function throwIfEmpty(res: unknown[]) {
   if (res.length === 0) {
-    const err: DNSException = new Error("No records found");
+    const err: DNSException = new Error("getaddrinfo ENOTFOUND");
     err.name = "DNSException";
-    err.code = "ENODATA";
+    err.code = "ENOTFOUND";
     // Hardcoded errno
-    err.errno = 1;
+    err.errno = 4;
     err.syscall = "getaddrinfo";
     throw err;
   }

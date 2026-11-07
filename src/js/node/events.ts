@@ -837,8 +837,23 @@ shared.originals.eventEmitter = {
   listenerCount: listenerCountMethod,
 };
 
+// https://github.com/nodejs/node/blob/v26.12.1/lib/events.js#L872-L883
 EventEmitterPrototype.eventNames = function eventNames(this: $Node.EventEmitter) {
-  return this._eventsCount > 0 ? Reflect.ownKeys(this._events!) : [];
+  if (this._eventsCount === 0) return [];
+  const events = this._events!;
+  const keys = ReflectOwnKeys(events);
+  const { length } = keys;
+  // `_eventsCount` cannot stand in for this scan: emitter-listener (under cls-hooked) stores `undefined` over a slot it still counts.
+  let i = 0;
+  while (i < length && events[keys[i]] !== undefined) i++;
+  if (i === length) return keys;
+  const names: $Node.EventName[] = [];
+  for (let j = 0; j < i; j++) $arrayPush(names, keys[j]);
+  for (i++; i < length; i++) {
+    const key = keys[i];
+    if (events[key] !== undefined) $arrayPush(names, key);
+  }
+  return names;
 };
 
 EventEmitterPrototype[kCapture] = false;

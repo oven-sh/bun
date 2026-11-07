@@ -31,7 +31,9 @@ bun_core.workspace = true
 bun_md.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
+bun_text_diff.workspace = true
 bun_threading.workspace = true
+bun_url.workspace = true
 bun_zstd.workspace = true
 bstr.workspace = true
 

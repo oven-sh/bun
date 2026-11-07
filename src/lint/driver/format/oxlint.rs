@@ -55,7 +55,7 @@ pub(super) fn is_error(message: &LintMessage) -> bool {
 }
 
 /// Converts ESLint's lines and columns to byte offsets.
-pub(super) struct Offsets<'t> {
+pub(crate) struct Offsets<'t> {
     text: &'t [u8],
     /// Where each line starts.
     pub(super) lines: LineStarts,
@@ -87,7 +87,7 @@ fn sizes(first: u8) -> Sizes {
 
 impl<'t> Offsets<'t> {
     /// `lines` has the start of each line.
-    pub(super) fn new(text: &'t [u8], lines: LineStarts) -> Offsets<'t> {
+    pub(crate) fn new(text: &'t [u8], lines: LineStarts) -> Offsets<'t> {
         Offsets {
             text,
             lines,
@@ -137,7 +137,7 @@ impl<'t> Offsets<'t> {
 
     /// Takes a 1-based line and a 1-based column in UTF-16 code units. Returns the byte offset and the 1-based column
     /// in bytes.
-    pub(super) fn at(&self, line: u32, column: u32) -> (usize, usize) {
+    pub(crate) fn at(&self, line: u32, column: u32) -> (usize, usize) {
         let start = match line {
             0 | 1 => self.start,
             line => (self.lines.start_of(line)).map_or(self.text.len(), |it| it as usize),

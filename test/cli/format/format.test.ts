@@ -4389,6 +4389,26 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    test.skipIf(isWindows)(
+      "what Prettier logs goes to stderr, and stdout is the formatted text alone",
+      async () => {
+        const logging = {
+          ...files,
+          "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async text => {
+  console.log("from Prettier");
+  return text.replace(/ +/g, " ");
+};
+`,
+        };
+        const result = await format(logging, ["--stdin-filepath", "c.astro"], { stdin: "<p   >c</p>\n" });
+        expect(result.raw).toBe("<p >c</p>\n");
+        expect(result.stderr).toBe("from Prettier");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
     test(
       "--parser with the plugin's parser: piped code goes to Prettier without a file name",
       async () => {
@@ -11246,8 +11266,9 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
         return [flag, /expected [\w ]+ but received array|cannot be set in bunfig\.toml/.test(stderr)];
       }),
     );
-    // Prettier and oxfmt flags that aren't project settings, or that do nothing.
+    // --lsp, and Prettier and oxfmt flags that aren't project settings, or that do nothing.
     expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
+      "lsp",
       "parser",
       "plugin",
       "jsx-bracket-same-line",
@@ -11255,7 +11276,6 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
       "cache-location",
       "cache-strategy",
       "experimental-cli",
-      "lsp",
     ]);
   });
 });

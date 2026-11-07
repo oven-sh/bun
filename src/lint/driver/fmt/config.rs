@@ -1056,6 +1056,11 @@ impl<'c> Configs<'c> {
         Configs::with(Cow::Owned(options), environment, true)
     }
 
+    /// [`Configs::new`] with the options owned, for a caller that keeps the configs longer than a run.
+    pub(crate) fn owned(options: Options, environment: &'c Environment<'c>) -> Configs<'c> {
+        Configs::with(Cow::Owned(options), environment, false)
+    }
+
     fn with(
         options: Cow<'c, Options>,
         environment: &'c Environment<'c>,

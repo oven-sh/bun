@@ -261,8 +261,8 @@ describe("alpnProtocol of a TLS socket has one code unit for each byte of the pr
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExeAtLeast } = await import("harness");
-  // Node.js runs a .ts file with no flag from v23.6.0.
-  const node = nodeExeAtLeast("23.6.0");
+  // Node.js parses the `await using` below from v24.0.0.
+  const node = nodeExeAtLeast("24.0.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

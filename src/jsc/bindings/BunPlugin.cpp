@@ -4475,6 +4475,24 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
 }
 
+bool isESModulePatchedByMockModule(JSC::JSModuleLoader* loader, const String& key, JSC::JSObject* moduleMock)
+{
+    auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
+    // jest.mock() and vi.mock() patch a module only to reach its importers: as in Jest, require() gets what the factory returned.
+    if (!mock || mock->function != Zig::ModuleMockFunction::MockModule)
+        return false;
+    // Until its own patch lands, a mock has the namespace object that the mock before it patched.
+    if (!mock->patchedNamespace || mock->hasPendingPatch)
+        return false;
+    auto* record = mock->patchedNamespace->moduleRecord();
+    // require() would run the body of any other record ahead of its turn and over the patch, or throw again what it threw.
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    if (cyclic && (cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated || cyclic->evaluationError()))
+        return false;
+    auto* entry = loader->registryEntry(JSC::Identifier::fromString(loader->vm(), key));
+    return entry && entry->record() == record;
+}
+
 static bool hasUncalledFactoryThatAwaits(Zig::JSModuleMock* mock)
 {
     if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)

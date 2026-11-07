@@ -231,6 +231,8 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, con
 bool isModuleMockInUse(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 // The exports, or a JSCommonJSModule that has them as `module.exports`. Null until the factory settles.
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
+// mock.module() has patched in place the ES module that `loader` holds as `key`, which keeps the exports the factory left out.
+bool isESModulePatchedByMockModule(JSC::JSModuleLoader*, const String& key, JSC::JSObject* moduleMock);
 // The factory is an async function that is running, or that nothing has called. require() can't wait for it, and calling it
 // from there would make the test file the file of a running factory, whose own import of the module gets the original.
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);

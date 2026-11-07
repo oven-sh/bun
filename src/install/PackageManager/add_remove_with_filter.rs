@@ -16,7 +16,7 @@ use bun_sys::{Fd, File};
 use super::add_catalog;
 use super::install_with_manager::install_with_manager;
 use super::options::LogLevel;
-use super::package_json_editor::EditOptions;
+use super::package_json_editor::{EditOptions, KeptEntries};
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
     package_json_entry_or_crash, remove_dependencies_from_package_json,
@@ -592,6 +592,7 @@ impl PendingWrite {
         &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
+        kept_entries: KeptEntries<'_>,
     ) -> Result<(), Error> {
         let dependency_list: &'static [u8] = manager.options.update.prop;
         let exact_versions = manager.options.enable.exact_versions();
@@ -619,6 +620,7 @@ impl PendingWrite {
                 dependency_list,
                 EditOptions {
                     exact_versions,
+                    kept: kept_entries,
                     ..Default::default()
                 },
             );

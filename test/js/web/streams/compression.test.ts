@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { once } from "node:events";
+import { join } from "node:path";
 import { addAbortSignal } from "node:stream";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import zlib from "node:zlib";
@@ -827,6 +828,264 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     ).text();
 
     expect(decoded).toBe("hello world");
+  });
+});
+
+// A DecompressionStream that meets bad input fails with the TypeError the spec
+// asks for. As on Node.js (v26.3.0 and v26.12.1) that TypeError has no message,
+// an own `code`, and as `cause` the Error that node:zlib reports for the same
+// bytes (`message`, `errno`, `code`). Programs tell a cut-off stream
+// (Z_BUF_ERROR) from a corrupt one (Z_DATA_ERROR) by the code, and some treat
+// an error without a message as the decoder's own.
+describe("DecompressionStream error code and cause", () => {
+  const plain = Buffer.alloc(260, "made-up text ");
+  const valid = {
+    gzip: zlib.gzipSync(plain),
+    deflate: zlib.deflateSync(plain),
+    "deflate-raw": zlib.deflateRawSync(plain),
+    brotli: zlib.brotliCompressSync(plain),
+    zstd: zlib.zstdCompressSync(plain),
+  };
+  const syncDecoders = {
+    gzip: zlib.gunzipSync,
+    deflate: zlib.inflateSync,
+    "deflate-raw": zlib.inflateRawSync,
+    brotli: zlib.brotliDecompressSync,
+    zstd: zlib.zstdDecompressSync,
+  };
+  type Format = keyof typeof valid;
+  type ZlibError = { message: string; errno: number; code: string };
+
+  const cutShort = (format: Format) => valid[format].subarray(0, valid[format].length - 3);
+  const flipBit = (bytes: Buffer, fromEnd: number) => {
+    const copy = Buffer.from(bytes);
+    copy[copy.length - fromEnd] ^= 1;
+    return copy;
+  };
+  const otherFormat = Buffer.alloc(20, "x");
+  const empty = Buffer.alloc(0);
+
+  const endsEarly: ZlibError = { message: "unexpected end of file", errno: -5, code: "Z_BUF_ERROR" };
+  const corrupt = (message: string): ZlibError => ({ message, errno: -3, code: "Z_DATA_ERROR" });
+
+  // Writes `chunks`, closes, and reads to the end. Returns what each side saw.
+  async function decompress(format: Format, chunks: Uint8Array[]) {
+    const ds = new DecompressionStream(format);
+    const writer = ds.writable.getWriter();
+    const writes = chunks.map(chunk =>
+      writer.write(chunk).then(
+        () => undefined,
+        e => e,
+      ),
+    );
+    const closed = writer.close().then(
+      () => undefined,
+      e => e,
+    );
+    const reader = ds.readable.getReader();
+    const received: Uint8Array[] = [];
+    let read: any;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received.push(value);
+      }
+    } catch (e) {
+      read = e;
+    }
+    return { read, received: Buffer.concat(received), writes: await Promise.all(writes), closed: await closed };
+  }
+
+  // A write either is fulfilled or rejects with the error object that the reader got.
+  const outcomes = (writes: unknown[], read: unknown) =>
+    writes.map(write => (write === undefined ? "fulfilled" : write === read ? "same error" : write));
+
+  // What a program can see of a node:zlib error.
+  const zlibErrorShape = (error: any) => ({
+    name: error.constructor.name,
+    message: error.message,
+    enumerable: Object.keys(error),
+    errno: error.errno,
+    code: error.code,
+  });
+  const streamErrorShape = (error: any) => {
+    const cause = Object.getOwnPropertyDescriptor(error, "cause");
+    return {
+      name: error.constructor.name,
+      message: error.message,
+      enumerable: Object.keys(error),
+      code: Object.getOwnPropertyDescriptor(error, "code"),
+      cause: cause && { ...cause, value: zlibErrorShape(cause.value) },
+    };
+  };
+  const expectedZlibError = ({ message, errno, code }: ZlibError) => ({
+    name: "Error",
+    message,
+    enumerable: ["errno", "code"],
+    errno,
+    code,
+  });
+  const expectedStreamError = (zlibError: ZlibError) => ({
+    name: "TypeError",
+    message: "",
+    enumerable: ["code"],
+    code: { value: zlibError.code, writable: true, enumerable: true, configurable: true },
+    cause: { value: expectedZlibError(zlibError), writable: true, enumerable: false, configurable: true },
+  });
+
+  const rows: [Format, string, Buffer, ZlibError][] = [
+    ["gzip", "input that ends early", cutShort("gzip"), endsEarly],
+    ["gzip", "no input", empty, endsEarly],
+    ["gzip", "a wrong checksum", flipBit(valid.gzip, 6), corrupt("incorrect data check")],
+    ["gzip", "another format", otherFormat, corrupt("incorrect header check")],
+    ["gzip", "two zero bytes", Buffer.alloc(2), corrupt("incorrect header check")],
+    ["deflate", "input that ends early", cutShort("deflate"), endsEarly],
+    ["deflate", "no input", empty, endsEarly],
+    ["deflate", "a wrong checksum", flipBit(valid.deflate, 1), corrupt("incorrect data check")],
+    ["deflate", "another format", otherFormat, corrupt("incorrect header check")],
+    ["deflate", "two zero bytes", Buffer.alloc(2), corrupt("unknown compression method")],
+    [
+      "deflate",
+      "a header that asks for a preset dictionary",
+      Buffer.from([0x78, 0xbb, 0, 0, 0, 0, 1]),
+      { message: "Missing dictionary", errno: 2, code: "Z_NEED_DICT" },
+    ],
+    ["deflate-raw", "input that ends early", cutShort("deflate-raw"), endsEarly],
+    ["deflate-raw", "no input", empty, endsEarly],
+    ["deflate-raw", "another format", otherFormat, corrupt("invalid stored block lengths")],
+    ["deflate-raw", "a reserved block type", Buffer.alloc(41, 0xff).fill(0x07, 0, 1), corrupt("invalid block type")],
+    ["brotli", "input that ends early", cutShort("brotli"), endsEarly],
+    ["brotli", "no input", empty, endsEarly],
+    [
+      "brotli",
+      "another format",
+      otherFormat,
+      { message: "Decompression failed", errno: -14, code: "ERR__ERROR_FORMAT_PADDING_1" },
+    ],
+    [
+      "zstd",
+      "another format",
+      otherFormat,
+      { message: "Unknown frame descriptor", errno: 10, code: "ZSTD_error_prefix_unknown" },
+    ],
+    [
+      "zstd",
+      "a frame header with reserved bits",
+      Buffer.alloc(20, 0xff).fill(Buffer.from([0x28, 0xb5, 0x2f, 0xfd]), 0, 4),
+      { message: "Unsupported frame parameter", errno: 14, code: "ZSTD_error_frameParameter_unsupported" },
+    ],
+  ];
+
+  test.each(rows)("%s: %s", async (format, _, bytes, zlibError) => {
+    const { read, closed } = await decompress(format, [bytes]);
+    expect(read).toBeInstanceOf(TypeError);
+    expect(streamErrorShape(read)).toEqual(expectedStreamError(zlibError));
+    // close() rejects with the same object.
+    expect(closed).toBe(read);
+
+    // The cause is what node:zlib throws for the same bytes.
+    let thrown: any;
+    try {
+      syncDecoders[format](bytes);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(zlibErrorShape(thrown)).toEqual(expectedZlibError(zlibError));
+  });
+
+  // Bun's node:zlib zstd decoder does not report a cut-off frame yet, so there is
+  // no sync call to compare with. The cause is what Node.js v26.6.0 and later
+  // throw from zlib.zstdDecompressSync() for these bytes.
+  test.each([
+    ["input that ends early", cutShort("zstd")],
+    ["no input", empty],
+  ] as const)("zstd: %s", async (_, bytes) => {
+    const { read, closed } = await decompress("zstd", [bytes]);
+    expect(read).toBeInstanceOf(TypeError);
+    expect(streamErrorShape(read)).toEqual(expectedStreamError(endsEarly));
+    expect(closed).toBe(read);
+  });
+
+  // A chunk over 128 KiB is decoded on the thread pool: the failure is carried
+  // to the JS thread and becomes the error there.
+  test("a chunk over 128 KiB fails with the same error from the thread pool", async () => {
+    const { read, writes, closed } = await decompress("gzip", [Buffer.alloc(200 * 1024, "x")]);
+    expect(read).toBeInstanceOf(TypeError);
+    expect(streamErrorShape(read)).toEqual(expectedStreamError(corrupt("incorrect header check")));
+    expect(outcomes(writes, read)).toEqual(["same error"]);
+    expect(closed).toBe(read);
+  });
+
+  // The output of one chunk is produced in steps of 64 KiB. Here the checksum
+  // at the very end is wrong, so the first steps succeed and a later one fails.
+  test("a chunk that fails in a later step of its expansion gives the same error", async () => {
+    const expanded = Buffer.alloc(1024 * 1024, "A");
+    const { read, received, writes, closed } = await decompress("gzip", [flipBit(zlib.gzipSync(expanded), 6)]);
+    expect(read).toBeInstanceOf(TypeError);
+    expect(streamErrorShape(read)).toEqual(expectedStreamError(corrupt("incorrect data check")));
+    expect(received.length).toBeGreaterThanOrEqual(64 * 1024);
+    expect(received.equals(expanded.subarray(0, received.length))).toBe(true);
+    expect(outcomes(writes, read)).toEqual(["same error"]);
+    expect(closed).toBe(read);
+  });
+
+  // Bun.write() attaches its file sink to the stream, so the decoder writes
+  // into the sink and never enqueues on the readable side.
+  test.each([
+    ["bytes in another format", otherFormat, corrupt("incorrect header check")],
+    ["input that ends early", cutShort("gzip"), endsEarly],
+  ] as const)("a native sink as the consumer gets the same error for %s", async (_, bytes, zlibError) => {
+    using dir = tempDir("decompression-stream-error", {});
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const written = Bun.write(join(String(dir), "out"), new Response(ds.readable)).then(
+      () => undefined,
+      e => e,
+    );
+    writer.write(bytes).catch(() => {});
+    const closed = writer.close().then(
+      () => undefined,
+      e => e,
+    );
+    const error = await written;
+    expect(error).toBeInstanceOf(TypeError);
+    expect(streamErrorShape(error)).toEqual(expectedStreamError(zlibError));
+    expect(await closed).toBe(error);
+  });
+
+  // The decoder goes on with the next gzip member (RFC 1952 section 2.2). These
+  // tests pin the code of a failure in that member, not the rule itself.
+  describe("after a gzip member", () => {
+    const member = valid.gzip;
+
+    test("a member that ends early is Z_BUF_ERROR", async () => {
+      const { read, received, writes, closed } = await decompress("gzip", [Buffer.concat([member, cutShort("gzip")])]);
+      expect(read).toBeInstanceOf(TypeError);
+      expect(streamErrorShape(read)).toEqual(expectedStreamError(endsEarly));
+      expect(received.subarray(0, plain.length).equals(plain)).toBe(true);
+      expect(outcomes(writes, read)).toEqual(["fulfilled"]);
+      expect(closed).toBe(read);
+    });
+
+    const notAMember: [string, Buffer[], string[]][] = [
+      ["in the same chunk", [Buffer.concat([member, otherFormat])], ["same error"]],
+      ["in the next chunk", [member, otherFormat], ["fulfilled", "same error"]],
+    ];
+    test.each(notAMember)("bytes that are not a member are Z_DATA_ERROR (%s)", async (_, chunks, writeOutcomes) => {
+      const { read, writes, closed } = await decompress("gzip", chunks);
+      expect(read).toBeInstanceOf(TypeError);
+      expect(streamErrorShape(read)).toEqual(expectedStreamError(corrupt("incorrect header check")));
+      expect(outcomes(writes, read)).toEqual(writeOutcomes);
+      expect(closed).toBe(read);
+    });
+
+    test("the next member in the next chunk still decodes", async () => {
+      const { read, received, writes, closed } = await decompress("gzip", [member, member]);
+      expect({ read, writes, closed }).toEqual({ read: undefined, writes: [undefined, undefined], closed: undefined });
+      expect(received.equals(Buffer.concat([plain, plain]))).toBe(true);
+    });
   });
 });
 

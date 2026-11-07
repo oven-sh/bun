@@ -121,14 +121,16 @@ impl ZStream {
         unsafe { (*self.as_ptr()).err_msg }
     }
 
-    /// `msg` as bytes, if zlib set one.
-    pub fn error_message(&self) -> Option<&[u8]> {
+    /// `msg` as bytes, if zlib set one. They outlive the stream.
+    pub fn error_message(&self) -> Option<&'static [u8]> {
         let msg = self.err_msg();
         if msg.is_null() {
             return None;
         }
-        // SAFETY: zlib sets `msg` to a NUL-terminated static C string.
-        Some(unsafe { bun_core::ffi::cstr(msg) }.to_bytes())
+        // SAFETY: zlib only points `msg` at a string literal (`SET_BAD` in
+        // inflate_p.h) or at an entry of its `z_errmsg` table (`ERR_RETURN` in
+        // zutil.h): NUL-terminated and never freed.
+        Some(unsafe { bun_core::ffi::cstr::<'static>(msg) }.to_bytes())
     }
 
     /// Point `next_in`/`avail_in` at the next input chunk.

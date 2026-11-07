@@ -1,4 +1,4 @@
-use core::ffi::c_int;
+use core::ffi::{CStr, c_int};
 
 // #define Z_BINARY   0
 // #define Z_TEXT     1
@@ -33,6 +33,23 @@ pub enum ReturnCode {
     MemError = -4,
     BufError = -5,
     VersionError = -6,
+}
+
+impl ReturnCode {
+    /// The name of the constant in `zlib.h`, which `node:zlib` reports as an error's `code`.
+    pub const fn name(self) -> &'static CStr {
+        match self {
+            Self::Ok => c"Z_OK",
+            Self::StreamEnd => c"Z_STREAM_END",
+            Self::NeedDict => c"Z_NEED_DICT",
+            Self::ErrNo => c"Z_ERRNO",
+            Self::StreamError => c"Z_STREAM_ERROR",
+            Self::DataError => c"Z_DATA_ERROR",
+            Self::MemError => c"Z_MEM_ERROR",
+            Self::BufError => c"Z_BUF_ERROR",
+            Self::VersionError => c"Z_VERSION_ERROR",
+        }
+    }
 }
 
 // #define Z_NO_FLUSH      0

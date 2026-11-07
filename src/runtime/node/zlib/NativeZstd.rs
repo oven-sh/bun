@@ -542,56 +542,7 @@ mod _impl {
                 Error {
                     err: err as c_int,
                     msg: c::ZSTD_getErrorString(err),
-                    code: match err {
-                        c::ZSTD_error_no_error => c"ZSTD_error_no_error",
-                        c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",
-                        c::ZSTD_error_prefix_unknown => c"ZSTD_error_prefix_unknown",
-                        c::ZSTD_error_version_unsupported => c"ZSTD_error_version_unsupported",
-                        c::ZSTD_error_frameParameter_unsupported => {
-                            c"ZSTD_error_frameParameter_unsupported"
-                        }
-                        c::ZSTD_error_frameParameter_windowTooLarge => {
-                            c"ZSTD_error_frameParameter_windowTooLarge"
-                        }
-                        c::ZSTD_error_corruption_detected => c"ZSTD_error_corruption_detected",
-                        c::ZSTD_error_checksum_wrong => c"ZSTD_error_checksum_wrong",
-                        c::ZSTD_error_literals_headerWrong => c"ZSTD_error_literals_headerWrong",
-                        c::ZSTD_error_dictionary_corrupted => c"ZSTD_error_dictionary_corrupted",
-                        c::ZSTD_error_dictionary_wrong => c"ZSTD_error_dictionary_wrong",
-                        c::ZSTD_error_dictionaryCreation_failed => {
-                            c"ZSTD_error_dictionaryCreation_failed"
-                        }
-                        c::ZSTD_error_parameter_unsupported => c"ZSTD_error_parameter_unsupported",
-                        c::ZSTD_error_parameter_combination_unsupported => {
-                            c"ZSTD_error_parameter_combination_unsupported"
-                        }
-                        c::ZSTD_error_parameter_outOfBound => c"ZSTD_error_parameter_outOfBound",
-                        c::ZSTD_error_tableLog_tooLarge => c"ZSTD_error_tableLog_tooLarge",
-                        c::ZSTD_error_maxSymbolValue_tooLarge => {
-                            c"ZSTD_error_maxSymbolValue_tooLarge"
-                        }
-                        c::ZSTD_error_maxSymbolValue_tooSmall => {
-                            c"ZSTD_error_maxSymbolValue_tooSmall"
-                        }
-                        c::ZSTD_error_stabilityCondition_notRespected => {
-                            c"ZSTD_error_stabilityCondition_notRespected"
-                        }
-                        c::ZSTD_error_stage_wrong => c"ZSTD_error_stage_wrong",
-                        c::ZSTD_error_init_missing => c"ZSTD_error_init_missing",
-                        c::ZSTD_error_memory_allocation => c"ZSTD_error_memory_allocation",
-                        c::ZSTD_error_workSpace_tooSmall => c"ZSTD_error_workSpace_tooSmall",
-                        c::ZSTD_error_dstSize_tooSmall => c"ZSTD_error_dstSize_tooSmall",
-                        c::ZSTD_error_srcSize_wrong => c"ZSTD_error_srcSize_wrong",
-                        c::ZSTD_error_dstBuffer_null => c"ZSTD_error_dstBuffer_null",
-                        c::ZSTD_error_noForwardProgress_destFull => {
-                            c"ZSTD_error_noForwardProgress_destFull"
-                        }
-                        c::ZSTD_error_noForwardProgress_inputEmpty => {
-                            c"ZSTD_error_noForwardProgress_inputEmpty"
-                        }
-                        _ => c"ZSTD_error_GENERIC",
-                    }
-                    .as_ptr(),
+                    code: bun_zstd::error_code_name(err).as_ptr(),
                 }
             };
             self.remaining = 0;

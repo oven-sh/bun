@@ -3378,7 +3378,7 @@ describe.concurrent("the next test doesn't start inside the call that ended the 
 });
 
 // The runner's timer decides, by the clock of its fire, what has timed out. A step of the runner acts on that later,
-// behind other callbacks, so a step compares no limit with the clock.
+// behind other callbacks, so a step does not time out an entry that still runs by its own clock.
 describe.concurrent("a test or hook times out only if its limit has passed when the runner's timer fires", () => {
   // Milliseconds. The files hold the thread with Bun.sleepSync(), as slow synchronous code does. No result needs a wait
   // to be short: an entry that has to end in time has `limit - body` to spare.

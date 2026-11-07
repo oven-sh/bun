@@ -1348,13 +1348,15 @@ describe.concurrent("a matcher of a test that the runner's timer has timed out",
       test("first", () => {}, 100);
       test("t", done => {
         expect(settles).resolves.toBe(1);
-        done();
         setTimeout(() => {
-          Promise.resolve().then(() => Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] }));
-        }, 10);
-        setTimeout(() => resolve(1), 120);
-        hold(150);
-        Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: () => later(0, 50) }] });
+          done();
+          setTimeout(() => {
+            Promise.resolve().then(() => Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] }));
+          }, 10);
+          setTimeout(() => resolve(1), 120);
+          hold(150);
+          Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: () => later(0, 50) }] });
+        });
       }, ${limit});
       test("next", () => {});`,
     );

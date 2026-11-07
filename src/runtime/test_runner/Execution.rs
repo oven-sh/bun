@@ -490,7 +490,7 @@ impl Execution {
         }
     }
 
-    /// Queues a `TimedOut` for each running entry that is past its deadline at `now`, the clock of the file timer's fire. A step acts on it later, behind other callbacks, so no step times out an entry by its own clock.
+    /// Queues a `TimedOut` for each running entry that is past its deadline at `now`, the clock of the file timer's fire. A step acts on it later, behind other callbacks, so no step times out an entry that still runs by its own clock.
     pub(crate) fn judge(buntest: &mut BunTest, global_this: &JSGlobalObject, now: &Timespec) -> Judged {
         let this = &mut buntest.execution;
         let group_index = this.group_index;

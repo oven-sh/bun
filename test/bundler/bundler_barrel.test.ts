@@ -2195,6 +2195,299 @@ describe("bundler", () => {
     },
   });
 
+  // `import()` of the barrel wraps it in a lazy `__esm` init. The barrel's
+  // `export *` target transitively has a top-level await, so the init of that
+  // target returns a promise and the barrel's init must await it, the same as
+  // for `import` / `export {} from`.
+  // https://github.com/oven-sh/bun/issues/47572
+  itBundled("barrel/ExportStarAwaitsAsyncTarget", {
+    files: {
+      "/main.js": /* js */ `
+        import { thing } from './consumer.js'
+        import { load } from './lazy.js'
+        console.log('ok', thing.ok, typeof (await load()).Thing)
+      `,
+      "/consumer.js": /* js */ `
+        import { Thing } from './barrel.js'
+        export const thing = new Thing()
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          return import('./barrel.js')
+        }
+      `,
+      "/barrel.js": /* js */ `export * from './reexport.js'`,
+      "/reexport.js": /* js */ `export { Thing } from './facade.js'`,
+      "/facade.js": /* js */ `
+        import { client } from './tla.js'
+        export const Thing = client && class { constructor() { this.ok = true } }
+      `,
+      "/tla.js": /* js */ `
+        export const client = await new Promise(r => setTimeout(() => r('client'), 10))
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "ok true function",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(/var init_barrel = __esm\(async \(\) => \{\s*await init_reexport\(\);\s*\}\);/);
+    },
+  });
+
+  // Two async `export *` targets are awaited one after the other, in source
+  // order.
+  itBundled("barrel/TwoExportStarsAwaitInOrder", {
+    files: {
+      "/main.js": /* js */ `
+        import { a, b } from './barrel.js'
+        import { load } from './lazy.js'
+        console.log(a, b, typeof (await load()).a)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          return import('./barrel.js')
+        }
+      `,
+      "/barrel.js": /* js */ `
+        export * from './a.js'
+        export * from './b.js'
+      `,
+      "/a.js": /* js */ `export const a = await Promise.resolve('A')`,
+      "/b.js": /* js */ `export const b = await Promise.resolve('B')`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "A B string",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(/var init_barrel = __esm\(async \(\) => \{\s*await init_a\(\);\s*await init_b\(\);\s*\}\);/);
+    },
+  });
+
+  // The barrel itself is not wrapped (only its targets are lazily loaded), so
+  // the awaits are printed at the top level of the chunk.
+  itBundled("barrel/UnwrappedBarrelAwaitsAsyncExportStarTargets", {
+    files: {
+      "/main.js": /* js */ `
+        import { a, b } from './barrel.js'
+        import { load } from './lazy.js'
+        console.log(a, b, typeof (await load()).a)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          await import('./b.js')
+          return import('./a.js')
+        }
+      `,
+      "/barrel.js": /* js */ `
+        export * from './a.js'
+        export * from './b.js'
+      `,
+      "/a.js": /* js */ `export const a = await Promise.resolve('A')`,
+      "/b.js": /* js */ `export const b = await Promise.resolve('B')`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "A B string",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).not.toContain("init_barrel");
+      expect(out).toMatch(/^await init_a\(\);\nawait init_b\(\);$/m);
+    },
+  });
+
+  // An import cycle through the barrel: the `export *` target is async and
+  // the barrel's own flag may or may not be set, depending on which file the
+  // linker visits first. Either way the bundle has to load and run.
+  itBundled("barrel/ExportStarInCycleWithAsyncTargetLoads", {
+    files: {
+      "/main.js": /* js */ `
+        import { a } from './alpha.js'
+        import { load } from './lazy.js'
+        const X = await load()
+        console.log('ok', a, X.x, X.c)
+      `,
+      "/lazy.js": /* js */ `export function load() { return import('./xray.js') }`,
+      "/xray.js": /* js */ `
+        export * from './charlie.js'
+        export const x = 'X'
+      `,
+      "/charlie.js": /* js */ `
+        import './xray.js'
+        import { a } from './alpha.js'
+        export const c = 'C'
+        export function getA() { return a }
+      `,
+      "/alpha.js": /* js */ `
+        import { c } from './charlie.js'
+        import { b } from './bravo.js'
+        export const a = 'A' + b + c
+      `,
+      "/bravo.js": /* js */ `export const b = await Promise.resolve('B')`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "ok ABC X C",
+    },
+  });
+
+  // An `export *` target with its own sync `__esm` wrapper (it is lazily
+  // loaded too) keeps a plain init call.
+  itBundled("barrel/ExportStarSyncTargetIsNotAwaited", {
+    files: {
+      "/main.js": /* js */ `
+        import { a } from './barrel.js'
+        import { load } from './lazy.js'
+        console.log(a, typeof (await load()).a)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          await import('./a.js')
+          return import('./barrel.js')
+        }
+      `,
+      "/barrel.js": /* js */ `export * from './a.js'`,
+      "/a.js": /* js */ `export const a = String('A')`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "A string",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(/var init_barrel = __esm\(\(\) => \{\s*init_a\(\);\s*\}\);/);
+      expect(out).not.toContain("await init_a");
+    },
+  });
+
+  // An async `export *` init stays in source order after a CommonJS import
+  // too: the polyfill still runs before the library.
+  itBundled("barrel/ExportStarAsyncTargetKeepsSourceOrderAfterCommonJSImport", {
+    files: {
+      "/main.js": /* js */ `
+        import { load } from './lazy.js'
+        console.log(typeof (await load()).x)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          return import('./barrel.js')
+        }
+      `,
+      "/barrel.js": /* js */ `
+        import './polyfill.cjs'
+        export * from './container.js'
+      `,
+      "/container.js": /* js */ `
+        import './lib.cjs'
+        export const x = await Promise.resolve('x')
+      `,
+      "/lib.cjs": /* js */ `
+        if (!globalThis.__polyfill) throw new Error('lib needs the polyfill')
+        console.log('lib ok')
+      `,
+      "/polyfill.cjs": /* js */ `globalThis.__polyfill = 'ready'`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "lib ok\nstring",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(
+        /var init_barrel = __esm\(async \(\) => \{\s*import_polyfill = __toESM\(require_polyfill\(\)\);\s*await init_container\(\);\s*\}\);/,
+      );
+    },
+  });
+
+  // A sync `export *` init stays in source order after a CommonJS import
+  // (the polyfill-before-library pattern).
+  itBundled("barrel/ExportStarSyncTargetKeepsSourceOrderAfterCommonJSImport", {
+    files: {
+      "/main.js": /* js */ `
+        import { load } from './lazy.js'
+        console.log(typeof (await load()).x)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          return import('./barrel.js')
+        }
+      `,
+      "/barrel.js": /* js */ `
+        import './polyfill.cjs'
+        export * from './container.js'
+      `,
+      "/container.js": /* js */ `
+        import './lib.cjs'
+        export const x = String('x')
+      `,
+      "/lib.cjs": /* js */ `
+        if (!globalThis.__polyfill) throw new Error('lib needs the polyfill')
+        console.log('lib ok')
+      `,
+      "/polyfill.cjs": /* js */ `globalThis.__polyfill = 'ready'`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "lib ok\nstring",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(
+        /var init_barrel = __esm\(\(\) => \{\s*import_polyfill = __toESM\(require_polyfill\(\)\);\s*init_container\(\);\s*\}\);/,
+      );
+    },
+  });
+
+  // A `__commonJS` wrapper cannot contain `await`, so a file bundled as
+  // CommonJS (it writes `exports`) keeps the bare init call for an async
+  // `export *` target.
+  itBundled("barrel/ExportStarAsyncTargetInCommonJSWrapperIsNotAwaited", {
+    files: {
+      "/main.js": /* js */ `
+        import c from './c.js'
+        console.log(c.a)
+      `,
+      "/c.js": /* js */ `
+        export * from './tla.js'
+        exports.a = 1
+        Object.keys(exports)
+      `,
+      "/tla.js": /* js */ `
+        await 0
+        export const t = 1
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "1",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(/var require_c = __commonJS\(function\(exports\) \{[^]*?init_tla\(\);\s*exports\.a = 1;/);
+      expect(out).not.toContain("await init_tla");
+    },
+  });
+
   // The barrel deferral must produce the same output no matter in which order
   // the parse tasks finish. When a request un-defers a barrel record, every
   // alias the barrel imports through that record has to propagate to the next

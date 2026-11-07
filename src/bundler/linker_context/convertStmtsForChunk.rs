@@ -274,23 +274,33 @@ pub(crate) fn convert_stmts_for_chunk(
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
+                                let init_call = Expr::init(
+                                    E::Call {
+                                        target: Expr::init(
+                                            E::Identifier {
+                                                ref_: wrapper_ref,
+                                                ..Default::default()
+                                            },
+                                            stmt.loc,
+                                        ),
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                );
+                                let value = if flag.is_async_or_has_async_dependency
+                                    && wrap != WrapKind::Cjs
+                                    && c.graph.meta.items_flags()[source_index as usize]
+                                        .is_async_or_has_async_dependency
+                                {
+                                    Expr::init(E::Await { value: init_call }, stmt.loc)
+                                } else {
+                                    init_call
+                                };
                                 stmts
                                     .inside_wrapper_prefix
                                     .append_non_dependency(Stmt::alloc(
                                         S::SExpr {
-                                            value: Expr::init(
-                                                E::Call {
-                                                    target: Expr::init(
-                                                        E::Identifier {
-                                                            ref_: wrapper_ref,
-                                                            ..Default::default()
-                                                        },
-                                                        stmt.loc,
-                                                    ),
-                                                    ..Default::default()
-                                                },
-                                                stmt.loc,
-                                            ),
+                                            value,
                                             ..Default::default()
                                         },
                                         stmt.loc,

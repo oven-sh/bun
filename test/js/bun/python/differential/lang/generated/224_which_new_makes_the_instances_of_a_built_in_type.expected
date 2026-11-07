@@ -1,0 +1,65 @@
+status: 0
+script: 247366c0b8eb5b87
+source: ae030c2af53e7148
+---
+--- one that only an mro() has put in the way
+with an __init__ 1
+with an __init__ ('TypeError', "init() missing 1 required positional argument: 'a'")
+without C
+without ('TypeError', 'C() takes no arguments')
+without ('TypeError', 'C() takes no arguments')
+explicitly ('TypeError', 'datetime.tzinfo.__new__(C) is not safe, use C.__new__()')
+explicitly C
+sched_param ((), (1, 2, 3))
+sched_priority 5
+__reduce__ (5,)
+sched_setparam ('TypeError', 'must have a sched_param object')
+--- among the bases, but not in the line of __base__
+Both.__base__.__name__ => Plain
+[c.__name__ for c in Both.__mro__] => ['Both', 'Plain', 'tzinfo', 'object']
+no arguments Both
+arguments ('TypeError', 'Both() takes no arguments')
+utcoffset ('NotImplementedError', 'a tzinfo subclass must implement utcoffset()')
+arguments 1
+object.__new__ in a class derived from dict ({}, {'a': 1})
+--- one that is written into a built-in type
+dict (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+dict ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+dict ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+stat_result (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+stat_result ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+stat_result ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+sched_param (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+sched_param ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+sched_param ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+tuple (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+tuple ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+tuple ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+object (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+object ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+object ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+struct_time (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+struct_time ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+struct_time ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+int (os.terminal_size(columns=1, lines=2), 'terminal_size', 2, 2)
+int ('TypeError', 'os.terminal_size() takes a 2-sequence (3-sequence given)')
+int ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+back os.terminal_size(columns=1, lines=2)
+a function ('written in Python', 'terminal_size', ((1, 2),))
+an exception of a module (error('x'), ('x',))
+back x
+--- names that mean nothing
+name [name='__asyncgen_hooks_type__'] => __asyncgen_hooks_type__
+hasattr(sys, name) [name='__asyncgen_hooks_type__'] => False
+name [name='__unraisable_hook_args_type__'] => __unraisable_hook_args_type__
+hasattr(sys, name) [name='__unraisable_hook_args_type__'] => False
+get_asyncgen_hooks asyncgen_hooks(firstiter=None, finalizer=None)
+unraisable UnraisableHookArgs 5 ValueError
+unraisablehook ('TypeError', 'sys.unraisablehook argument type must be UnraisableHookArgs')
+excepthook ('TypeError', '_thread.excepthook argument type must be ExceptHookArgs')

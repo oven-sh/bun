@@ -1,0 +1,825 @@
+status: 0
+oracle: none
+---
+--- Reflect.construct(T, args, N), where N derives from T. What T.__new__(N, ...) gives in Python is shown where it is something else.
+object for dict -> TypeError: object.__new__(dict) is not safe, use dict.__new__() 
+object for tuple -> TypeError: object.__new__(tuple) is not safe, use tuple.__new__() 
+object for int -> TypeError: object.__new__(int) is not safe, use int.__new__() 
+object for bool -> TypeError: object.__new__(bool) is not safe, use bool.__new__() 
+object for str -> TypeError: object.__new__(str) is not safe, use str.__new__() 
+object for date -> TypeError: object.__new__(datetime.date) is not safe, use datetime.date.__new__() 
+object for datetime -> TypeError: object.__new__(datetime.datetime) is not safe, use datetime.datetime.__new__() 
+object for tzinfo -> TypeError: object.__new__(datetime.tzinfo) is not safe, use datetime.tzinfo.__new__() 
+object for timezone -> TypeError: object.__new__(datetime.timezone) is not safe, use datetime.timezone.__new__() 
+object for OrderedDict -> TypeError: object.__new__(collections.OrderedDict) is not safe, use collections.OrderedDict.__new__() 
+object for Exception -> TypeError: object.__new__(Exception) is not safe, use Exception.__new__() 
+object for OSError -> TypeError: object.__new__(OSError) is not safe, use OSError.__new__() 
+object for KeyError -> TypeError: object.__new__(KeyError) is not safe, use KeyError.__new__() 
+object for terminal_size -> TypeError: object.__new__(os.terminal_size) is not safe, use os.terminal_size.__new__() 
+object for stat_result -> TypeError: object.__new__(os.stat_result) is not safe, use os.stat_result.__new__() 
+object for struct_time -> TypeError: object.__new__(time.struct_time) is not safe, use time.struct_time.__new__() 
+object for NoneType -> TypeError: object.__new__(NoneType) is not safe, use NoneType.__new__() 
+object for P -> P>object a P 
+object for PN -> PN>object a PN 
+object for SubDict -> TypeError: object.__new__(SubDict) is not safe, use SubDict.__new__() 
+object for SubDate -> TypeError: object.__new__(SubDate) is not safe, use SubDate.__new__() 
+dict for OrderedDict -> OrderedDict>dict>object OrderedDict() 
+dict for SubDict -> SubDict>dict>object {} 
+tuple for terminal_size -> TypeError: tuple.__new__(os.terminal_size) is not safe, use os.terminal_size.__new__() 
+tuple for stat_result -> TypeError: tuple.__new__(os.stat_result) is not safe, use os.stat_result.__new__() 
+tuple for struct_time -> TypeError: tuple.__new__(time.struct_time) is not safe, use time.struct_time.__new__() 
+int for bool -> TypeError: int.__new__(bool) is not safe, use bool.__new__() 
+date for datetime -> TypeError: datetime.date.__new__(datetime.datetime) is not safe, use datetime.datetime.__new__() 
+date for SubDate -> SubDate>date>object SubDate(2020, 1, 2) 
+tzinfo for timezone -> TypeError: datetime.tzinfo.__new__(datetime.timezone) is not safe, use datetime.timezone.__new__() 
+Exception for OSError -> TypeError: Exception.__new__(OSError) is not safe, use OSError.__new__() 
+Exception for KeyError -> KeyError>LookupError>Exception>BaseException>object KeyError() 
+pairs where N does not derive from T: 430 not as new T(...): 0
+--- class D extends T
+object: new D -> D>object a D
+object: D() in Python -> D>object a D
+object: T.__new__(D) -> D>object a D
+object: object.__new__(D) -> D>object a D
+object: new E -> E>D>object a E
+object: construct(T, D) -> D>object a D
+object: construct(T, E) -> E>D>object a E
+object: construct(D, E) -> E>D>object a E
+object: construct(E, D) -> E>D>object a E
+dict: new D -> D>dict>object {}
+dict: D() in Python -> D>dict>object {}
+dict: T.__new__(D) -> D>dict>object {}
+dict: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use dict.__new__()
+dict: new E -> E>D>dict>object {}
+dict: construct(T, D) -> D>dict>object {}
+dict: construct(T, E) -> E>D>dict>object {}
+dict: construct(D, E) -> E>D>dict>object {}
+dict: construct(E, D) -> E>D>dict>object {}
+tuple: new D -> D>tuple>object ()
+tuple: D() in Python -> D>tuple>object ()
+tuple: T.__new__(D) -> D>tuple>object ()
+tuple: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use tuple.__new__()
+tuple: new E -> E>D>tuple>object ()
+tuple: construct(T, D) -> D>tuple>object ()
+tuple: construct(T, E) -> E>D>tuple>object ()
+tuple: construct(D, E) -> E>D>tuple>object ()
+tuple: construct(E, D) -> E>D>tuple>object ()
+int: new D -> D>int>object 0
+int: D() in Python -> D>int>object 0
+int: T.__new__(D) -> D>int>object 0
+int: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use int.__new__()
+int: new E -> E>D>int>object 0
+int: construct(T, D) -> D>int>object 0
+int: construct(T, E) -> E>D>int>object 0
+int: construct(D, E) -> E>D>int>object 0
+int: construct(E, D) -> E>D>int>object 0
+bool no class: TypeError: type 'bool' is not an acceptable base type
+str: new D -> D>str>object ''
+str: D() in Python -> D>str>object ''
+str: T.__new__(D) -> D>str>object ''
+str: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use str.__new__()
+str: new E -> E>D>str>object ''
+str: construct(T, D) -> D>str>object ''
+str: construct(T, E) -> E>D>str>object ''
+str: construct(D, E) -> E>D>str>object ''
+str: construct(E, D) -> E>D>str>object ''
+date: new D -> D>date>object D(2020, 1, 2)
+date: D() in Python -> D>date>object D(2020, 1, 2)
+date: T.__new__(D) -> D>date>object D(2020, 1, 2)
+date: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use datetime.date.__new__()
+date: new E -> E>D>date>object E(2020, 1, 2)
+date: construct(T, D) -> D>date>object D(2020, 1, 2)
+date: construct(T, E) -> E>D>date>object E(2020, 1, 2)
+date: construct(D, E) -> E>D>date>object E(2020, 1, 2)
+date: construct(E, D) -> E>D>date>object E(2020, 1, 2)
+datetime: new D -> D>datetime>date>object D(2020, 1, 2, 0, 0)
+datetime: D() in Python -> D>datetime>date>object D(2020, 1, 2, 0, 0)
+datetime: T.__new__(D) -> D>datetime>date>object D(2020, 1, 2, 0, 0)
+datetime: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use datetime.datetime.__new__()
+datetime: new E -> E>D>datetime>date>object E(2020, 1, 2, 0, 0)
+datetime: construct(T, D) -> D>datetime>date>object D(2020, 1, 2, 0, 0)
+datetime: construct(T, E) -> E>D>datetime>date>object E(2020, 1, 2, 0, 0)
+datetime: construct(D, E) -> E>D>datetime>date>object E(2020, 1, 2, 0, 0)
+datetime: construct(E, D) -> E>D>datetime>date>object E(2020, 1, 2, 0, 0)
+tzinfo: new D -> D>tzinfo>object a D
+tzinfo: D() in Python -> D>tzinfo>object a D
+tzinfo: T.__new__(D) -> D>tzinfo>object a D
+tzinfo: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use datetime.tzinfo.__new__()
+tzinfo: new E -> E>D>tzinfo>object a E
+tzinfo: construct(T, D) -> D>tzinfo>object a D
+tzinfo: construct(T, E) -> E>D>tzinfo>object a E
+tzinfo: construct(D, E) -> E>D>tzinfo>object a E
+tzinfo: construct(E, D) -> E>D>tzinfo>object a E
+timezone no class: TypeError: type 'datetime.timezone' is not an acceptable base type
+OrderedDict: new D -> D>OrderedDict>dict>object D()
+OrderedDict: D() in Python -> D>OrderedDict>dict>object D()
+OrderedDict: T.__new__(D) -> D>OrderedDict>dict>object D()
+OrderedDict: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use collections.OrderedDict.__new__()
+OrderedDict: new E -> E>D>OrderedDict>dict>object E()
+OrderedDict: construct(T, D) -> D>OrderedDict>dict>object D()
+OrderedDict: construct(T, E) -> E>D>OrderedDict>dict>object E()
+OrderedDict: construct(D, E) -> E>D>OrderedDict>dict>object E()
+OrderedDict: construct(E, D) -> E>D>OrderedDict>dict>object E()
+Exception: new D -> D>Exception>BaseException>object D()
+Exception: D() in Python -> D>Exception>BaseException>object D()
+Exception: T.__new__(D) -> D>Exception>BaseException>object D()
+Exception: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use Exception.__new__()
+Exception: new E -> E>D>Exception>BaseException>object E()
+Exception: construct(T, D) -> D>Exception>BaseException>object D()
+Exception: construct(T, E) -> E>D>Exception>BaseException>object E()
+Exception: construct(D, E) -> E>D>Exception>BaseException>object E()
+Exception: construct(E, D) -> E>D>Exception>BaseException>object E()
+OSError: new D -> D>OSError>Exception>BaseException>object D()
+OSError: D() in Python -> D>OSError>Exception>BaseException>object D()
+OSError: T.__new__(D) -> D>OSError>Exception>BaseException>object D()
+OSError: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use OSError.__new__()
+OSError: new E -> E>D>OSError>Exception>BaseException>object E()
+OSError: construct(T, D) -> D>OSError>Exception>BaseException>object D()
+OSError: construct(T, E) -> E>D>OSError>Exception>BaseException>object E()
+OSError: construct(D, E) -> E>D>OSError>Exception>BaseException>object E()
+OSError: construct(E, D) -> E>D>OSError>Exception>BaseException>object E()
+KeyError: new D -> D>KeyError>LookupError>Exception>BaseException>object D()
+KeyError: D() in Python -> D>KeyError>LookupError>Exception>BaseException>object D()
+KeyError: T.__new__(D) -> D>KeyError>LookupError>Exception>BaseException>object D()
+KeyError: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use KeyError.__new__()
+KeyError: new E -> E>D>KeyError>LookupError>Exception>BaseException>object E()
+KeyError: construct(T, D) -> D>KeyError>LookupError>Exception>BaseException>object D()
+KeyError: construct(T, E) -> E>D>KeyError>LookupError>Exception>BaseException>object E()
+KeyError: construct(D, E) -> E>D>KeyError>LookupError>Exception>BaseException>object E()
+KeyError: construct(E, D) -> E>D>KeyError>LookupError>Exception>BaseException>object E()
+terminal_size no class: TypeError: type 'os.terminal_size' is not an acceptable base type
+stat_result no class: TypeError: type 'os.stat_result' is not an acceptable base type
+struct_time no class: TypeError: type 'time.struct_time' is not an acceptable base type
+NoneType no class: TypeError: type 'NoneType' is not an acceptable base type
+P: new D -> D>P>object a D
+P: D() in Python -> D>P>object a D
+P: T.__new__(D) -> D>P>object a D
+P: object.__new__(D) -> D>P>object a D
+P: new E -> E>D>P>object a E
+P: construct(T, D) -> D>P>object a D
+P: construct(T, E) -> E>D>P>object a E
+P: construct(D, E) -> E>D>P>object a E
+P: construct(E, D) -> E>D>P>object a E
+PN: new D -> D>PN>object a D
+PN: D() in Python -> D>PN>object a D
+PN: T.__new__(D) -> D>PN>object a D
+PN: object.__new__(D) -> D>PN>object a D
+PN: new E -> E>D>PN>object a E
+PN: construct(T, D) -> D>PN>object a D
+PN: construct(T, E) -> E>D>PN>object a E
+PN: construct(D, E) -> E>D>PN>object a E
+PN: construct(E, D) -> E>D>PN>object a E
+SubDict: new D -> D>SubDict>dict>object {}
+SubDict: D() in Python -> D>SubDict>dict>object {}
+SubDict: T.__new__(D) -> D>SubDict>dict>object {}
+SubDict: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use SubDict.__new__()
+SubDict: new E -> E>D>SubDict>dict>object {}
+SubDict: construct(T, D) -> D>SubDict>dict>object {}
+SubDict: construct(T, E) -> E>D>SubDict>dict>object {}
+SubDict: construct(D, E) -> E>D>SubDict>dict>object {}
+SubDict: construct(E, D) -> E>D>SubDict>dict>object {}
+SubDate: new D -> D>SubDate>date>object D(2020, 1, 2)
+SubDate: D() in Python -> D>SubDate>date>object D(2020, 1, 2)
+SubDate: T.__new__(D) -> D>SubDate>date>object D(2020, 1, 2)
+SubDate: object.__new__(D) -> TypeError: object.__new__(D) is not safe, use SubDate.__new__()
+SubDate: new E -> E>D>SubDate>date>object E(2020, 1, 2)
+SubDate: construct(T, D) -> D>SubDate>date>object D(2020, 1, 2)
+SubDate: construct(T, E) -> E>D>SubDate>date>object E(2020, 1, 2)
+SubDate: construct(D, E) -> E>D>SubDate>date>object E(2020, 1, 2)
+SubDate: construct(E, D) -> E>D>SubDate>date>object E(2020, 1, 2)
+--- over a class of Python that finds the __new__ of one built-in type and is made by that of another
+TzDict: new C -> TzDict>tzinfo>dict>object {}
+TzDict: new D -> D>TzDict>tzinfo>dict>object {}
+TzDict: new K -> K>TzDict>tzinfo>dict>object {'q': 1}
+TzDict: new F -> F>TzDict>tzinfo>dict>object {'f': 1}
+TzDict: new KK -> KK>K>TzDict>tzinfo>dict>object {'q': 1}
+TzDict: K() in Python -> K>TzDict>tzinfo>dict>object {'q': 1}
+TzDict: construct(C, K) -> K>TzDict>tzinfo>dict>object {}
+ValueOS: new C -> ValueOS>ValueError>OSError>Exception>BaseException>object ValueOS(2, 'x')
+ValueOS: new D -> D>ValueOS>ValueError>OSError>Exception>BaseException>object D(2, 'x')
+ValueOS: new K -> K>ValueOS>ValueError>OSError>Exception>BaseException>object K(2, 'x')
+ValueOS: new F -> F>ValueOS>ValueError>OSError>Exception>BaseException>object F(2, 'x')
+ValueOS: new KK -> KK>K>ValueOS>ValueError>OSError>Exception>BaseException>object KK(2, 'x')
+ValueOS: K() in Python -> K>ValueOS>ValueError>OSError>Exception>BaseException>object K(2, 'x')
+ValueOS: construct(C, K) -> K>ValueOS>ValueError>OSError>Exception>BaseException>object K(2, 'x')
+ObjectsNew: new C -> ObjectsNew>dict>object {}
+ObjectsNew: new D -> D>ObjectsNew>dict>object {}
+ObjectsNew: new K -> K>ObjectsNew>dict>object {'q': 1}
+ObjectsNew: new F -> F>ObjectsNew>dict>object {'f': 1}
+ObjectsNew: new KK -> KK>K>ObjectsNew>dict>object {'q': 1}
+ObjectsNew: K() in Python -> K>ObjectsNew>dict>object {'q': 1}
+ObjectsNew: construct(C, K) -> K>ObjectsNew>dict>object {}
+MixDict: new C -> MixDict>MixNew>dict>object {}
+MixDict: new D -> D>MixDict>MixNew>dict>object {}
+MixDict: new K -> K>MixDict>MixNew>dict>object {'q': 1}
+MixDict: new F -> F>MixDict>MixNew>dict>object {'f': 1}
+MixDict: new KK -> KK>K>MixDict>MixNew>dict>object {'q': 1}
+MixDict: K() in Python -> K>MixDict>MixNew>dict>object {'q': 1}
+MixDict: construct(C, K) -> K>MixDict>MixNew>dict>object {}
+TzInt: new C -> TzInt>tzinfo>int>object 5
+TzInt: new D -> D>TzInt>tzinfo>int>object 5
+TzInt: new K -> K>TzInt>tzinfo>int>object 5
+TzInt: new F -> F>TzInt>tzinfo>int>object 5
+TzInt: new KK -> KK>K>TzInt>tzinfo>int>object 5
+TzInt: K() in Python -> K>TzInt>tzinfo>int>object 5
+TzInt: construct(C, K) -> K>TzInt>tzinfo>int>object 5
+Group: new C -> Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object Group('m', [ValueError()])
+Group: new D -> D>Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object D('m', [ValueError()])
+Group: new K -> K>Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object K('m', [ValueError()])
+Group: new F -> F>Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object F('m', [ValueError()])
+Group: new KK -> KK>K>Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object KK('m', [ValueError()])
+Group: K() in Python -> K>Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object K('m', [ValueError()])
+Group: construct(C, K) -> K>Group>ValueError>ExceptionGroup>BaseExceptionGroup>Exception>BaseException>object K('m', [ValueError()])
+--- other kinds of new.target
+object: a proxy of itself -> object a object
+object: a class of Python derived from it -> S>object a S
+object: a proxy of that -> object a object
+object: a proxy of a class of JS derived from it -> object a object
+object: itself, bound -> object a object
+object: the derived class, bound -> object a object
+object: a function of JS -> object a object
+object: a class of JS -> object a object
+dict: a proxy of itself -> dict>object {}
+dict: a class of Python derived from it -> S>dict>object {}
+dict: a proxy of that -> dict>object {}
+dict: a proxy of a class of JS derived from it -> dict>object {}
+dict: itself, bound -> dict>object {}
+dict: the derived class, bound -> dict>object {}
+dict: a function of JS -> dict>object {}
+dict: a class of JS -> dict>object {}
+date: a proxy of itself -> date>object datetime.date(2020, 1, 2)
+date: a class of Python derived from it -> S>date>object S(2020, 1, 2)
+date: a proxy of that -> date>object datetime.date(2020, 1, 2)
+date: a proxy of a class of JS derived from it -> date>object datetime.date(2020, 1, 2)
+date: itself, bound -> date>object datetime.date(2020, 1, 2)
+date: the derived class, bound -> date>object datetime.date(2020, 1, 2)
+date: a function of JS -> date>object datetime.date(2020, 1, 2)
+date: a class of JS -> date>object datetime.date(2020, 1, 2)
+tuple: a proxy of itself -> tuple>object ()
+tuple: a class of Python derived from it -> S>tuple>object ()
+tuple: a proxy of that -> tuple>object ()
+tuple: a proxy of a class of JS derived from it -> tuple>object ()
+tuple: itself, bound -> tuple>object ()
+tuple: the derived class, bound -> tuple>object ()
+tuple: a function of JS -> tuple>object ()
+tuple: a class of JS -> tuple>object ()
+P: a proxy of itself -> P>object a P
+P: a class of Python derived from it -> S>P>object a S
+P: a proxy of that -> P>object a P
+P: a proxy of a class of JS derived from it -> P>object a P
+P: itself, bound -> P>object a P
+P: the derived class, bound -> P>object a P
+P: a function of JS -> P>object a P
+P: a class of JS -> P>object a P
+PN: a proxy of itself -> PN>object a PN
+PN: a class of Python derived from it -> S>PN>object a S
+PN: a proxy of that -> PN>object a PN
+PN: a proxy of a class of JS derived from it -> PN>object a PN
+PN: itself, bound -> PN>object a PN
+PN: the derived class, bound -> PN>object a PN
+PN: a function of JS -> PN>object a PN
+PN: a class of JS -> PN>object a PN
+Exception: a proxy of itself -> Exception>BaseException>object Exception()
+Exception: a class of Python derived from it -> S>Exception>BaseException>object S()
+Exception: a proxy of that -> Exception>BaseException>object Exception()
+Exception: a proxy of a class of JS derived from it -> Exception>BaseException>object Exception()
+Exception: itself, bound -> Exception>BaseException>object Exception()
+Exception: the derived class, bound -> Exception>BaseException>object Exception()
+Exception: a function of JS -> Exception>BaseException>object Exception()
+Exception: a class of JS -> Exception>BaseException>object Exception()
+--- __new__ is written and taken away
+before: new P -> P>object a P
+before: new D -> D>P>object a D
+before: new K -> K>P>object a K
+before: D() in Python -> D>P>object a D
+before: K() in Python -> K>P>object a K
+P.__new__ = f: new P -> str>object 'made by a function of Python for P'
+P.__new__ = f: new D -> str>object 'made by a function of Python for D'
+P.__new__ = f: new K -> TypeError: The constructor did not return an object
+P.__new__ = f: D() in Python -> str>object 'made by a function of Python for D'
+P.__new__ = f: K() in Python -> JSTypeError: TypeError: The constructor did not return an object
+deleted: new P -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: new D -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: new K -> K>P>object a K
+deleted: D() in Python -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: K() in Python -> K>P>object a K
+D.__new__ = K.__new__ = f: new P -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+D.__new__ = K.__new__ = f: new D -> str>object 'made by a function of Python for D'
+D.__new__ = K.__new__ = f: new K -> str>object 'made by a function of Python for K'
+D.__new__ = K.__new__ = f: D() in Python -> str>object 'made by a function of Python for D'
+D.__new__ = K.__new__ = f: K() in Python -> str>object 'made by a function of Python for K'
+deleted: new P -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: new D -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: new K -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: D() in Python -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+deleted: K() in Python -> TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+--- a class of JS beside a built-in type, among the bases of a class of Python
+K extends object, class C(K, dict): C() in Python -> C>K>dict>object {}
+K extends object, class C(K, dict): new C -> C>K>dict>object {}
+K extends object, class C(K, dict): a class of JS derived from C -> >C>K>dict>object {}
+class R(dict, K): R() in Python -> R>dict>K>object {}
+D extends object, class C(D, dict): C() in Python -> C>D>dict>object {}
+D extends object, class C(D, dict): new C -> C>D>dict>object {}
+D extends object, class C(D, dict): a class of JS derived from C -> >C>D>dict>object {}
+class R(dict, D): R() in Python -> R>dict>D>object {}
+K extends object, class C(K, int): C() in Python -> C>K>int>object 5
+K extends object, class C(K, int): new C -> C>K>int>object 5
+K extends object, class C(K, int): a class of JS derived from C -> >C>K>int>object 5
+class R(int, K): R() in Python -> R>int>K>object 5
+D extends object, class C(D, int): C() in Python -> C>D>int>object 5
+D extends object, class C(D, int): new C -> C>D>int>object 5
+D extends object, class C(D, int): a class of JS derived from C -> >C>D>int>object 5
+class R(int, D): R() in Python -> R>int>D>object 5
+K extends object, class C(K, tuple): C() in Python -> C>K>tuple>object (1, 2)
+K extends object, class C(K, tuple): new C -> C>K>tuple>object (1, 2)
+K extends object, class C(K, tuple): a class of JS derived from C -> >C>K>tuple>object (1, 2)
+class R(tuple, K): R() in Python -> R>tuple>K>object (1, 2)
+D extends object, class C(D, tuple): C() in Python -> C>D>tuple>object (1, 2)
+D extends object, class C(D, tuple): new C -> C>D>tuple>object (1, 2)
+D extends object, class C(D, tuple): a class of JS derived from C -> >C>D>tuple>object (1, 2)
+class R(tuple, D): R() in Python -> R>tuple>D>object (1, 2)
+K extends object, class C(K, str): C() in Python -> C>K>str>object 's'
+K extends object, class C(K, str): new C -> C>K>str>object 's'
+K extends object, class C(K, str): a class of JS derived from C -> >C>K>str>object 's'
+class R(str, K): R() in Python -> R>str>K>object 's'
+D extends object, class C(D, str): C() in Python -> C>D>str>object 's'
+D extends object, class C(D, str): new C -> C>D>str>object 's'
+D extends object, class C(D, str): a class of JS derived from C -> >C>D>str>object 's'
+class R(str, D): R() in Python -> R>str>D>object 's'
+K extends object, class C(K, OSError): C() in Python -> C>K>OSError>Exception>BaseException>object C(2, 'x')
+K extends object, class C(K, OSError): new C -> C>K>OSError>Exception>BaseException>object C(2, 'x')
+K extends object, class C(K, OSError): a class of JS derived from C -> >C>K>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, K): R() in Python -> R>OSError>Exception>BaseException>K>object R(2, 'x')
+D extends object, class C(D, OSError): C() in Python -> C>D>OSError>Exception>BaseException>object C(2, 'x')
+D extends object, class C(D, OSError): new C -> C>D>OSError>Exception>BaseException>object C(2, 'x')
+D extends object, class C(D, OSError): a class of JS derived from C -> >C>D>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, D): R() in Python -> R>OSError>Exception>BaseException>D>object R(2, 'x')
+K extends object, class C(K, KeyError): C() in Python -> C>K>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends object, class C(K, KeyError): new C -> C>K>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends object, class C(K, KeyError): a class of JS derived from C -> >C>K>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, K): R() in Python -> R>KeyError>LookupError>Exception>BaseException>K>object R('k')
+D extends object, class C(D, KeyError): C() in Python -> C>D>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends object, class C(D, KeyError): new C -> C>D>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends object, class C(D, KeyError): a class of JS derived from C -> >C>D>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, D): R() in Python -> R>KeyError>LookupError>Exception>BaseException>D>object R('k')
+K extends object, class C(K, date): C() in Python -> C>K>date>object C(2020, 1, 2)
+K extends object, class C(K, date): new C -> C>K>date>object C(2020, 1, 2)
+K extends object, class C(K, date): a class of JS derived from C -> >C>K>date>object (2020, 1, 2)
+class R(date, K): R() in Python -> R>date>K>object R(2020, 1, 2)
+D extends object, class C(D, date): C() in Python -> C>D>date>object C(2020, 1, 2)
+D extends object, class C(D, date): new C -> C>D>date>object C(2020, 1, 2)
+D extends object, class C(D, date): a class of JS derived from C -> >C>D>date>object (2020, 1, 2)
+class R(date, D): R() in Python -> R>date>D>object R(2020, 1, 2)
+K extends object, class C(K, OrderedDict): C() in Python -> C>K>OrderedDict>dict>object C()
+K extends object, class C(K, OrderedDict): new C -> C>K>OrderedDict>dict>object C()
+K extends object, class C(K, OrderedDict): a class of JS derived from C -> >C>K>OrderedDict>dict>object ()
+class R(OrderedDict, K): R() in Python -> R>OrderedDict>dict>K>object R()
+D extends object, class C(D, OrderedDict): C() in Python -> C>D>OrderedDict>dict>object C()
+D extends object, class C(D, OrderedDict): new C -> C>D>OrderedDict>dict>object C()
+D extends object, class C(D, OrderedDict): a class of JS derived from C -> >C>D>OrderedDict>dict>object ()
+class R(OrderedDict, D): R() in Python -> R>OrderedDict>dict>D>object R()
+K extends Plain, class C(K, dict): C() in Python -> C>K>Plain>dict>object {}
+K extends Plain, class C(K, dict): new C -> C>K>Plain>dict>object {}
+K extends Plain, class C(K, dict): a class of JS derived from C -> >C>K>Plain>dict>object {}
+class R(dict, K): R() in Python -> R>dict>K>Plain>object {}
+D extends Plain, class C(D, dict): C() in Python -> C>D>Plain>dict>object {}
+D extends Plain, class C(D, dict): new C -> C>D>Plain>dict>object {}
+D extends Plain, class C(D, dict): a class of JS derived from C -> >C>D>Plain>dict>object {}
+class R(dict, D): R() in Python -> R>dict>D>Plain>object {}
+K extends Plain, class C(K, int): C() in Python -> C>K>Plain>int>object 5
+K extends Plain, class C(K, int): new C -> C>K>Plain>int>object 5
+K extends Plain, class C(K, int): a class of JS derived from C -> >C>K>Plain>int>object 5
+class R(int, K): R() in Python -> R>int>K>Plain>object 5
+D extends Plain, class C(D, int): C() in Python -> C>D>Plain>int>object 5
+D extends Plain, class C(D, int): new C -> C>D>Plain>int>object 5
+D extends Plain, class C(D, int): a class of JS derived from C -> >C>D>Plain>int>object 5
+class R(int, D): R() in Python -> R>int>D>Plain>object 5
+K extends Plain, class C(K, tuple): C() in Python -> C>K>Plain>tuple>object (1, 2)
+K extends Plain, class C(K, tuple): new C -> C>K>Plain>tuple>object (1, 2)
+K extends Plain, class C(K, tuple): a class of JS derived from C -> >C>K>Plain>tuple>object (1, 2)
+class R(tuple, K): R() in Python -> R>tuple>K>Plain>object (1, 2)
+D extends Plain, class C(D, tuple): C() in Python -> C>D>Plain>tuple>object (1, 2)
+D extends Plain, class C(D, tuple): new C -> C>D>Plain>tuple>object (1, 2)
+D extends Plain, class C(D, tuple): a class of JS derived from C -> >C>D>Plain>tuple>object (1, 2)
+class R(tuple, D): R() in Python -> R>tuple>D>Plain>object (1, 2)
+K extends Plain, class C(K, str): C() in Python -> C>K>Plain>str>object 's'
+K extends Plain, class C(K, str): new C -> C>K>Plain>str>object 's'
+K extends Plain, class C(K, str): a class of JS derived from C -> >C>K>Plain>str>object 's'
+class R(str, K): R() in Python -> R>str>K>Plain>object 's'
+D extends Plain, class C(D, str): C() in Python -> C>D>Plain>str>object 's'
+D extends Plain, class C(D, str): new C -> C>D>Plain>str>object 's'
+D extends Plain, class C(D, str): a class of JS derived from C -> >C>D>Plain>str>object 's'
+class R(str, D): R() in Python -> R>str>D>Plain>object 's'
+K extends Plain, class C(K, OSError): C() in Python -> C>K>Plain>OSError>Exception>BaseException>object C(2, 'x')
+K extends Plain, class C(K, OSError): new C -> C>K>Plain>OSError>Exception>BaseException>object C(2, 'x')
+K extends Plain, class C(K, OSError): a class of JS derived from C -> >C>K>Plain>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, K): R() in Python -> R>OSError>Exception>BaseException>K>Plain>object R(2, 'x')
+D extends Plain, class C(D, OSError): C() in Python -> C>D>Plain>OSError>Exception>BaseException>object C(2, 'x')
+D extends Plain, class C(D, OSError): new C -> C>D>Plain>OSError>Exception>BaseException>object C(2, 'x')
+D extends Plain, class C(D, OSError): a class of JS derived from C -> >C>D>Plain>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, D): R() in Python -> R>OSError>Exception>BaseException>D>Plain>object R(2, 'x')
+K extends Plain, class C(K, KeyError): C() in Python -> C>K>Plain>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends Plain, class C(K, KeyError): new C -> C>K>Plain>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends Plain, class C(K, KeyError): a class of JS derived from C -> >C>K>Plain>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, K): R() in Python -> R>KeyError>LookupError>Exception>BaseException>K>Plain>object R('k')
+D extends Plain, class C(D, KeyError): C() in Python -> C>D>Plain>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends Plain, class C(D, KeyError): new C -> C>D>Plain>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends Plain, class C(D, KeyError): a class of JS derived from C -> >C>D>Plain>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, D): R() in Python -> R>KeyError>LookupError>Exception>BaseException>D>Plain>object R('k')
+K extends Plain, class C(K, date): C() in Python -> C>K>Plain>date>object C(2020, 1, 2)
+K extends Plain, class C(K, date): new C -> C>K>Plain>date>object C(2020, 1, 2)
+K extends Plain, class C(K, date): a class of JS derived from C -> >C>K>Plain>date>object (2020, 1, 2)
+class R(date, K): R() in Python -> R>date>K>Plain>object R(2020, 1, 2)
+D extends Plain, class C(D, date): C() in Python -> C>D>Plain>date>object C(2020, 1, 2)
+D extends Plain, class C(D, date): new C -> C>D>Plain>date>object C(2020, 1, 2)
+D extends Plain, class C(D, date): a class of JS derived from C -> >C>D>Plain>date>object (2020, 1, 2)
+class R(date, D): R() in Python -> R>date>D>Plain>object R(2020, 1, 2)
+K extends Plain, class C(K, OrderedDict): C() in Python -> C>K>Plain>OrderedDict>dict>object C()
+K extends Plain, class C(K, OrderedDict): new C -> C>K>Plain>OrderedDict>dict>object C()
+K extends Plain, class C(K, OrderedDict): a class of JS derived from C -> >C>K>Plain>OrderedDict>dict>object ()
+class R(OrderedDict, K): R() in Python -> R>OrderedDict>dict>K>Plain>object R()
+D extends Plain, class C(D, OrderedDict): C() in Python -> C>D>Plain>OrderedDict>dict>object C()
+D extends Plain, class C(D, OrderedDict): new C -> C>D>Plain>OrderedDict>dict>object C()
+D extends Plain, class C(D, OrderedDict): a class of JS derived from C -> >C>D>Plain>OrderedDict>dict>object ()
+class R(OrderedDict, D): R() in Python -> R>OrderedDict>dict>D>Plain>object R()
+K extends PlainInit, class C(K, dict): C() in Python -> C>K>PlainInit>dict>object {}
+K extends PlainInit, class C(K, dict): new C -> C>K>PlainInit>dict>object {}
+K extends PlainInit, class C(K, dict): a class of JS derived from C -> >C>K>PlainInit>dict>object {}
+class R(dict, K): R() in Python -> R>dict>K>PlainInit>object {}
+D extends PlainInit, class C(D, dict): C() in Python -> C>D>PlainInit>dict>object {}
+D extends PlainInit, class C(D, dict): new C -> C>D>PlainInit>dict>object {}
+D extends PlainInit, class C(D, dict): a class of JS derived from C -> >C>D>PlainInit>dict>object {}
+class R(dict, D): R() in Python -> R>dict>D>PlainInit>object {}
+K extends PlainInit, class C(K, int): C() in Python -> C>K>PlainInit>int>object 5
+K extends PlainInit, class C(K, int): new C -> C>K>PlainInit>int>object 5
+K extends PlainInit, class C(K, int): a class of JS derived from C -> >C>K>PlainInit>int>object 5
+class R(int, K): R() in Python -> R>int>K>PlainInit>object 5
+D extends PlainInit, class C(D, int): C() in Python -> C>D>PlainInit>int>object 5
+D extends PlainInit, class C(D, int): new C -> C>D>PlainInit>int>object 5
+D extends PlainInit, class C(D, int): a class of JS derived from C -> >C>D>PlainInit>int>object 5
+class R(int, D): R() in Python -> R>int>D>PlainInit>object 5
+K extends PlainInit, class C(K, tuple): C() in Python -> C>K>PlainInit>tuple>object (1, 2)
+K extends PlainInit, class C(K, tuple): new C -> C>K>PlainInit>tuple>object (1, 2)
+K extends PlainInit, class C(K, tuple): a class of JS derived from C -> >C>K>PlainInit>tuple>object (1, 2)
+class R(tuple, K): R() in Python -> R>tuple>K>PlainInit>object (1, 2)
+D extends PlainInit, class C(D, tuple): C() in Python -> C>D>PlainInit>tuple>object (1, 2)
+D extends PlainInit, class C(D, tuple): new C -> C>D>PlainInit>tuple>object (1, 2)
+D extends PlainInit, class C(D, tuple): a class of JS derived from C -> >C>D>PlainInit>tuple>object (1, 2)
+class R(tuple, D): R() in Python -> R>tuple>D>PlainInit>object (1, 2)
+K extends PlainInit, class C(K, str): C() in Python -> C>K>PlainInit>str>object 's'
+K extends PlainInit, class C(K, str): new C -> C>K>PlainInit>str>object 's'
+K extends PlainInit, class C(K, str): a class of JS derived from C -> >C>K>PlainInit>str>object 's'
+class R(str, K): R() in Python -> R>str>K>PlainInit>object 's'
+D extends PlainInit, class C(D, str): C() in Python -> C>D>PlainInit>str>object 's'
+D extends PlainInit, class C(D, str): new C -> C>D>PlainInit>str>object 's'
+D extends PlainInit, class C(D, str): a class of JS derived from C -> >C>D>PlainInit>str>object 's'
+class R(str, D): R() in Python -> R>str>D>PlainInit>object 's'
+K extends PlainInit, class C(K, OSError): C() in Python -> C>K>PlainInit>OSError>Exception>BaseException>object C(2, 'x')
+K extends PlainInit, class C(K, OSError): new C -> C>K>PlainInit>OSError>Exception>BaseException>object C(2, 'x')
+K extends PlainInit, class C(K, OSError): a class of JS derived from C -> >C>K>PlainInit>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, K): R() in Python -> R>OSError>Exception>BaseException>K>PlainInit>object R(2, 'x')
+D extends PlainInit, class C(D, OSError): C() in Python -> C>D>PlainInit>OSError>Exception>BaseException>object C()
+D extends PlainInit, class C(D, OSError): new C -> C>D>PlainInit>OSError>Exception>BaseException>object C()
+D extends PlainInit, class C(D, OSError): a class of JS derived from C -> >C>D>PlainInit>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, D): R() in Python -> R>OSError>Exception>BaseException>D>PlainInit>object R(2, 'x')
+K extends PlainInit, class C(K, KeyError): C() in Python -> C>K>PlainInit>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends PlainInit, class C(K, KeyError): new C -> C>K>PlainInit>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends PlainInit, class C(K, KeyError): a class of JS derived from C -> >C>K>PlainInit>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, K): R() in Python -> R>KeyError>LookupError>Exception>BaseException>K>PlainInit>object R('k')
+D extends PlainInit, class C(D, KeyError): C() in Python -> C>D>PlainInit>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends PlainInit, class C(D, KeyError): new C -> C>D>PlainInit>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends PlainInit, class C(D, KeyError): a class of JS derived from C -> >C>D>PlainInit>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, D): R() in Python -> R>KeyError>LookupError>Exception>BaseException>D>PlainInit>object R('k')
+K extends PlainInit, class C(K, date): C() in Python -> C>K>PlainInit>date>object C(2020, 1, 2)
+K extends PlainInit, class C(K, date): new C -> C>K>PlainInit>date>object C(2020, 1, 2)
+K extends PlainInit, class C(K, date): a class of JS derived from C -> >C>K>PlainInit>date>object (2020, 1, 2)
+class R(date, K): R() in Python -> R>date>K>PlainInit>object R(2020, 1, 2)
+D extends PlainInit, class C(D, date): C() in Python -> C>D>PlainInit>date>object C(2020, 1, 2)
+D extends PlainInit, class C(D, date): new C -> C>D>PlainInit>date>object C(2020, 1, 2)
+D extends PlainInit, class C(D, date): a class of JS derived from C -> >C>D>PlainInit>date>object (2020, 1, 2)
+class R(date, D): R() in Python -> R>date>D>PlainInit>object R(2020, 1, 2)
+K extends PlainInit, class C(K, OrderedDict): C() in Python -> C>K>PlainInit>OrderedDict>dict>object C()
+K extends PlainInit, class C(K, OrderedDict): new C -> C>K>PlainInit>OrderedDict>dict>object C()
+K extends PlainInit, class C(K, OrderedDict): a class of JS derived from C -> >C>K>PlainInit>OrderedDict>dict>object ()
+class R(OrderedDict, K): R() in Python -> R>OrderedDict>dict>K>PlainInit>object R()
+D extends PlainInit, class C(D, OrderedDict): C() in Python -> C>D>PlainInit>OrderedDict>dict>object C()
+D extends PlainInit, class C(D, OrderedDict): new C -> C>D>PlainInit>OrderedDict>dict>object C()
+D extends PlainInit, class C(D, OrderedDict): a class of JS derived from C -> >C>D>PlainInit>OrderedDict>dict>object ()
+class R(OrderedDict, D): R() in Python -> R>OrderedDict>dict>D>PlainInit>object R()
+K extends PN, class C(K, dict): C() in Python -> TypeError: object.__new__(C) is not safe, use dict.__new__()
+K extends PN, class C(K, dict): new C -> TypeError: object.__new__(C) is not safe, use dict.__new__()
+K extends PN, class C(K, dict): a class of JS derived from C -> TypeError: object.__new__() is not safe, use dict.__new__()
+class R(dict, K): R() in Python -> R>dict>K>PN>object {}
+D extends PN, class C(D, dict): C() in Python -> TypeError: object.__new__(C) is not safe, use dict.__new__()
+D extends PN, class C(D, dict): new C -> TypeError: object.__new__(C) is not safe, use dict.__new__()
+D extends PN, class C(D, dict): a class of JS derived from C -> TypeError: object.__new__() is not safe, use dict.__new__()
+class R(dict, D): R() in Python -> R>dict>D>PN>object {}
+K extends PN, class C(K, int): C() in Python -> TypeError: object.__new__(C) is not safe, use int.__new__()
+K extends PN, class C(K, int): new C -> TypeError: object.__new__(C) is not safe, use int.__new__()
+K extends PN, class C(K, int): a class of JS derived from C -> TypeError: object.__new__() is not safe, use int.__new__()
+class R(int, K): R() in Python -> R>int>K>PN>object 5
+D extends PN, class C(D, int): C() in Python -> TypeError: object.__new__(C) is not safe, use int.__new__()
+D extends PN, class C(D, int): new C -> TypeError: object.__new__(C) is not safe, use int.__new__()
+D extends PN, class C(D, int): a class of JS derived from C -> TypeError: object.__new__() is not safe, use int.__new__()
+class R(int, D): R() in Python -> R>int>D>PN>object 5
+K extends PN, class C(K, tuple): C() in Python -> TypeError: object.__new__(C) is not safe, use tuple.__new__()
+K extends PN, class C(K, tuple): new C -> TypeError: object.__new__(C) is not safe, use tuple.__new__()
+K extends PN, class C(K, tuple): a class of JS derived from C -> TypeError: object.__new__() is not safe, use tuple.__new__()
+class R(tuple, K): R() in Python -> R>tuple>K>PN>object (1, 2)
+D extends PN, class C(D, tuple): C() in Python -> TypeError: object.__new__(C) is not safe, use tuple.__new__()
+D extends PN, class C(D, tuple): new C -> TypeError: object.__new__(C) is not safe, use tuple.__new__()
+D extends PN, class C(D, tuple): a class of JS derived from C -> TypeError: object.__new__() is not safe, use tuple.__new__()
+class R(tuple, D): R() in Python -> R>tuple>D>PN>object (1, 2)
+K extends PN, class C(K, str): C() in Python -> TypeError: object.__new__(C) is not safe, use str.__new__()
+K extends PN, class C(K, str): new C -> TypeError: object.__new__(C) is not safe, use str.__new__()
+K extends PN, class C(K, str): a class of JS derived from C -> TypeError: object.__new__() is not safe, use str.__new__()
+class R(str, K): R() in Python -> R>str>K>PN>object 's'
+D extends PN, class C(D, str): C() in Python -> TypeError: object.__new__(C) is not safe, use str.__new__()
+D extends PN, class C(D, str): new C -> TypeError: object.__new__(C) is not safe, use str.__new__()
+D extends PN, class C(D, str): a class of JS derived from C -> TypeError: object.__new__() is not safe, use str.__new__()
+class R(str, D): R() in Python -> R>str>D>PN>object 's'
+K extends PN, class C(K, OSError): C() in Python -> TypeError: object.__new__(C) is not safe, use OSError.__new__()
+K extends PN, class C(K, OSError): new C -> TypeError: object.__new__(C) is not safe, use OSError.__new__()
+K extends PN, class C(K, OSError): a class of JS derived from C -> TypeError: object.__new__() is not safe, use OSError.__new__()
+class R(OSError, K): R() in Python -> R>OSError>Exception>BaseException>K>PN>object R(2, 'x')
+D extends PN, class C(D, OSError): C() in Python -> TypeError: object.__new__(C) is not safe, use OSError.__new__()
+D extends PN, class C(D, OSError): new C -> TypeError: object.__new__(C) is not safe, use OSError.__new__()
+D extends PN, class C(D, OSError): a class of JS derived from C -> TypeError: object.__new__() is not safe, use OSError.__new__()
+class R(OSError, D): R() in Python -> R>OSError>Exception>BaseException>D>PN>object R(2, 'x')
+K extends PN, class C(K, KeyError): C() in Python -> TypeError: object.__new__(C) is not safe, use KeyError.__new__()
+K extends PN, class C(K, KeyError): new C -> TypeError: object.__new__(C) is not safe, use KeyError.__new__()
+K extends PN, class C(K, KeyError): a class of JS derived from C -> TypeError: object.__new__() is not safe, use KeyError.__new__()
+class R(KeyError, K): R() in Python -> R>KeyError>LookupError>Exception>BaseException>K>PN>object R('k')
+D extends PN, class C(D, KeyError): C() in Python -> TypeError: object.__new__(C) is not safe, use KeyError.__new__()
+D extends PN, class C(D, KeyError): new C -> TypeError: object.__new__(C) is not safe, use KeyError.__new__()
+D extends PN, class C(D, KeyError): a class of JS derived from C -> TypeError: object.__new__() is not safe, use KeyError.__new__()
+class R(KeyError, D): R() in Python -> R>KeyError>LookupError>Exception>BaseException>D>PN>object R('k')
+K extends PN, class C(K, date): C() in Python -> TypeError: object.__new__(C) is not safe, use datetime.date.__new__()
+K extends PN, class C(K, date): new C -> TypeError: object.__new__(C) is not safe, use datetime.date.__new__()
+K extends PN, class C(K, date): a class of JS derived from C -> TypeError: object.__new__() is not safe, use datetime.date.__new__()
+class R(date, K): R() in Python -> R>date>K>PN>object R(2020, 1, 2)
+D extends PN, class C(D, date): C() in Python -> TypeError: object.__new__(C) is not safe, use datetime.date.__new__()
+D extends PN, class C(D, date): new C -> TypeError: object.__new__(C) is not safe, use datetime.date.__new__()
+D extends PN, class C(D, date): a class of JS derived from C -> TypeError: object.__new__() is not safe, use datetime.date.__new__()
+class R(date, D): R() in Python -> R>date>D>PN>object R(2020, 1, 2)
+K extends PN, class C(K, OrderedDict): C() in Python -> TypeError: object.__new__(C) is not safe, use collections.OrderedDict.__new__()
+K extends PN, class C(K, OrderedDict): new C -> TypeError: object.__new__(C) is not safe, use collections.OrderedDict.__new__()
+K extends PN, class C(K, OrderedDict): a class of JS derived from C -> TypeError: object.__new__() is not safe, use collections.OrderedDict.__new__()
+class R(OrderedDict, K): R() in Python -> R>OrderedDict>dict>K>PN>object R()
+D extends PN, class C(D, OrderedDict): C() in Python -> TypeError: object.__new__(C) is not safe, use collections.OrderedDict.__new__()
+D extends PN, class C(D, OrderedDict): new C -> TypeError: object.__new__(C) is not safe, use collections.OrderedDict.__new__()
+D extends PN, class C(D, OrderedDict): a class of JS derived from C -> TypeError: object.__new__() is not safe, use collections.OrderedDict.__new__()
+class R(OrderedDict, D): R() in Python -> R>OrderedDict>dict>D>PN>object R()
+K extends tzinfo, class C(K, dict): C() in Python -> C>K>tzinfo>dict>object {}
+K extends tzinfo, class C(K, dict): new C -> C>K>tzinfo>dict>object {}
+K extends tzinfo, class C(K, dict): a class of JS derived from C -> >C>K>tzinfo>dict>object {}
+class R(dict, K): R() in Python -> R>dict>K>tzinfo>object {}
+D extends tzinfo, class C(D, dict): C() in Python -> C>D>tzinfo>dict>object {}
+D extends tzinfo, class C(D, dict): new C -> C>D>tzinfo>dict>object {}
+D extends tzinfo, class C(D, dict): a class of JS derived from C -> >C>D>tzinfo>dict>object {}
+class R(dict, D): R() in Python -> R>dict>D>tzinfo>object {}
+K extends tzinfo, class C(K, int): C() in Python -> C>K>tzinfo>int>object 5
+K extends tzinfo, class C(K, int): new C -> C>K>tzinfo>int>object 5
+K extends tzinfo, class C(K, int): a class of JS derived from C -> >C>K>tzinfo>int>object 5
+class R(int, K): R() in Python -> R>int>K>tzinfo>object 5
+D extends tzinfo, class C(D, int): C() in Python -> C>D>tzinfo>int>object 5
+D extends tzinfo, class C(D, int): new C -> C>D>tzinfo>int>object 5
+D extends tzinfo, class C(D, int): a class of JS derived from C -> >C>D>tzinfo>int>object 5
+class R(int, D): R() in Python -> R>int>D>tzinfo>object 5
+K extends tzinfo, class C(K, tuple): C() in Python -> C>K>tzinfo>tuple>object (1, 2)
+K extends tzinfo, class C(K, tuple): new C -> C>K>tzinfo>tuple>object (1, 2)
+K extends tzinfo, class C(K, tuple): a class of JS derived from C -> >C>K>tzinfo>tuple>object (1, 2)
+class R(tuple, K): R() in Python -> R>tuple>K>tzinfo>object (1, 2)
+D extends tzinfo, class C(D, tuple): C() in Python -> C>D>tzinfo>tuple>object (1, 2)
+D extends tzinfo, class C(D, tuple): new C -> C>D>tzinfo>tuple>object (1, 2)
+D extends tzinfo, class C(D, tuple): a class of JS derived from C -> >C>D>tzinfo>tuple>object (1, 2)
+class R(tuple, D): R() in Python -> R>tuple>D>tzinfo>object (1, 2)
+K extends tzinfo, class C(K, str): C() in Python -> C>K>tzinfo>str>object 's'
+K extends tzinfo, class C(K, str): new C -> C>K>tzinfo>str>object 's'
+K extends tzinfo, class C(K, str): a class of JS derived from C -> >C>K>tzinfo>str>object 's'
+class R(str, K): R() in Python -> R>str>K>tzinfo>object 's'
+D extends tzinfo, class C(D, str): C() in Python -> C>D>tzinfo>str>object 's'
+D extends tzinfo, class C(D, str): new C -> C>D>tzinfo>str>object 's'
+D extends tzinfo, class C(D, str): a class of JS derived from C -> >C>D>tzinfo>str>object 's'
+class R(str, D): R() in Python -> R>str>D>tzinfo>object 's'
+K extends tzinfo, class C(K, OSError): C() in Python -> C>K>tzinfo>OSError>Exception>BaseException>object C(2, 'x')
+K extends tzinfo, class C(K, OSError): new C -> C>K>tzinfo>OSError>Exception>BaseException>object C(2, 'x')
+K extends tzinfo, class C(K, OSError): a class of JS derived from C -> >C>K>tzinfo>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, K): R() in Python -> R>OSError>Exception>BaseException>K>tzinfo>object R(2, 'x')
+D extends tzinfo, class C(D, OSError): C() in Python -> C>D>tzinfo>OSError>Exception>BaseException>object C(2, 'x')
+D extends tzinfo, class C(D, OSError): new C -> C>D>tzinfo>OSError>Exception>BaseException>object C(2, 'x')
+D extends tzinfo, class C(D, OSError): a class of JS derived from C -> >C>D>tzinfo>OSError>Exception>BaseException>object (2, 'x')
+class R(OSError, D): R() in Python -> R>OSError>Exception>BaseException>D>tzinfo>object R(2, 'x')
+K extends tzinfo, class C(K, KeyError): C() in Python -> C>K>tzinfo>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends tzinfo, class C(K, KeyError): new C -> C>K>tzinfo>KeyError>LookupError>Exception>BaseException>object C('k')
+K extends tzinfo, class C(K, KeyError): a class of JS derived from C -> >C>K>tzinfo>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, K): R() in Python -> R>KeyError>LookupError>Exception>BaseException>K>tzinfo>object R('k')
+D extends tzinfo, class C(D, KeyError): C() in Python -> C>D>tzinfo>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends tzinfo, class C(D, KeyError): new C -> C>D>tzinfo>KeyError>LookupError>Exception>BaseException>object C('k')
+D extends tzinfo, class C(D, KeyError): a class of JS derived from C -> >C>D>tzinfo>KeyError>LookupError>Exception>BaseException>object ('k')
+class R(KeyError, D): R() in Python -> R>KeyError>LookupError>Exception>BaseException>D>tzinfo>object R('k')
+K extends tzinfo, class C(K, date): C() in Python -> C>K>tzinfo>date>object C(2020, 1, 2)
+K extends tzinfo, class C(K, date): new C -> C>K>tzinfo>date>object C(2020, 1, 2)
+K extends tzinfo, class C(K, date): a class of JS derived from C -> >C>K>tzinfo>date>object (2020, 1, 2)
+class R(date, K): R() in Python -> R>date>K>tzinfo>object R(2020, 1, 2)
+D extends tzinfo, class C(D, date): C() in Python -> C>D>tzinfo>date>object C(2020, 1, 2)
+D extends tzinfo, class C(D, date): new C -> C>D>tzinfo>date>object C(2020, 1, 2)
+D extends tzinfo, class C(D, date): a class of JS derived from C -> >C>D>tzinfo>date>object (2020, 1, 2)
+class R(date, D): R() in Python -> R>date>D>tzinfo>object R(2020, 1, 2)
+K extends tzinfo, class C(K, OrderedDict): C() in Python -> C>K>tzinfo>OrderedDict>dict>object C()
+K extends tzinfo, class C(K, OrderedDict): new C -> C>K>tzinfo>OrderedDict>dict>object C()
+K extends tzinfo, class C(K, OrderedDict): a class of JS derived from C -> >C>K>tzinfo>OrderedDict>dict>object ()
+class R(OrderedDict, K): R() in Python -> R>OrderedDict>dict>K>tzinfo>object R()
+D extends tzinfo, class C(D, OrderedDict): C() in Python -> C>D>tzinfo>OrderedDict>dict>object C()
+D extends tzinfo, class C(D, OrderedDict): new C -> C>D>tzinfo>OrderedDict>dict>object C()
+D extends tzinfo, class C(D, OrderedDict): a class of JS derived from C -> >C>D>tzinfo>OrderedDict>dict>object ()
+class R(OrderedDict, D): R() in Python -> R>OrderedDict>dict>D>tzinfo>object R()
+--- an mro() that leaves out the first base, of the classes of JS too
+D over X: new -> D>object a D
+D over X: in Python -> D>object a D
+K over X: new -> K>object a K
+K over X: in Python -> K>object a K
+K2 over X: new -> K2>object a K2
+K2 over X: in Python -> K2>object a K2
+Reflect.construct(X, [], K) -> X>object a X
+D over XE: new -> D>Exception>BaseException>object D()
+D over XE: in Python -> D>Exception>BaseException>object D()
+K over XE: new -> K>Exception>BaseException>object K()
+K over XE: in Python -> K>Exception>BaseException>object K()
+K2 over XE: new -> K2>Exception>BaseException>object K2()
+K2 over XE: in Python -> K2>Exception>BaseException>object K2()
+Reflect.construct(XE, [], K) -> XE>Exception>BaseException>object XE()
+D over XD: new -> D>object a D
+D over XD: in Python -> D>object a D
+K over XD: new -> K>object a K
+K over XD: in Python -> K>object a K
+K2 over XD: new -> K2>object a K2
+K2 over XD: in Python -> K2>object a K2
+Reflect.construct(XD, [], K) -> XD>object a XD
+--- the __new__ of another built-in type, written into one that can be written to
+dict: new error -> error>Exception>BaseException>object error(1)
+dict: new D -> D>error>Exception>BaseException>object D(1)
+dict: new K -> K>error>Exception>BaseException>object K(1)
+dict: Reflect.construct(error, [1], D) -> D>error>Exception>BaseException>object D(1)
+dict: Reflect.construct(error, [1], K) -> K>error>Exception>BaseException>object K(1)
+KeyError: new error -> error>Exception>BaseException>object error(1)
+KeyError: new D -> D>error>Exception>BaseException>object D(1)
+KeyError: new K -> K>error>Exception>BaseException>object K(1)
+KeyError: Reflect.construct(error, [1], D) -> D>error>Exception>BaseException>object D(1)
+KeyError: Reflect.construct(error, [1], K) -> K>error>Exception>BaseException>object K(1)
+OSError: new error -> error>Exception>BaseException>object error(1)
+OSError: new D -> D>error>Exception>BaseException>object D(1)
+OSError: new K -> K>error>Exception>BaseException>object K(1)
+OSError: Reflect.construct(error, [1], D) -> D>error>Exception>BaseException>object D(1)
+OSError: Reflect.construct(error, [1], K) -> K>error>Exception>BaseException>object K(1)
+object: new error -> error>Exception>BaseException>object error(1)
+object: new D -> D>error>Exception>BaseException>object D(1)
+object: new K -> K>error>Exception>BaseException>object K(1)
+object: Reflect.construct(error, [1], D) -> D>error>Exception>BaseException>object D(1)
+object: Reflect.construct(error, [1], K) -> K>error>Exception>BaseException>object K(1)
+Exception: new error -> error>Exception>BaseException>object error(1)
+Exception: new D -> D>error>Exception>BaseException>object D(1)
+Exception: new K -> K>error>Exception>BaseException>object K(1)
+Exception: Reflect.construct(error, [1], D) -> D>error>Exception>BaseException>object D(1)
+Exception: Reflect.construct(error, [1], K) -> K>error>Exception>BaseException>object K(1)
+deleted: Reflect.construct(error, [1], D) -> D>error>Exception>BaseException>object D(1)
+--- a class of JS beside a class with a __new__ of the program's: that is not passed over in silence
+class C(K extends Plain, DictNew): C() -> C>K>Plain>DictNew>dict>object {} | calls of its __new__: 1
+class C(D extends Plain, DictNew): C() -> C>D>Plain>DictNew>dict>object {} | calls of its __new__: 1
+class C(Plain, DictNew): C() -> C>Plain>DictNew>dict>object {} | calls of its __new__: 1
+class C(K extends Plain, OSNew): C() -> C>K>Plain>OSNew>OSError>Exception>BaseException>object C() | calls of its __new__: 1
+class C(D extends Plain, OSNew): C() -> C>D>Plain>OSNew>OSError>Exception>BaseException>object C() | calls of its __new__: 1
+class C(Plain, OSNew): C() -> C>Plain>OSNew>OSError>Exception>BaseException>object C() | calls of its __new__: 1
+class C(K extends Plain, MixedNew): C() -> TypeError: object.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(D extends Plain, MixedNew): C() -> TypeError: object.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(Plain, MixedNew): C() -> TypeError: object.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(K extends tzinfo, DictNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(D extends tzinfo, DictNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(tzinfo, DictNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(K extends tzinfo, OSNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use OSError.__new__() | calls of its __new__: 0
+class C(D extends tzinfo, OSNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use OSError.__new__() | calls of its __new__: 0
+class C(tzinfo, OSNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use OSError.__new__() | calls of its __new__: 0
+class C(K extends tzinfo, MixedNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(D extends tzinfo, MixedNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(tzinfo, MixedNew): C() -> TypeError: datetime.tzinfo.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(K extends ValueError, DictNew) -> TypeError: multiple bases have instance lay-out conflict
+class C(D extends ValueError, DictNew) -> TypeError: multiple bases have instance lay-out conflict
+class C(ValueError, DictNew) -> TypeError: multiple bases have instance lay-out conflict
+class C(K extends ValueError, OSNew): C() -> TypeError: ValueError.__new__(C) is not safe, use OSError.__new__() | calls of its __new__: 0
+class C(D extends ValueError, OSNew): C() -> TypeError: ValueError.__new__(C) is not safe, use OSError.__new__() | calls of its __new__: 0
+class C(ValueError, OSNew): C() -> TypeError: ValueError.__new__(C) is not safe, use OSError.__new__() | calls of its __new__: 0
+class C(K extends ValueError, MixedNew) -> TypeError: multiple bases have instance lay-out conflict
+class C(D extends ValueError, MixedNew) -> TypeError: multiple bases have instance lay-out conflict
+class C(ValueError, MixedNew) -> TypeError: multiple bases have instance lay-out conflict
+class C(K extends object, DictNew): C() -> C>K>DictNew>dict>object {} | calls of its __new__: 1
+class C(D extends object, DictNew): C() -> C>D>DictNew>dict>object {} | calls of its __new__: 1
+class C(object, DictNew) -> TypeError: Cannot create a consistent method resolution order (MRO) for bases object, DictNew
+class C(K extends object, OSNew): C() -> C>K>OSNew>OSError>Exception>BaseException>object C() | calls of its __new__: 1
+class C(D extends object, OSNew): C() -> C>D>OSNew>OSError>Exception>BaseException>object C() | calls of its __new__: 1
+class C(object, OSNew) -> TypeError: Cannot create a consistent method resolution order (MRO) for bases object, OSNew
+class C(K extends object, MixedNew): C() -> TypeError: object.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(D extends object, MixedNew): C() -> TypeError: object.__new__(C) is not safe, use dict.__new__() | calls of its __new__: 0
+class C(object, MixedNew) -> TypeError: Cannot create a consistent method resolution order (MRO) for bases object, MixedNew
+W(K), K extends ValueOS, with a __new__ that calls super().__new__(cls) -> TypeError: ValueError.__new__(W) is not safe, use ValueOS.__new__()
+W(ValueOS), with a __new__ that calls super().__new__(cls) -> TypeError: ValueError.__new__(W) is not safe, use ValueOS.__new__()
+W(M, dict), with a __new__ that calls super().__new__(cls) -> W>M>dict>object {}
+W(dict), with a __new__ that calls super().__new__(cls) -> W>dict>object {}
+--- a __new__ that returns what is no object for JS: super(...) does not make that `this`
+5: new P -> int>object 5
+5: nothing of its own -> int>object 5
+5: a constructor -> TypeError: The constructor did not return an object
+5: a constructor that writes to this -> TypeError: The constructor did not return an object
+5: a field -> TypeError: The constructor did not return an object
+5: a field and a constructor -> TypeError: The constructor did not return an object
+5: a computed field -> TypeError: The constructor did not return an object
+5: a private field -> TypeError: The constructor did not return an object
+5: a private method -> TypeError: The constructor did not return an object
+5: a class between -> TypeError: The constructor did not return an object
+5: super() in an arrow function -> TypeError: The constructor did not return an object
+None: new P -> NoneType>object None
+None: nothing of its own -> NoneType>object None
+None: a constructor -> TypeError: The constructor did not return an object
+None: a constructor that writes to this -> TypeError: The constructor did not return an object
+None: a field -> TypeError: The constructor did not return an object
+None: a field and a constructor -> TypeError: The constructor did not return an object
+None: a computed field -> TypeError: The constructor did not return an object
+None: a private field -> TypeError: The constructor did not return an object
+None: a private method -> TypeError: The constructor did not return an object
+None: a class between -> TypeError: The constructor did not return an object
+None: super() in an arrow function -> TypeError: The constructor did not return an object
+True: new P -> bool>int>object True
+True: nothing of its own -> bool>int>object True
+True: a constructor -> TypeError: The constructor did not return an object
+True: a constructor that writes to this -> TypeError: The constructor did not return an object
+True: a field -> TypeError: The constructor did not return an object
+True: a field and a constructor -> TypeError: The constructor did not return an object
+True: a computed field -> TypeError: The constructor did not return an object
+True: a private field -> TypeError: The constructor did not return an object
+True: a private method -> TypeError: The constructor did not return an object
+True: a class between -> TypeError: The constructor did not return an object
+True: super() in an arrow function -> TypeError: The constructor did not return an object
+1.5: new P -> float>object 1.5
+1.5: nothing of its own -> float>object 1.5
+1.5: a constructor -> TypeError: The constructor did not return an object
+1.5: a constructor that writes to this -> TypeError: The constructor did not return an object
+1.5: a field -> TypeError: The constructor did not return an object
+1.5: a field and a constructor -> TypeError: The constructor did not return an object
+1.5: a computed field -> TypeError: The constructor did not return an object
+1.5: a private field -> TypeError: The constructor did not return an object
+1.5: a private method -> TypeError: The constructor did not return an object
+1.5: a class between -> TypeError: The constructor did not return an object
+1.5: super() in an arrow function -> TypeError: The constructor did not return an object
+'x': new P -> str>object 'x'
+'x': nothing of its own -> str>object 'x'
+'x': a constructor -> TypeError: The constructor did not return an object
+'x': a constructor that writes to this -> TypeError: The constructor did not return an object
+'x': a field -> TypeError: The constructor did not return an object
+'x': a field and a constructor -> TypeError: The constructor did not return an object
+'x': a computed field -> TypeError: The constructor did not return an object
+'x': a private field -> TypeError: The constructor did not return an object
+'x': a private method -> TypeError: The constructor did not return an object
+'x': a class between -> TypeError: The constructor did not return an object
+'x': super() in an arrow function -> TypeError: The constructor did not return an object
+10 ** 30: new P -> int>object 1000000000000000000000000000000
+10 ** 30: nothing of its own -> int>object 1000000000000000000000000000000
+10 ** 30: a constructor -> TypeError: The constructor did not return an object
+10 ** 30: a constructor that writes to this -> TypeError: The constructor did not return an object
+10 ** 30: a field -> TypeError: The constructor did not return an object
+10 ** 30: a field and a constructor -> TypeError: The constructor did not return an object
+10 ** 30: a computed field -> TypeError: The constructor did not return an object
+10 ** 30: a private field -> TypeError: The constructor did not return an object
+10 ** 30: a private method -> TypeError: The constructor did not return an object
+10 ** 30: a class between -> TypeError: The constructor did not return an object
+10 ** 30: super() in an arrow function -> TypeError: The constructor did not return an object
+[]: new P -> list>object []
+[]: nothing of its own -> list>object []
+[]: a constructor -> list>object []
+[]: a constructor that writes to this -> list>object []
+[]: a field -> list>object []
+[]: a field and a constructor -> list>object []
+[]: a computed field -> list>object []
+[]: a private field -> list>object []
+[]: a private method -> list>object []
+[]: a class between -> list>object []
+[]: super() in an arrow function -> list>object []
+object(): new P -> object a object
+object(): nothing of its own -> object a object
+object(): a constructor -> object a object
+object(): a constructor that writes to this -> AttributeError: 'object' object has no attribute 'k' and no __dict__ for setting new attributes
+object(): a field -> AttributeError: 'object' object has no attribute 'f' and no __dict__ for setting new attributes
+object(): a field and a constructor -> AttributeError: 'object' object has no attribute 'f' and no __dict__ for setting new attributes
+object(): a computed field -> AttributeError: 'object' object has no attribute 'f1' and no __dict__ for setting new attributes
+object(): a private field -> object a object
+object(): a private method -> object a object
+object(): a class between -> AttributeError: 'object' object has no attribute 'f' and no __dict__ for setting new attributes
+object(): super() in an arrow function -> AttributeError: 'object' object has no attribute 'f' and no __dict__ for setting new attributes
+int: new P -> type>object <class 'int'>
+int: nothing of its own -> type>object <class 'int'>
+int: a constructor -> type>object <class 'int'>
+int: a constructor that writes to this -> TypeError: cannot set 'k' attribute of immutable type 'int'
+int: a field -> TypeError: cannot set 'f' attribute of immutable type 'int'
+int: a field and a constructor -> TypeError: cannot set 'f' attribute of immutable type 'int'
+int: a computed field -> TypeError: cannot set 'f1' attribute of immutable type 'int'
+int: a private field -> type>object <class 'int'>
+int: a private method -> type>object <class 'int'>
+int: a class between -> TypeError: cannot set 'f' attribute of immutable type 'int'
+int: super() in an arrow function -> TypeError: cannot set 'f' attribute of immutable type 'int'

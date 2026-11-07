@@ -1,0 +1,327 @@
+status: 0
+script: eb6ad0a3a736e0b7
+source: a0efca5d648031c1
+---
+--- a function of the program is written, and taken away again
+fresh -> ('C', '{}')
+a function -> ('C', '{}')
+then object's -> ('TypeError', 'object.__new__(C) is not safe, use dict.__new__()')
+then dict's -> ('C', '{}')
+then nothing -> ('C', '{}')
+dict.__new__(C) -> ('C', '{}')
+object.__new__(C) -> ('TypeError', 'object.__new__(C) is not safe, use dict.__new__()')
+object's in the class statement -> ('D', '{}')
+int's written -> ('D', '{}')
+dict's in a staticmethod -> ('D', '{}')
+object's after that -> ('TypeError', 'object.__new__(D) is not safe, use dict.__new__()')
+arguments, fresh -> ('TypeError', 'E() takes no arguments')
+arguments, a function -> a E
+arguments, deleted -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+no arguments, deleted -> a E
+--- the classes derived from it follow, as far as they have none of their own
+before G -> ('TypeError', 'G() takes no arguments')
+before H -> ('TypeError', 'H() takes no arguments')
+before Own -> ('TypeError', 'Own() takes no arguments')
+before BelowOwn -> ('TypeError', 'BelowOwn() takes no arguments')
+before HasInit -> a HasInit
+written G -> ('tuple', "('made by G.__new__ for', 'G')")
+written H -> ('tuple', "('made by G.__new__ for', 'H')")
+written Own -> ('TypeError', 'Own() takes no arguments')
+written BelowOwn -> ('TypeError', 'BelowOwn() takes no arguments')
+written HasInit -> ('tuple', "('made by G.__new__ for', 'HasInit')")
+deleted G -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+deleted H -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+deleted Own -> ('TypeError', 'Own() takes no arguments')
+deleted BelowOwn -> ('TypeError', 'BelowOwn() takes no arguments')
+deleted HasInit -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+made afterwards -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+made afterwards -> a Late
+--- __bases__
+from one with a __new__ to one without -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+below it -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+from one without to one with -> a S
+below it -> a BelowS
+and back -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+below it -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+--- what is written into the dict behind the back of the class
+object's -> ('T', '{}')
+a function -> a U
+after another attribute was written -> a U
+after __init__ was written -> a U
+U.__new__(U) -> ('int', '42')
+a class made afterwards -> ('int', '42')
+--- T.__new__(S)
+date for datetime -> ('TypeError', 'datetime.date.__new__(datetime.datetime) is not safe, use datetime.datetime.__new__()')
+datetime for date -> ('TypeError', 'datetime.datetime.__new__(datetime.date): datetime.date is not a subtype of datetime.datetime')
+int for bool -> ('TypeError', 'int.__new__(bool) is not safe, use bool.__new__()')
+tzinfo for timezone -> ('TypeError', 'datetime.tzinfo.__new__(datetime.timezone) is not safe, use datetime.timezone.__new__()')
+object for X -> ('TypeError', 'object.__new__(X) is not safe, use dict.__new__()')
+dict for X -> ('X', '{}')
+object for Y -> ('TypeError', 'object.__new__(Y) is not safe, use Y.__new__()')
+OrderedDict for Y -> ('Y', '{}')
+Exception for KeyError -> ('KeyError', 'KeyError()')
+Exception for OSError -> ('TypeError', 'Exception.__new__(OSError) is not safe, use OSError.__new__()')
+OSError for FileNotFoundError -> ('FileNotFoundError', 'FileNotFoundError()')
+BaseException for ExceptionGroup -> ('TypeError', 'BaseException.__new__(ExceptionGroup) is not safe, use ExceptionGroup.__new__()')
+tuple for struct_time -> ('TypeError', 'tuple.__new__(time.struct_time) is not safe, use time.struct_time.__new__()')
+object for NoneType -> ('TypeError', 'object.__new__(NoneType) is not safe, use NoneType.__new__()')
+object for a generator -> ('TypeError', "cannot create 'generator' instances")
+object for a function -> ('TypeError', 'object.__new__(function) is not safe, use function.__new__()')
+object for an iterator -> ('TypeError', "cannot create 'list_iterator' instances")
+object for sys.flags -> ('TypeError', "cannot create 'sys.flags' instances")
+tuple for sys.flags -> ('TypeError', "cannot create 'sys.flags' instances")
+object for IOBase -> a IOBase
+object for Generic -> a Generic
+no class -> ('TypeError', 'object.__new__(): not enough arguments')
+no class -> ('TypeError', 'object.__new__(X): X is not a type object (int)')
+--- what an mro() names, and what it leaves out
+before -> ('TypeError', 'N1() takes no arguments')
+the class is not told -> ('TypeError', 'N1() takes no arguments')
+nor after a write to it -> ('TypeError', 'N1() takes no arguments')
+one made afterwards sees it -> ('tuple', "('made by Stranger.__new__ for', 'N2')")
+and goes on looking -> ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)')
+the first -> ('TypeError', 'N1() takes no arguments')
+no object in the MRO -> ('TypeError', "cannot create 'O' instances")
+object.__new__ -> ('TypeError', 'object.__new__(O): O is not a subtype of object')
+a function -> ('int', '5')
+deleted -> ('TypeError', "cannot create 'O' instances")
+without int: () -> ('str', "'Z'")
+without int: (1) -> ('str', "'Z'")
+without int: (a=1) -> ('TypeError', "int() got an unexpected keyword argument 'a'")
+without int: its __new__ -> ('TypeError', 'int.__new__(Z): Z is not a subtype of int')
+without int: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without float: () -> ('str', "'Z'")
+without float: (1) -> ('str', "'Z'")
+without float: (a=1) -> ('TypeError', 'float() takes no keyword arguments')
+without float: its __new__ -> ('TypeError', 'float.__new__(Z): Z is not a subtype of float')
+without float: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without str: () -> ('str', "'Z'")
+without str: (1) -> ('str', "'Z'")
+without str: (a=1) -> ('TypeError', "str() got an unexpected keyword argument 'a'")
+without str: its __new__ -> ('TypeError', 'str.__new__(Z): Z is not a subtype of str')
+without str: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without bytes: () -> ('str', "'Z'")
+without bytes: (1) -> ('str', "'Z'")
+without bytes: (a=1) -> ('TypeError', "bytes() got an unexpected keyword argument 'a'")
+without bytes: its __new__ -> ('TypeError', 'bytes.__new__(Z): Z is not a subtype of bytes')
+without bytes: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without tuple: () -> ('str', "'Z'")
+without tuple: (1) -> ('TypeError', "'int' object is not iterable")
+without tuple: (a=1) -> ('TypeError', 'tuple() takes no keyword arguments')
+without tuple: its __new__ -> ('TypeError', 'tuple.__new__(Z): Z is not a subtype of tuple')
+without tuple: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without dict: () -> ('str', "'Z'")
+without dict: (1) -> ('str', "'Z'")
+without dict: (a=1) -> ('str', "'Z'")
+without dict: its __new__ -> ('TypeError', 'dict.__new__(Z): Z is not a subtype of dict')
+without dict: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without list: () -> ('str', "'Z'")
+without list: (1) -> ('str', "'Z'")
+without list: (a=1) -> ('str', "'Z'")
+without list: its __new__ -> ('TypeError', 'list.__new__(Z): Z is not a subtype of list')
+without list: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+without Exception: () -> ('str', "'Z'")
+without Exception: (1) -> ('str', "'Z'")
+without Exception: (a=1) -> ('str', "'Z'")
+without Exception: its __new__ -> ('TypeError', 'Exception.__new__(Z): Z is not a subtype of Exception')
+without Exception: object.__new__ -> ('TypeError', 'object.__new__(Z) is not safe, use Z.__new__()')
+NoneType for [] () -> ('tuple', "('C', False)")
+NoneType for [] ((1, 2)) -> ('TypeError', 'C() takes no arguments')
+NoneType for [] its __new__ -> ('TypeError', 'NoneType.__new__(C) is not safe, use C.__new__()')
+NoneType for ['tuple'] () -> ('tuple', "('C', False)")
+NoneType for ['tuple'] ((1, 2)) -> ('str', "'C'")
+NoneType for ['tuple'] its __new__ -> ('TypeError', 'NoneType.__new__(C) is not safe, use C.__new__()')
+NotImplementedType for [] () -> ('tuple', "('C', False)")
+NotImplementedType for [] ((1, 2)) -> ('TypeError', 'C() takes no arguments')
+NotImplementedType for [] its __new__ -> ('TypeError', 'NotImplementedType.__new__(C) is not safe, use C.__new__()')
+NotImplementedType for ['tuple'] () -> ('tuple', "('C', False)")
+NotImplementedType for ['tuple'] ((1, 2)) -> ('str', "'C'")
+NotImplementedType for ['tuple'] its __new__ -> ('TypeError', 'NotImplementedType.__new__(C) is not safe, use C.__new__()')
+ellipsis for [] () -> ('tuple', "('C', False)")
+ellipsis for [] ((1, 2)) -> ('TypeError', 'C() takes no arguments')
+ellipsis for [] its __new__ -> ('TypeError', 'ellipsis.__new__(C) is not safe, use C.__new__()')
+ellipsis for ['tuple'] () -> ('tuple', "('C', False)")
+ellipsis for ['tuple'] ((1, 2)) -> ('str', "'C'")
+ellipsis for ['tuple'] its __new__ -> ('TypeError', 'ellipsis.__new__(C) is not safe, use C.__new__()')
+label [stranger=sched_param, bases=()] => sched_param for []
+no class: error [stranger=sched_param, bases=()] => C.mro() returned base with unsuitable layout ('posix.sched_param')
+sched_param for ['tuple'] () -> ('tuple', "('C', False)")
+sched_param for ['tuple'] ((1, 2)) -> ('str', "'C'")
+sched_param for ['tuple'] its __new__ -> ('TypeError', 'posix.sched_param.__new__(C) is not safe, use C.__new__()')
+label [stranger=terminal_size, bases=()] => terminal_size for []
+no class: error [stranger=terminal_size, bases=()] => C.mro() returned base with unsuitable layout ('os.terminal_size')
+terminal_size for ['tuple'] () -> ('tuple', "('C', False)")
+terminal_size for ['tuple'] ((1, 2)) -> ('str', "'C'")
+terminal_size for ['tuple'] its __new__ -> ('TypeError', 'os.terminal_size.__new__(C) is not safe, use C.__new__()')
+--- built-in types that can be written to
+kept -> ('terminal_size', 'os.terminal_size(columns=1, lines=2)')
+dict's written -> ('terminal_size', 'os.terminal_size(columns=1, lines=2)')
+a function: two -> ('terminal_size', 'os.terminal_size(columns=1, lines=2)')
+a function: one -> ('tuple', '(os.terminal_size(columns=1), 1, None)')
+tuple.__new__ -> ('terminal_size', 'os.terminal_size(columns=1)')
+kept -> ('TypeError', 'os.terminal_size.__new__(os.terminal_size) is not safe, use tuple.__new__()')
+put back -> ('TypeError', 'os.terminal_size.__new__(os.terminal_size) is not safe, use tuple.__new__()')
+tuple.__new__ -> ('terminal_size', 'os.terminal_size(columns=1)')
+tuple's written -> ('struct_time', 'time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, ')
+tuple's written -> ('TypeError', 'time.struct_time() takes an at least 9-sequence (0-sequence given)')
+--- an exception that C++ raises, whose type makes something else
+an int -> ('TypeError', "calling <class 'struct.error'> should have returned an instance of BaseException, not int")
+a dict -> ('TypeError', "calling <class 'struct.error'> should have returned an instance of BaseException, not dict")
+another exception -> ('ValueError', "('another', 'required argument is not an integer')")
+one that the program has: sum(o is kept for o in gc.get_objects()) [again=0] => 1
+sys.exception() is kept [again=0] => True
+kept.__traceback__.tb_frame is sys._getframe() [again=0] => True
+raised again while it is handled: sum(o is kept for o in gc.get_objects()) [again=0] => 1
+kept.__context__ [again=0] => None
+one that the program has: sum(o is kept for o in gc.get_objects()) [again=1] => 1
+sys.exception() is kept [again=1] => True
+kept.__traceback__.tb_frame is sys._getframe() [again=1] => True
+raised again while it is handled: sum(o is kept for o in gc.get_objects()) [again=1] => 1
+kept.__context__ [again=1] => None
+deleted -> ('error', 'required argument is not an integer')
+--- and one that the program gets hold of while it is made, by an __init__ written in C++
+len(held) => 1
+held[0].args => ('unknown dialect',)
+names(held[0]) => ['<module>', 'outer', 'inner']
+sum(o is held[0] for o in gc.get_objects()) => 1
+len(held) => 1
+names(held[0]) => ['catches', 'inner']
+held[0].__traceback__.tb_frame.f_back.f_code.co_name => <module>
+deleted -> ('Error', 'unknown dialect')
+--- the type changes while its __new__ runs
+   an __init__ of the program: ('m', [ValueError()])
+a function -> ('ExceptionGroup', "ExceptionGroup('m', [ValueError()])")
+dict's -> ('TypeError', "descriptor '__init__' requires a 'dict' object but received a 'ExceptionGroup'")
+as before -> ('ExceptionGroup', "ExceptionGroup('m', [ValueError()])")
+--- a base that brings a __new__ of another kind to a built-in type that can be written to
+made -> ('Error', "Error('a')")
+used -> ('tuple', "((1, 2), KeyError(), ['a note'], 'utcoffset')")
+raised by C++ -> ('Error', 'Non-hexadecimal digit found')
+a struct sequence -> ('times_result', 'posix.times_result(user=1, system=2, children_user=3, children_system=')
+a struct sequence -> ('int', '5')
+a struct sequence -> ('TypeError', "structseq() missing required argument 'sequence' (pos 1)")
+made by C++ -> ('str', "'times_result'")
+found first -> ('tuple', "('a',)")
+found first, raised by C++ -> ('error', 'Error -5 while decompressing data: incomplete or truncated stream')
+found first, a class derived from it -> ('tuple', "('b',)")
+as before -> ('error', 'Error -5 while decompressing data: incomplete or truncated stream')
+--- the metaclass that wins
+dict's written -> ('str', "'M1'")
+a function -> ('int', '5')
+dict's after that -> ('TypeError', 'dict.__new__(M1): M1 is not a subtype of dict')
+type's after that -> ('str', "'M1'")
+--- a class that looks __new__ up asks for it as for any attribute of the class
+   the metaclass is asked for __new__
+with a __new__ in Python -> a A1
+without -> a A2
+found -> ('int', '5')
+taken out of the dict behind its back -> ('TypeError', 'type.__new__(A3): A3 is not a subtype of type')
+written -> ('int', '6')
+deleted -> ('TypeError', "cannot create 'A3' instances")
+the name is of a class derived from str -> ('int', '7')
+a metaclass that has nothing to say -> ('str', "'what A5 has'")
+abc.ABC -> ('str', "'what A6 has'")
+the metaclass is given a __getattribute__ -> ('str', "'what __getattribute__ gives'")
+and loses it -> ('str', "'what A5 has'")
+a data descriptor in the metaclass -> ('str', "'what the data descriptor of the metaclass gives'")
+that is one no longer -> ('str', "'what A5 has'")
+and is gone -> ('str', "'what A5 has'")
+a descriptor that refuses -> ('AttributeError', 'refused')
+a descriptor that refuses, and a __getattr__ in the metaclass -> ('str', "'what __getattr__ gives for __new__'")
+a descriptor that refuses -> ('AttributeError', 'refused')
+--- a key that is no str changes the class while __new__ is looked for
+before -> a K1
+after -> a K1
+after -> ('TypeError', 'K1() takes no arguments')
+--- copies and pickles do not go by who makes the instances
+before -> ('tuple', '(1, 1, 1)')
+after -> ('tuple', '(1, 1)')
+no instances from Python -> ('str', "'list_iterator'")
+no instances from Python -> ('TypeError', "cannot pickle 'generator' object")
+--- a built-in type that can be written to is given a class for a base
+__dict__ -> ('dict', '{}')
+__dict__ -> ('tuple', "({'x': 1}, {'x': 1}, ('a',))")
+__dict__ -> ('tuple', "(2, {'y': 2})")
+--- behind the back of types that cannot be written to
+no object.__eq__: != -> ('tuple', '(True, False)')
+no object.__eq__: in -> ('bool', 'True')
+BaseException.__init__ is bytearray's: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is a function that raises: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is 5: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is its own __repr__: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is object's __eq__: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is object's __setattr__: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is its own __reduce__: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+BaseException.__init__ is its own __new__: what C++ raises -> ('ZeroDivisionError', 'division by zero')
+and -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+and -> ('IndexError', 'pop from empty list')
+and -> ('KeyError', "'k'")
+and -> ('FileNotFoundError', "[Errno 2] No such file or directory: '/nonexistent/file'")
+and -> ('StopIteration', '')
+no datetime.__new__ -> ('datetime', 'datetime.datetime(2020, 1, 2, 0, 0)')
+dict.__new__ is a function -> ('tuple', "({'a': 1}, namespace(a=1))")
+ValueError.__new__ is a function -> ('ValueError', "invalid literal for int() with base 10: 'x'")
+type.__new__ is a function -> ('str', "'X'")
+and a class for which C++ makes a second one -> ('tuple', "('I', 'I_be', True, 5)")
+RecursionError.__init__ is object's, and the stack is used up -> ('tuple', "('RecursionError', 1)")
+RuntimeError.__init__ is object's, and the stack is used up -> ('tuple', "('RecursionError', 1)")
+BaseException.__init__ is object's, and the stack is used up -> ('tuple', "('RecursionError', 1)")
+the metaclass that wins hands back <class '_io._IOBase'> for the second class -> ('SystemError', "'_io._IOBase' is not a ctypes class.")
+the metaclass that wins hands back <class 'os.terminal_size'> for the second class -> ('SystemError', "'os.terminal_size' is not a ctypes class.")
+the metaclass that wins hands back <class 'int'> for the second class -> ('SystemError', "'int' is not a ctypes class.")
+and these are as they were -> ('tuple', "(b'x', 2, 7)")
+all is as it was -> ('tuple', "(True, datetime.datetime(2020, 1, 2, 0, 0), {'a': 1}, 1)")
+--- one function that makes cells of two sizes goes by __base__ as well
+a task after all -> ('tuple', "('PlainTask', None, 'a name', True, 1, None, False)")
+a class that only names Task -> ('TypeError', "Z.mro() returned base with unsuitable layout ('_asyncio.Task')")
+with __slots__ -> ('int', '2')
+a Future whose class is of PyCStructType -> ('tuple', '(True, True)')
+a Future whose class is of UnionType -> ('tuple', '(True, True)')
+a Future whose class is of PyCSimpleType -> ('tuple', '(True, True)')
+a Future whose class is of PyCArrayType -> ('tuple', '(True, True)')
+--- a lattice of classes, and a long chain: each class is told once, whatever the ways that lead to it
+-----------------------------
+iiiiiiiiiiiiiiiiiiiiiiiiiiiii
+iiiiiiiiiiooooooooooooooooooo
+----------ooooooooooooooooooo
+iiiiiiiiiiiiiiiiiiiiiiiiiiiii
+-----------------------------
+refused(Root) => False
+sum(refused(c) for c in chain[1:]) => 3000
+refused(Root) => True
+sum(refused(c) for c in chain[1:]) => 3000

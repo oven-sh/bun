@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -302,6 +302,74 @@ describe("fs.mkdir - return values", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+describe.skipIf(!isWindows)("fs.mkdir - recursive Windows relative paths", () => {
+  it.each(["sync", "promise", "callback"])("preserves dot components and logical junction cwd (%s)", async method => {
+    using dir = tempDir("mkdir-relative", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const assert = require("node:assert/strict");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const { promisify } = require("node:util");
+          const root = process.env.MKDIR_ROOT;
+          const method = process.env.MKDIR_VARIANT;
+          const mkdir = method === "sync" ? fs.mkdirSync : method === "promise" ? fs.promises.mkdir : promisify(fs.mkdir);
+          const logical = path.join(root, "logical");
+          const work = path.join(logical, "work");
+          const physical = path.join(root, "physical");
+          const target = path.join(physical, "target");
+          fs.mkdirSync(work, { recursive: true });
+          fs.mkdirSync(path.join(logical, "sibling"));
+          fs.writeFileSync(path.join(logical, "file"), "unchanged");
+          fs.mkdirSync(target, { recursive: true });
+          const junction = path.join(logical, "junction");
+          fs.symlinkSync(target, junction, "junction");
+          process.chdir(work);
+          const driveRelative = path.parse(work).root.slice(0, 2) + path.join("..", "sibling");
+          for (const input of [driveRelative, ".", "..", "../sibling", "..\\\\sibling", ".\\\\..\\\\sibling", work + "\\\\..\\\\sibling"]) {
+            assert.equal(await mkdir(input, { recursive: true }), undefined);
+            await assert.rejects(async () => mkdir(input, { recursive: false }), { code: "EEXIST" });
+          }
+          await assert.rejects(async () => mkdir("../file", { recursive: true }), { code: "EEXIST" });
+          const unpaired = Buffer.concat([Buffer.from("../unpaired-"), Buffer.from([0xed, 0xa0, 0x80])]);
+          fs.mkdirSync(unpaired);
+          assert.equal(fs.statSync(unpaired).isDirectory(), true);
+          assert.equal(await mkdir(unpaired, { recursive: true }), undefined);
+          const firstCreated = path.join("..", "created");
+          const created = await mkdir(path.join(firstCreated, "nested"), { recursive: true });
+          assert.equal(typeof created, "string");
+          const createdStat = fs.statSync(created, { bigint: true });
+          const expectedStat = fs.statSync(path.join(logical, "created"), { bigint: true });
+          assert.deepEqual([createdStat.dev, createdStat.ino], [expectedStat.dev, expectedStat.ino]);
+          assert.equal(fs.statSync(path.join(logical, "created", "nested")).isDirectory(), true);
+          process.chdir(junction);
+          assert.equal(process.cwd(), junction);
+          assert.equal(await mkdir("../sibling", { recursive: true }), undefined);
+          assert.equal(fs.existsSync(path.join(physical, "sibling")), false);
+          const firstJunctionCreated = path.join("..", "junction-created");
+          const junctionCreated = await mkdir(path.join(firstJunctionCreated, "nested"), { recursive: true });
+          assert.equal(typeof junctionCreated, "string");
+          const junctionStat = fs.statSync(junctionCreated, { bigint: true });
+          const expectedJunctionStat = fs.statSync(path.join(logical, "junction-created"), { bigint: true });
+          assert.deepEqual([junctionStat.dev, junctionStat.ino], [expectedJunctionStat.dev, expectedJunctionStat.ino]);
+          assert.equal(fs.statSync(path.join(logical, "junction-created", "nested")).isDirectory(), true);
+          assert.equal(fs.existsSync(path.join(physical, "junction-created")), false);
+          assert.equal(fs.readFileSync(path.join(logical, "file"), "utf8"), "unchanged");
+          console.log("ok");
+        `,
+      ],
+      env: { ...bunEnv, MKDIR_ROOT: String(dir), MKDIR_VARIANT: method },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   });
 });
 

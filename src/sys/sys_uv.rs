@@ -517,6 +517,26 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
     }
 }
 
+/// Preserve Windows filename code units while using libuv's Win32 stat semantics.
+pub fn stat_w(path: &bun_core::WStr) -> Result<Stat> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut len = 0;
+    let mut units = path.as_slice();
+    while !units.is_empty() {
+        let (codepoint, count) = bun_core::strings::decode_wtf16_raw(units);
+        let mut encoded = [0; 4];
+        let written = bun_core::strings::encode_wtf8_rune(&mut encoded, codepoint);
+        if len + written >= buf.len() {
+            return Err(Error::new(E::NOBUFS, Tag::stat));
+        }
+        buf[len..len + written].copy_from_slice(&encoded[..written]);
+        len += written;
+        units = &units[count as usize..];
+    }
+    buf[len] = 0;
+    stat(ZStr::from_buf(&buf[..], len))
+}
+
 pub fn lstat(path: &ZStr) -> Result<Stat> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.

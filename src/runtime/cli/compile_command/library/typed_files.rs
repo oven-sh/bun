@@ -1,5 +1,6 @@
 use bun_ast::{Loader, Log};
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
+use bun_bundler::output_file::TypedFileSources;
 use bun_core::ZBox;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::{join_abs_string, platform_to_posix_in_place, relative_platform};
@@ -42,14 +43,18 @@ pub(crate) fn add_typed_files(
         }
         OutputFileValue::Copy(_) | OutputFileValue::Noop => None,
     };
-    struct Written<'f> {
+    // The typed files are the one reader of these.
+    let sources: Vec<Option<Box<TypedFileSources>>> = (output_files.iter_mut())
+        .map(|file| file.typed_file_sources.take())
+        .collect();
+    struct Written {
         path: Vec<u8>,
         text: Vec<u8>,
         source_map: Vec<u8>,
-        entry_point: Option<&'f [u8]>,
+        sources: Box<TypedFileSources>,
     }
-    let mut written: Vec<Written<'_>> = Vec::new();
-    for file in output_files.iter() {
+    let mut written: Vec<Written> = Vec::new();
+    for (file, sources) in output_files.iter().zip(sources) {
         let is_code = matches!(file.output_kind, OutputKind::EntryPoint | OutputKind::Chunk);
         if !is_code || !file.loader.is_javascript_like() {
             continue;
@@ -64,12 +69,11 @@ pub(crate) fn add_typed_files(
         {
             text.truncate(length);
         }
-        let is_entry_point = file.output_kind == OutputKind::EntryPoint;
         written.push(Written {
             path: path_of(file),
             text,
             source_map,
-            entry_point: is_entry_point.then_some(file.src_path.text),
+            sources: sources.unwrap_or_default(),
         });
     }
     let javascript: Vec<WrittenJavaScript<'_>> = written
@@ -78,7 +82,7 @@ pub(crate) fn add_typed_files(
             path: &file.path,
             text: &file.text,
             source_map: &file.source_map,
-            entry_point: file.entry_point,
+            sources: &file.sources,
         })
         .collect();
     let modules = take_module_types();

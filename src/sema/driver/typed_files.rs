@@ -4036,9 +4036,6 @@ fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 fn absolute(directory: &[u8], path: &[u8]) -> Vec<u8> {
-    if cfg!(windows) && bun_paths::is_fully_qualified(path) {
-        return crate::host::from_native(path);
-    }
     let mut parts: Vec<&[u8]> = if path.starts_with(b"/") {
         Vec::new()
     } else {
@@ -4057,53 +4054,61 @@ fn absolute(directory: &[u8], path: &[u8]) -> Vec<u8> {
 }
 
 fn add_types_by_source_map(
-    path: &[u8],
-    javascript: &[u8],
-    source_map: &[u8],
+    output: &Output<'_>,
     bundle: &Bundle<'_>,
 ) -> Result<TypedText, TypedFilesError> {
-    let source_map = crate::host::parse_json_object(&bun_sema::session::Arena::new(), source_map)
-        .ok_or(TypedFilesError::SourceMapNotJson)?;
-    let strings = |field: &[u8]| -> Vec<&[u8]> {
-        source_map
-            .get(field)
-            .and_then(Json::as_array)
-            .unwrap_or_default()
-            .iter()
-            .map(|entry| entry.as_str().unwrap_or_default())
-            .collect()
-    };
-    let (paths, texts) = (strings(b"sources"), strings(b"sourcesContent"));
-    if paths.len() != texts.len() {
-        return Err(TypedFilesError::SourceMapWithoutSources);
+    let source_map =
+        crate::host::parse_json_object(&bun_sema::session::Arena::new(), output.source_map)
+            .ok_or(TypedFilesError::SourceMapNotJson)?;
+    let texts: Vec<&[u8]> = source_map
+        .get(b"sourcesContent")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| entry.as_str().unwrap_or_default())
+        .collect();
+    if output.sources.len() != texts.len() {
+        return Err(TypedFilesError::SourceMapOfOtherSources {
+            named: output.sources.len(),
+            held: texts.len(),
+        });
     }
-    let directory = &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)];
-    let is_known = |path: &Vec<u8>| {
+    let module_of = |path: &[u8]| {
         bundle
             .modules
             .iter()
-            .any(|module| module.path[..] == path[..])
+            .find(|module| module.path[..] == *path)
     };
-    let paths: Vec<Vec<u8>> = (paths.iter())
-        .map(|source| {
-            ancestors(directory)
-                .map(|from| absolute(from, source))
-                .find(is_known)
-                .unwrap_or_else(|| absolute(directory, source))
+    let sources: Vec<Source<'_>> = (output.sources.iter().zip(&texts))
+        .map(|(source, &text)| match source {
+            // What the type checker noted of a module are offsets in the text that it read.
+            MappedSource::File(path) => match module_of(path) {
+                Some(module) if module.text[..] != *text => {
+                    let path = path.clone();
+                    Err(match bun_core::strings::is_valid_utf8(&module.text) {
+                        true => TypedFilesError::SourceNotAsChecked { path },
+                        false => TypedFilesError::SourceNotUtf8 { path },
+                    })
+                }
+                _ => Ok(Source { path, text }),
+            },
+            // Every module has a path from the root, so this is the path of none.
+            MappedSource::NotFile(name) => Ok(Source {
+                path: bun_core::strings::trim_leading_char(name, b'/'),
+                text,
+            }),
         })
-        .collect();
-    let sources: Vec<Source<'_>> = paths
-        .iter()
-        .zip(&texts)
-        .map(|(path, &text)| Source { path, text })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let mappings = source_map
         .get(b"mappings")
         .and_then(Json::as_str)
         .ok_or(TypedFilesError::SourceMapWithoutMappings)?;
-    let typed = add_types(path, javascript, mappings, &sources, bundle)?;
+    let typed = add_types(output.path, output.javascript, mappings, &sources, bundle)?;
     Ok(TypedText {
-        source: paths.first().filter(|path| is_known(path)).cloned(),
+        source: match output.sources.first() {
+            Some(MappedSource::File(path)) if module_of(path).is_some() => Some(path.clone()),
+            _ => None,
+        },
         ..typed
     })
 }
@@ -4467,7 +4472,17 @@ pub struct Output<'a> {
     pub path: &'a [u8],
     pub javascript: &'a [u8],
     pub source_map: &'a [u8],
+    /// What each entry of the `sources` of `source_map` names, in order. The bundler says it, so no entry is resolved.
+    pub sources: &'a [MappedSource],
     pub entry_point: Option<&'a [u8]>,
+}
+
+/// What one entry of the `sources` of a source map names.
+pub enum MappedSource {
+    /// A file, by the path under which the type checker was given it: `ModuleTypes::path` if it found a module there.
+    File(Vec<u8>),
+    /// Not a file, such as what a plugin made in a namespace of its own. No `ModuleTypes` are of it.
+    NotFile(Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -4479,7 +4494,16 @@ pub enum TypedFilesError {
     MappingsNotBase64,
     NoFinalLineBreak,
     SourceMapNotJson,
-    SourceMapWithoutSources,
+    SourceMapOfOtherSources {
+        named: usize,
+        held: usize,
+    },
+    SourceNotAsChecked {
+        path: Vec<u8>,
+    },
+    SourceNotUtf8 {
+        path: Vec<u8>,
+    },
     SourceMapWithoutMappings,
     NotNamedJavaScript {
         path: Vec<u8>,
@@ -4505,9 +4529,20 @@ impl core::fmt::Display for TypedFilesError {
                 f.write_str("the JavaScript does not end with a line break")
             }
             TypedFilesError::SourceMapNotJson => f.write_str("the source map is not JSON"),
-            TypedFilesError::SourceMapWithoutSources => {
-                f.write_str("the source map does not hold the text of its sources")
-            }
+            TypedFilesError::SourceMapOfOtherSources { named, held } => write!(
+                f,
+                "the source map holds the text of {held} of its sources and the bundler names {named} of them"
+            ),
+            TypedFilesError::SourceNotAsChecked { path } => write!(
+                f,
+                "the text of {} in the source map is not the text that was type checked",
+                BStr::new(path)
+            ),
+            TypedFilesError::SourceNotUtf8 { path } => write!(
+                f,
+                "{} is not UTF-8, so the source map does not hold its text",
+                BStr::new(path)
+            ),
             TypedFilesError::SourceMapWithoutMappings => {
                 f.write_str("the source map has no mappings")
             }
@@ -4592,11 +4627,10 @@ fn typed_outputs(
             entry_point: output.entry_point,
         };
         let typed =
-            add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
-                .map_err(|why| TypedFilesError::InOutput {
-                    path: shown.to_vec(),
-                    why: Box::new(why),
-                })?;
+            add_types_by_source_map(output, &bundle).map_err(|why| TypedFilesError::InOutput {
+                path: shown.to_vec(),
+                why: Box::new(why),
+            })?;
         let typed_path =
             typed_path_beside(output.path).ok_or_else(|| TypedFilesError::NotNamedJavaScript {
                 path: shown.to_vec(),

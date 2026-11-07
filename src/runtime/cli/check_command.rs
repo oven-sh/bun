@@ -680,17 +680,17 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     }))
 }
 
-/// Converts `TypeChecked::sources`. A key in `Bun.build`'s `files` may be relative, and its value
-/// may start with a byte order mark.
+/// The name under which the type checker is given a file of the bundle. A key in `Bun.build`'s `files` may be relative.
+fn checker_path(cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path]))
+}
+
+/// Converts `TypeChecked::sources`. A value may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
-        .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(path), text)
-        })
+        .map(|(path, text)| (checker_path(cwd, path), without_utf8_bom(text).to_vec()))
         .collect()
 }
 

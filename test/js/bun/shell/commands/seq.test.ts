@@ -180,6 +180,18 @@ describe("seq", async () => {
     .stderr("seq: invalid argument\n")
     .runAsTest("underscore after hex prefix is invalid");
 
+  TestBuilder.command`seq "- 5"`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("space after the sign is invalid");
+
+  TestBuilder.command`seq -+5`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("two signs are invalid");
+
   TestBuilder.command`seq 4 0 7`.exitCode(1).stdout("").stderr("seq: zero increment\n").runAsTest("zero increment");
 
   TestBuilder.command`seq 4 -2 7`

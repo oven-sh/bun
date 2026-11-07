@@ -98,6 +98,13 @@ impl Editor {
                     let _ = opened.close(); // close error is non-actionable
                     return Some(path.as_bytes());
                 }
+                // No descriptor was free for the open, so ask about the path.
+                bun_sys::Result::Err(err)
+                    if matches!(err.get_errno(), bun_sys::E::EMFILE | bun_sys::E::ENFILE)
+                        && bun_sys::access(path, bun_sys::posix::R_OK).is_ok() =>
+                {
+                    return Some(path.as_bytes());
+                }
                 bun_sys::Result::Err(_) => {}
             }
         }

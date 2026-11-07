@@ -13,10 +13,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 
-// Absolute argv[0] so PATH lookup (which_for_spawn) is skipped; on musl that
-// lookup fails under EMFILE before the event loop is created and turns the
-// failure into ENOENT instead of exercising us_create_loop.
-const fixture = /* js */ `
+// `/bin/sh` skips the PATH lookup (which_for_spawn), so that row tests
+// us_create_loop alone. `sh` runs the lookup before the event loop is created:
+// the lookup must find the command with no descriptor free, and then the
+// failure comes from us_create_loop all the same.
+const fixture = (command: string) => /* js */ `
   import * as fs from "node:fs";
   // Warm anything lazily opened on first use so the fd fill below leaves zero
   // descriptors for us_create_loop itself (not for a module loader read).
@@ -27,7 +28,7 @@ const fixture = /* js */ `
 
   let first;
   try {
-    Bun.spawnSync({ cmd: ["/bin/sh", "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
+    Bun.spawnSync({ cmd: [${JSON.stringify(command)}, "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
     first = { ok: false, msg: "UNEXPECTED: spawnSync succeeded" };
   } catch (e) {
     first = { ok: true, code: e?.code, msg: String(e?.message ?? e) };
@@ -40,16 +41,17 @@ const fixture = /* js */ `
 
   // Descriptors are free again: the isolated loop was not cached on failure,
   // so this call creates it successfully and runs the child.
-  const retry = Bun.spawnSync({ cmd: ["/bin/sh", "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
+  const retry = Bun.spawnSync({ cmd: [${JSON.stringify(command)}, "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
   console.error("retry exit:", retry.exitCode);
   console.error("SURVIVED");
 `;
 
 describe.skipIf(!isPosix)("Bun.spawnSync event-loop creation under EMFILE", () => {
-  test("throws instead of aborting the process", async () => {
+  test.concurrent.each(["/bin/sh", "sh"])("throws instead of aborting the process: %s", async command => {
     await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `ulimit -n 512 && exec "$1" --no-install -e "$2"`, "sh", bunExe(), fixture],
-      env: bunEnv,
+      cmd: ["/bin/sh", "-c", `ulimit -n 512 && exec "$1" --no-install -e "$2"`, "sh", bunExe(), fixture(command)],
+      // A fixed PATH, so that the `sh` row finds its command whatever PATH the test runner has.
+      env: { ...bunEnv, PATH: "/bin:/usr/bin" },
       stdout: "pipe",
       stderr: "pipe",
     });

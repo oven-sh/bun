@@ -5,7 +5,7 @@ use bun_core::{Global, Output, env_var};
 use bun_core::{note, print_errorln};
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
-use bun_sys::{self, E, File};
+use bun_sys::{self, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
@@ -172,10 +172,10 @@ impl InstallCompletionsCommand {
         Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
     }
 
-    /// Exits, unless the write fails on something else than a closed pipe.
+    /// Exits, unless the write fails for another reason than a reader that left.
     fn write_and_exit(stdout: &File, completions: &[u8]) -> Result<(), crate::Error> {
         match stdout.write_all(completions) {
-            Err(err) if err.get_errno() != E::EPIPE => Err(err.into()),
+            Err(err) if !bun_sys::reader_left(stdout.handle, err.get_errno()) => Err(err.into()),
             _ => Global::exit(0),
         }
     }

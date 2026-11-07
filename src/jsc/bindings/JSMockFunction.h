@@ -70,6 +70,8 @@ public:
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
+    // The install order of the newest spy. restoreAllMocks() undoes spies from the highest order down.
+    uint32_t lastSpyOrder { 0 };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

@@ -450,6 +450,11 @@ public:
     // Preloads and their beforeAll() hooks run once for all test files, so the end of a test file leaves it alone.
     bool isMadeByPreload { false };
 
+private:
+    // The List bits of the sets this mock is in. It sits here because the flags above leave two bytes free.
+    uint8_t m_lists { 0 };
+
+public:
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
     // The spy is the property's getter or setter, or what its getter returns.
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
@@ -859,6 +864,9 @@ public:
         return getter && getter->boundThis() == this;
     }
 
+    // Call it before the store that installs the spy: a Proxy trap of that store can put a newer spy on top.
+    void willInstall() { m_spyOrder = ++mockModule().lastSpyOrder; }
+
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
@@ -922,7 +930,8 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    template<typename Functor> static void forEachIn(Zig::GlobalObject*, List, const Functor&);
+    template<List, typename Functor> static void forEachIn(Zig::GlobalObject*, const Functor&);
+    static void sortNewestFirst(MarkedArgumentBuffer& spies);
 
     ALWAYS_INLINE void enter(List list)
     {
@@ -1027,8 +1036,12 @@ private:
     JSC::Weak<JSObject> m_spyTarget;
     JSC::Identifier m_spyIdentifier;
     unsigned m_spyAttributes { 0 };
-    uint8_t m_lists { 0 };
+    // From JSMockModule::lastSpyOrder: a spy installed later has a higher one.
+    uint32_t m_spyOrder { 0 };
 };
+
+// The cell is 208 bytes, because an IsoSubspace rounds the size up to MarkedBlock::atomSize.
+static_assert(sizeof(JSMockFunction) <= 208);
 
 template<typename Visitor>
 void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
@@ -1155,10 +1168,20 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
+// The set's snapshot is in address-hash order. Two spies on one property only end on the original if the newer one is undone first.
+NEVER_INLINE void JSMockFunction::sortNewestFirst(MarkedArgumentBuffer& spies)
+{
+    auto isStale = [](JSValue spy) { return !(uncheckedDowncast<JSMockFunction>(spy)->m_lists & static_cast<uint8_t>(List::Spies)); };
+    spies.shrink(std::remove_if(spies.begin(), spies.end(), isStale) - spies.begin());
+    std::sort(spies.begin(), spies.end(), [](JSValue newer, JSValue older) {
+        return uncheckedDowncast<JSMockFunction>(newer)->m_spyOrder > uncheckedDowncast<JSMockFunction>(older)->m_spyOrder;
+    });
+}
+
 // Detaches the set first, which drops its stale entries and lets script that `apply` runs register mocks in a new set.
 // Every mock leaves, so `apply` must enter() the ones that stay. Keeps going after an exception and rethrows the first one at the end.
-template<typename Functor>
-void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const Functor& apply)
+template<JSMockFunction::List list, typename Functor>
+void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, const Functor& apply)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto& set = setOf(globalObject->mockModule, list);
@@ -1168,6 +1191,8 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
     MarkedArgumentBuffer mocks;
     uncheckedDowncast<ActiveSpySet>(set.get())->takeSnapshot(mocks);
     set.clear();
+    if constexpr (list == List::Spies)
+        sortNewestFirst(mocks);
     JSC::Exception* firstException = nullptr;
     for (size_t i = 0; i < mocks.size(); ++i) {
         auto* mock = uncheckedDowncast<JSMockFunction>(mocks.at(i));
@@ -1189,12 +1214,12 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
 void JSMockFunction::restoreAll(Zig::GlobalObject* globalObject)
 {
     // vi.restoreAllMocks() keeps a spy's calls and implementation.
-    forEachIn(globalObject, List::Spies, [globalObject](JSMockFunction* spy) { spy->clearSpy(globalObject, !spy->isVitest); });
+    forEachIn<List::Spies>(globalObject, [globalObject](JSMockFunction* spy) { spy->clearSpy(globalObject, !spy->isVitest); });
 }
 
 void JSMockFunction::clearAll(Zig::GlobalObject* globalObject)
 {
-    forEachIn(globalObject, List::Called, [](JSMockFunction* mock) { mock->clear(); });
+    forEachIn<List::Called>(globalObject, [](JSMockFunction* mock) { mock->clear(); });
 }
 
 void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
@@ -1203,7 +1228,7 @@ void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
     clearAll(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     scope.release();
-    forEachIn(globalObject, List::Configured, [globalObject](JSMockFunction* mock) { mock->resetConfiguration(globalObject); });
+    forEachIn<List::Configured>(globalObject, [globalObject](JSMockFunction* mock) { mock->resetConfiguration(globalObject); });
 }
 
 // The next test file shares the global object, so this file's spies and recorded calls have to go.
@@ -1216,7 +1241,7 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     JSC::Exception* firstException = nullptr;
     // Loop, because a Proxy trap hit while restoring one spy may install another.
     while (globalObject->mockModule.activeSpies) {
-        forEachIn(globalObject, List::Spies, [&](JSMockFunction* spy) {
+        forEachIn<List::Spies>(globalObject, [&](JSMockFunction* spy) {
             if (spy->isMadeByPreload) {
                 spiesOfPreload.append(spy);
                 return;
@@ -1241,7 +1266,7 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     }
 
     // Must run after restoring spies, since a Proxy trap may call a mock.
-    forEachIn(globalObject, List::Called, [](JSMockFunction* mock) {
+    forEachIn<List::Called>(globalObject, [](JSMockFunction* mock) {
         if (mock->isMadeByPreload)
             mock->enter(List::Called);
         else
@@ -3146,6 +3171,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         auto* mock = createMockFunction(vm, globalObject, isVitest);
+        mock->willInstall();
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
@@ -3227,6 +3253,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     auto* mock = createMockFunction(vm, globalObject, isVitest);
+    mock->willInstall();
     if (original.isCallable()) {
         wrapFunction(globalObject, mock, original);
     } else if (access == SpyAccess::Get && descriptor.isDataDescriptor()) {

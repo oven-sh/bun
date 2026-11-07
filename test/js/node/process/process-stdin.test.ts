@@ -2,7 +2,7 @@ import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
-import { closeSync, readSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, readSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -363,7 +363,10 @@ describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
     using dir = tempDir("stdin-pause-eof", {});
     const gate = join(String(dir), "gate");
     const [childEnd, parentEnd] = createSocketPair();
-    let writeEnd: number | undefined = parentEnd;
+    // A close() of parentEnd is not EOF while the child of a concurrent test, between fork and
+    // exec, holds a copy of the descriptor. shutdown() is. The socket owns parentEnd.
+    const writer = await Bun.connect({ fd: parentEnd, socket: { data() {} } } as any);
+    let sent = false;
     try {
       await using proc = Bun.spawn({
         cmd: [
@@ -408,10 +411,10 @@ describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
       let stdout = "";
       for await (const chunk of proc.stdout) {
         stdout += decoder.decode(chunk, { stream: true });
-        if (writeEnd !== undefined && stdout.includes("READY\n")) {
-          writeSync(writeEnd, "abcdefgh");
-          closeSync(writeEnd);
-          writeEnd = undefined;
+        if (!sent && stdout.includes("READY\n")) {
+          sent = true;
+          expect(writer.write("abcdefgh")).toBe(8);
+          writer.shutdown();
           writeFileSync(gate, "");
         }
       }
@@ -423,7 +426,7 @@ describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
       });
     } finally {
       closeSync(childEnd);
-      if (writeEnd !== undefined) closeSync(writeEnd);
+      writer.end();
     }
   });
 });

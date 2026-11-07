@@ -456,6 +456,8 @@ export const pgHold = Symbol("pgHold");
  */
 export async function pgMockServer(
   respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
+  /** Frames sent after AuthenticationOk and before ReadyForQuery, for example a BackendKeyData. */
+  startupFrames: Buffer[] = [],
 ): Promise<{ port: number; server: net.Server; held(): Promise<void>; release(): void }> {
   const releases = new Set<() => void>();
   let holding = Promise.withResolvers<void>();
@@ -476,7 +478,7 @@ export async function pgMockServer(
         if (buffered.length < 4 || buffered.length < buffered.readInt32BE(0)) return;
         buffered = buffered.subarray(buffered.readInt32BE(0));
         startup = false;
-        out.push(pgAuthenticationOk(), pgReadyForQuery());
+        out.push(pgAuthenticationOk(), ...startupFrames, pgReadyForQuery());
       }
       buffered = pgReadFrontendMessages(buffered, (type, body) => {
         const reply = respond(String.fromCharCode(type), body, socket);

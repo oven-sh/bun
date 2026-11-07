@@ -441,7 +441,12 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
   const nameOf = (it: Example) => `${it.page.replaceAll("/", "__")}__${it.line}`;
   // Those in another language are below an ESLint config of their own.
   const languagesOf = (it: Example) => byPage.get(it.page)!.languages;
-  const directoryOf = (it: Example) => join(dir, ...(languagesOf(it).length ? ["languages"] : []), nameOf(it));
+  // A `root` example has options that are paths, so it runs below a directory with a name that is a pattern.
+  const above = (it: Example) => [
+    ...(languagesOf(it).length ? ["languages"] : []),
+    ...(it.root ? ["[p]{a,b}+(c)"] : []),
+  ];
+  const directoryOf = (it: Example) => join(dir, ...above(it), nameOf(it));
   const put = (path: string, content: string) => (
     mkdirSync(dirname(path), { recursive: true }),
     writeFileSync(path, content)

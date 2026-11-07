@@ -192,76 +192,52 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
 ];
 
 // `OnceLock` for lazily-initialised statics (`DefineData` is not const-constructible).
-//
-// `DefineData` is not `Send`/`Sync` in general (it carries `ExprData`, whose
-// boxed variants hold `NonNull<_>`). The four instances stored here only ever
-// use the inline `EUndefined` / `ENumber` variants and `original_name = None`,
-// so they contain no raw pointers and are trivially shareable. Wrap in a local
-// newtype to satisfy `OnceLock<T: Sync + Send>` without globally relaxing
-// `DefineData`'s auto-traits.
-#[repr(transparent)]
-struct SyncDefineData(defines::IdentifierDefine);
-// SAFETY: only constructed below with pointer-free `ExprData` payloads
-// (`EUndefined`/`ENumber`) and `original_name = None`; never mutated after
-// `OnceLock` init. See note above.
-unsafe impl Sync for SyncDefineData {}
-// SAFETY: see `Sync` impl above.
-unsafe impl Send for SyncDefineData {}
-
 fn pure_global_identifier_define() -> &'static defines::IdentifierDefine {
-    static CELL: OnceLock<SyncDefineData> = OnceLock::new();
-    &CELL
-        .get_or_init(|| {
-            SyncDefineData(defines::DefineData::init(defines::Options {
-                value: ExprData::EUndefined(js_ast::E::Undefined),
-                valueless: true,
-                can_be_removed_if_unused: true,
-                ..Default::default()
-            }))
+    static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
+    CELL.get_or_init(|| {
+        defines::DefineData::init(defines::Options {
+            value: ExprData::EUndefined(js_ast::E::Undefined),
+            valueless: true,
+            can_be_removed_if_unused: true,
+            ..Default::default()
         })
-        .0
+    })
 }
 
 mod identifiers {
-    use super::{ExprData, OnceLock, SyncDefineData, defines, js_ast};
+    use super::{ExprData, OnceLock, defines, js_ast};
 
     const NAN_VAL: js_ast::E::Number = js_ast::E::Number::new(f64::NAN);
     const INF_VAL: js_ast::E::Number = js_ast::E::Number::new(f64::INFINITY);
 
     // Step 2. Swap in certain literal values because those can be constant folded
     pub(super) fn undefined() -> &'static defines::IdentifierDefine {
-        static CELL: OnceLock<SyncDefineData> = OnceLock::new();
-        &CELL
-            .get_or_init(|| {
-                SyncDefineData(defines::DefineData::init(defines::Options {
-                    value: ExprData::EUndefined(js_ast::E::Undefined),
-                    can_be_removed_if_unused: true,
-                    ..Default::default()
-                }))
+        static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
+        CELL.get_or_init(|| {
+            defines::DefineData::init(defines::Options {
+                value: ExprData::EUndefined(js_ast::E::Undefined),
+                can_be_removed_if_unused: true,
+                ..Default::default()
             })
-            .0
+        })
     }
     pub(super) fn nan() -> &'static defines::IdentifierDefine {
-        static CELL: OnceLock<SyncDefineData> = OnceLock::new();
-        &CELL
-            .get_or_init(|| {
-                SyncDefineData(defines::DefineData::init(defines::Options {
-                    value: ExprData::ENumber(NAN_VAL),
-                    ..Default::default()
-                }))
+        static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
+        CELL.get_or_init(|| {
+            defines::DefineData::init(defines::Options {
+                value: ExprData::ENumber(NAN_VAL),
+                ..Default::default()
             })
-            .0
+        })
     }
     pub(super) fn infinity() -> &'static defines::IdentifierDefine {
-        static CELL: OnceLock<SyncDefineData> = OnceLock::new();
-        &CELL
-            .get_or_init(|| {
-                SyncDefineData(defines::DefineData::init(defines::Options {
-                    value: ExprData::ENumber(INF_VAL),
-                    ..Default::default()
-                }))
+        static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
+        CELL.get_or_init(|| {
+            defines::DefineData::init(defines::Options {
+                value: ExprData::ENumber(INF_VAL),
+                ..Default::default()
             })
-            .0
+        })
     }
 }
 

@@ -3,6 +3,10 @@
 #include "NodeVM.h"
 #include "NodeVMModule.h"
 
+namespace JSC {
+class ModuleProgramNode;
+}
+
 namespace Bun {
 
 class NodeVMSourceTextModule final : public NodeVMModule {
@@ -37,7 +41,6 @@ public:
     bool hasTopLevelAwait() const { return m_hasTopLevelAwait; }
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
-    ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -45,13 +48,15 @@ public:
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     WriteBarrier<JSArray> m_moduleRequestsArray;
-    WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Unknown> m_initializeImportMeta;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
     bool m_hasTopLevelAwait { false };
     bool m_linkCalled { false };
+
+    JSModuleRecord* analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<JSC::ModuleProgramNode>& node);
+    void replaceUnlinkedRecords(JSGlobalObject* globalObject);
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
         : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)

@@ -8,6 +8,7 @@
 #include "JSX509Certificate.h"
 #include "JSX509CertificatePrototype.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -18,7 +19,6 @@
 #include "webcrypto/CryptoKeyRSA.h"
 #include "webcrypto/CryptoKeyOKP.h"
 #include "webcrypto/CryptoKeyAES.h"
-#include "wtf/DateMath.h"
 #include "AsymmetricKeyValue.h"
 #include <JavaScriptCore/DateInstance.h>
 #include "JSKeyObject.h"
@@ -61,7 +61,7 @@ static const HashTableValue JSX509CertificatePrototypeTableValues[] = {
     { "ca"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_ca, 0 } },
     { "checkEmail"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckEmail, 2 } },
     { "checkHost"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckHost, 2 } },
-    { "checkIP"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIP, 1 } },
+    { "checkIP"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIP, 2 } },
     { "checkIssued"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIssued, 1 } },
     { "checkPrivateKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckPrivateKey, 1 } },
     { "fingerprint"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_fingerprint, 0 } },
@@ -113,95 +113,83 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
     return JSValue::encode(jsString(vm, pemString));
 }
 
+// What `{ ...options }` has under `name`: an own enumerable property, or undefined.
+static JSValue getOwnOption(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSObject* options, const Identifier& name)
+{
+    PropertyDescriptor descriptor;
+    bool isOwn = options->getOwnPropertyDescriptor(globalObject, name, descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isOwn || !descriptor.enumerable())
+        return jsUndefined();
+    return options->get(globalObject, name);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/x509.js#L59-L86
 static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
     if (options.isUndefined())
         return 0;
 
-    JSObject* object = options.getObject();
+    V::validateObject(scope, globalObject, options, "options"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!object) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "options must be an object"_s);
-        return 0;
+    JSObject* object = options.getObject();
+
+    JSValue subject = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "subject"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue wildcards = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "wildcards"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue partialWildcards = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "partialWildcards"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue multiLabelWildcards = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "multiLabelWildcards"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue singleLabelSubdomains = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "singleLabelSubdomains"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!subject.isUndefined()) {
+        V::validateString(scope, globalObject, subject, "options.subject"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSValue subject = object->get(globalObject, Identifier::fromString(vm, String("subject"_s)));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue wildcards = object->get(globalObject, Identifier::fromString(vm, String("wildcards"_s)));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue partialWildcards = object->get(globalObject, Identifier::fromString(vm, String("partialWildcards"_s)));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue multiLabelWildcards = object->get(globalObject, Identifier::fromString(vm, String("multiLabelWildcards"_s)));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue singleLabelSubdomains = object->get(globalObject, Identifier::fromString(vm, String("singleLabelSubdomains"_s)));
-    RETURN_IF_EXCEPTION(scope, {});
+    const std::pair<JSValue, ASCIILiteral> booleans[] = {
+        { wildcards, "options.wildcards"_s },
+        { partialWildcards, "options.partialWildcards"_s },
+        { multiLabelWildcards, "options.multiLabelWildcards"_s },
+        { singleLabelSubdomains, "options.singleLabelSubdomains"_s },
+    };
+    for (auto& [value, name] : booleans) {
+        if (value.isUndefined())
+            continue;
+        V::validateBoolean(scope, globalObject, value, name);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     uint32_t flags = 0;
 
     if (!subject.isUndefined()) {
-        if (!subject.isString()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "subject must be a string"_s);
-            return 0;
-        }
-
-        auto subjectString = subject.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto view = subjectString->view(globalObject);
+        auto view = asString(subject)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (view == "always"_s) {
             flags |= ncrypto::X509View::CheckFlags::ALWAYS_CHECK_SUBJECT;
         } else if (view == "never"_s) {
             flags |= ncrypto::X509View::CheckFlags::NEVER_CHECK_SUBJECT;
-        } else if (view == "default"_s) {
-            // Matches OpenSSL's default, no flags.
-        } else {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "subject must be 'always' or 'never'"_s);
+        } else if (view != "default"_s) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.subject"_s, subject);
             return 0;
         }
     }
 
-    if (!wildcards.isUndefined()) {
-        if (!wildcards.isBoolean()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "wildcards must be a boolean"_s);
-            return 0;
-        }
-
-        if (!wildcards.asBoolean())
-            flags |= ncrypto::X509View::CheckFlags::NO_WILDCARDS;
-    }
-
-    if (!partialWildcards.isUndefined()) {
-        if (!partialWildcards.isBoolean()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "partialWildcards must be a boolean"_s);
-            return 0;
-        }
-
-        if (!partialWildcards.asBoolean())
-            flags |= ncrypto::X509View::CheckFlags::NO_PARTIAL_WILDCARDS;
-    }
-
-    if (!multiLabelWildcards.isUndefined()) {
-        if (!multiLabelWildcards.isBoolean()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "multiLabelWildcards must be a boolean"_s);
-            return 0;
-        }
-
-        if (multiLabelWildcards.asBoolean())
-            flags |= ncrypto::X509View::CheckFlags::MULTI_LABEL_WILDCARDS;
-    }
-
-    if (!singleLabelSubdomains.isUndefined()) {
-        if (!singleLabelSubdomains.isBoolean()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "singleLabelSubdomains must be a boolean"_s);
-            return 0;
-        }
-        if (singleLabelSubdomains.asBoolean())
-            flags |= ncrypto::X509View::CheckFlags::SINGLE_LABEL_SUBDOMAINS;
-    }
+    if (wildcards.isFalse())
+        flags |= ncrypto::X509View::CheckFlags::NO_WILDCARDS;
+    if (partialWildcards.isFalse())
+        flags |= ncrypto::X509View::CheckFlags::NO_PARTIAL_WILDCARDS;
+    if (multiLabelWildcards.isTrue())
+        flags |= ncrypto::X509View::CheckFlags::MULTI_LABEL_WILDCARDS;
+    if (singleLabelSubdomains.isTrue())
+        flags |= ncrypto::X509View::CheckFlags::SINGLE_LABEL_SUBDOMAINS;
 
     return flags;
 }
@@ -218,24 +206,22 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     }
 
     JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isUndefined()) {
-        if (!arg0.isString()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "email must be a string"_s);
-            return {};
-        }
-    }
-
-    auto emailString = arg0.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto view = emailString->view(globalObject);
+    V::validateString(scope, globalObject, arg0, "email"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::UTF8View emailView(view);
+    auto* emailString = asString(arg0);
+    auto view = emailString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    auto check = thisObject->checkEmail(globalObject, emailView.span(), flags);
+    // A string too long to convert is not a name in the certificate.
+    auto emailView = Bun::UTF8View::tryCreate(view);
+    if (!emailView) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    auto check = thisObject->checkEmail(globalObject, emailView->span(), flags);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(emailString);
@@ -253,33 +239,29 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     }
 
     JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isUndefined()) {
-        if (!arg0.isString()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "host must be a string"_s);
-            return {};
-        }
-    }
+    V::validateString(scope, globalObject, arg0, "name"_s);
+    RETURN_IF_EXCEPTION(scope, {});
 
     uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto hostString = arg0.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    auto* hostString = asString(arg0);
     auto view = hostString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::UTF8View hostView(view);
+    // Neither the empty string nor a string too long to convert is a name in the certificate.
+    auto hostView = Bun::UTF8View::tryCreate(view);
+    if (!hostView || view->isEmpty()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 
-    ncrypto::DataPointer peerName;
-    auto check = thisObject->checkHost(globalObject, hostView.span(), flags, &peerName);
+    WTF::String peerName;
+    auto check = thisObject->checkHost(globalObject, hostView->span(), flags, &peerName);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     // Node returns the subject name that matched, which differs from the query
     // for wildcard SAN entries and for case-insensitive matches.
-    if (peerName) {
-        auto matched = WTF::String::fromUTF8ReplacingInvalidSequences(peerName.span());
-        return JSValue::encode(jsString(vm, WTF::move(matched)));
-    }
+    if (!peerName.isEmpty())
+        return JSValue::encode(jsString(vm, WTF::move(peerName)));
     return JSValue::encode(hostString);
 }
 
@@ -295,24 +277,18 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     }
 
     JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isUndefined()) {
-        if (!arg0.isString()) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "ip must be a string"_s);
-            return {};
-        }
-    }
-
-    auto ipString = arg0.toString(globalObject);
+    V::validateString(scope, globalObject, arg0, "ip"_s);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // None of the options changes the result. They are still validated.
+    getFlags(vm, globalObject, scope, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* ipString = asString(arg0);
     auto view = ipString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    WTF::CString ip = view->utf8();
 
-    // ignore flags
-    // uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
-    // RETURN_IF_EXCEPTION(scope, {});
-
-    auto check = thisObject->checkIP(globalObject, ip.data());
+    auto check = thisObject->checkIP(globalObject, view);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(ipString);
@@ -329,8 +305,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIssued, (JSGlobalObject 
 
     JSX509Certificate* issuer = dynamicDowncast<JSX509Certificate>(callFrame->argument(0));
     if (!issuer) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "issuer must be a JSX509Certificate"_s);
-        return {};
+        return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "otherCert"_s, "X509Certificate"_s, callFrame->argument(0));
     }
 
     auto check = thisObject->checkIssued(globalObject, issuer);
@@ -351,7 +326,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckPrivateKey, (JSGlobalObj
 
     JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(pkeyValue);
     if (!keyObject) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "pkey"_s, "KeyObject"_s, pkeyValue);
+        return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "pkey"_s, "KeyObject"_s, pkeyValue);
     }
 
     auto& handle = keyObject->handle();
@@ -419,7 +394,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncVerify, (JSGlobalObject * glo
 
     JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(pkeyValue);
     if (!keyObject) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "pkey"_s, "KeyObject"_s, pkeyValue);
+        return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "pkey"_s, "KeyObject"_s, pkeyValue);
     }
 
     const auto& handle = keyObject->handle();
@@ -455,7 +430,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint, (JSGlobalObject * 
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint()));
+    JSString* fingerprint = thisObject->fingerprint(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fingerprint);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -469,7 +446,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256, (JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint256()));
+    JSString* fingerprint256 = thisObject->fingerprint256(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fingerprint256);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -483,7 +462,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint512()));
+    JSString* fingerprint512 = thisObject->fingerprint512(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fingerprint512);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -533,7 +514,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * glob
         return {};
     }
 
-    JSString* subject = thisObject->subject();
+    JSString* subject = thisObject->subject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(undefinedIfEmpty(subject));
 }
@@ -549,8 +530,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject
         return {};
     }
 
-    JSString* san = thisObject->subjectAltName();
-    RELEASE_AND_RETURN(scope, JSValue::encode(san ? JSValue(san) : jsUndefined()));
+    JSValue san = thisObject->subjectAltName(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(san.isString() ? san : jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -599,7 +581,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuer, (JSGlobalObject * globa
         return {};
     }
 
-    JSString* issuer = thisObject->issuer();
+    JSString* issuer = thisObject->issuer(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(undefinedIfEmpty(issuer));
 }
@@ -632,7 +614,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey, (JSGlobalObject * gl
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->publicKey()));
+    JSObject* publicKey = thisObject->publicKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(publicKey);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -646,7 +630,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalOb
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->raw())));
+    JSUint8Array* raw = thisObject->raw(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(raw));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -660,7 +646,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber, (JSGlobalObject *
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->serialNumber())));
+    JSString* serialNumber = thisObject->serialNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(serialNumber));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -674,7 +662,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom, (JSGlobalObject * gl
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->validFrom())));
+    JSString* validFrom = thisObject->validFrom(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(validFrom));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validTo, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -688,7 +678,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validTo, (JSGlobalObject * glob
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->validTo())));
+    JSString* validTo = thisObject->validTo(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(validTo));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -702,16 +694,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * 
         return {};
     }
 
-    auto* validToDate = thisObject->validTo();
-    RETURN_IF_EXCEPTION(scope, {});
-    auto view = validToDate->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View validToDateView = Bun::UTF8View(view);
-    if (view->isEmpty())
-        return JSValue::encode(jsUndefined());
-    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validToDateView.span().data()), validToDateView.span().size() };
-    double date = WTF::parseDate(span);
-    return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
+    auto time = thisObject->view().getValidToTime();
+    double milliseconds = time ? *time * 1000. : PNaN;
+    return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), milliseconds));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -725,15 +710,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject 
         return {};
     }
 
-    auto* validFromDate = thisObject->validFrom();
-    RETURN_IF_EXCEPTION(scope, {});
-    auto view = validFromDate->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View validFromDateView = Bun::UTF8View(view);
-    if (view->isEmpty())
-        return JSValue::encode(jsUndefined());
-    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validFromDateView.span().data()), validFromDateView.span().size() };
-    double date = WTF::parseDate(span);
-    return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
+    auto time = thisObject->view().getValidFromTime();
+    double milliseconds = time ? *time * 1000. : PNaN;
+    return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), milliseconds));
 }
 } // namespace Bun

@@ -7,6 +7,6 @@ class Response extends ServerResponse {
     super(req);
   }
 }
-const req = {};
+const req: any = {};
 const res = new Response(req);
 expect(res.req).toBe(req);

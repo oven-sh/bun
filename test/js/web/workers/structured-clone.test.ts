@@ -3,6 +3,9 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
+import { deserialize as v8Deserialize } from "node:v8";
+import { receiveMessageOnPort } from "node:worker_threads";
 import { deflate } from "node:zlib";
 import { join } from "path";
 
@@ -51,7 +54,7 @@ function jscSerializeRoundtripCrossProcessCold(original: any) {
     `,
     ],
     env: bunEnv,
-    stdin: serialized,
+    stdin: serialized as any,
     stdout: "pipe",
     stderr: "inherit",
   });
@@ -309,8 +312,8 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           const d = new Date(7);
           const e = new TypeError("boom");
           const cloned = structuredCloneFn({ a: { d, e }, b: [d, e], map: new Map([["d", d]]), set: new Set([e]) });
-          expect(cloned.a.d).toBe(cloned.b[0]);
-          expect(cloned.a.e).toBe(cloned.b[1]);
+          expect(cloned.a.d).toBe(cloned.b[0] as Date);
+          expect(cloned.a.e).toBe(cloned.b[1] as TypeError);
           expect(cloned.map.get("d")).toBe(cloned.a.d);
           expect(cloned.set.has(cloned.a.e)).toBe(true);
         });
@@ -450,6 +453,36 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
+        // Serialization can run user code, so the transfer list is checked again after it
+        // (step 5): a listed buffer that a getter detached is a DataCloneError. Bun checks the
+        // whole list before it detaches anything, so the failed call also leaves `first`
+        // intact (previously: TypeError, with `first` already detached). HTML detaches entry
+        // by entry, so this is stricter. `second` is kept out of the value so the serializer
+        // itself never sees it.
+        test("a listed ArrayBuffer detached during serialization fails without detaching the others", () => {
+          const first = new ArrayBuffer(8);
+          const second = new ArrayBuffer(8);
+          const value = {
+            first,
+            get detachSecond() {
+              structuredCloneFn(second, { transfer: [second] });
+              return 1;
+            },
+          };
+          let error: unknown;
+          try {
+            structuredCloneFn(value, { transfer: [first, second] });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect({
+            name: (error as DOMException).name,
+            first: first.byteLength,
+            second: second.byteLength,
+          }).toEqual({ name: "DataCloneError", first: 8, second: 0 });
+        });
         // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
         // non-detachable without setting the C-API lock flag. Transferring a
         // pinned buffer must copy via transferTo()'s copyTo() fallback, not
@@ -506,6 +539,7 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         test("Transferring a non-transferable platform object fails", () => {
           const blob = new Blob();
           expect(() => {
+            // @ts-expect-error
             structuredCloneFn(blob, { transfer: [blob] });
           }).toThrow(DOMException);
         });
@@ -765,7 +799,7 @@ for (const structuredCloneFn of [
       const o = { x: 1 };
       const c = await structuredCloneFn([cert, o, o]);
       expect(c[0]).toBeInstanceOf(X509Certificate);
-      expect(c[0].subject).toBe(cert.subject);
+      expect((c[0] as X509Certificate).subject).toBe(cert.subject);
       expect(c[1]).toEqual({ x: 1 });
       expect(c[2]).toBe(c[1]);
     });
@@ -820,6 +854,100 @@ describe("deserializing a version 13 payload", () => {
     expect(+cloned[0]).toBe(5);
     expect(+cloned[1]).toBe(5);
     expect(cloned[0]).not.toBe(cloned[1]);
+  });
+});
+
+async function describeKey(key: CryptoKey) {
+  return {
+    type: key.type,
+    algorithm: key.algorithm,
+    usages: key.usages,
+    extractable: key.extractable,
+    material: Buffer.from(await crypto.subtle.exportKey(key.type === "public" ? "spki" : "pkcs8", key)).toString("hex"),
+  };
+}
+
+test("receiveMessageOnPort returns an X25519 CryptoKey", async () => {
+  const { privateKey } = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+  const { port1, port2 } = new MessageChannel();
+  port1.postMessage(privateKey);
+  expect(await describeKey(receiveMessageOnPort(port2)!.message)).toEqual(await describeKey(privateKey));
+  port1.close();
+});
+
+// An OKP CryptoKey record has these fields, in order:
+//   format version, CryptoKeyTag, record length, format version, key format, extractable,
+//   usage count, usage tags, OKP, algorithm, curve, [key type], key size, key bytes.
+// Only an X25519 record has the key type.
+describe("X25519 CryptoKey records", () => {
+  const compact = (spaced: string) => spaced.replaceAll(" ", "");
+  const read = (spaced: string) => deserialize(Buffer.from(compact(spaced), "hex"));
+  const written = (key: CryptoKey) => Buffer.from(serialize(key)).toString("hex");
+
+  // The X25519 key pair from Node's test-webcrypto-derivebits-cfrg.js.
+  const x25519Private = "c8838e76d057dfb7d8c95a69e138160add6373fd71a4d276bb56e3a81b64ff61";
+  const x25519Public = "1cf2b1e6022ec537371ed7f53e54fa1154d83e98eb64ea51fae5b3307cfe9706";
+  const importX25519 = () =>
+    Promise.all([
+      crypto.subtle.importKey(
+        "pkcs8",
+        Buffer.from(`302e020100300506032b656e04220420${x25519Private}`, "hex"),
+        "X25519",
+        true,
+        ["deriveBits"],
+      ),
+      crypto.subtle.importKey(
+        "spki",
+        Buffer.from(`302a300506032b656e032100${x25519Public}`, "hex"),
+        "X25519",
+        true,
+        [],
+      ),
+    ]);
+
+  test("an X25519 record includes the key type", async () => {
+    const [privateKey, publicKey] = await importX25519();
+    const privateRecord = `0e000000 21 39000000 0e000000 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
+    const publicRecord = `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
+
+    expect(written(privateKey)).toBe(compact(privateRecord));
+    expect(written(publicKey)).toBe(compact(publicRecord));
+    expect(await describeKey(read(privateRecord))).toEqual(await describeKey(privateKey));
+    expect(await describeKey(read(publicRecord))).toEqual(await describeKey(publicKey));
+  });
+
+  // No release could ever read these records.
+  test("rejects the X25519 records without a key type that Bun 1.4.3 wrote", () => {
+    const privateRecord = `0e000000 21 38000000 0e000000 02000000 01000000 01000000 05 05 17 00 20000000 ${x25519Private}`;
+    const publicRecord = `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 00 20000000 ${x25519Public}`;
+
+    expect(() => read(privateRecord)).toThrow(new TypeError("Unable to deserialize data."));
+    expect(() => read(publicRecord)).toThrow(new TypeError("Unable to deserialize data."));
+  });
+
+  test.each([
+    [
+      "an X25519 key type that isn't public or private",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 02 20000000 ${x25519Public}`,
+    ],
+    [
+      "a 31-byte X25519 key",
+      `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 00 00 1f000000 ${x25519Public.slice(2)}`,
+    ],
+    [
+      "the X25519 algorithm with the Ed25519 curve",
+      `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 01 20000000 ${x25519Public}`,
+    ],
+    [
+      "the Ed25519 algorithm with the X25519 curve",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 16 00 00 20000000 ${x25519Public}`,
+    ],
+    [
+      "the AES-GCM algorithm in an OKP record",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 09 00 00 20000000 ${x25519Public}`,
+    ],
+  ])("%s is rejected", (_what, malformed) => {
+    expect(() => read(malformed)).toThrow(new TypeError("Unable to deserialize data."));
   });
 });
 
@@ -1089,5 +1217,115 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+// An X509Certificate record is [tag][u32 derLength][DER]. The serializer never writes
+// derLength 0, but the reader used to accept it and return an X509Certificate with no
+// certificate inside, a state `new X509Certificate()` cannot produce. Its .publicKey
+// wrapped a null EVP_PKEY, and key.equals(key) crashed the process.
+describe("X509Certificate records whose DER does not decode are rejected", () => {
+  const cert = new X509Certificate(tls.cert);
+  const der = cert.raw;
+  // Wire header + tag bytes derived from a real serialize() so a CurrentVersion
+  // bump doesn't invalidate the crafted payloads.
+  const real = Buffer.from(serialize(cert));
+  const headerAndTag = real.subarray(0, real.length - der.length - 4);
+  const record = (derBytes: Uint8Array) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(derBytes.length);
+    return Buffer.concat([headerAndTag, length, derBytes]);
+  };
+
+  // Report only the class of a returned value: inspecting a certificate-less
+  // X509Certificate is exactly what must not be possible.
+  const outcome = (fn: (bytes: Buffer) => unknown, bytes: Buffer) => {
+    try {
+      return { returned: Object.prototype.toString.call(fn(bytes)) };
+    } catch (e: any) {
+      return { threw: `${e.name}: ${e.message}` };
+    }
+  };
+
+  describe.each([
+    ["bun:jsc deserialize", deserialize],
+    ["v8.deserialize", v8Deserialize],
+  ])("%s", (_api, fn) => {
+    test.each([
+      ["an empty DER", Buffer.alloc(0)],
+      ["a DER that is not a certificate", Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+      ["a truncated certificate DER", der.subarray(0, der.length - 1)],
+    ])("rejects %s", (_name, derBytes) => {
+      expect(outcome(fn, record(derBytes))).toEqual({ threw: "TypeError: Unable to deserialize data." });
+    });
+  });
+
+  test("the crashing input: no key reaches equals() from an empty-DER record", async () => {
+    // A subprocess, because on a build that accepts the record equals() dies with a SEGV.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { deserialize } from "bun:jsc";
+         import { deserialize as v8Deserialize } from "node:v8";
+         for (const [name, fn] of [["bun:jsc", deserialize], ["node:v8", v8Deserialize]]) {
+           try {
+             const key = fn(new Uint8Array(${JSON.stringify([...record(Buffer.alloc(0))])})).publicKey;
+             console.log(name + ": RETURNED " + key.equals(key));
+           } catch (e) {
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: ["bun:jsc: Unable to deserialize data.", "node:v8: Unable to deserialize data."],
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  test("a real certificate rebuilt through record() still round-trips", () => {
+    // Guards the record layout the crafted payloads assume.
+    expect(record(der)).toEqual<Buffer>(real);
+    const cloned = deserialize(record(der));
+    expect(cloned).toBeInstanceOf(X509Certificate);
+    expect(cloned.fingerprint256).toBe(cert.fingerprint256);
+    expect(cloned.publicKey.equals(cert.publicKey)).toBe(true);
+  });
+});
+
+describe("string constant pool entries survive GC during deserialization", () => {
+  // A string that appears twice in one payload is materialized once and referenced by index the
+  // second time. If the only object holding the first JSString drops it (here: a Map key that the
+  // payload sets twice) and the heap is collected before the back-reference is read, the
+  // deserializer must still hand back the original string.
+  test("Map value re-set during serialization", () => {
+    for (let iteration = 0; iteration < 1; iteration++) {
+      const expected = "Expected result " + iteration;
+      const map = new Map();
+      map.set("free", expected);
+      map.set("tmp", {
+        get a() {
+          map.delete("free");
+          map.set("free", 0x1234);
+          for (let i = 0; i < 0x10; i++) map.set("gc1_" + i, new ArrayBuffer(1024 * 1024 * 0x10));
+          for (let i = 0; i < 0x800; i++) map.set("gc2_" + i, new Date());
+          map.set("expected", expected);
+          return 1;
+        },
+      });
+      const result = structuredClone(map);
+      expect(result.get("expected")).toBe(expected);
+      expect(result.get("free")).toBe(0x1234);
+      expect(result.get("tmp")).toEqual({ a: 1 });
+    }
   });
 });

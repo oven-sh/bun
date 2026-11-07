@@ -1,0 +1,9 @@
+class A extends (b, c /* 1 */) {}
+class D extends (b, c // 2
+) {}
+class E extends (b, c /**
+ * 3
+ */ ) {}
+class F extends (G as H /**
+ * 4
+ */ ) {}

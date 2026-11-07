@@ -1,0 +1,5 @@
+x = /* prettier-ignore */ (function(){}());
+for (let x = /* prettier-ignore */ ([a   in b]);;);
+(/* prettier-ignore */ {}.a), b;
+((/* prettier-ignore */ a   +   b), c);
+x = ((/* prettier-ignore */ a   +   b), c);

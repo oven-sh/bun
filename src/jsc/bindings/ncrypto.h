@@ -111,9 +111,6 @@ public:
 
     void capture();
 
-    // Add an error message to the end of the stack.
-    void add(WTF::String message);
-
     inline size_t size() const { return errors_.size(); }
     inline bool empty() const { return errors_.empty(); }
 
@@ -123,7 +120,6 @@ public:
     inline auto rend() const noexcept { return errors_.rend(); }
 
     std::optional<WTF::String> pop_back();
-    std::optional<WTF::String> pop_front();
 
 private:
     std::list<WTF::String> errors_;
@@ -318,7 +314,6 @@ public:
     // the result will be an empty Cipher object whose bool operator
     // will return false.
 
-    static const Cipher& EMPTY();
     static const Cipher& AES_128_CBC();
     static const Cipher& AES_192_CBC();
     static const Cipher& AES_256_CBC();
@@ -326,6 +321,7 @@ public:
     struct CipherParams {
         int padding;
         Digest digest;
+        Digest mgf1_digest;
         const Buffer<const void> label;
     };
 
@@ -406,6 +402,8 @@ public:
 
     const PublicKey getPublicKey() const;
     const PrivateKey getPrivateKey() const;
+    // Check that n is the product of all private-key prime factors.
+    bool checkPrimeProduct() const;
     const std::optional<PssParams> getPssParams() const;
 
     bool setPublicKey(BignumPointer&& n, BignumPointer&& e);
@@ -424,19 +422,7 @@ private:
 
 class Ec final {
 public:
-    Ec();
-    Ec(OSSL3_CONST EC_KEY* key);
-    NCRYPTO_DISALLOW_COPY_AND_MOVE(Ec)
-
-    const EC_GROUP* getGroup() const;
-
-    static int GetCurveIdFromName(const char* name);
-
-    inline operator bool() const { return ec_ != nullptr; }
-    inline operator OSSL3_CONST EC_KEY*() const { return ec_; }
-
-private:
-    OSSL3_CONST EC_KEY* ec_ = nullptr;
+    static int GetCurveIdFromName(WTF::StringView name);
 };
 
 // A managed pointer to a buffer of data. When destroyed the underlying
@@ -507,7 +493,6 @@ class BIOPointer final {
 
 public:
     static BIOPointer NewMem();
-    static BIOPointer New(const BIO_METHOD* method);
     static BIOPointer New(const void* data, size_t len);
     static BIOPointer New(const BIGNUM* bn);
     template<typename T>
@@ -545,8 +530,6 @@ public:
 
     bool resetBio() const;
 
-    static int Write(BIOPointer* bio, WTF::StringView message);
-
 private:
     mutable DeleteFnPtr<BIO, BIO_free_all> bio_;
 };
@@ -581,8 +564,6 @@ public:
 
     static DataPointer toHex(const BIGNUM* bn);
     DataPointer toHex() const;
-    DataPointer encode() const;
-    size_t encodeInto(unsigned char* out) const;
 
     using PrimeCheckCallback = WTF::Function<bool(int, int)>;
     int isPrime(int checks,
@@ -689,14 +670,13 @@ public:
     void reset(EVP_PKEY_CTX* ctx = nullptr);
     EVP_PKEY_CTX* release();
 
-    DataPointer derive() const;
-
     bool initForParamgen();
     bool setDhParameters(int prime_size, uint32_t generator);
     bool setDsaParameters(uint32_t bits, std::optional<int> q_bits);
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
+    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);
@@ -837,7 +817,8 @@ public:
 
     int id() const;
     int base_id() const;
-    int bits() const;
+    bool hasSmallOrderEdDsaPoint(
+        const Buffer<const unsigned char>& signature) const;
     size_t size() const;
 
     size_t rawPublicKeySize() const;
@@ -922,14 +903,9 @@ public:
 
     enum class CheckPublicKeyResult {
         NONE,
-#ifndef OPENSSL_IS_BORINGSSL
-        // Boringssl does not define DH_R_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
-        TOO_SMALL = DH_R_CHECK_PUBKEY_TOO_SMALL,
-        TOO_LARGE = DH_R_CHECK_PUBKEY_TOO_LARGE,
-        INVALID = DH_R_CHECK_PUBKEY_INVALID,
-#else
-        INVALID = DH_R_INVALID_PUBKEY,
-#endif
+        TOO_SMALL,
+        TOO_LARGE,
+        INVALID,
         CHECK_FAILED = 512,
     };
     // Check to see if the given public key is suitable for this DH instance.
@@ -983,6 +959,8 @@ public:
     BIOPointer getValidTo() const;
     std::optional<std::string_view> getSignatureAlgorithm() const;
     std::optional<std::string> getSignatureAlgorithmOID() const;
+    std::optional<int64_t> getValidFromTime() const;
+    std::optional<int64_t> getValidToTime() const;
     DataPointer getSerialNumber() const;
     Result<EVPKeyPointer, int> getPublicKey() const;
     StackOfASN1 getKeyUsage() const;
@@ -993,8 +971,6 @@ public:
     bool checkPublicKey(const EVPKeyPointer& pkey) const;
 
     std::optional<WTF::String> getFingerprint(const Digest& method) const;
-
-    X509Pointer clone() const;
 
     enum class CheckMatch {
         NO_MATCH,
@@ -1015,7 +991,7 @@ public:
     };
     CheckMatch checkHost(const std::span<const char> host,
         int flags,
-        DataPointer* peerName = nullptr) const;
+        WTF::String* peerName = nullptr) const;
     CheckMatch checkEmail(const std::span<const char> email, int flags) const;
     CheckMatch checkIp(const char* ip, int flags) const;
 
@@ -1165,7 +1141,6 @@ public:
     const BIGNUM* getPrivateKey() const;
     const EC_POINT* getPublicKey() const;
 
-    static ECKeyPointer New(const EC_GROUP* group);
     static ECKeyPointer NewByCurveName(int nid);
 
     static const EC_POINT* GetPublicKey(const EC_KEY* key);
@@ -1243,7 +1218,6 @@ public:
 
     bool init(const Buffer<const void>& buf, const Digest& md);
     bool update(const Buffer<const void>& buf);
-    DataPointer digest();
     bool digestInto(Buffer<void>* buf);
 
     static HMACCtxPointer New();
@@ -1287,6 +1261,14 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 
 const EVP_MD* getDigestByName(const WTF::StringView name);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
+
+// Not upstream.
+struct DigestName {
+    WTF::ASCIILiteral name;
+    const EVP_MD* (*digest)();
+};
+// The names in getHashes(). getDigestByName() looks through them first.
+std::span<const DigestName> getDigestNames();
 
 // Verify that the specified HKDF output length is valid for the given digest.
 // The maximum length for HKDF output for a given digest is 255 times the

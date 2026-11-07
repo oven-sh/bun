@@ -1,0 +1,21 @@
+{
+  "name": "typed-packages",
+  "private": true,
+  "dependencies": {
+    "base64-js": "1.5.1",
+    "elysia": "1.4.30",
+    "hono": "4.13.13",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-reconciler": "0.33.0",
+    "scheduler": "0.27.0",
+    "seroval": "1.6.9",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/react-reconciler": "0.33.0"
+  }
+}

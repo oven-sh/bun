@@ -1,0 +1,21 @@
+# a native binding is evaluated by its number, which an entry of another kind and a function that native code hands over by itself do not have
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodBinding" results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenTimerBindTsMonotonicNowMs
+    Return v0
+}
+function f1 name="badBindingHandedOverByNativeCode" results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue
+    Return v0
+}
+function f2 name="badEntryOfAnotherKind" results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=MathAbs
+    Return v0
+}

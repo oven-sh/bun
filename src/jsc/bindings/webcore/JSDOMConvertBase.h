@@ -176,6 +176,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
             return JSC::jsUndefined();
         } else if constexpr (std::is_same_v<ExceptionOr<void>, FunctorReturnType>) {
             auto result = valueOrFunctor();
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (result.hasException()) [[unlikely]] {
                 propagateException(lexicalGlobalObject, throwScope, result.releaseException());
                 return {};
@@ -206,6 +207,7 @@ template<typename T, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject& l
             return JSC::jsUndefined();
         } else if constexpr (std::is_same_v<ExceptionOr<void>, FunctorReturnType>) {
             auto result = valueOrFunctor();
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (result.hasException()) [[unlikely]] {
                 propagateException(lexicalGlobalObject, throwScope, result.releaseException());
                 return {};
@@ -236,6 +238,7 @@ template<typename T, typename U> inline JSC::JSValue toJSNewlyCreated(JSC::JSGlo
             return JSC::jsUndefined();
         } else if constexpr (std::is_same_v<ExceptionOr<void>, FunctorReturnType>) {
             auto result = valueOrFunctor();
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (result.hasException()) [[unlikely]] {
                 propagateException(lexicalGlobalObject, throwScope, result.releaseException());
                 return {};

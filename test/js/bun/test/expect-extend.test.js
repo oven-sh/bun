@@ -686,6 +686,7 @@ describe("MatcherContext", () => {
       [[null, null], "Compared values have no visual difference."],
       [[{ a: 1 }, { a: 1 }], "Compared values have no visual difference."],
       [[[1], [1]], "Compared values have no visual difference."],
+      [[new Proxy([2], {}), [2]], "Compared values have no visual difference."],
       [[1, 1n], "  Comparing two different types of values. Expected number but received bigint."],
       [["1", 1], "  Comparing two different types of values. Expected string but received number."],
       [[1], "  Comparing two different types of values. Expected number but received undefined."],
@@ -697,6 +698,15 @@ describe("MatcherContext", () => {
       [[new Date(0), {}], "  Comparing two different types of values. Expected date but received object."],
       [[() => {}, {}], "  Comparing two different types of values. Expected function but received object."],
       [[Symbol(), {}], "  Comparing two different types of values. Expected symbol but received object."],
+      [
+        [new Proxy(new Map([[1, 2]]), {}), new Proxy(new Set([1]), {})],
+        "  Comparing two different types of values. Expected map but received set.",
+      ],
+      [[new Proxy(/b/, {}), {}], "  Comparing two different types of values. Expected regexp but received object."],
+      [
+        [new Proxy(new Date(1), {}), {}],
+        "  Comparing two different types of values. Expected date but received object.",
+      ],
       [[new String("a"), "a"], "  Comparing two different types of values. Expected object but received string."],
     ])("diff(...%p)", (args, text) => {
       const diff = utils.diff(...args);
@@ -712,6 +722,18 @@ describe("MatcherContext", () => {
       expect(marked("a\nb\nc", "a\nx\nc")).toEqual(["- b", "+ x", ...counts(1, 1)]);
       expect(marked({ a: 1, b: 2 }, { a: 1, b: 3 })).toEqual(['-   "b": 2,', '+   "b": 3,', ...counts(1, 1)]);
       expect(marked([1, 2, 3], [1, 3])).toEqual(["-   2,", ...counts(1, 0)]);
+      expect(marked(new Proxy([1, 2, 3], {}), [1, 3])).toEqual(["-   2,", ...counts(1, 0)]);
+      const cyclic = { a: 1 };
+      cyclic.self = cyclic;
+      expect(marked({ a: 2 }, new Proxy(cyclic, {}))).toEqual([
+        '-   "a": 2,',
+        '+   "a": 1,',
+        '+   "self": {',
+        '+     "a": 1,',
+        '+     "self": [Circular],',
+        "+   },",
+        ...counts(1, 5),
+      ]);
       expect(marked(new Map([["a", 1]]), new Map([["a", 2]]))).toEqual([
         '-   "a" => 1,',
         '+   "a" => 2,',
@@ -750,6 +772,7 @@ describe("MatcherContext", () => {
       [undefined, "Received has value: <undefined>"],
       [null, "Received has value: <object>"],
       [[1], "Received has type:  array\nReceived has value: <object>"],
+      [new Proxy([2], {}), "Received has type:  array\nReceived has value: <object>"],
       [true, "Received has type:  boolean\nReceived has value: <boolean>"],
       [() => {}, "Received has type:  function\nReceived has value: <function>"],
       [1, "Received has type:  number\nReceived has value: <number>"],
@@ -760,6 +783,10 @@ describe("MatcherContext", () => {
       [new Map(), "Received has type:  map\nReceived has value: <object>"],
       [new Set(), "Received has type:  set\nReceived has value: <object>"],
       [new Date(0), "Received has type:  date\nReceived has value: <object>"],
+      [new Proxy(/b/, {}), "Received has type:  regexp\nReceived has value: <object>"],
+      [new Proxy(new Map([[1, 2]]), {}), "Received has type:  map\nReceived has value: <object>"],
+      [new Proxy(new Set([1]), {}), "Received has type:  set\nReceived has value: <object>"],
+      [new Proxy(new Date(1), {}), "Received has type:  date\nReceived has value: <object>"],
       [Symbol("s"), "Received has type:  symbol\nReceived has value: <symbol>"],
       [new Error("e"), "Received has type:  object\nReceived has value: <object>"],
       [Object.create(null), "Received has type:  object\nReceived has value: <object>"],

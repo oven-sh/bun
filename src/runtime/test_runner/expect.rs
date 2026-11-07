@@ -2928,11 +2928,13 @@ impl ExpectMatcherUtils {
     /// Mirrors `getType` in @jest/get-type.
     #[optimize(size)]
     fn type_name(value: JSValue) -> &'static str {
+        // The cell of the target answers for a Proxy, as `Array.isArray()` does, and no trap runs.
+        let cell = super::pretty_format::target_of_proxy(value).js_type();
         if value.is_undefined() {
             "undefined"
         } else if value.is_null() {
             "null"
-        } else if value.is_array() {
+        } else if cell.is_array() {
             "array"
         } else if value.is_boolean() {
             "boolean"
@@ -2947,7 +2949,7 @@ impl ExpectMatcherUtils {
         } else if value.is_symbol() {
             "symbol"
         } else {
-            match value.js_type() {
+            match cell {
                 bun_jsc::JSType::RegExpObject => "regexp",
                 bun_jsc::JSType::Map => "map",
                 bun_jsc::JSType::Set => "set",

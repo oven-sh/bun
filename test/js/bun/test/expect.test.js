@@ -956,6 +956,412 @@ describe("expect()", () => {
         signalCode: null,
       });
     });
+
+    describe("a failing matcher prints", () => {
+      /** The lines of the message that `run` fails with. */
+      const messageOf = (/** @type {() => unknown} */ run) => {
+        try {
+          run();
+        } catch (error) {
+          return Bun.stripANSI(ANY(error).message).split("\n");
+        }
+        throw new Error("the matcher passed");
+      };
+      /** The text that a failing matcher prints for `value`. */
+      const printed = (/** @type {unknown} */ value) => {
+        const lines = messageOf(() => expect(value).toEqual(Symbol.for("equal to no value")));
+        const onOneLine = lines.find(line => line.startsWith("Received: "));
+        if (onOneLine !== undefined) return onOneLine.slice("Received: ".length);
+        return lines
+          .filter(line => line.startsWith("+ ") && !line.startsWith("+ Received"))
+          .map(line => line.slice(2))
+          .join("\n");
+      };
+      /** The matcher and the lines of its diff that differ. */
+      const marked = (/** @type {string[]} */ lines) => [lines[0], ...lines.filter(line => /^[-+] {3}/.test(line))];
+      /** A Proxy of an object that holds itself. The target is not the Proxy, so the cycle closes one level down. */
+      const cyclic = () => {
+        const target = ANY({ a: 1 });
+        target.self = target;
+        return new Proxy(target, {});
+      };
+      const cyclicDiff = [
+        '-   "a": 2,',
+        '+   "a": 1,',
+        '+   "self": {',
+        '+     "a": 1,',
+        '+     "self": [Circular],',
+        "+   },",
+      ];
+
+      // Jest 30 prints this diff with `Object {` for `{`. Vitest 4 prints this diff.
+      test("a Proxy that holds a cycle, where JSON.stringify() threw a TypeError", () => {
+        expect(messageOf(() => expect(cyclic()).toEqual({ a: 2 }))).toEqual([
+          "expect(received).toEqual(expected)",
+          "",
+          "  {",
+          ...cyclicDiff,
+          "  }",
+          "",
+          "- Expected  - 1",
+          "+ Received  + 5",
+          "",
+        ]);
+        expect(marked(messageOf(() => expect({ a: 2 }).toEqual(cyclic())))).toEqual([
+          "expect(received).toEqual(expected)",
+          '-   "a": 1,',
+          '-   "self": {',
+          '-     "a": 1,',
+          '-     "self": [Circular],',
+          "-   },",
+          '+   "a": 2,',
+        ]);
+        const proxy = cyclic();
+        expect(messageOf(() => expect(proxy).not.toEqual(proxy))).toEqual([
+          "expect(received).not.toEqual(expected)",
+          "",
+          "Expected: not {",
+          '  "a": 1,',
+          '  "self": {',
+          '    "a": 1,',
+          '    "self": [Circular],',
+          "  },",
+          "}",
+          "",
+        ]);
+
+        const target = ANY({ a: 1 });
+        target.self = new Proxy(target, {});
+        expect(printed(target.self)).toBe('{\n  "a": 1,\n  "self": [Circular],\n}');
+      });
+
+      test("a Proxy from every matcher that prints a diff", async () => {
+        const inArguments = cyclicDiff.map(line => line.replace("   ", "     "));
+        const called = mock(() => {});
+        called(cyclic());
+        expect([
+          marked(messageOf(() => expect(cyclic()).toStrictEqual({ a: 2 }))),
+          marked(messageOf(() => expect(cyclic()).toMatchObject({ a: 2 }))),
+          marked(messageOf(() => expect({ p: cyclic() }).toHaveProperty("p", { a: 2 }))),
+          marked(messageOf(() => expect(called).toHaveBeenCalledWith({ a: 2 }))),
+          marked(messageOf(() => expect(called).toHaveBeenLastCalledWith({ a: 2 }))),
+          marked(messageOf(() => expect(called).toHaveBeenNthCalledWith(1, { a: 2 }))),
+          marked(messageOf(() => expect(called).toHaveBeenCalledExactlyOnceWith({ a: 2 }))),
+        ]).toEqual([
+          ["expect(received).toStrictEqual(expected)", ...cyclicDiff],
+          ["expect(received).toMatchObject(expected)", ...cyclicDiff],
+          ["expect(received).toHaveProperty(path, value)", ...cyclicDiff],
+          ["expect(received).toHaveBeenCalledWith(...expected)", ...inArguments],
+          ["expect(received).toHaveBeenLastCalledWith(...expected)", ...inArguments],
+          ["expect(received).toHaveBeenNthCalledWith(n, ...expected)", ...inArguments],
+          ["expect(received).toHaveBeenCalledExactlyOnceWith(...expected)", ...inArguments],
+        ]);
+        const diff = ["", "  {", ...cyclicDiff, "  }"].join("\n");
+        await expectFailure(() => expect(Promise.resolve(cyclic())).resolves.toEqual({ a: 2 })).toThrow(
+          "expect(received).toEqual(expected)\n" + diff,
+        );
+        await expectFailure(() => expect(Promise.reject(cyclic())).rejects.toStrictEqual({ a: 2 })).toThrow(
+          "expect(received).toStrictEqual(expected)\n" + diff,
+        );
+      });
+
+      // Jest 30 and Vitest 4 print the same, but for `[Function foo]` and `[Function anonymous]`.
+      // They differ on a Date (`{}` and `Date {}`) and on a TypeError (`[TypeError: boom]` and `TypeError {`).
+      test("a Proxy as the object, array, function or error that its traps present", () => {
+        class Foo {
+          a = 1;
+        }
+        const self = ANY([1]);
+        self.push(self);
+        const revoked = Proxy.revocable(function foo() {}, {});
+        revoked.revoke();
+        expect({
+          bigint: printed(new Proxy({ a: 1n }, {})),
+          array: printed(new Proxy([1, 2n], {})),
+          "array that holds itself": printed(new Proxy(self, {})),
+          "class instance": printed(new Proxy(new Foo(), {})),
+          "traps that add and hide a key": printed(
+            new Proxy(ANY({ a: 1, hidden: 2 }), {
+              ownKeys: () => ["a", "added"],
+              getOwnPropertyDescriptor: (target, key) => ({ value: target[key], enumerable: true, configurable: true }),
+              get: (target, key) => (key === "added" ? 42 : target[key]),
+            }),
+          ),
+          "Proxy of a Proxy": printed(new Proxy(new Proxy([{ a: 1n }], {}), {})),
+          "inside an object and an array": printed({ list: [new Proxy({ a: 1n }, {})], object: new Proxy([2n], {}) }),
+          "empty object": printed(new Proxy({}, {})),
+          "empty array": printed(new Proxy([], {})),
+          function: printed(new Proxy(function foo() {}, {})),
+          arrow: printed(new Proxy(() => {}, {})),
+          "revoked function": printed(revoked.proxy),
+          class: printed(new Proxy(Foo, {})),
+          "element of a component": printed({
+            $$typeof: Symbol.for("react.element"),
+            type: new Proxy(function Button() {}, {}),
+            props: {},
+          }),
+          Date: printed(new Proxy(new Date(0), {})),
+          Error: printed(new Proxy(new TypeError("boom"), {})),
+          "typed array": printed(new Proxy(new Uint8Array([1, 2]), {}))
+            .split("\n")
+            .slice(-3),
+        }).toEqual({
+          bigint: '{\n  "a": 1n,\n}',
+          array: "[\n  1,\n  2n,\n]",
+          "array that holds itself": "[\n  1,\n  [\n    1,\n    [Circular],\n  ],\n]",
+          "class instance": 'Foo {\n  "a": 1,\n}',
+          "traps that add and hide a key": '{\n  "a": 1,\n  "added": 42,\n}',
+          "Proxy of a Proxy": '[\n  {\n    "a": 1n,\n  },\n]',
+          "inside an object and an array":
+            '{\n  "list": [\n    {\n      "a": 1n,\n    },\n  ],\n  "object": [\n    2n,\n  ],\n}',
+          "empty object": "{}",
+          "empty array": "[]",
+          function: "[Function: foo]",
+          arrow: "[Function]",
+          "revoked function": "[Function: foo]",
+          class: "[class Foo]",
+          "element of a component": "<Button />",
+          Date: "Date {}",
+          Error: "[TypeError: boom]",
+          "typed array": ['  "0": 1,', '  "1": 2,', "}"],
+        });
+      });
+
+      // No trap gives the entries of a Map or Set, so they come from the target.
+      // Jest 30 and Vitest 4 print them for Vue's `reactive(new Map())`, whose `get` trap wraps the methods.
+      // With no such trap they throw the TypeError of `Map.prototype.entries()`.
+      test("a Proxy of a Map or Set with the entries of its target", () => {
+        /** @type {ProxyHandler<any>} */
+        const wrapsMethods = {
+          get(target, key) {
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        };
+        const itself = new Map();
+        itself.set("self", new Proxy(itself, {}));
+        expect({
+          Map: printed(new Proxy(new Map([["k", 1]]), {})),
+          Set: printed(new Proxy(new Set([1]), {})),
+          "Map that holds itself": printed(itself.get("self")),
+        }).toEqual({
+          Map: 'Map {\n  "k" => 1,\n}',
+          Set: "Set {\n  1,\n}",
+          "Map that holds itself": 'Map {\n  "self" => [Circular],\n}',
+        });
+        for (const make of [
+          () => new Map([[{ key: 1n }, new Proxy([2n], {})]]),
+          () => new Set([{ item: 1n }, new Proxy({ a: 2n }, {})]),
+          () => new Map(),
+          () => new Set(),
+          () => new WeakMap(),
+          () => new WeakSet(),
+        ]) {
+          for (const handler of [{}, wrapsMethods]) {
+            expect(printed(new Proxy(make(), handler))).toBe(printed(make()));
+            expect(printed({ inside: new Proxy(new Proxy(make(), handler), {}) })).toBe(printed({ inside: make() }));
+          }
+        }
+      });
+
+      test("a Proxy that has no trap like its target", () => {
+        const members = () => ({
+          method() {},
+          missing: undefined,
+          [Symbol.for("key")]: 1,
+          nan: NaN,
+          zero: -0,
+          date: new Date(0),
+        });
+        const text = printed(new Proxy(members(), {}));
+        expect(text).toBe(
+          '{\n  "date": 1970-01-01T00:00:00.000Z,\n  [Symbol(key)]: 1,\n  "method": [Function: method],\n' +
+            '  "missing": undefined,\n  "nan": NaN,\n  "zero": -0,\n}',
+        );
+        expect(text).toBe(printed(members()));
+        class Tagged {
+          a = 1;
+          get [Symbol.toStringTag]() {
+            return "Tag";
+          }
+        }
+        // `JSON.stringify()` printed what `toJSON()` returns, and left out a Map, a Set and a RegExp.
+        for (const make of [
+          () => ({ a: 1, toJSON: () => "from toJSON()" }),
+          () => new Tagged(),
+          () => ({ a: 1, [Symbol.toStringTag]: "Tag" }),
+          () => ({ map: new Map([["k", 1]]), set: new Set([1]), regexp: /x/g, error: new Error("e") }),
+          () => [undefined, () => {}, Symbol.for("item"), NaN, -0, new Date(0)],
+        ]) {
+          expect(printed(new Proxy(make(), {}))).toBe(printed(make()));
+        }
+      });
+
+      test("a Proxy inside another value like its target there", () => {
+        /** @type {Record<string, (value: object) => unknown>} */
+        const positions = {
+          "an object": value => ({ value }),
+          "the second item of an array": value => [1, value],
+          "an arguments object": value =>
+            (function () {
+              return arguments;
+            })(value),
+          "a Set": value => new Set([value]),
+          "the key of a Map": value => new Map([[value, 1]]),
+          "the value of a Map": value => new Map([["key", value]]),
+          "a generator": value => Object.assign((function* () {})(), { value }),
+          "expect.objectContaining()": value => expect.objectContaining({ value }),
+        };
+        const printedAt = (/** @type {() => object} */ make) =>
+          Object.entries(positions).map(([name, position]) => [name, printed(position(make()))]);
+        const proxies = printedAt(() => new Proxy({ a: 1n }, {}));
+        expect(proxies).toEqual(printedAt(() => ({ a: 1n })));
+        expect(proxies.filter(([, text]) => !text.includes('"a": 1n,'))).toEqual([]);
+      });
+
+      // The `constructor` read finds out if the value is a DOM node. `JSON.stringify()` also read `toJSON`.
+      test("a Proxy with one call of each trap per key, and fails with what a trap throws", () => {
+        /** @type {string[]} */
+        const asked = [];
+        const traps = new Proxy(
+          {},
+          {
+            get: (_, /** @type {keyof typeof Reflect} */ trap) =>
+              function (/** @type {object} */ target, /** @type {unknown} */ key) {
+                asked.push(typeof key === "string" || typeof key === "symbol" ? `${trap} ${String(key)}` : trap);
+                return ANY(Reflect[trap])(...arguments);
+              },
+          },
+        );
+        const proxy = new Proxy({ a: 1, b: 2, [Symbol("c")]: 3 }, traps);
+        expect(messageOf(() => expect({ proxy }).toEqual({ other: 1 }))[0]).toBe("expect(received).toEqual(expected)");
+        expect(asked).toEqual([
+          "get constructor",
+          "ownKeys",
+          "getOwnPropertyDescriptor a",
+          "getOwnPropertyDescriptor b",
+          "getOwnPropertyDescriptor Symbol(c)",
+          "get a",
+          "get b",
+          "get Symbol(c)",
+        ]);
+
+        const thrown = new Error("from the trap");
+        const throwing = () => {
+          throw thrown;
+        };
+        for (const throws of [
+          new Proxy({ a: 1 }, { get: throwing }),
+          new Proxy({ a: 1 }, { ownKeys: throwing }),
+          new Proxy({ a: 1 }, { getOwnPropertyDescriptor: throwing }),
+          new Proxy(Object.defineProperty({}, "a", { get: throwing, enumerable: true }), {}),
+        ]) {
+          expect(() => expect({ throws }).toEqual({ other: 1 })).toThrow(thrown);
+        }
+
+        // `JSON.stringify()` read no symbol key, so a symbol key that throws is left out.
+        for (const symbolThrows of [
+          new Proxy(
+            { a: 1, [Symbol("key")]: 2 },
+            { get: (target, key) => (ANY(key).startsWith("_") ? 0 : target[key]) },
+          ),
+          new Proxy(Object.defineProperty({ a: 1 }, Symbol("key"), { get: throwing, enumerable: true }), {}),
+        ]) {
+          expect(printed(symbolThrows)).toBe('{\n  "a": 1,\n}');
+        }
+      });
+
+      /** A Proxy whose `next` is another such Proxy, made when it is read. `made` counts them. */
+      const endless = (/** @type {{ made: number, limit: number, long?: string }} */ chain) => {
+        if (++chain.made > chain.limit) throw new Error("the print did not end");
+        return new Proxy(
+          {},
+          {
+            ownKeys: () => (chain.long === undefined ? ["next"] : ["long", "next"]),
+            getOwnPropertyDescriptor: () => ({ value: 1, enumerable: true, configurable: true }),
+            get: (_, key) => (key === "next" ? endless(chain) : key === "long" ? chain.long : undefined),
+          },
+        );
+      };
+
+      test("a chain of Proxies that has no end, up to the limit of the message", () => {
+        const chain = { made: 0, limit: 100, long: Buffer.alloc(20_000, "x").toString() };
+        const lines = messageOf(() => expect({ endless: endless(chain) }).toEqual({ other: 1 }));
+        expect(lines[0]).toBe("expect(received).toEqual(expected)");
+        expect(lines.filter(line => line.includes('"next": ')).map(line => line.slice(1).trim())).toEqual([
+          ...Array.from({ length: 49 }, () => '"next": {'),
+          '"next": [Object],',
+        ]);
+        expect(chain.made).toBe(51);
+      });
+
+      test("a chain of Proxies that has no end, up to a RangeError", () => {
+        const chain = { made: 0, limit: 20_000 };
+        let error;
+        try {
+          expect({ endless: endless(chain) }).toEqual({ other: 1 });
+        } catch (caught) {
+          error = ANY(caught);
+        }
+        expect(error).toBeInstanceOf(RangeError);
+        expect(error.message).toBe("Maximum call stack size exceeded.");
+      });
+
+      // An arguments object is not equal to an array in Jest 30 and Vitest 4 either, and they also print `Arguments [`.
+      test("an arguments object, a generator and an iterator, where JSON.stringify() threw a TypeError", () => {
+        const itself = ANY({ a: 1n });
+        itself.self = itself;
+        (function () {
+          expect(messageOf(() => expect(arguments).toEqual([1, 2]))).toEqual([
+            "expect(received).toEqual(expected)",
+            "",
+            "- [",
+            "+ Arguments [",
+            "    1,",
+            "    2,",
+            "  ]",
+            "",
+            "- Expected  - 1",
+            "+ Received  + 1",
+            "",
+          ]);
+        })(1, 2);
+        (function () {
+          expect(printed({ args: arguments })).toBe(
+            '{\n  "args": Arguments [\n    {\n      "a": 1n,\n      "self": [Circular],\n    },\n  ],\n}',
+          );
+        })(itself);
+        (function () {
+          expect(printed(arguments)).toBe("Arguments []");
+          delete ANY(arguments).length;
+          expect(printed(arguments)).toBe("Arguments []");
+        })();
+        // `JSON.stringify()` printed the own keys, so a `length` that the object does not fill ends at its last item.
+        (function () {
+          ANY(arguments).length = 2 ** 32 - 1;
+          expect(printed(arguments)).toBe("Arguments [\n  1,\n  2,\n]");
+        })(1, 2);
+        expect(printed(new Function("arguments.length = 2 ** 32 - 1; return arguments")(1n, 2))).toBe(
+          "Arguments [\n  1n,\n  2,\n]",
+        );
+        (function () {
+          Object.setPrototypeOf(arguments, { 1: "inherited" });
+          ANY(arguments).length = 2 ** 32 - 1;
+          expect(printed(arguments)).toBe('Arguments [\n  1,\n  "inherited",\n]');
+        })(1);
+        // A function that is not in strict mode has another kind of arguments object, and a third kind with a closure.
+        expect(printed(new Function("return arguments")(1n, 2))).toBe("Arguments [\n  1n,\n  2,\n]");
+        expect(printed(new Function("a", "(() => a)(); return arguments")(1n, 2))).toBe("Arguments [\n  1n,\n  2,\n]");
+
+        const generator = ANY((function* () {})());
+        expect(printed(generator)).toBe("Generator {}");
+        generator.big = 1n;
+        expect(printed(generator).split("\n")).toContain('  "big": 1n,');
+        const iterator = ANY([1][Symbol.iterator]());
+        iterator.self = iterator;
+        expect(printed(iterator).split("\n")).toContain('  "self": [Circular],');
+      });
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {

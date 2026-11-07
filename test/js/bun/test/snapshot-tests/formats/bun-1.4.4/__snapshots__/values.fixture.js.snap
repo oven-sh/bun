@@ -1,0 +1,147 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Proxy of an object 1`] = `{"a":1,"b":"x"}`;
+
+exports[`Proxy in an object 1`] = `
+{
+  "x": {
+ "s": "hi",
+ "n": [
+  1,
+  {
+   "z": 1
+  }
+ ]
+},
+  "y": 1,
+}
+`;
+
+exports[`Proxy three levels down 1`] = `
+{
+  "l1": {
+    "l2": {
+      "p": {
+   "a": 1,
+   "b": [
+      1,
+      2
+   ]
+},
+    },
+  },
+}
+`;
+
+exports[`Proxy of an array 1`] = `[1,2,3]`;
+
+exports[`Proxy in an array 1`] = `
+[
+  {
+ "a": 1
+},
+  2,
+]
+`;
+
+exports[`Proxy in a Map and a Set 1`] = `
+{
+  "m": 
+Map {
+    "k" => {
+  "a": 1
+},
+  }
+,
+  "s":   
+Set {
+    [
+  1
+],
+  }
+,
+}
+`;
+
+exports[`Proxy of a function 1`] = `[class ProxyObject]`;
+
+exports[`Proxy of a class 1`] = `[class ProxyObject]`;
+
+exports[`Proxy of a function in an object 1`] = `
+{
+  "f": [class ProxyObject],
+}
+`;
+
+exports[`Proxy of a class instance 1`] = `{"a":1}`;
+
+exports[`Proxy with traps 1`] = `{"a":1,"virtual":42}`;
+
+exports[`Proxy of a Map 1`] = `{}`;
+
+exports[`Proxy of a Set 1`] = `{}`;
+
+exports[`Proxy of an Error 1`] = `{}`;
+
+exports[`Proxy of a RegExp 1`] = `{}`;
+
+exports[`Proxy of a Promise 1`] = `{}`;
+
+exports[`Proxy of a typed array 1`] = `{"0":1,"1":2}`;
+
+exports[`Proxy of an object with no prototype 1`] = `{"a":1}`;
+
+exports[`Proxy with undefined, a method, a symbol, null and a Date 1`] = `{"n":null,"d":"1970-01-01T00:00:00.000Z"}`;
+
+exports[`Proxy with toJSON() 1`] = `{"json":true}`;
+
+exports[`Proxy of a Proxy 1`] = `{"a":1}`;
+
+exports[`Proxy whose get trap accepts only a string key 1`] = `{"a":1}`;
+
+exports[`Proxy with a symbol key that throws 1`] = `{"a":1}`;
+
+exports[`Proxy of an empty object 1`] = `{}`;
+
+exports[`Proxy of an empty array 1`] = `[]`;
+
+exports[`arguments 1`] = `{"0":1,"1":2}`;
+
+exports[`arguments in an object 1`] = `
+{
+  "a": {
+ "0": "x",
+ "1": {
+  "y": 1
+ }
+},
+}
+`;
+
+exports[`arguments with no items 1`] = `{}`;
+
+exports[`generator 1`] = `{}`;
+
+exports[`generator with a property 1`] = `{"tag":"g"}`;
+
+exports[`array iterator 1`] = `{}`;
+
+exports[`Map iterator in an object 1`] = `
+{
+  "it": {},
+}
+`;
+
+exports[`iterator helper 1`] = `{}`;
+
+exports[`multi-line string beside a Proxy 1`] = `
+{
+  "p": {
+ "a": 1
+},
+  "s": 
+"a
+b"
+,
+}
+`;

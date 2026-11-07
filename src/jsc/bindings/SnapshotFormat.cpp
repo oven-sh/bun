@@ -224,6 +224,25 @@ extern "C" uint32_t SnapshotFormat__lengthOf(JSGlobalObject* globalObject, Encod
                                                                                                             : 0;
 }
 
+// One past the largest index that `value` has, on itself or on a prototype. An `arguments` object can claim any `length`.
+extern "C" uint32_t SnapshotFormat__endOfIndexes(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return 0;
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->getPropertyNames(globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, 0);
+    uint32_t end = 0;
+    for (auto& name : names) {
+        if (auto index = parseIndex(name))
+            end = std::max(end, *index + 1);
+    }
+    return end;
+}
+
 extern "C" bool SnapshotFormat__isArray(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     return isArray(globalObject, JSValue::decode(encodedValue));

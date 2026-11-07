@@ -554,7 +554,7 @@ impl JSType {
 
     /// This means that we don't have bindings for the type yet, but it
     /// implements .toJSON()
-    pub(crate) const JSAsJSONType: JSType = JSType(0b11110000 | 1);
+    pub const JSAsJSONType: JSType = JSType(0b11110000 | 1);
 }
 
 impl JSType {
@@ -833,7 +833,7 @@ impl JSType {
     }
 
     #[inline]
-    pub(crate) fn is_arguments(self) -> bool {
+    pub fn is_arguments(self) -> bool {
         matches!(
             self,
             JSType::DirectArguments | JSType::ClonedArguments | JSType::ScopedArguments

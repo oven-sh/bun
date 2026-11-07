@@ -613,6 +613,7 @@ impl Tag {
 
             JSType::Event => Tag::Event,
 
+            // The replay of older versions needs this answer. `Formatter::format` gives these cells another tag.
             _ => Tag::JSON,
         };
 
@@ -903,13 +904,14 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
-        if !value.js_type().is_function() {
+        let named = self.formatter.named(value);
+        if !named.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
-            let name_str = value.get_name_property(global_this)?;
+            let name_str = named.get_name_property(global_this)?;
             if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                 writer.print(format_args!("{} ", name_str));
             } else {
-                let name_str = value
+                let name_str = named
                     .get_prototype(global_this)?
                     .get_name_property(global_this)?;
                 if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
@@ -924,7 +926,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if self.formatter.indent == 0 {
             let _ = self.writer.write_all(b"\n");
         }
-        let classname = value.get_class_name(global_this)?;
+        let classname = named.get_class_name(global_this)?;
         if !classname.is_empty() && !classname.eq_ascii(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
@@ -1382,7 +1384,7 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Error => {
-                    let classname = value.get_class_name(self.global_this)?;
+                    let classname = self.named(value).get_class_name(self.global_this)?;
                     let mut message_string = bun_core::String::EMPTY;
 
                     if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
@@ -1404,7 +1406,7 @@ impl<'a> Formatter<'a> {
                         bun_core::String::static_(b"Function")
                     } else {
                         self.same_as_older_bun &= !was_function;
-                        value.get_class_name(self.global_this)?
+                        self.named(value).get_class_name(self.global_this)?
                     };
                     self.add_for_new_line(printable.length());
 
@@ -1424,7 +1426,7 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Function => {
-                    let printable = value.get_name_property(self.global_this)?;
+                    let printable = self.named(value).get_name_property(self.global_this)?;
 
                     if printable.is_empty() {
                         writer.print(format_args!(
@@ -1442,15 +1444,25 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Array => {
-                    let len: u32 = value.get_length(self.global_this)? as u32;
+                    // `get_length()` answers the largest length for a Proxy or an `arguments` object that has none.
+                    let len: u32 = if js_type.is_array() {
+                        value.get_length(self.global_this)? as u32
+                    } else {
+                        length_of_array_like(self.global_this, value, js_type)?
+                    };
                     if len == 0 {
-                        writer.write_all(b"[]");
-                        self.add_for_new_line(2);
+                        let empty: &[u8] = if js_type.is_arguments() { b"Arguments []" } else { b"[]" };
+                        writer.write_all(empty);
+                        self.add_for_new_line(empty.len());
                         return Ok(());
                     }
 
                     if self.indent == 0 {
                         writer.write_all(b"\n");
+                    }
+                    // An `arguments` object is not equal to an array of the same items, so the diff has to tell them apart.
+                    if js_type.is_arguments() {
+                        writer.write_all(b"Arguments ");
                     }
 
                     let mut was_good_time = self.always_newline_scope;
@@ -1762,6 +1774,8 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::Map => {
+                    // No trap gives the entries of a Map, so a Proxy of one prints those of its target.
+                    let value = target_of_proxy(value);
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
@@ -1810,6 +1824,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::Set => {
+                    let value = target_of_proxy(value);
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
@@ -1857,6 +1872,12 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
+                    // `JSON.stringify()` throws on a cycle or a BigInt, so `format` sends it nothing else.
+                    debug_assert!(
+                        self.like_older_bun.is_some()
+                            || !js_type.is_object()
+                            || matches!(js_type, JSType::JSDate | JSType::JSAsJSONType)
+                    );
                     let str = value.json_stringify(self.global_this, self.indent)?;
                     self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
@@ -2032,7 +2053,7 @@ impl<'a> Formatter<'a> {
                             tag_name_slice = tag_name_view.to_utf8();
                             is_tag_kind_primitive = true;
                         } else if _tag.cell.is_object() || type_value.is_callable() {
-                            let name = type_value.get_name_property(self.global_this)?;
+                            let name = self.named(type_value).get_name_property(self.global_this)?;
                             tag_name_slice = if name.is_empty() {
                                 Utf8Bytes::Borrowed(b"NoName")
                             } else {
@@ -2389,7 +2410,7 @@ impl<'a> Formatter<'a> {
                     self.same_as_older_bun &= result?;
 
                     if iter_i == 0 {
-                        let object_name = value.get_class_name(self.global_this)?;
+                        let object_name = self.named(value).get_class_name(self.global_this)?;
 
                         if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
@@ -2536,6 +2557,13 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
+        // `Tag::get` also classifies for the replay of older versions, so the tag changes here and not there.
+        if self.like_older_bun.is_none() && (result.cell == JSType::ProxyObject || result.tag == Tag::JSON) {
+            let tag = self.tag_of_unclassified(result, value, global_this);
+            if tag != result.tag {
+                return self.format::<W, ENABLE_ANSI_COLORS>(TagResult { tag, cell: result.cell }, writer, value, global_this);
+            }
+        }
         // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
         if !result.tag.is_primitive() && self.output_length.is_some_and(|length| length.get() > 1_000_000) {
             let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
@@ -2566,7 +2594,7 @@ impl<'a> Formatter<'a> {
 
         if let Some(differs) = self.like_older_bun {
             self.failed |= differs.get();
-        } else if matches!(result.tag, Tag::Object | Tag::Array | Tag::JSON) {
+        } else if matches!(result.tag, Tag::Object | Tag::Array) {
             match super::dom_format::print_in_snapshot(self, writer, value) {
                 Ok(false) => {}
                 printed => {
@@ -2655,6 +2683,49 @@ impl<'a> Formatter<'a> {
         self.global_this = prev_global_this;
         r
     }
+
+    /// The tag for a Proxy, and for a kind that `Tag::get` leaves to `JSON.stringify()`, which throws on a cycle or a BigInt.
+    #[cold]
+    #[inline(never)]
+    fn tag_of_unclassified(&mut self, result: TagResult, value: JSValue, global: &JSGlobalObject) -> Tag {
+        if result.cell == JSType::ProxyObject {
+            self.same_as_older_bun = false;
+            let target = target_of_proxy(value);
+            return if value.is_callable() {
+                if target.is_class(global) { Tag::Class } else { Tag::Function }
+            } else {
+                match target.js_type() {
+                    JSType::Array | JSType::DerivedArray => Tag::Array,
+                    JSType::ErrorInstance => Tag::Error,
+                    JSType::Map | JSType::WeakMap => Tag::Map,
+                    JSType::Set | JSType::WeakSet => Tag::Set,
+                    _ => Tag::Object,
+                }
+            };
+        }
+        if !result.cell.is_object() || matches!(result.cell, JSType::JSDate | JSType::JSAsJSONType) {
+            return Tag::JSON;
+        }
+        self.same_as_older_bun = false;
+        if result.cell.is_arguments() { Tag::Array } else { Tag::Object }
+    }
+
+    /// The value that a header names: the target of a Proxy, so no trap runs. Older versions printed `ProxyObject`.
+    fn named(&mut self, value: JSValue) -> JSValue {
+        if value.js_type() != JSType::ProxyObject || self.like_older_bun.is_some() {
+            return value;
+        }
+        self.same_as_older_bun = false;
+        target_of_proxy(value)
+    }
+}
+
+/// The target behind every Proxy around `value`, read without a trap.
+pub(crate) fn target_of_proxy(mut value: JSValue) -> JSValue {
+    while value.js_type() == JSType::ProxyObject {
+        value = value.get_proxy_target();
+    }
+    value
 }
 
 /// Bridge so the `Response`/`Request`/`Blob`/`BuildArtifact` `write_format`
@@ -3116,6 +3187,21 @@ fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
         safe fn SnapshotFormat__lengthOf(global: &JSGlobalObject, value: JSValue) -> u32;
     }
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__lengthOf(global, value))
+}
+
+/// The `length` of a Proxy or an `arguments` object. An `arguments` object can claim any `length`, so its items end at the last index that it has.
+#[cold]
+#[inline(never)]
+fn length_of_array_like(global: &JSGlobalObject, value: JSValue, js_type: JSType) -> JsResult<u32> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__endOfIndexes(global: &JSGlobalObject, value: JSValue) -> u32;
+    }
+    let length = length_of(global, value)?;
+    if !js_type.is_arguments() || length == 0 || has_index(global, value, length - 1)? {
+        return Ok(length);
+    }
+    let end = jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__endOfIndexes(global, value))?;
+    Ok(length.min(end))
 }
 
 /// `Number(value)`, so a BigInt converts instead of throwing.

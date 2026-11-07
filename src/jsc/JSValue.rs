@@ -2486,7 +2486,7 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
+    /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws. A Proxy ends the walk with what the read of a string key throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
     #[inline(always)]
     pub fn for_each_property_ordered_calling_getters(

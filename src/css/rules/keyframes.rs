@@ -22,7 +22,8 @@ pub enum KeyframesName {
 }
 
 impl KeyframesName {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    /// `global`: the name is global to the CSS module and is printed as written.
+    pub fn to_css(&self, dest: &mut Printer, global: bool) -> core::result::Result<(), PrintErr> {
         use bun_core::strings;
         #[inline]
         fn write_ident<'a>(
@@ -34,7 +35,7 @@ impl KeyframesName {
         }
 
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
-            css_module.config.animation
+            css_module.config.animation && !global
         } else {
             false
         };
@@ -230,6 +231,8 @@ pub struct KeyframesRule {
     /// The animation name.
     /// <keyframes-name> = <custom-ident> | <string>
     pub name: KeyframesName,
+    /// Written in the block of a rule whose selector ends with a bare `:global` of a CSS module.
+    pub(crate) global: bool,
     /// A list of keyframes in the animation.
     pub(crate) keyframes: ArrayList<Keyframe>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
@@ -269,7 +272,7 @@ impl KeyframesRule {
                 dest.write_char(b'@')?;
                 super::vendor_prefix_to_css(prefix, dest)?;
                 dest.write_str("keyframes ")?;
-                self.name.to_css(dest)?;
+                self.name.to_css(dest, self.global)?;
                 dest.whitespace()?;
                 dest.write_char(b'{')?;
                 dest.indent();
@@ -301,6 +304,7 @@ impl KeyframesRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
+            global: self.global,
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
             vendor_prefix: self.vendor_prefix,
             loc: self.loc,

@@ -557,23 +557,50 @@ fn parse_selector<Impl: BunSelectorImpl>(
 
     'outer_loop: loop {
         // Parse a sequence of simple selectors.
-        let empty = parse_compound_selector::<Impl>(parser, state, input, &mut builder)?;
-        if empty {
-            let kind: SelectorParseErrorKind = if builder.has_combinators() {
-                SelectorParseErrorKind::DanglingCombinator
-            } else {
-                SelectorParseErrorKind::EmptySelector
-            };
-            return Err(input.new_custom_error(kind.into_default_parser_error()));
+        match parse_compound_selector::<Impl>(parser, state, input, &mut builder)? {
+            Compound::Parsed => {}
+            Compound::Empty => {
+                let kind: SelectorParseErrorKind = if builder.has_combinators() {
+                    SelectorParseErrorKind::DanglingCombinator
+                } else {
+                    SelectorParseErrorKind::EmptySelector
+                };
+                return Err(input.new_custom_error(kind.into_default_parser_error()));
+            }
+            Compound::ScopeSwitch => match builder.pop_combinator() {
+                // `.a :global {`: the white space before the switch joins nothing.
+                Some(Combinator::Descendant) => break,
+                Some(_) => {
+                    return Err(input.new_custom_error(
+                        SelectorParseErrorKind::DanglingCombinator.into_default_parser_error(),
+                    ));
+                }
+                // `:global {`: no components. The rule parser reads the block into the one that holds it.
+                None => {
+                    return Ok(GenericSelector {
+                        specificity_and_flags: SpecificityAndFlags {
+                            specificity: 0,
+                            flags: SelectorFlags::empty(),
+                        },
+                        components: Vec::new_in(ArenaPtr::new(input.arena())),
+                    });
+                }
+            },
         }
 
         if state.after_any_pseudo() {
             let source_location = input.current_source_location();
-            if let Ok(next) = input.next() {
-                return Err(source_location.new_custom_error(
-                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(*next)
-                        .into_default_parser_error(),
-                ));
+            if let Ok(&next) = input.next() {
+                // `.a::before :global {`
+                let ends_with_scope_switch = matches!(next, Token::Colon)
+                    && parse_scope_switch_name(parser, input)
+                        .is_ok_and(|global| parser.scope_switch_ends_selector(input, global));
+                if !ends_with_scope_switch {
+                    return Err(source_location.new_custom_error(
+                        SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(next)
+                            .into_default_parser_error(),
+                    ));
+                }
             }
             break;
         }
@@ -696,20 +723,22 @@ fn parse_selector<Impl: BunSelectorImpl>(
 /// | [ HASH | class | attrib | pseudo | negation ]+
 ///
 /// `Err(())` means invalid selector.
-/// `Ok(true)` is an empty selector
 fn parse_compound_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     state: &mut SelectorParsingState,
     input: &mut CssParser,
     builder: &mut SelectorBuilder<Impl>,
-) -> CResult<bool> {
+) -> CResult<Compound> {
     input.skip_whitespace();
 
     if input.flags.css_modules() {
-        while let Ok(global) = input.try_parse(parse_scope_switch) {
+        while let Ok(global) = input.try_parse(|input| parse_scope_switch(parser, input)) {
             input
                 .flags
                 .set(crate::css_parser::ParserOpts::GLOBAL_SCOPE, global);
+            if parser.scope_switch_ends_selector(input, global) {
+                return Ok(Compound::ScopeSwitch);
+            }
         }
     }
 
@@ -826,23 +855,56 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         }
     }
 
-    Ok(empty)
+    Ok(if empty {
+        Compound::Empty
+    } else {
+        Compound::Parsed
+    })
+}
+
+/// What `parse_compound_selector` read.
+enum Compound {
+    Empty,
+    Parsed,
+    /// Nothing but a bare `:global` / `:local` that ends the selector. See `BlockScope`.
+    ScopeSwitch,
 }
 
 /// A bare `:global` or `:local` of a CSS module, with white space on both sides as in css-loader.
 /// It sets the scope of the names that follow, up to the end of the selector.
-fn parse_scope_switch(input: &mut CssParser) -> CResult<bool> {
+/// One that ends a selector of a style rule's prelude needs no white space after it: see `BlockScope`.
+fn parse_scope_switch(parser: &SelectorParser, input: &mut CssParser) -> CResult<bool> {
     input.expect_colon()?;
+    parse_scope_switch_name(parser, input)
+}
+
+/// `parse_scope_switch` after the colon.
+fn parse_scope_switch_name(parser: &SelectorParser, input: &mut CssParser) -> CResult<bool> {
     let name = *input.next_including_whitespace()?;
-    let after = *input.next_including_whitespace()?;
-    let (Token::Ident(name), Token::Whitespace(_)) = (name, after) else {
-        return Err(input.new_unexpected_token_error(after));
+    let Token::Ident(ident) = name else {
+        return Err(input.new_unexpected_token_error(name));
     };
-    input.skip_whitespace();
+    let Some(global) = scope_switch_name(ident) else {
+        return Err(input.new_unexpected_token_error(name));
+    };
+    match input.next_including_whitespace() {
+        Ok(Token::Whitespace(_)) => input.skip_whitespace(),
+        Ok(&after) => return Err(input.new_unexpected_token_error(after)),
+        Err(e) => {
+            if !parser.scope_switch_may_end_selector(input) {
+                return Err(e);
+            }
+        }
+    }
+    Ok(global)
+}
+
+/// `true` for the name of a bare `:global`, `false` for the name of a bare `:local`.
+fn scope_switch_name(name: &[u8]) -> Option<bool> {
     crate::match_ignore_ascii_case! { name, {
-        b"global" => Ok(true),
-        b"local" => Ok(false),
-        _ => Err(input.new_unexpected_token_error(after)),
+        b"global" => Some(true),
+        b"local" => Some(false),
+        _ => None,
     }}
 }
 
@@ -885,6 +947,12 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
 
     let mut selector = parse_selector::<Impl>(parser, input, state, nesting_requirement)?;
     if let Some(wombo_combo) = combinator {
+        // `> :global {`
+        if selector.components.is_empty() {
+            return Err(input.new_custom_error(
+                SelectorParseErrorKind::EmptySelector.into_default_parser_error(),
+            ));
+        }
         // https://www.w3.org/TR/selectors/#absolutizing
         selector
             .components
@@ -1204,8 +1272,52 @@ impl WebKitScrollbarPseudoElement {
 
 pub struct SelectorParser<'a> {
     pub(crate) is_nesting_allowed: bool,
+    /// `Some` while the prelude of a style rule of a CSS module is parsed.
+    pub(crate) block_scope: Option<BlockScope>,
     pub(crate) options: &'a ParserOptions<'a>,
     // PERF: re-thread `&'bump Bump` here to restore arena allocation.
+}
+
+/// The bare `:global` / `:local` that ends every selector of a prelude, `.a :global {`, and scopes the block.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BlockScope {
+    /// How many selectors of the prelude ended with one.
+    pub(crate) selectors: u32,
+    /// The last one was `:global`.
+    global: bool,
+    /// Two selectors ended with different ones.
+    mixed: bool,
+}
+
+impl BlockScope {
+    /// Sets `ParserOpts::NEXT_BLOCK_SCOPE` for the block. A prelude that is only the switch gives an empty list.
+    #[cold]
+    pub(crate) fn end_prelude(
+        self,
+        selectors: SelectorList,
+        input: &mut CssParser,
+    ) -> CResult<SelectorList> {
+        // Every selector must end with the same switch. css-loader also takes `:global .a, .b :global`.
+        let list = selectors.v.slice();
+        let is_switch_only = list.iter().any(|selector| selector.components.is_empty());
+        if self.mixed || self.selectors as usize != list.len() || (is_switch_only && list.len() > 1)
+        {
+            let name: &[u8] = if self.global { b"global" } else { b"local" };
+            return Err(input.new_custom_error(
+                SelectorParseErrorKind::AmbiguousCssModuleClass(name).into_default_parser_error(),
+            ));
+        }
+        input.flags.insert(if self.global {
+            crate::css_parser::ParserOpts::NEXT_BLOCK_GLOBAL
+        } else {
+            crate::css_parser::ParserOpts::NEXT_BLOCK_LOCAL
+        });
+        Ok(if is_switch_only {
+            SelectorList::default()
+        } else {
+            selectors
+        })
+    }
 }
 
 // Rust inherent associated types are unstable (rust#8995); the equivalent
@@ -1213,6 +1325,26 @@ pub struct SelectorParser<'a> {
 // at module scope instead.
 
 impl<'a> SelectorParser<'a> {
+    /// True in the prelude of a style rule, but not inside parentheses: there `stop_before` has no `{`.
+    fn scope_switch_may_end_selector(&self, input: &CssParser) -> bool {
+        self.block_scope.is_some() && input.stop_before.contains(css::Delimiters::CURLY_BRACKET)
+    }
+
+    /// Records the switch just read if it ends the selector.
+    fn scope_switch_ends_selector(&mut self, input: &mut CssParser, global: bool) -> bool {
+        if !self.scope_switch_may_end_selector(input) || !input.is_exhausted() {
+            return false;
+        }
+        let Some(scope) = &mut self.block_scope else {
+            return false;
+        };
+        scope.mixed |= scope.selectors > 0 && scope.global != global;
+        // Cannot overflow: each one takes 6 bytes or more of an input shorter than 2^31 bytes.
+        scope.selectors += 1;
+        scope.global = global;
+        true
+    }
+
     pub(crate) fn new_local_identifier(
         &mut self,
         input: &mut CssParser,
@@ -3365,7 +3497,18 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                         parse_functional_pseudo_class::<Impl>(parser, input2, name, state)
                     })?
                 } else {
-                    parse_simple_pseudo_class::<Impl>(parser, location, name, *state)?
+                    match parse_simple_pseudo_class::<Impl>(parser, location, name, *state) {
+                        Ok(pseudo_class) => pseudo_class,
+                        Err(e) => {
+                            // `.a:global {`: the switch is consumed and ends the compound.
+                            if let Some(global) = scope_switch_name(name)
+                                && parser.scope_switch_ends_selector(input, global)
+                            {
+                                return Ok(None);
+                            }
+                            return Err(e);
+                        }
+                    }
                 };
                 return Ok(Some(S::SimpleSelector(pseudo_class)));
             }

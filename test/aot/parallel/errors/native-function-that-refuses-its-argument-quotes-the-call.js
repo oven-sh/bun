@@ -1,3 +1,5 @@
+// Reference: bun build --compile
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // `Object.keys(null)`: the function throws out of the engine's own C++, and the message quotes the call as it is written in the frame that a stack trace lists first.
 function show(name, run) {
   try {

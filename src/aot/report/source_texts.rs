@@ -1,37 +1,59 @@
-use std::sync::OnceLock;
-
+use bun_core::strings;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::messages::Category;
 use bun_sema_driver::{self as driver, TextLocator};
+use rustc_hash::FxHashMap;
 
 use crate::diagnostics::{SourcePosition, new_driver_diagnostic};
 use crate::engine::Position;
+use crate::ir::StringTable;
 use crate::ir::ids::{Id, ModuleId};
+use crate::load::read_file_bytes;
+use std::sync::OnceLock;
 
-pub struct ModuleSource {
-    // `ModulePaths::display_path`, which `ProgramNames::module_path` returns too.
-    pub path: Box<[u8]>,
-    text: StoredText,
-    // `ModuleFragment::types_in_function_text`
-    types_in_function_text: Option<PackedTypeRanges>,
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ModuleOrigin {
+    Program,
+    Dependency,
+    Runtime,
 }
 
-// The texts of all modules stay alive while the engine runs, and messages name few of them.
-enum StoredText {
-    Plain(Box<[u8]>),
-    Compressed {
-        bytes: Box<[u8]>,
-        length: usize,
-        text: OnceLock<Box<[u8]>>,
+enum Text {
+    Kept(Box<[u8]>),
+    OnDisk {
+        path_on_disk: Box<[u8]>,
+        len: usize,
+        hash: u64,
+        read_again: OnceLock<Option<Box<[u8]>>>,
     },
+}
+
+pub struct ModuleSource {
+    pub path: Box<[u8]>,
+    text: Text,
+    types_in_function_text: Option<PackedTypeRanges>,
+    origin: ModuleOrigin,
 }
 
 impl ModuleSource {
     pub fn new(path: &[u8], text: &[u8]) -> ModuleSource {
         ModuleSource {
             path: path.into(),
-            text: StoredText::new(text),
+            text: Text::Kept(text.into()),
             types_in_function_text: None,
+            origin: ModuleOrigin::Program,
+        }
+    }
+
+    pub fn new_on_disk(path: &[u8], path_on_disk: &[u8], text: &[u8]) -> ModuleSource {
+        ModuleSource {
+            text: Text::OnDisk {
+                path_on_disk: path_on_disk.into(),
+                len: text.len(),
+                hash: StringTable::hash_of(text),
+                read_again: OnceLock::new(),
+            },
+            ..ModuleSource::new(path, &[])
         }
     }
 
@@ -42,10 +64,28 @@ impl ModuleSource {
         }
     }
 
+    pub fn with_origin(self, origin: ModuleOrigin) -> Self {
+        ModuleSource { origin, ..self }
+    }
+
+    pub fn origin(&self) -> ModuleOrigin {
+        self.origin
+    }
+
     pub fn len(&self) -> usize {
         match &self.text {
-            StoredText::Plain(text) => text.len(),
-            StoredText::Compressed { length, .. } => *length,
+            Text::Kept(text) => text.len(),
+            Text::OnDisk { len, .. } => *len,
+        }
+    }
+
+    fn kept_len(&self) -> usize {
+        match &self.text {
+            Text::Kept(text) => text.len(),
+            Text::OnDisk { read_again, .. } => {
+                let text = read_again.get().and_then(Option::as_ref);
+                text.map_or(0, |text| text.len())
+            }
         }
     }
 
@@ -54,18 +94,11 @@ impl ModuleSource {
         types.map_or(0, |types| types.kept_len(self.len()))
     }
 
-    /// `text()` keeps what it decompresses for the rest of the build. This does not.
     pub fn copy_function_text_to(&self, destination: &mut [u8]) {
-        let Some(types) = &self.types_in_function_text else {
-            return;
-        };
-        match &self.text {
-            StoredText::Plain(text) => types.remove_from(text, destination),
-            StoredText::Compressed { bytes, .. } => {
-                let text = bun_zstd::decompress_alloc(bytes);
-                let text = text.expect("the bytes come from `compress_append`");
-                types.remove_from(&text, destination);
-            }
+        if let Some(types) = &self.types_in_function_text
+            && let Some(text) = self.text()
+        {
+            types.remove_from(text, destination);
         }
     }
 
@@ -75,36 +108,20 @@ impl ModuleSource {
         text
     }
 
-    pub fn types_cut_from_function_text(&self) -> &[u8] {
-        let types = self.types_in_function_text.as_ref();
-        types.map_or(&[], PackedTypeRanges::as_bytes)
-    }
-
-    pub fn text(&self) -> &[u8] {
+    pub fn text(&self) -> Option<&[u8]> {
         match &self.text {
-            StoredText::Plain(text) => text,
-            StoredText::Compressed { bytes, text, .. } => text.get_or_init(|| {
-                let text = bun_zstd::decompress_alloc(bytes);
-                text.expect("the bytes come from `compress_append`")
-                    .into_boxed_slice()
-            }),
-        }
-    }
-}
-
-impl StoredText {
-    const FASTEST_LEVEL: i32 = 1;
-
-    fn new(text: &[u8]) -> StoredText {
-        let mut bytes = Vec::with_capacity(bun_zstd::compress_bound(text.len()));
-        match bun_zstd::compress_append(&mut bytes, text, Self::FASTEST_LEVEL) {
-            // Not `into_boxed_slice`: the allocator leaves what shrinks to no less than half its size where it is.
-            Ok(_) if bytes.len() < text.len() => StoredText::Compressed {
-                bytes: bytes[..].into(),
-                length: text.len(),
-                text: OnceLock::new(),
-            },
-            Ok(_) | Err(_) => StoredText::Plain(text.into()),
+            Text::Kept(text) => Some(text),
+            Text::OnDisk {
+                path_on_disk,
+                len,
+                hash,
+                read_again,
+            } => {
+                let is_as_compiled =
+                    |text: &Vec<u8>| text.len() == *len && StringTable::hash_of(text) == *hash;
+                let read = || Some(read_file_bytes(path_on_disk).filter(is_as_compiled)?.into());
+                read_again.get_or_init(read).as_deref()
+            }
         }
     }
 }
@@ -112,21 +129,50 @@ impl StoredText {
 #[derive(Default)]
 pub struct SourceTexts {
     modules: Vec<Option<ModuleSource>>,
+    written_names: Vec<u8>,
 }
 
 impl SourceTexts {
     pub fn new(modules: Vec<Option<ModuleSource>>) -> SourceTexts {
-        SourceTexts { modules }
+        SourceTexts {
+            modules,
+            written_names: Vec::new(),
+        }
+    }
+
+    pub fn set_written_names(&mut self, names: Vec<u8>) {
+        self.written_names = names;
+    }
+
+    pub fn written_names(&self) -> FxHashMap<&[u8], &[u8]> {
+        let mut parts = strings::split(&self.written_names, b"\0");
+        core::iter::from_fn(|| Some((parts.next()?, parts.next()?))).collect()
     }
 
     pub fn get(&self, module: ModuleId) -> Option<&ModuleSource> {
         self.modules.get(module.index())?.as_ref()
     }
+
+    pub fn size_of_texts(&self) -> usize {
+        let sources = self.modules.iter().flatten();
+        sources.map(ModuleSource::kept_len).sum()
+    }
+
+    pub fn origin(&self, module: ModuleId) -> ModuleOrigin {
+        let source = self.get(module);
+        source.map_or(ModuleOrigin::Runtime, ModuleSource::origin)
+    }
+
+    pub fn path(&self, module: ModuleId) -> &[u8] {
+        match self.get(module) {
+            Some(source) => &source.path,
+            None => &[],
+        }
+    }
 }
 
 pub struct ModuleLocator<'t> {
     texts: &'t SourceTexts,
-    // By module. Positions come in the order of what they belong to, not of their modules, and a locator reads its whole text once.
     locators: Vec<Option<TextLocator<'t>>>,
 }
 
@@ -143,11 +189,10 @@ impl<'t> ModuleLocator<'t> {
         position: Position,
         reported: driver::Diagnostic,
     ) -> driver::Diagnostic {
-        let Some(source) = self.texts.get(position.module) else {
-            return reported;
-        };
-        let locator = self.locator_of(position.module, source);
-        locator.locate(position.offset, position.offset, reported)
+        match self.locator_of(position.module) {
+            Some(locator) => locator.locate(position.offset, position.offset, reported),
+            None => reported,
+        }
     }
 
     pub fn position_of(&mut self, position: Position) -> Option<SourcePosition> {
@@ -161,21 +206,23 @@ impl<'t> ModuleLocator<'t> {
     }
 
     pub fn has_text(&self, module: ModuleId) -> bool {
-        self.texts.get(module).is_some()
+        let source = self.texts.get(module);
+        source.and_then(ModuleSource::text).is_some()
     }
 
     pub fn line_and_column(&mut self, position: Position) -> Option<(u32, u32)> {
-        let source = self.texts.get(position.module)?;
-        let locator = self.locator_of(position.module, source);
+        let locator = self.locator_of(position.module)?;
         Some(locator.line_and_column(position.offset))
     }
 
-    fn locator_of(&mut self, module: ModuleId, source: &'t ModuleSource) -> &TextLocator<'t> {
+    fn locator_of(&mut self, module: ModuleId) -> Option<&TextLocator<'t>> {
+        let source = self.texts.get(module)?;
+        let text = source.text()?;
         let index = module.index();
         if self.locators.len() <= index {
             self.locators.resize_with(index + 1, || None);
         }
-        self.locators[index].get_or_insert_with(|| TextLocator::new(&source.path, source.text()))
+        Some(self.locators[index].get_or_insert_with(|| TextLocator::new(&source.path, text)))
     }
 
     pub fn source_line(&mut self, position: Position) -> Vec<u8> {
@@ -197,6 +244,7 @@ impl<'t> ModuleLocator<'t> {
 mod tests {
     use super::*;
     use bstr::BString;
+    use bun_sema_driver::host::from_native;
 
     fn texts() -> SourceTexts {
         let source =
@@ -218,6 +266,78 @@ mod tests {
     fn line_and_column(locator: &mut ModuleLocator<'_>, position: Position) -> Option<(u32, u32)> {
         let found = locator.position_of(position)?;
         Some((found.line, found.column))
+    }
+
+    #[test]
+    fn new_source_has_program_origin() {
+        let source = ModuleSource::new(b"/p/a.ts", b"a;");
+        assert_eq!(source.origin(), ModuleOrigin::Program);
+    }
+
+    #[test]
+    fn builders_keep_what_the_other_set() {
+        let types = || Some(PackedTypeRanges::default());
+        let origin_last = ModuleSource::new(b"node:fs", b"a;")
+            .with_function_text(types())
+            .with_origin(ModuleOrigin::Runtime);
+        let origin_first = ModuleSource::new(b"node:fs", b"a;")
+            .with_origin(ModuleOrigin::Runtime)
+            .with_function_text(types());
+        for source in [origin_last, origin_first] {
+            assert_eq!(source.origin(), ModuleOrigin::Runtime);
+            assert_eq!(BString::from(source.function_text()), "a;");
+        }
+    }
+
+    #[test]
+    fn long_text_that_repeats_itself_is_read_back_byte_for_byte() {
+        let text = b"const value = call(1, 2, 3);\n".repeat(4096);
+        let source = ModuleSource::new(b"/p/long.js", &text)
+            .with_function_text(Some(PackedTypeRanges::default()));
+        assert_eq!(source.len(), text.len());
+        assert_eq!(source.function_text_len(), text.len());
+        assert!(source.text() == Some(&text[..]));
+        assert!(source.function_text() == text);
+    }
+
+    #[test]
+    fn source_without_function_text_writes_nothing() {
+        let source = ModuleSource::new(b"/p/a.ts", b"a();");
+        assert_eq!(source.function_text_len(), 0);
+        assert!(source.function_text().is_empty());
+        let mut destination = *b"kept";
+        source.copy_function_text_to(&mut destination);
+        assert_eq!(&destination, b"kept");
+    }
+
+    #[test]
+    fn texts_are_as_large_as_the_texts_of_their_modules() {
+        assert_eq!(SourceTexts::default().size_of_texts(), 0);
+        assert_eq!(SourceTexts::new(vec![None]).size_of_texts(), 0);
+        let first = "let a;\nconst \u{e9} = call();\n".len();
+        assert_eq!(texts().size_of_texts(), first + "b();".len());
+    }
+
+    #[test]
+    fn origin_and_path_are_those_of_the_source() {
+        let program = ModuleSource::new(b"/p/a.ts", b"a();");
+        let dependency = ModuleSource::new(b"/p/node_modules/b/b.js", b"b();")
+            .with_origin(ModuleOrigin::Dependency);
+        let texts = SourceTexts::new(vec![Some(program), Some(dependency)]);
+        let (first, second) = (ModuleId::new(0), ModuleId::new(1));
+        assert_eq!(texts.origin(first), ModuleOrigin::Program);
+        assert_eq!(texts.origin(second), ModuleOrigin::Dependency);
+        assert_eq!(BString::from(texts.path(first)), "/p/a.ts");
+        assert_eq!(BString::from(texts.path(second)), "/p/node_modules/b/b.js");
+    }
+
+    #[test]
+    fn module_without_source_has_runtime_origin_and_no_path() {
+        let texts = texts();
+        for module in [1, 9].map(ModuleId::new) {
+            assert_eq!(texts.origin(module), ModuleOrigin::Runtime);
+            assert!(texts.path(module).is_empty());
+        }
     }
 
     #[test]
@@ -261,5 +381,39 @@ mod tests {
         let mut locator = ModuleLocator::new(&texts);
         assert_eq!(BString::from(locator.source_line(at(0, 2))), "let a;");
         assert_eq!(BString::from(locator.source_line(at(2, 0))), "b();");
+    }
+
+    #[test]
+    fn text_on_disk_is_read_by_the_first_who_asks() {
+        let name = format!("bun-aot-source-text-{}.ts", std::process::id());
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, "let a;\nb();\n")
+            .expect("the folder for temporary files takes a file");
+        let path_on_disk = from_native(path.to_str().expect("the path is text").as_bytes());
+        let on_disk = || ModuleSource::new_on_disk(b"/p/a.ts", &path_on_disk, b"let a;\nb();\n");
+
+        let texts = SourceTexts::new(vec![Some(on_disk())]);
+        assert_eq!(
+            (
+                texts.size_of_texts(),
+                texts.get(ModuleId::new(0)).map(ModuleSource::len)
+            ),
+            (0, Some(12))
+        );
+        let mut locator = ModuleLocator::new(&texts);
+        assert_eq!(locator.line_and_column(at(0, 7)), Some((2, 1)));
+        assert_eq!(BString::from(locator.source_line(at(0, 8))), "b();");
+        assert_eq!(texts.size_of_texts(), 12);
+
+        for edited in ["let a;\n", "let b;\na();\n"] {
+            std::fs::write(&path, edited).expect("the file is written again");
+            assert_eq!(on_disk().text(), None, "{edited:?}");
+        }
+        let texts = SourceTexts::new(vec![Some(on_disk())]);
+        let mut locator = ModuleLocator::new(&texts);
+        assert_eq!(locator.line_and_column(at(0, 7)), None);
+        assert_eq!(BString::from(locator.source_line(at(0, 8))), "");
+        std::fs::remove_file(&path).expect("the file is there");
+        assert_eq!(on_disk().text(), None);
     }
 }

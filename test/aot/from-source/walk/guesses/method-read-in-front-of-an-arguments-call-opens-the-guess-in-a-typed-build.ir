@@ -1,0 +1,30 @@
+# f1 = gather
+# -- source: method-read-in-front-of-an-arguments-call-opens-the-guess-in-a-typed-build.ts
+# declare function print(...values: unknown[]): void;
+# function gather(items: unknown[], pick: boolean, ask: (x: unknown, into: unknown[], at: number) => unknown): unknown[] {
+#   const shown = pick ? [] : items.slice(0, 1);
+#   for (let i = 0; i < items.length; i++) shown.push(ask(items[i], shown, i));
+#   return shown;
+# }
+# (globalThis as any).gatherers = [gather];
+# const plain = gather([1, 2, 3], false, (x) => x);
+# function pushOfMine(this: unknown[], v: unknown): number { return Array.prototype.push.call(this, "mine:" + v); }
+# const above = { push: pushOfMine };
+# const other = gather([1, 2, 3, 4], true, (x, into, at) => { if (at === 1) Object.setPrototypeOf(into, above); return x; });
+# let said = "";
+# try { gather([1, 2, 3], true, (x, into, at) => { if (at === 1) Object.freeze(into); return x; }); } catch (error) { said = (error as Error).constructor.name; }
+# print(plain.join(), Array.prototype.join.call(other), said);
+# -- end of source
+# `shown.push(ask(..))`: the language reads `push` in front of the argument's call. `shown` is a list on one way and whatever a closed call of slice gave on the other, so it is only expected to be a list.
+# In a clean turn of the typed build a test that fails begins the turn again in the other build, so what it has shown outlives the stretch: the read of the method opens the guess by itself:
+# is it a list (asked once, in front of the loop), is it as made (at the read): the value read is the built-in. Behind the argument's call the list is asked again whether it is as made, and the push stands in line.
+# The second asker gives the list another object above it, with a push of its own, in the midst of a typed build: that turn still calls what it has read; the next turn's read must find the other push: the look at the read is asked in every turn.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=Array
+# CHECK: isLoopHead=true
+# CHECK: = IsPristine {{*}}builtinClass=Array
+# CHECK: = Call
+# CHECK: = IsPristine {{*}}builtinClass=Array
+# CHECK: TryCallInline {{*}}inlineBuiltin=ArrayPush
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1,1,2,3 1,2,mine:3,mine:4 TypeError

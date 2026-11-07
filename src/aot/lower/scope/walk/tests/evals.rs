@@ -190,8 +190,11 @@ fn direct_eval_skips_redeclared_commonjs_variable() {
         let slots = slots_used_by(walk, function);
         let commonjs_slots = slots.iter().filter(|slot| is_commonjs_slot(slot.1));
         assert_eq!(commonjs_slots.count(), WRAPPER_PARAMETERS.len() - 1);
-        let redeclared = BindingRef::Symbol(symbol_named(hir, bound, "exports"));
-        assert!(has_use(walk, function, redeclared));
+        let redeclared = symbol_named(hir, bound, "exports");
+        let names_of_file = bound.runtime.eval_scopes()[0].1.file_symbols;
+        assert!(bound.ids(names_of_file).any(|symbol| symbol == redeclared));
+        let mut under_names_of_file = walk.evals_under_names_of_file.iter();
+        assert!(under_names_of_file.any(|eval| eval.0 == function));
     });
 }
 
@@ -302,9 +305,8 @@ fn sloppy_eval_declares_in_function() {
     assert_eq!(scopes, [function_scope]);
     let (scopes, function_scope) = eval_variable_scopes("function f(s) { { eval(s); } }");
     assert_eq!(scopes, [function_scope]);
-    let with_own_directive = "function f(s) { 'use strict'; eval(s); }";
-    let (scopes, function_scope) = eval_variable_scopes(with_own_directive);
-    assert_eq!(scopes, [function_scope]);
+    let (scopes, _) = eval_variable_scopes("function f(s) { 'use strict'; eval(s); }");
+    assert!(scopes.is_empty());
     let (scopes, _) = eval_variable_scopes("'use strict'; function f(s) { eval(s); }");
     assert!(scopes.is_empty());
     let (scopes, _) = eval_variable_scopes("function f(s) { if (false) { eval(s); } }");

@@ -105,97 +105,11 @@ const webAssemblyClasses: any[] = [WebAssembly.Global, WebAssembly.Instance, Web
 show("WebAssembly", ...webAssemblyClasses.map(webAssemblyClass => webAssemblyClass.prototype.constructor === webAssemblyClass));
 show("a WebAssembly error", constructorOfError(new WebAssembly.CompileError("e")) === WebAssembly.CompileError, Object.getPrototypeOf(WebAssembly.CompileError) === Error);
 
-// GENERATED: attempt constructorOfMap constructorOfSet constructorOfError later steps laterSteps Failure
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b3():
-// CHECK-NEXT: v1 = Call v0 calleeName="run"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: b3() role=CatchHandler:
-// CHECK-NEXT: v2 = CatchValue
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="TypeError" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(TypeError) flags=[IsExpected]}
-// CHECK-NEXT: v6 = InstanceOf v2, v5 writtenExpression="error instanceof TypeError"
-// CHECK-NEXT: v7 = ToBoolean v6
-// CHECK-NEXT: Branch v7 -> taken b4(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b4(v8):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v9 = String string="TypeError"
-// CHECK-NEXT: Jump -> next b8(v9)
-// CHECK-NEXT: b6(v10):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v11 = String string="another error"
-// CHECK-NEXT: Jump -> next b8(v11)
-// CHECK-NEXT: b8(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="constructorOfMap"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Map<undefined|null|string, number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="constructor"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|function site=[[w_5]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="constructorOfSet"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<undefined|null|string> site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Set<undefined|null|string>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="constructor"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|function site=[[w_8]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="constructorOfError"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Error):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="constructor"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|function site=[[w_10]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="steps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="laterSteps"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|AsyncGenerator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Failure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_11]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

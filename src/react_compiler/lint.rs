@@ -6,8 +6,6 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
-use crate::collections::FxHashSet as HashSet;
-
 use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerError, ErrorCategory};
 use crate::hir::environment::{Environment, OutputMode};
@@ -129,7 +127,6 @@ pub fn lint_function(
     let mut env = Environment::with_config(config);
     env.fn_type = fn_type;
     env.output_mode = OutputMode::Lint;
-    env.seed_uid_known_names(&HashSet::default());
     let result = run(
         func,
         host,

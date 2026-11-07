@@ -166,6 +166,42 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  itBundled("browser/NodeUrlWebSocketProtocolsAreSlashed", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse, format, resolve, resolveObject } from "node:url";
+        for (const protocol of ["ws", "wss"]) {
+          console.log(parse(protocol + ":host/p").host);
+          console.log(format({ protocol, host: "h", pathname: "/p" }));
+          console.log(resolve(protocol + "://h/a/b", "../../x"));
+          console.log(resolve(protocol + "://api.example.com/v1/socket", "/room"));
+          // A protocol without the colon reads the bare keys of the table.
+          console.log(resolveObject("http://a/b", { protocol, pathname: "/h/p" }).href);
+          console.log(resolveObject(protocol + "://h:8080/a/b", protocol + "://other/p").port);
+        }
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout:
+        "null\nws://h/p\nws://h/x\nws://api.example.com/room\nws://h/p\nnull\n" +
+        "null\nwss://h/p\nwss://h/x\nwss://api.example.com/room\nwss://h/p\nnull",
+    },
+  });
+  itBundled("browser/NodeUrlResolveDropsAuthAndPortOnHostChange", {
+    files: {
+      "/entry.js": /* js */ `
+        import { resolve, resolveObject } from "node:url";
+        console.log(resolve("http://user:pw@a/x", "http://b/y"));
+        console.log(resolve("http://user:pw@a/x", "http://a/y"));
+        console.log(resolveObject("http://a:8080/x", "http://b/y").port);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "http://b/y\nhttp://user:pw@a/y\nnull",
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

@@ -95,11 +95,15 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     ftp: true,
     gopher: true,
     file: true,
+    ws: true,
+    wss: true,
     "http:": true,
     "https:": true,
     "ftp:": true,
     "gopher:": true,
     "file:": true,
+    "ws:": true,
+    "wss:": true,
   };
 
 // https://github.com/Cap32/tiny-querystring/blob/master/tiny-querystring.js
@@ -591,8 +595,15 @@ Url.prototype.resolveObject = function (relative) {
 
   if (isRelAbs) {
     // it's absolute.
-    result.host = relative.host || relative.host === "" ? relative.host : result.host;
-    result.hostname = relative.hostname || relative.hostname === "" ? relative.hostname : result.hostname;
+    if (relative.host || relative.host === "") {
+      if (result.host !== relative.host) result.auth = null;
+      result.host = relative.host;
+      result.port = relative.port;
+    }
+    if (relative.hostname || relative.hostname === "") {
+      if (result.hostname !== relative.hostname) result.auth = null;
+      result.hostname = relative.hostname;
+    }
     result.search = relative.search;
     result.query = relative.query;
     srcPath = relPath;

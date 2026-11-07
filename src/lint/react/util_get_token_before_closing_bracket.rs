@@ -2,8 +2,8 @@
 
 use bun_lint::prelude::*;
 
-/// `getTokenBeforeClosingBracket(node)` for the opening element of `jsx`: the last attribute, else
-/// the name. A fragment, which upstream never asks about, has neither: its `<`.
+/// `getTokenBeforeClosingBracket(node)` for `jsx`'s opening element: the last attribute, or else
+/// the name. A fragment has neither, so its `<` is returned, but upstream never passes one.
 pub(crate) fn get_token_before_closing_bracket(jsx: Jsx<'_>) -> Span {
     match (jsx.attrs().last(), jsx.tag()) {
         (Some(attribute), _) => attribute.span(),

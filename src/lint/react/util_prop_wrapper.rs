@@ -3,7 +3,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 
-/// `func[key]`, if that is a string.
+/// `func[key]`, if it's a string.
 fn string_of<'a>(func: &'a Json, key: &[u8]) -> Option<&'a [u8]> {
     func.get(key)?.as_str()
 }
@@ -12,7 +12,7 @@ fn search_prop_wrapper_functions(
     name: &[u8],
     prop_wrapper_functions: &mut dyn Iterator<Item = &Json>,
 ) -> bool {
-    // `None`: `splitName.length` is not 2.
+    // `None` if `splitName.length` isn't 2.
     let split_name = strings::split_once_char(name, b'.');
     let split_name = split_name.filter(|it| !strings::contains_char(it.1, b'.'));
     for func in prop_wrapper_functions {
@@ -29,8 +29,8 @@ fn search_prop_wrapper_functions(
     false
 }
 
-/// `getPropWrapperFunctions`. Nothing for what is no array: upstream throws, or takes a string for
-/// its characters.
+/// `getPropWrapperFunctions`. Empty if the setting isn't an array, where upstream throws or
+/// iterates over a string's characters.
 fn get_prop_wrapper_functions<'a>(file: &'a File<'a>) -> &'a [Json] {
     let prop_wrapper_functions = file.settings().get(b"propWrapperFunctions");
     (prop_wrapper_functions.and_then(Json::as_array)).unwrap_or_default()
@@ -51,7 +51,7 @@ pub(crate) fn is_exact_prop_wrapper_function<'a>(file: &'a File<'a>, name: &[u8]
     search_prop_wrapper_functions(name, &mut get_exact_prop_wrapper_functions(file))
 }
 
-/// `formatPropWrapperFunctions(getExactPropWrapperFunctions(context))`. `None`: there is none.
+/// `formatPropWrapperFunctions(getExactPropWrapperFunctions(context))`. `None` if there are none.
 pub(crate) fn format_exact_prop_wrapper_functions<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     let mut formatted = Vec::new();
     for func in get_exact_prop_wrapper_functions(file) {

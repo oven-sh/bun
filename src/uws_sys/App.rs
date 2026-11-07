@@ -60,6 +60,8 @@ pub struct App<const SSL: bool> {
 /// the call.
 macro_rules! uws_app_route_methods {
     ($($name:ident => $cfn:ident),* $(,)?) => {$(
+        // The C++ side is always_inline, so without this every caller gets its own copy of the route registration.
+        #[inline(never)]
         pub fn $name(
             &mut self,
             pattern: &[u8],
@@ -273,17 +275,6 @@ impl<const SSL: bool> App<SSL> {
         thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
     }
 
-    pub fn domain(&mut self, pattern: &ZStr) {
-        // SAFETY: pattern is NUL-terminated; self is a valid app.
-        unsafe {
-            c::uws_app_domain(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr().cast(),
-            )
-        }
-    }
-
     pub fn on_client_error(
         &mut self,
         handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
@@ -405,6 +396,7 @@ impl<const SSL: bool> App<SSL> {
 
     /// Calls with the same `context_key` share one uWS WebSocketContext. It keeps the first
     /// call's callbacks and the last call's settings. The key is only compared, never dereferenced.
+    #[inline(never)]
     pub fn ws(
         &mut self,
         pattern: &[u8],
@@ -633,7 +625,6 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
         pub(crate) fn uws_app_listen_with_config(
             ssl: i32,
             app: *mut uws_app_t,

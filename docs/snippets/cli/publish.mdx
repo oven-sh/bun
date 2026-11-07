@@ -148,6 +148,14 @@ A package can pin the registry it is published to with `publishConfig.registry` 
   Use the system's trusted certificate authorities
 </ParamField>
 
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <CodeGroup>
 ```bash Inline Certificate
 bun publish --ca "-----BEGIN CERTIFICATE-----..."

@@ -5,7 +5,7 @@ pub struct NoSpaceInEmphasis {
     check_strikethrough: bool,
 }
 
-const SPACE_IN_EMPHASIS: Message = Message::new(
+const SPACE_IN_EMPHASIS: &Message = &Message::new(
     "spaceInEmphasis",
     "Unexpected space around emphasis marker.",
 );
@@ -18,24 +18,24 @@ const NOT_TEXT: u8 = 1;
 struct Marker {
     start: usize,
     end: usize,
-    place: (Index, Index),
+    index_range: (Index, Index),
 }
 
-fn is_blank(byte: u8) -> bool {
+fn is_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
 
 /// True if the marker isn't attached to a word on this side. `outward` iterates over the text, moving away from the
-/// marker. Punctuation before the next blank is skipped. `/` and `\` count as word characters: `src/*`, `*/`.
+/// marker. Punctuation before the next whitespace is skipped. `/` and `\` count as word characters: `src/*`, `*/`.
 fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
     let is_in_word =
         |byte: u8| byte.is_ascii_alphanumeric() || byte >= 0x80 || matches!(byte, b'/' | b'\\');
     !outward
-        .find(|&byte| is_blank(byte) || is_in_word(byte))
+        .find(|&byte| is_whitespace(byte) || is_in_word(byte))
         .is_some_and(is_in_word)
 }
 
-/// True if two identical markers would be emphasis if not for a blank just inside them: `** a**`, `_a _`, `__ a __`.
+/// True if two identical markers would be emphasis if not for whitespace just inside them: `** a**`, `_a _`, `__ a __`.
 ///
 /// Upstream pairs a paragraph's first marker with its second, its third with its fourth, and so on, no matter what
 /// surrounds them. So it reports `*.ts, *.tsx` and `char *a, *b`, and its fix joins the words.
@@ -50,9 +50,9 @@ fn is_broken_pair(text: &[u8], opening: Marker, closing: Marker) -> bool {
         text.get(..opening.start).unwrap_or_default(),
         text.get(closing.end..).unwrap_or_default(),
     );
-    // A single `*` or `~` with blanks inside on both ends isn't emphasis: `(* a comment in OCaml *)`.
+    // A single `*` or `~` with whitespace inside on both ends isn't emphasis: `(* a comment in OCaml *)`.
     let is_single = opening.end - opening.start == 1 && text.get(opening.start) != Some(&b'_');
-    match (is_blank(first), is_blank(last)) {
+    match (is_whitespace(first), is_whitespace(last)) {
         (false, false) => return false,
         (true, true) if is_single => return false,
         _ => {}
@@ -148,8 +148,8 @@ impl Listens for NoSpaceInEmphasis {
         for &span in texts.iter() {
             let first = masked.len();
             let between = cx.document.slice(Span::before(from, span));
-            util::push_blanks(between, false, &mut masked);
-            if !between.iter().all(|&byte| is_blank(byte)) {
+            util::push_as_spaces(between, false, &mut masked);
+            if !between.iter().all(|&byte| is_whitespace(byte)) {
                 masked[first..].fill(NOT_TEXT);
             }
             masked.extend_from_slice(cx.document.slice(span));
@@ -173,18 +173,18 @@ impl Listens for NoSpaceInEmphasis {
             let marker = Marker {
                 start,
                 end,
-                place: (index, index + len as Index),
+                index_range: (index, index + len as Index),
             };
-            // A `*` or `~` with blanks on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 * 4`
-            // into `2 *3* 4`.
-            let is_blank_at = |at: Option<usize>| {
+            // A `*` or `~` with whitespace on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 *
+            // 4` into `2 *3* 4`.
+            let is_whitespace_at = |at: Option<usize>| {
                 at.and_then(|at| masked.get(at))
                     .copied()
-                    .is_some_and(is_blank)
+                    .is_some_and(is_whitespace)
             };
             if matches!(&masked[start..end], b"*" | b"~")
-                && is_blank_at(start.checked_sub(1))
-                && is_blank_at(Some(end))
+                && is_whitespace_at(start.checked_sub(1))
+                && is_whitespace_at(Some(end))
             {
                 continue;
             }
@@ -197,7 +197,7 @@ impl Listens for NoSpaceInEmphasis {
             };
             match open[at].1.take() {
                 Some(opening) if is_broken_pair(&masked, opening, marker) => {
-                    let (opening, closing) = (opening.place, marker.place);
+                    let (opening, closing) = (opening.index_range, marker.index_range);
                     report_whitespace(opening.1, opening.0, opening.1 + 2)?;
                     report_whitespace(closing.0 - 1, closing.0 - 2, closing.1)?;
                 }

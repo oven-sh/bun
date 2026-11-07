@@ -510,9 +510,9 @@ extern "C" EncodedJSValue SQL__createStatementDescription(JSC::JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* statement = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-    statement->putDirect(vm, Identifier::fromString(vm, "string"_s), string);
-    statement->putDirect(vm, Identifier::fromString(vm, "types"_s), typesArray);
-    statement->putDirect(vm, Identifier::fromString(vm, "columns"_s), columnsArray);
+    Bun::putDirectNamed(vm, statement, "string"_s, string);
+    Bun::putDirectNamed(vm, statement, "types"_s, typesArray);
+    Bun::putDirectNamed(vm, statement, "columns"_s, columnsArray);
     return JSValue::encode(statement);
 }
 

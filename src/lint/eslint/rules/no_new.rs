@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `new` operators outside of assignments or comparisons.
 pub struct NoNew;
 
-const NO_NEW_STATEMENT: Message =
-    Message::new("noNewStatement", "Do not use 'new' for side effects.");
+const NO_NEW_STATEMENT: &Message =
+    &Message::new("noNewStatement", "Do not use 'new' for side effects.");
 
 impl Rule for NoNew {
     const META: Meta = Meta::eslint("no-new", Kind::Suggestion);
@@ -20,11 +20,11 @@ impl Rule for NoNew {
             && statement.tag() == StmtTag::Expr
         {
             // oxlint points at `new A`.
-            let place = match e.callee().filter(|_| cx.language().is_oxlint) {
+            let location = match e.callee().filter(|_| cx.language().is_oxlint) {
                 Some(callee) => e.span().to(callee.outer_span()),
                 None => statement.span(),
             };
-            cx.report(place, NO_NEW_STATEMENT);
+            cx.report(location, NO_NEW_STATEMENT);
         }
     }
 }

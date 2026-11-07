@@ -29,7 +29,7 @@ pub const fn is_surrogate_pair(lead: u32, tail: u32) -> bool {
     matches!(lead, 0xD800..=0xDBFF) && matches!(tail, 0xDC00..=0xDFFF)
 }
 
-/// `regex.test(String.fromCodePoint(c))`, where half of a surrogate pair matches nothing.
+/// `regex.test(String.fromCodePoint(c))`, where a lone surrogate never matches.
 pub(crate) fn matches_code_point(regex: &Regex, c: u32) -> bool {
     char::from_u32(c).is_some_and(|c| regex.test(c.encode_utf8(&mut [0; 4]).as_bytes()))
 }

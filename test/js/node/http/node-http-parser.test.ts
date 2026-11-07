@@ -409,6 +409,17 @@ describe("ConnectionsList", () => {
     expect(list.expired()).toEqual([]);
   });
 
+  test("idle() and expired() skip a closed parser", () => {
+    const list = new ConnectionsList();
+    const closed = new HTTPParser();
+    closed.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    closed.close();
+
+    expect(list.idle()).toEqual([]);
+    expect(list.expired(1, 1)).toEqual([]);
+    expect(list.all()).toEqual([closed]);
+  });
+
   test("works with HTTPParser", () => {
     const p1 = new HTTPParser();
     p1.name = "parser1";

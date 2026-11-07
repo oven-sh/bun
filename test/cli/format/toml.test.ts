@@ -1,4 +1,4 @@
-// TOML under a configuration file of oxfmt. What is printed for which text is in `own/cases/toml`, judged by oxfmt.
+// Tests for TOML under an oxfmt config. The expected output for each input is in `own/cases/toml`, recorded from oxfmt.
 import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -21,7 +21,7 @@ async function format(files: Record<string, string>, config: object, args: strin
   return { files: Object.fromEntries(after), stderr, exitCode };
 }
 
-test.concurrent("printWidth, useTabs, trailingComma and endOfLine count", async () => {
+test.concurrent("respects printWidth, useTabs, trailingComma and endOfLine", async () => {
   const config = { printWidth: 20, useTabs: true, trailingComma: "none", endOfLine: "crlf" };
   const result = await format({ "a.toml": 'a = ["aaaaaaaa", "bbbbbbbb"]\n' }, config);
   expect(result.files["a.toml"]).toBe('a = [\r\n\t"aaaaaaaa",\r\n\t"bbbbbbbb"\r\n]\r\n');
@@ -29,7 +29,7 @@ test.concurrent("printWidth, useTabs, trailingComma and endOfLine count", async 
 });
 
 test.concurrent(
-  "a file with \\r\\n is read as one with \\n, but a string of several lines stays as it is written",
+  "reads a file with \\r\\n like one with \\n, but leaves the line breaks in a multi-line string unchanged",
   async () => {
     const text = 'a = 1\r\n\r\n\r\n\r\n\r\nb   = [\r\n 1, # c\r\n 2\r\n]\r\ns = """\r\nx\r\n"""\r\n';
     const lf = await format({ "a.toml": text }, {});
@@ -39,7 +39,7 @@ test.concurrent(
   },
 );
 
-test.concurrent("the names that oxfmt takes for TOML, and the lock files that it never touches", async () => {
+test.concurrent("formats the file names that oxfmt treats as TOML, but never lock files", async () => {
   const names = ["a.toml", "b.toml.example", "Pipfile", "Cargo.toml.orig"];
   const locks = ["Cargo.lock", "Gopkg.lock", "pdm.lock", "poetry.lock", "uv.lock"];
   const result = await format(Object.fromEntries([...names, ...locks].map(name => [name, "a   = 1\n"])), {});
@@ -49,7 +49,7 @@ test.concurrent("the names that oxfmt takes for TOML, and the lock files that it
   expect(result.exitCode).toBe(0);
 });
 
-test.concurrent("numbers, dates, strings and keys stay as they are written, whatever their size", async () => {
+test.concurrent("keeps numbers, dates, strings and keys as written, whatever their size", async () => {
   const text =
     'big   = 123456789012345678901234567890\nhex=0xDEAD_beef\n"a b" . \'c\'=1979-05-27 07:32:00.123456789123\ns = "\\u00e9\\t"\n';
   const result = await format({ "a.toml": text }, {});
@@ -59,7 +59,7 @@ test.concurrent("numbers, dates, strings and keys stay as they are written, what
   expect(result.exitCode).toBe(0);
 });
 
-test.concurrent("what is nested too deeply is left as it is, and that is said", async () => {
+test.concurrent("reports a file that's nested too deeply and leaves it unchanged", async () => {
   const files = {
     "ok.toml": `a   = ${"[".repeat(128)}${"]".repeat(128)}\n`,
     "huge.toml": `a   = ${"[".repeat(200_000)}${"]".repeat(200_000)}\n`,

@@ -1,0 +1,1 @@
+postMessage("short.ts");

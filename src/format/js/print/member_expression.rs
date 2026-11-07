@@ -15,7 +15,7 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
             f,
             [
                 object,
-                boundary_behind_object(f),
+                boundary_after_object(f),
                 FormatComputedMemberExpressionWithoutObject(e)
             ]
         ),
@@ -23,19 +23,19 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// A comment at the end of the line of the object stays there. oxfmt, like Prettier 3.8, moves it behind the member:
-/// `a // comment` and `.b` on the next line are `a.b // comment`.
-fn boundary_behind_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+/// Prettier keeps a comment at the end of the object's line there. oxfmt, like Prettier 3.8, moves it after the member:
+/// `a // comment` with `.b` on the next line becomes `a.b // comment`.
+fn boundary_after_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
 }
 
 fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut Formatter<'a>) {
     let start = f.elements().len();
-    write!(f, [object, boundary_behind_object(f)]);
+    write!(f, [object, boundary_after_object(f)]);
     write_property_after_object(e, object, start, f);
 }
 
-/// Not inlined: `a.b.c.d` is nested as deep as it is long, and what this needs of the stack would be taken at each level.
+/// Not inlined: `a.b.c.d` nests as deep as it is long, and inlining would add this function's stack use to every level.
 #[inline(never)]
 fn write_property_after_object<'a>(
     e: Expr<'a>,
@@ -62,8 +62,8 @@ fn write_property_after_object<'a>(
     );
 }
 
-/// Prettier attaches a comment on its own line in `a.b` or `a[b]` to the member access, so it is printed before `a`. oxfmt
-/// leaves it where it is.
+/// Prettier attaches an own-line comment in `a.b` or `a[b]` to the member access, so it's printed before `a`. oxfmt
+/// leaves it in place.
 ///
 /// ```js
 /// a                // comment
@@ -74,8 +74,8 @@ pub(crate) fn comments_in_member_access_stay(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// See [`comments_in_member_access_stay`]: the comments of the property of `member`, if one of them ends its line. They are
-/// printed before the `.`. Not for `a.#b`, which oxfmt never breaks.
+/// See [`comments_in_member_access_stay`]. Returns the comments on `member`'s property if one of them ends its line.
+/// They're printed before the `.`. Skips `a.#b`, which oxfmt never breaks.
 fn comments_on_lines_before_property<'a>(member: Expr<'a>, f: &Formatter<'a>) -> CommentList<'a> {
     if f.is_quiet() || !comments_in_member_access_stay(f) || member.is_private_member() {
         return CommentList::empty();
@@ -86,7 +86,7 @@ fn comments_on_lines_before_property<'a>(member: Expr<'a>, f: &Formatter<'a>) ->
         .unwrap_or_default()
 }
 
-/// The `.b` or `?.b` of `member`. Prettier's `printMemberLookup`.
+/// `member`'s `.b` or `?.b`. Prettier's `printMemberLookup`.
 pub(crate) fn write_lookup<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     if f.is_quiet() {
         return write_lookup_without_comments(member, f);
@@ -98,8 +98,8 @@ pub(crate) fn write_lookup<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, [operator, identifier(property)]);
 }
 
-/// [`write_lookup`] after the leading comments of the name have been written before the `.`, as oxfmt does. There a
-/// `prettier-ignore` comment among them is not about the name any more.
+/// [`write_lookup`] for when the name's leading comments were already printed before the `.`, as oxfmt does. A
+/// `prettier-ignore` comment among them then no longer applies to the name.
 pub(crate) fn write_lookup_after_its_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     if f.is_quiet() {
         return write_lookup_without_comments(member, f);
@@ -114,7 +114,7 @@ pub(crate) fn write_lookup_after_its_comments<'a>(member: Expr<'a>, f: &mut Form
     write!(f, [operator, name, trailing_comments]);
 }
 
-/// The `.b` or `?.b` of `member`, where there are no comments.
+/// `member`'s `.b` or `?.b` when there are no comments.
 fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     let Some(start) = member.member_name_start() else {
         return;
@@ -126,8 +126,7 @@ fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
             .checked_sub(count)
             .and_then(|at| f.source_text().byte_at(at))
     };
-    // As a rule nothing is between the operator and the name, and they are one piece of the source
-    // text.
+    // Usually nothing is between the operator and the name, so both are one slice of the source text.
     let (operator, is_before_name) = match member.is_optional() {
         true => (
             "?.",
@@ -153,9 +152,9 @@ fn is_member(node: AstNodes<'_>) -> bool {
     )
 }
 
-/// Whether there is no line break between the object and the `.`, however long the line.
+/// True if there's never a line break between the object and the `.`, however long the line is.
 ///
-/// `object_start`: where the elements of the object start in what is written.
+/// `object_start` is where the object's elements start in the formatter's buffer.
 fn should_inline<'a>(
     e: Expr<'a>,
     object: Expr<'a>,
@@ -167,8 +166,8 @@ fn should_inline<'a>(
         return true;
     }
 
-    // What follows comes to this unless the member accesses and `!`s around `e` are in one of a few
-    // kinds of nodes.
+    // Fast path: the rest boils down to this check unless the member accesses and `!`s around `e` are inside one of a
+    // few node kinds.
     let is_wrapper =
         |node: Node<'a>| matches!(node, Node::Expr(it) if it.tag() == ExprTag::NonNull);
     let is_member_or_wrapper = |node: Node<'a>| matches!(node, Node::Expr(it) if matches!(it.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::NonNull));
@@ -176,7 +175,7 @@ fn should_inline<'a>(
     while is_wrapper(outer) {
         outer = outer.parent();
     }
-    // For Prettier `e` is in the parentheses of a type cast then.
+    // In that case Prettier sees `e` inside a type cast's parentheses.
     let is_in_member = is_member_or_wrapper(outer) && !is_cast_target_that_hides_its_kind(e, f);
     if !is_in_member && !is_private && object.tag() == ExprTag::Ident && !is_cast_target(object, f)
     {
@@ -187,7 +186,7 @@ fn should_inline<'a>(
         outer = outer.parent();
         steps += 1;
         if steps == LONG_CHAIN
-            && let Some(answer) = answer_for_object(object, f)
+            && let Some(answer) = cached_answer_for_object(object, f)
         {
             f.context().long_member_chain.set(Some((e, answer)));
             return answer;
@@ -200,13 +199,14 @@ fn should_inline<'a>(
     answer
 }
 
-/// With so many member accesses and `!`s around one, the way up is not gone for each of them.
+/// With this many member accesses and `!`s around an expression, the walk up the chain is cached instead of repeated
+/// for each one.
 const LONG_CHAIN: u32 = 16;
 
-/// What [`should_inline`] came to for the member access that `object` is, or is an `[..]` or a `!`
-/// of, if that is the last one in a long chain that it was asked about. The way up from there leads
-/// through what `object` is the object of, unless a `ChainExpression` is in between.
-fn answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
+/// Returns the answer [`should_inline`] cached for the last member access of a long chain, if `object` is that access
+/// or an `[..]` or `!` applied to it. The walk up from there passes through `object`'s parent, so it ends at the same
+/// node, unless a `ChainExpression` is in between.
+fn cached_answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
     let (last, answer) = f.context().long_member_chain.get()?;
     let mut at = object;
     loop {
@@ -225,8 +225,8 @@ fn answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
     }
 }
 
-/// `outer`: the first thing around `e` that is neither a member access nor a `!`. `is_in_member`:
-/// `e`, with the `!`s after it, is in a member access.
+/// `outer` is the first ancestor of `e` that's neither a member access nor a `!`. `is_in_member` means `e`, with the
+/// `!`s after it, is inside a member access.
 fn should_inline_in<'a>(
     e: Expr<'a>,
     object: Expr<'a>,
@@ -235,7 +235,7 @@ fn should_inline_in<'a>(
     is_in_member: bool,
     f: &Formatter<'a>,
 ) -> bool {
-    // For Prettier the parentheses of a type cast are a node, which is none of those that matter here.
+    // In Prettier a type cast's parentheses are a node, and not one of the kinds that matter here.
     if f.comments().has_type_cast_comments() {
         let mut inner = e;
         loop {
@@ -272,7 +272,7 @@ fn should_inline_in<'a>(
     if is_member(first_non_wrapper_parent) {
         // `a.b` of `a.b.c`
     } else if matches!(first_non_wrapper_parent, AstNodes::AssignmentExpression(_) | AstNodes::VariableDeclarator(_))
-        // The parentheses of a type cast are a node for Prettier, which is neither.
+        // In Prettier a type cast's parentheses are a node, which is neither of those.
         && !is_cast_target(object, f)
         && (matches!(strip_chain_element_wrappers(object).kind(), ExprKind::Call(call) if !call.args().is_empty())
             || (is_member_chain_or_member_of_one(object, f)
@@ -281,8 +281,8 @@ fn should_inline_in<'a>(
         return true;
     }
 
-    // Babel, which reads JavaScript for Prettier, has no `ChainExpression`.
-    let is_javascript = f.context().has_tree_of_babel() || has_no_chain_expression_in_the_way(f);
+    // Babel, which Prettier uses to parse JavaScript, has no `ChainExpression`.
+    let is_javascript = f.context().has_babel_tree() || looks_through_chain_expression(f);
     let is_transparent =
         |node: AstNodes<'a>| is_javascript && matches!(node, AstNodes::ChainExpression(_));
 
@@ -299,7 +299,7 @@ fn should_inline_in<'a>(
             .is_some_and(|left| matches!(left.kind(), ExprKind::Ident(_))),
         // `typeof a.b.c` has a `TSQualifiedName`.
         AstNodes::TSTypeQuery(_) => true,
-        // Prettier's `shouldInlineNewExpressionCallee`: it is on the left edge of the callee.
+        // Prettier's `shouldInlineNewExpressionCallee`: `e` is on the callee's left edge.
         AstNodes::NewExpression(new) => {
             let mut child = e;
             let mut ancestor = parent;
@@ -324,23 +324,23 @@ fn should_inline_in<'a>(
     }
 }
 
-/// oxfmt looks through a `ChainExpression` for what a member expression is in, in TypeScript as well.
-fn has_no_chain_expression_in_the_way(f: &Formatter<'_>) -> bool {
+/// oxfmt looks through a `ChainExpression` to find a member expression's parent, in TypeScript too.
+fn looks_through_chain_expression(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// oxfmt writes `a.#b` without a way to break. For Prettier it is a member expression like any other.
+/// oxfmt never lets `a.#b` break. Prettier treats it like any other member expression.
 fn never_breaks_before_private_name(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `a.b().c!.d`: for Prettier what is written for `a.b().c!` has no label. oxfmt looks at how it starts.
+/// `a.b().c!.d`: in Prettier the doc for `a.b().c!` has no label. oxfmt looks at how it starts.
 fn non_null_mark_keeps_label(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether what is written for `object` has the label of what is at its left edge: it is a call
-/// of a member, which may be written as a member chain, or a member of that.
+/// True if `object`'s output carries the label of its left edge: it's a call of a member, which may be printed as a
+/// member chain, or a member of such a call.
 fn is_member_chain_or_member_of_one(mut object: Expr<'_>, f: &Formatter<'_>) -> bool {
     loop {
         match object.kind() {

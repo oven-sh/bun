@@ -5,7 +5,7 @@ use crate::types::tsutils::union_constituents;
 use crate::types::{IdSet, Literal, SymbolFlags, SyntaxKind, Type, TypeFlags};
 use smallvec::SmallVec;
 
-/// The enum for a member of an enum, any other type as it is: `Fruit` for `Fruit.Apple`.
+/// Returns an enum member's enum (`Fruit` for `Fruit.Apple`), and any other type unchanged.
 fn get_base_enum_type(ty: Type<'_>) -> Type<'_> {
     let member = ty
         .get_symbol()
@@ -14,8 +14,7 @@ fn get_base_enum_type(ty: Type<'_>) -> Type<'_> {
     declaration.map_or(ty, |it| it.get_type_at_location())
 }
 
-/// `getEnumLiterals(type)`: the constituents that are members of enums. `Fruit.Apple` of
-/// `Fruit.Apple | 123`.
+/// `getEnumLiterals(type)`: the constituents that are enum members, such as `Fruit.Apple` in `Fruit.Apple | 123`.
 pub fn get_enum_literals(ty: Type<'_>) -> SmallVec<[Type<'_>; 4]> {
     union_constituents(ty)
         .iter()
@@ -23,8 +22,8 @@ pub fn get_enum_literals(ty: Type<'_>) -> SmallVec<[Type<'_>; 4]> {
         .collect()
 }
 
-/// `getEnumTypes(typeChecker, type)`: the enums of those. `Fruit` and `Vegetable` for
-/// `Fruit.Apple | Vegetable.Lettuce | 123`. As upstream, one for each member.
+/// `getEnumTypes(typeChecker, type)`: the enums of those members. `Fruit` and `Vegetable` for
+/// `Fruit.Apple | Vegetable.Lettuce | 123`. As upstream, there's one entry per member.
 pub fn get_enum_types(ty: Type<'_>) -> SmallVec<[Type<'_>; 4]> {
     let literals = union_constituents(ty)
         .iter()
@@ -32,8 +31,8 @@ pub fn get_enum_types(ty: Type<'_>) -> SmallVec<[Type<'_>; 4]> {
     literals.map(get_base_enum_type).collect()
 }
 
-/// `isMismatchedEnumComparisonTypes(typeChecker, leftType, rightType)`: a value of an enum is
-/// compared with a value of the same primitive kind that is not of that enum.
+/// `isMismatchedEnumComparisonTypes(typeChecker, leftType, rightType)`: true if an enum value is compared with a value
+/// of the same primitive kind that isn't from that enum.
 pub fn is_mismatched_enum_comparison_types<'a>(left_type: Type<'a>, right_type: Type<'a>) -> bool {
     // Comparisons that have nothing to do with enums.
     let left_enum_types = get_enum_types(left_type);
@@ -51,7 +50,7 @@ pub fn is_mismatched_enum_comparison_types<'a>(left_type: Type<'a>, right_type: 
     {
         return false;
     }
-    // A type on both sides: `fruit === 0` for a `Fruit.Apple | 0`.
+    // The same type on both sides: `fruit === 0` where `fruit` is `Fruit.Apple | 0`.
     let mut right_type_parts = IdSet::new();
     for right_type_part in union_constituents(right_type).iter() {
         right_type_parts.insert(right_type_part);
@@ -65,7 +64,7 @@ pub fn is_mismatched_enum_comparison_types<'a>(left_type: Type<'a>, right_type: 
     type_violates(left_type, right_type) || type_violates(right_type, left_type)
 }
 
-/// Whether the right type is an unsafe comparison against any constituent of the left type.
+/// True if comparing the right type against any constituent of the left type is unsafe.
 fn type_violates(left_type: Type, right_type: Type) -> bool {
     let has = |flags: TypeFlags| {
         union_constituents(left_type)
@@ -76,8 +75,7 @@ fn type_violates(left_type: Type, right_type: Type) -> bool {
         || has(TypeFlags::STRING) && is_string_like(right_type)
 }
 
-/// `getEnumValueType(type)`: `NUMBER` or `STRING` for an enum or a member of one, by what its value
-/// is.
+/// `getEnumValueType(type)`: `NUMBER` or `STRING` for an enum or enum member, depending on its value.
 pub fn get_enum_value_type(ty: Type) -> Option<TypeFlags> {
     let flags = ty.flags();
     flags.intersects(TypeFlags::ENUM_LIKE).then(|| {
@@ -88,8 +86,8 @@ pub fn get_enum_value_type(ty: Type) -> Option<TypeFlags> {
     })
 }
 
-/// `getEnumKeyForLiteral(enumLiterals, literal)`: how the member whose value is `literal` is
-/// written: `Fruit.Apple`, `Fruit['a b']`, `Fruit[key]`.
+/// `getEnumKeyForLiteral(enumLiterals, literal)`: how to write the member whose value is `literal`, such as
+/// `Fruit.Apple`, `Fruit['a b']` or `Fruit[key]`.
 pub fn get_enum_key_for_literal(enum_literals: &[Type], literal: Literal) -> Option<Vec<u8>> {
     for enum_literal in enum_literals {
         if enum_literal.value() != Some(literal) {

@@ -1,0 +1,53 @@
+{
+  "nothing": {},
+  "texts": {
+    "count": "5",
+    "label": "five"
+  },
+  "fraction": {
+    "count": 0.5
+  },
+  "large": {
+    "count": 2147483647
+  },
+  "none": {
+    "count": null,
+    "label": null,
+    "items": null
+  },
+  "numberForText": {
+    "label": 5
+  },
+  "listForText": {
+    "label": [
+      1,
+      2,
+      3
+    ]
+  },
+  "textForList": {
+    "items": "abc"
+  },
+  "objectForList": {
+    "items": {
+      "length": 2
+    }
+  },
+  "textLimits": {
+    "limits": {
+      "low": "1",
+      "high": "10"
+    }
+  },
+  "fewerLimits": {
+    "limits": {
+      "high": 10
+    }
+  },
+  "otherOrder": {
+    "limits": {
+      "high": 10,
+      "low": 1
+    }
+  }
+}

@@ -59,3 +59,10 @@ declare var BUILD_ID: string;
 
 console.log(globalThis.BUILD_ID);
 ```
+
+With an ESLint config the rule reports what ESLint reports, so that a `// eslint-disable-next-line no-var` above a `declare var` is still needed: every `var`, except one directly inside `declare global`, which only ESLint 8 reports. With an oxlint config it reports what oxlint reports: `declare var`, but no `var` inside `declare global`, `declare module` or `declare namespace`.
+
+{/* bad {"config": "oxlint"} */}
+```ts
+declare var BUILD_ID: string;
+```

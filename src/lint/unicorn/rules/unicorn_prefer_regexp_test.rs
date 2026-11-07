@@ -6,10 +6,10 @@ use bun_lint::utils::visible::{VisibleRegExp, is_visibly_string, visible_regexp}
 /// Prefers `RegExp#test()` over `String#match()` and `String#exec()`.
 pub struct PreferRegexpTest;
 
-const PREFER_REGEXP_TEST: Message =
-    Message::new("", "Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.");
+const PREFER_REGEXP_TEST: &Message =
+    &Message::new("", "Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.");
 
-/// A literal that is not a regular expression.
+/// A literal that isn't a regular expression.
 fn is_other_literal(e: Expr) -> bool {
     !e.is_parenthesized()
         && matches!(
@@ -18,7 +18,7 @@ fn is_other_literal(e: Expr) -> bool {
         )
 }
 
-/// Whether only the truthiness of `call` counts.
+/// True if only `call`'s truthiness matters.
 fn is_in_boolean_position(call: Expr) -> bool {
     if call.is_chain_root() {
         return false;

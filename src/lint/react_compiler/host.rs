@@ -1,4 +1,4 @@
-//! What the compiler asks of the parser, answered from a [`Converted`] function.
+//! Implements [`Host`], the parser interface that the compiler needs, on top of a [`Converted`] function.
 
 use crate::convert::Converted;
 use bun_alloc::Arena;
@@ -9,7 +9,7 @@ pub(crate) struct LintHost<'c> {
     converted: &'c Converted,
     arena: &'c Arena,
     source: &'c [u8],
-    /// Nothing is in it: [`Host::is_module_level`] says what is bound outside of the function.
+    /// Always empty. [`Host::is_module_level`] tells the compiler what's bound outside the function.
     module_scope: Scope,
 }
 
@@ -31,7 +31,7 @@ impl Host for LintHost<'_> {
     fn module_scope(&self) -> &Scope {
         &self.module_scope
     }
-    fn import_records(&self) -> &[ImportRecord] {
+    fn import_records(&self) -> &[ImportRecord<'_>] {
         &[]
     }
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -67,7 +67,7 @@ impl Host for LintHost<'_> {
         true
     }
 
-    // The rest is for generating code, which a linter does not.
+    // The rest is for code generation, which a linter doesn't do.
     fn jsx_import(&mut self, _: JsxImportKind) -> Ref {
         Ref::NONE
     }

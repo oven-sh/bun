@@ -73,6 +73,36 @@ const kSyncWriteAccepted = Symbol("kSyncWriteAccepted");
  */
 const kSyncWriteAcceptedOnFalse = Symbol("kSyncWriteAcceptedOnFalse");
 
+type Chunk = Uint8Array | string;
+
+interface WriteOptions {
+  __proto__?: null;
+  signal?: AbortSignal;
+}
+
+/** What `pipeTo()` and `toWritable()` write to. Only `write()` is required. */
+interface Writer {
+  readonly desiredSize?: number | null;
+  write(chunk: Chunk, options?: WriteOptions): Promise<void>;
+  writev?(chunks: Chunk[], options?: WriteOptions): Promise<void>;
+  writeSync?(chunk: Chunk): boolean;
+  writevSync?(chunks: Chunk[]): boolean;
+  end?(options?: WriteOptions): Promise<number>;
+  endSync?(): number;
+  fail?(reason?: unknown): void;
+  [drainableProtocol]?(): Promise<boolean> | null;
+  [kSyncWriteAccepted]?(): boolean;
+  [kSyncWriteAcceptedOnFalse]?: boolean;
+}
+
+/** What the protocols add to a value that can be turned into a stream. */
+interface Streamable {
+  [toStreamable]?(): unknown;
+  [toAsyncStreamable]?(): unknown;
+}
+
+export type { Chunk, Streamable, WriteOptions, Writer };
+
 export default {
   broadcastProtocol,
   drainableProtocol,
@@ -84,4 +114,4 @@ export default {
   shareSyncProtocol,
   toAsyncStreamable,
   toStreamable,
-};
+} as const;

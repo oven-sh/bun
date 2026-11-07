@@ -30,7 +30,10 @@ function makeFor(node, type, range, fields) {
     const { line, column } = sourceCode.getLocFromIndex(index);
     return { column, line };
   };
-  const made = { type, ...fields, range, loc: { end: at(range[1]), start: at(range[0]) } };
+  const loc = { end: at(range[1]), start: at(range[0]) };
+  // As laid out as `node`, which can be from an earlier file.
+  const made =
+    "start" in node ? { type, ...fields, start: range[0], end: range[1], range, loc } : { type, ...fields, range, loc };
   madeFor.set(node, made);
   return made;
 }

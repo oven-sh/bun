@@ -7,7 +7,7 @@ use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
+use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
@@ -195,6 +195,12 @@ impl PackageManager {
                     ),
                 );
             }
+            Diff::keep_while_refreshing(
+                self,
+                existing_id,
+                existing.dependencies,
+                package.dependencies,
+            );
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
@@ -229,17 +235,7 @@ impl PackageManager {
         source: &bun_ast::Source,
         resolver: &mut R,
     ) -> crate::Result<()> {
-        // SAFETY: `self` is a live `&mut PackageManager`; the callee
-        // split-borrows `self.lockfile` / `self.log` (separate
-        // allocations) alongside `self` for the call's duration.
-        unsafe {
-            package.parse_from_real_manager(
-                std::ptr::from_mut::<PackageManager>(self),
-                source,
-                resolver,
-                Features::NPM,
-            )
-        }
+        package.parse_from_real_manager(self, source, resolver)
     }
 
     /// Parses the package.json of an extracted package and adds what its `file:` folders depend on.
@@ -313,7 +309,7 @@ impl PackageManager {
                     continue;
                 }
             };
-            let path = bun_resolver::fs::FileSystem::instance()
+            let path = bun_resolver::fs::FileSystem::get()
                 .dirname_store()
                 .append(&[package_dir, b"/", &folder, b"/package.json"].concat())?;
             let source = bun_ast::Source::init_path_string(path, &json[..]);

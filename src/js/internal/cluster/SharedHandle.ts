@@ -1,16 +1,33 @@
-const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
-const closeRawHandle = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
-const validateFd = $bindgen("node_cluster_binding.bind.ts", "clusterValidateFd");
+import type { ClusterWorker, SendReply } from "internal/cluster/Worker";
+
+interface RawHandle {
+  fd: number;
+  port?: number;
+  path?: string;
+}
+
+/** A bound descriptor, or the error number. */
+const clusterRawBind: (
+  addressType: number | string,
+  address: unknown,
+  port: number,
+  flags: number,
+) => RawHandle | number = $bindgen("node_cluster_binding.bind.ts", "clusterRawBind");
+const closeRawHandle: (fd: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
+const validateFd: (fd: number, wantDgram: boolean) => number = $bindgen(
+  "node_cluster_binding.bind.ts",
+  "clusterValidateFd",
+);
 
 export default class SharedHandle {
-  key;
-  workers;
-  handle;
-  errno;
-  data;
-  sharedOnly;
+  key: string;
+  workers: Map<number, ClusterWorker>;
+  handle: RawHandle | null;
+  errno: number;
+  data: unknown;
+  sharedOnly: boolean;
 
-  constructor(key, address, { port, addressType, fd, flags, sharedOnly }) {
+  constructor(key: string, address, { port, addressType, fd, flags, sharedOnly }) {
     this.key = key;
     this.workers = new Map();
     this.handle = null;
@@ -19,7 +36,7 @@ export default class SharedHandle {
     this.sharedOnly = sharedOnly === true;
 
     if (typeof fd === "number" && fd >= 0) {
-      const err = validateFd(fd);
+      const err = validateFd(fd, addressType === "udp4" || addressType === "udp6");
       if (err !== 0) {
         this.errno = err;
       } else {
@@ -37,17 +54,23 @@ export default class SharedHandle {
     }
   }
 
-  add(worker, send) {
+  add(worker: ClusterWorker, send: SendReply) {
     $assert(!this.workers.has(worker.id));
     this.workers.set(worker.id, worker);
     send(this.errno, null, this.handle);
   }
 
-  has(worker) {
+  has(worker: ClusterWorker) {
     return this.workers.has(worker.id);
   }
 
-  remove(worker) {
+  // Returns the file descriptor that remove() closes, or -1.
+  get fd() {
+    const handle = this.handle;
+    return handle ? handle.fd : -1;
+  }
+
+  remove(worker: ClusterWorker) {
     const workers = this.workers;
     if (!workers.has(worker.id)) return false;
 

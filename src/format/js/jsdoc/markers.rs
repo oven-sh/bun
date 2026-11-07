@@ -1,4 +1,4 @@
-//! What starts an item of a list, for all who have to know.
+//! List item markers, shared by the modules that need to recognize them.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ListMarker {
@@ -10,7 +10,7 @@ pub(super) enum ListMarker {
     LegacyOrdered,
 }
 
-/// The marker that `line` starts with, after spaces and tabs. `line` can go on behind the end of the line.
+/// Returns the marker that `line` starts with, after spaces and tabs. `line` may extend past the end of the line.
 pub(super) fn list_marker(line: &[u8]) -> Option<ListMarker> {
     let bytes = &line[line
         .iter()
@@ -38,8 +38,8 @@ pub(super) fn list_marker(line: &[u8]) -> Option<ListMarker> {
     }
 }
 
-/// Whether `word` at the start of a line would start a list, a heading or a quote. No line is broken before it:
-/// `/^>|^(?:[*+-]|#{1,6}|\d+[).])$/` of Prettier's printer for Markdown, and `1-`.
+/// True if `word` at the start of a line would start a list, a heading or a quote, so no line may break before it.
+/// That's `/^>|^(?:[*+-]|#{1,6}|\d+[).])$/` from Prettier's Markdown printer, plus `1-`.
 pub(super) fn is_block_marker_token(word: &[u8]) -> bool {
     match word {
         [b'-' | b'+' | b'*'] | [b'>', ..] => true,

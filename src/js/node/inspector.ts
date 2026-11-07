@@ -758,8 +758,7 @@ const console = {
   },
 };
 
-// The functions have node's names, which are not the export keys:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/inspector.js#L242-L246
+// The names are node's, not the export keys: https://github.com/nodejs/node/blob/v26.3.0/lib/inspector.js#L242-L246
 export default {
   console,
   open: inspectorOpen,

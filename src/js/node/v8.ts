@@ -409,8 +409,7 @@ function writeHeapSnapshot(path, _options) {
 function setHeapSnapshotNearHeapLimit() {
   throwNotImplemented("node:v8 setHeapSnapshotNearHeapLimit");
 }
-// A function per key, as in node, where each has its own `name` and a `length` of 2:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/v8/startup_snapshot.js#L47
+// A function per key, each with node's name and length: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/v8/startup_snapshot.js#L47
 function addDeserializeCallback(_callback, _data) {
   throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
 }
@@ -421,8 +420,7 @@ function setDeserializeMainFunction(_callback, _data) {
   throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
 }
 
-// One factory makes the four hooks, as in node, so that they have no `name` and a `length` of 1:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/promise_hooks.js#L90-L103
+// A factory, as in node, so that the hooks have no name: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/promise_hooks.js#L90-L103
 function notImplementedHook(name) {
   return _hook => {
     throwNotImplemented("node:v8 " + name);

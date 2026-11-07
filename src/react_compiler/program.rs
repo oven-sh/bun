@@ -537,6 +537,8 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"enableOptionalDependencies" => env_bool!(enable_optional_dependencies, val),
             b"enableNameAnonymousFunctions" => env_bool!(enable_name_anonymous_functions, val),
             b"validateHooksUsage" => env_bool!(validate_hooks_usage, val),
+            // Not in upstream: `a component with a joined function is compiled as before or not at all` turns the rule off.
+            b"joinedFunctionsAreRefused" => env_bool!(joined_functions_are_refused, val),
             b"validateRefAccessDuringRender" => env_bool!(validate_ref_access_during_render, val),
             b"validateNoSetStateInRender" => env_bool!(validate_no_set_state_in_render, val),
             b"enableUseKeyedState" => env_bool!(enable_use_keyed_state, val),

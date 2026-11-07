@@ -228,6 +228,19 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // As in both tools. `EnvironmentConfig::joined_functions_are_refused` is for `bun build` only: with it, a function
+  // that the rule refuses has no report.
+  test("a local that is one of two functions is the first of them, also where a loop assigns the second", async () => {
+    const { diagnostics, exit } = await report(small.functions);
+    expect(diagnostics).toEqual(expected.reports.functions.diagnostics);
+    expect(locationsOf(diagnostics["joined-functions.jsx"])).toEqual([
+      ["react(purity)", 5, 14],
+      ["react(set-state-in-render)", 13, 3],
+      ["react(set-state-in-render)", 23, 3],
+    ]);
+    expect(exit).toBe(1);
+  });
+
   test("a module's own useMemo isn't React's, and an expression that contains JSX can't be evaluated earlier", async () => {
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);
@@ -611,6 +624,12 @@ describe.concurrent(
         "disabled.jsx": [],
         // All three are reported at the first write.
         "writes.jsx": Array(3).fill("react-hooks/immutability 5:3-5:4 Error: This value cannot be modified"),
+        // A local that is one of two functions is the first of them, also where a loop assigns the second.
+        "joined-functions.jsx": [
+          "react-hooks/purity 5:14-5:19 Error: Cannot call impure function during render",
+          "react-hooks/set-state-in-render 13:3-13:6 Error: Cannot call setState during render",
+          "react-hooks/set-state-in-render 23:3-23:6 Error: Cannot call setState during render",
+        ],
         "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
         "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
         "long.jsx": [

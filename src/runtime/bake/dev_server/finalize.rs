@@ -411,7 +411,7 @@ fn finalize_bundle_inner(
             );
         }
         // A CSS module with a `composes` that cannot be followed fails the same way.
-        let failure = if log.errors > 0 {
+        let mut failure = if log.errors > 0 {
             Some(&log)
         } else {
             result
@@ -421,6 +421,10 @@ fn finalize_bundle_inner(
         };
         let key = entry_source.path.key_for_incremental_graph();
         let is_served = graph == bake::Graph::Client || !dev.client_graph.keeps_css_root(key);
+        // Nothing clears a failure of this copy of a plain stylesheet. The browser's copy has the result for the page.
+        if failure.is_some() && !is_served && !bun_css::css_modules::is_module_path(key) {
+            failure = None;
+        }
         if let Some(log) = failure {
             if !is_served {
                 dev.server_graph.insert_failure(

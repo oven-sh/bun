@@ -1575,7 +1575,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// `IncrementalGraph(.server).insertCssFileOnServer` (spec :1390).
     /// Server CSS files are just targets for graph traversal; content lives
     /// only on the client.
-    /// `failed_graph`: the graph of a CSS module copy that failed in this bundle. The record is left stale.
+    /// `failed_graph`: the graph of a CSS module copy that failed in this bundle.
     pub(crate) fn insert_css_file_on_server(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
@@ -1611,10 +1611,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
                 self.dev_incremental_result().failures_removed.push(kv.1);
             }
-        }
-        if failed_graph.is_some() {
-            self.ensure_stale_bit_capacity(true)?;
-            self.stale_files.set(idx);
         }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
@@ -1877,6 +1873,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
                                 entry_points.append_css(k.slice())?;
+                                // A CSS module gets names from the file that changed: the server graphs bundle their copies too.
+                                // SAFETY: cross-graph access via `owner()`; `server_graph` is a disjoint sibling field.
+                                let server_graph = unsafe { &mut (*self.owner()).server_graph };
+                                if let Some(server_index) =
+                                    server_graph.bundled_files.get_index(k.slice())
+                                {
+                                    server_graph.stale_files.set(server_index);
+                                    server_graph
+                                        .append_server_entry_points(server_index, entry_points)?;
+                                }
                             }
                             it = entry.next_dependency;
                         }
@@ -1911,16 +1917,26 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                     }
                 },
-                Side::Server => {
-                    let f = &self.bundled_files.values()[index];
-                    if f.is_rsc {
-                        entry_points.append_js(owned_path, bake::Graph::Server)?;
-                    }
-                    if f.rebundles_for_ssr_graph() {
-                        entry_points.append_js(owned_path, bake::Graph::Ssr)?;
-                    }
-                }
+                Side::Server => self.append_server_entry_points(index, entry_points)?,
             }
+        }
+        Ok(())
+    }
+
+    /// Server side: queues the file for each graph that bundles it.
+    fn append_server_entry_points(
+        &self,
+        index: usize,
+        entry_points: &mut EntryPointList,
+    ) -> Result<(), crate::Error> {
+        debug_assert!(matches!(SIDE, Side::Server));
+        let f = &self.bundled_files.values()[index];
+        let path = &*self.bundled_files.keys()[index];
+        if f.is_rsc {
+            entry_points.append_js(path, bake::Graph::Server)?;
+        }
+        if f.rebundles_for_ssr_graph() {
+            entry_points.append_js(path, bake::Graph::Ssr)?;
         }
         Ok(())
     }

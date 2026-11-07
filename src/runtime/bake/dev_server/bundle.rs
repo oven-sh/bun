@@ -242,26 +242,6 @@ impl EntryPointList {
         )
     }
 
-    /// A CSS module that is bundled again gets a copy for each server graph that holds its class-name module.
-    pub(crate) fn append_css_module_server_copies(
-        &mut self,
-        server_graph: &IncrementalGraph<{ bake::Side::Server }>,
-    ) {
-        use entry_point_list::Flags;
-        for i in 0..self.set.count() {
-            if !self.set.values()[i].contains(Flags::CSS) {
-                continue;
-            }
-            let Some(file) = server_graph.bundled_files.get(&self.set.keys()[i]) else {
-                continue;
-            };
-            let mut server_copies = Flags::empty();
-            server_copies.set(Flags::SERVER, file.is_rsc);
-            server_copies.set(Flags::SSR, file.rebundles_for_ssr_graph());
-            self.set.values_mut()[i] |= server_copies;
-        }
-    }
-
     /// Deduplictes requests to bundle the same file twice.
     pub(crate) fn append(
         &mut self,

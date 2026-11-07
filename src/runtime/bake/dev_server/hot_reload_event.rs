@@ -205,7 +205,6 @@ impl HotReloadEvent {
                 }
             }
         }
-        entry_points.append_css_module_server_copies(&dev.server_graph);
     }
 
     pub(crate) fn reset(&mut self) {

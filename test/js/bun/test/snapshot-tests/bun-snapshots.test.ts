@@ -292,13 +292,17 @@ describe.concurrent("snapshot file writes", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("an aborted --update-snapshots run leaves the .snap as it was", async () => {
+  // With the value of the file, the run opens nothing. With another value, it opens the file for a write that the exit skips.
+  test.each([
+    ["the value of the file", "{ a: 1 }"],
+    ["another value", "{ a: 2 }"],
+  ])("an aborted --update-snapshots run leaves the .snap as it was when the test has %s", async (_, value) => {
     const stored = header + '\nexports[`matches 1`] = `\n{\n  "a": 1,\n}\n`;\n';
     using dir = tempDir("aborted-update-snapshots", {
       "snap.test.js": `
         import { expect, test } from "bun:test";
         test("matches", () => {
-          expect({ a: 1 }).toMatchSnapshot();
+          expect(${value}).toMatchSnapshot();
           process.exit(3);
         });
       `,

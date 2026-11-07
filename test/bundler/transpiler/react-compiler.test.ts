@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
@@ -4867,6 +4867,47 @@ test("react-compiler does not compile a function that declares `using` for bun t
 
   expect(stdout.match(/memoized: .*/)?.[0] ?? stderr).toBe("memoized: Memoized, disposed: +a -a +a -a +b -b +c -c");
   expect(exitCode).toBe(0);
+});
+
+// `bun lint` reports what eslint-plugin-react-hooks and oxlint report. Their lowering reads no kind in a loop head.
+test("react-compiler records nothing for a `var` loop head in bun lint", async () => {
+  using dir = tempDir("react-compiler-var-head-bun-lint", {
+    "bunfig.toml": `[lint.rules]\n"react-hooks/todo" = "error"\n`,
+    "head.jsx": `
+      export function Keys({ o }) {
+        const keys = [];
+        for (var key in o) keys.push(key);
+        for (var value of Object.values(o)) keys.push(value);
+        return <ul>{keys}</ul>;
+      }
+    `,
+    "statement.jsx": `
+      export function Keys({ o }) {
+        var keys = Object.keys(o);
+        return <ul>{keys}</ul>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "lint", "-f", "json"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const files: { filePath: string; messages: { message: string }[] }[] = stdout.startsWith("[")
+    ? JSON.parse(stdout)
+    : [];
+  const reported = files.map(file => [basename(file.filePath), file.messages.map(it => it.message.split("\n")[0])]);
+  expect(Object.fromEntries(reported)).toEqual({
+    "head.jsx": [],
+    "statement.jsx": ["Todo: (BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration"],
+  });
+  expect(stderr).toContain("Linted 2 files");
+  expect(exitCode).toBe(1);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

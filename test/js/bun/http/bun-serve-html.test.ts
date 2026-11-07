@@ -1305,6 +1305,350 @@ describe("requests while a dev server bundle is in flight", () => {
   });
 });
 
+// A bundle parses only the files that changed since they were last bundled. A file that fails stays on
+// record, but a later bundle that reaches it through a file it doesn't parse again reports no failure.
+describe("routes that reach a build failure recorded by an earlier bundle", () => {
+  const page = (file: string) =>
+    `<!DOCTYPE html><html><head><title>loaded</title>${
+      file.endsWith(".css") ? `<link rel="stylesheet" href="./${file}">` : ""
+    }</head><body>${file.endsWith(".css") ? "" : `<script type="module" src="./${file}"></script>`}</body></html>`;
+  const loaded = [200, "loaded"];
+  const failed = [500, "Bun - Build Failed"];
+  // With "0", the default of release builds, a request for a failed route bundles every file the route
+  // reaches again. With "1", the default of debug builds, it is answered from the recorded failure.
+  const modes = ["0", "1"];
+  // A bundle that resolves "./parked.ts" resolves bundleParked, then waits for releaseBundle.
+  const parking = {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "parked.ts": `export {};`,
+    "plugin.ts": /*ts*/ `
+      import { join } from "node:path";
+      export default {
+        name: "park-bundle",
+        setup(build) {
+          build.onResolve({ filter: /parked\\.ts$/ }, async () => {
+            globalThis.bundleParked.resolve();
+            await globalThis.releaseBundle.promise;
+            return { path: join(import.meta.dir, "parked.ts") };
+          });
+        },
+      };
+    `,
+  };
+  const helpers = /*ts*/ `
+    const park = () => {
+      globalThis.bundleParked = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+    };
+    const request = async path => {
+      const response = await fetch(new URL(path, server.url));
+      return [response.status, (await response.text()).match(/<title>(.*?)<\\/title>/)?.[1] ?? null];
+    };
+  `;
+
+  test.concurrent.each(modes)(
+    "first request for a route that shares a module with a failed route, BUN_ASSUME_PERFECT_INCREMENTAL=%s",
+    async assumePerfectIncremental => {
+      using dir = tempDir("bun-serve-html-shared-failed-import", {
+        "first.html": page("shared.ts"),
+        "same-script.html": page("shared.ts"),
+        "importer.html": page("importer.ts"),
+        "importer.ts": `import "./shared.ts";`,
+        "shared.ts": `import "./broken.ts";\nconsole.log("shared");`,
+        "broken.ts": `let = ;`,
+        "first-stylesheet.html": page("root.css"),
+        "same-stylesheet.html": page("root.css"),
+        "root.css": `@import "./child.css";\nbody { color: red; }`,
+        "child.css": `@import "./missing.css";\na { color: blue; }`,
+        "fine.html": page("fine.ts"),
+        "fine.ts": `console.log("fine");`,
+        "serve.ts": /*ts*/ `
+          import first from "./first.html";
+          import sameScript from "./same-script.html";
+          import importer from "./importer.html";
+          import firstStylesheet from "./first-stylesheet.html";
+          import sameStylesheet from "./same-stylesheet.html";
+          import fine from "./fine.html";
+
+          using server = Bun.serve({
+            port: 0,
+            development: true,
+            routes: {
+              "/first": first,
+              "/same-script": sameScript,
+              "/importer": importer,
+              "/first-stylesheet": firstStylesheet,
+              "/same-stylesheet": sameStylesheet,
+              "/fine": fine,
+            },
+          });
+          ${helpers}
+          const paths = ["/first", "/same-script", "/importer", "/first-stylesheet", "/same-stylesheet", "/fine"];
+          const responses = [];
+          // The second request for a route arrives after the route's own bundle has ended.
+          for (const path of [...paths, "/same-script", "/same-stylesheet", "/fine"]) {
+            responses.push([path, ...(await request(path))]);
+          }
+          console.log(JSON.stringify(responses));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+        BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+      });
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify([
+          ["/first", ...failed],
+          ["/same-script", ...failed],
+          ["/importer", ...failed],
+          ["/first-stylesheet", ...failed],
+          ["/same-stylesheet", ...failed],
+          // This route reaches no failed file.
+          ["/fine", ...loaded],
+          ["/same-script", ...failed],
+          ["/same-stylesheet", ...failed],
+          ["/fine", ...loaded],
+        ]),
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The rebuild bundles app.ts again and clears what the request did to have it bundled again. The
+  // bundle that answers the request then finds app.ts up to date.
+  test.concurrent.each(modes)(
+    "request for a failed route while a rebuild of its script is in flight, BUN_ASSUME_PERFECT_INCREMENTAL=%s",
+    async assumePerfectIncremental => {
+      using dir = tempDir("bun-serve-html-failed-route-during-rebuild", {
+        ...parking,
+        "index.html": page("app.ts"),
+        "app.ts": `import "./broken.ts";\nimport "./parked.ts";\n`,
+        "broken.ts": `let = ;`,
+        "serve.ts": /*ts*/ `
+          import { appendFileSync } from "node:fs";
+          import index from "./index.html";
+
+          using server = Bun.serve({
+            port: 0,
+            development: true,
+            routes: { "/": index },
+            fetch: () => new Response("barrier"),
+          });
+          ${helpers}
+          park();
+          globalThis.releaseBundle.resolve();
+          const first = await request("/");
+
+          park();
+          appendFileSync("app.ts", "// saved\\n");
+          await globalThis.bundleParked.promise;
+          const duringRebuild = request("/");
+          // The server has read that request by the time it responds to this one.
+          await request("/barrier");
+          globalThis.releaseBundle.resolve();
+          console.log(JSON.stringify({ first, duringRebuild: await duringRebuild, afterwards: await request("/") }));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+        BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+      });
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({ first: failed, duringRebuild: failed, afterwards: failed }),
+        exitCode: 0,
+      });
+    },
+  );
+
+  // No request waits for the rebuild, and the rebuild doesn't parse shared.ts.
+  test.concurrent.each(
+    [
+      ["script", /*ts*/ `writeFileSync("edited.ts", 'import "./shared.ts";\\nimport "./parked.ts";\\n');`],
+      ["html", /*ts*/ `writeFileSync("edited.html", ${JSON.stringify(page("added.ts"))});`],
+    ].flatMap(([file, save]) => modes.map(mode => [file, mode, save])),
+  )(
+    "loaded route after a save makes its %s load a module of a failed route, BUN_ASSUME_PERFECT_INCREMENTAL=%s",
+    async (_file, assumePerfectIncremental, save) => {
+      using dir = tempDir("bun-serve-html-save-imports-failed-module", {
+        ...parking,
+        "failed.html": page("failed.ts"),
+        "failed.ts": `import "./shared.ts";`,
+        "shared.ts": `import "./broken.ts";\nconsole.log("shared");`,
+        "broken.ts": `let = ;`,
+        "edited.html": page("edited.ts"),
+        "edited.ts": `console.log("edited");`,
+        "added.ts": `import "./shared.ts";\nimport "./parked.ts";\n`,
+        "other.html": page("other.ts"),
+        "other.ts": `console.log("other");`,
+        "serve.ts": /*ts*/ `
+          import { writeFileSync } from "node:fs";
+          import failedPage from "./failed.html";
+          import editedPage from "./edited.html";
+          import otherPage from "./other.html";
+
+          using server = Bun.serve({
+            port: 0,
+            development: true,
+            routes: { "/failed": failedPage, "/edited": editedPage, "/other": otherPage },
+            fetch: () => new Response("barrier"),
+          });
+          ${helpers}
+          park();
+          const beforeSave = { failed: await request("/failed"), edited: await request("/edited") };
+
+          ${save}
+          await globalThis.bundleParked.promise;
+          // The first request for a route waits for the bundle in flight to end.
+          const other = request("/other");
+          await request("/barrier");
+          globalThis.releaseBundle.resolve();
+          console.log(JSON.stringify({ beforeSave, other: await other, edited: await request("/edited") }));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+        BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+      });
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({ beforeSave: { failed, edited: loaded }, other: loaded, edited: failed }),
+        exitCode: 0,
+      });
+    },
+  );
+
+  // One trace state serves every route that waits for a bundle.
+  test.concurrent("first requests for two routes that share one bundle and reach one failed import", async () => {
+    using dir = tempDir("bun-serve-html-waiting-routes-share-failed-import", {
+      ...parking,
+      "first.html": page("shared.ts"),
+      "shared.ts": `import "./broken.ts";\nconsole.log("shared");`,
+      "broken.ts": `let = ;`,
+      "parker.html": page("parker.ts"),
+      "parker.ts": `import "./parked.ts";`,
+      "second.html": page("shared.ts"),
+      "third.html": page("shared.ts"),
+      "serve.ts": /*ts*/ `
+        import firstPage from "./first.html";
+        import parkerPage from "./parker.html";
+        import secondPage from "./second.html";
+        import thirdPage from "./third.html";
+
+        using server = Bun.serve({
+          port: 0,
+          development: true,
+          routes: { "/first": firstPage, "/parker": parkerPage, "/second": secondPage, "/third": thirdPage },
+          fetch: () => new Response("barrier"),
+        });
+        ${helpers}
+        park();
+        const first = await request("/first");
+        const parker = request("/parker");
+        await globalThis.bundleParked.promise;
+        // Both routes wait for the bundle in flight to end. One bundle then builds both.
+        const second = request("/second");
+        const third = request("/third");
+        // The server has read both requests by the time it responds to this one.
+        await request("/barrier");
+        globalThis.releaseBundle.resolve();
+        console.log(JSON.stringify({ first, parker: await parker, second: await second, third: await third }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ first: failed, parker: loaded, second: failed, third: failed }),
+      exitCode: 0,
+    });
+  });
+
+  // The trace of a route stops at a failed file. The page doesn't list a failure below that file.
+  test.concurrent("failure page of a route that reaches a failed file which imports another", async () => {
+    using dir = tempDir("bun-serve-html-failure-below-failed-file", {
+      ...parking,
+      "first.html": page("shared.ts"),
+      "second.html": page("shared.ts"),
+      "shared.ts": `import "./upper.ts";\nconsole.log("shared");`,
+      "upper.ts": `import "./lower.ts";\n`,
+      "lower.ts": `let = ;`,
+      "other.html": page("other.ts"),
+      "other.ts": `console.log("other");`,
+      "serve.ts": /*ts*/ `
+        import { appendFileSync } from "node:fs";
+        import firstPage from "./first.html";
+        import secondPage from "./second.html";
+        import otherPage from "./other.html";
+
+        using server = Bun.serve({
+          port: 0,
+          development: true,
+          routes: { "/first": firstPage, "/second": secondPage, "/other": otherPage },
+          fetch: () => new Response("barrier"),
+        });
+        ${helpers}
+        // The failed files that the page of a route names.
+        const failures = async path => {
+          const page = await (await fetch(new URL(path, server.url))).text();
+          const list = Buffer.from(page.match(/atob\\("([^"]*)"\\)/)?.[1] ?? "", "base64").toString("latin1");
+          return ["upper.ts", "lower.ts"].filter(file => list.includes(file));
+        };
+        park();
+        const beforeSave = await failures("/first");
+
+        // upper.ts fails now too. It still imports lower.ts.
+        appendFileSync("upper.ts", 'import "./parked.ts";\\nimport "./missing.ts";\\n');
+        await globalThis.bundleParked.promise;
+        // The first request for a route waits for the bundle in flight to end.
+        const rebuilt = request("/other");
+        await request("/barrier");
+        globalThis.releaseBundle.resolve();
+        await rebuilt;
+        console.log(JSON.stringify({ beforeSave, second: await failures("/second") }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ beforeSave: ["lower.ts"], second: ["upper.ts"] }),
+      exitCode: 0,
+    });
+  });
+
+  // With a plugin that has "tailwind" in its name, every bundle builds the stylesheets that mention
+  // tailwind again. So the bundle of a first request adds the failure of a stylesheet that a save broke.
+  test.concurrent.each(modes)(
+    "routes that link a stylesheet which a save breaks, with a tailwind plugin, BUN_ASSUME_PERFECT_INCREMENTAL=%s",
+    async assumePerfectIncremental => {
+      using dir = tempDir("bun-serve-html-tailwind-stylesheet-fails", {
+        "bunfig.toml": `[serve.static]\nplugins = ["./tailwind-plugin.ts"]\n`,
+        "tailwind-plugin.ts": `export default { name: "tailwind-plugin", setup() {} };`,
+        "style.css": `.tailwind { color: red; }`,
+        "one.html": page("style.css"),
+        "two.html": page("style.css"),
+        "three.html": page("style.css"),
+        "serve.ts": /*ts*/ `
+          import { writeFileSync } from "node:fs";
+          import onePage from "./one.html";
+          import twoPage from "./two.html";
+          import threePage from "./three.html";
+
+          using server = Bun.serve({
+            port: 0,
+            development: true,
+            routes: { "/one": onePage, "/two": twoPage, "/three": threePage },
+          });
+          ${helpers}
+          const beforeSave = [await request("/one"), await request("/two")];
+          writeFileSync("style.css", '@import "./missing.css";\\n.tailwind { color: red; }\\n');
+          const firstRequest = await request("/three");
+          console.log(JSON.stringify({ beforeSave, firstRequest, loadedRoute: await request("/one") }));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+        BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+      });
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({ beforeSave: [loaded, loaded], firstRequest: failed, loadedRoute: failed }),
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 // The rejection ends the bundle, and the next bundle reuses the memory that the first one freed.
 test.concurrent("starts the queued bundle after an onLoad plugin's rejection ends a dev server bundle", async () => {
   const rounds = [0, 1, 2, 3, 4, 5];

@@ -1270,6 +1270,35 @@ it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exc
   expect(await runner.exited).toBe(0);
 });
 
+// Where the statement of a module link error is is looked for in the file as it is when the link fails.
+it.each(["--hot", "--watch"])("%s says where the statement of a module link error is after each save", async flag => {
+  using dir = tempDir("hot-link-error", {
+    "dep.ts": `export const b = 1;\n`,
+    "index.ts": `import { a } from "./dep.ts";\nconsole.log("ran", a);\n`,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  const index = join(String(dir), "index.ts");
+  expect(await stderr(`1 | import { a } from "./dep.ts";\n             ^\n`)).toBe(true);
+  expect(await stderr(`index.ts:1:10\n`)).toBe(true);
+
+  writeFileSync(index, `// One line above.\n// And another.\nimport { a } from "./dep.ts";\nconsole.log("ran", a);\n`);
+  expect(await stderr(`3 | import { a } from "./dep.ts";\n             ^\n`)).toBe(true);
+  expect(await stderr(`index.ts:3:10\n`)).toBe(true);
+
+  writeFileSync(index, `import { b as a } from "./dep.ts";\nconsole.log("ran", a);\nprocess.exit(0);\n`);
+  expect(await stdout("ran 1")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
 it.each([
   [
     "a throw",

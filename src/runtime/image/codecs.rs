@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/bun_webp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -360,18 +360,10 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
-            let mut cw: c_int = 0;
-            let mut ch: c_int = 0;
-            // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
-                == 0
-                || cw <= 0
-                || ch <= 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(cw).expect("int cast");
-            h = u32::try_from(ch).expect("int cast");
+            bun_webp::Info {
+                width: w,
+                height: h,
+            } = webp::probe(bytes)?;
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
@@ -466,7 +458,7 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
+/// codec mallocs internally (turbojpeg's allocator); rather
 /// than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
@@ -492,7 +484,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`) to the
+/// Adapt a 1-arg C free (`tj3Free`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.

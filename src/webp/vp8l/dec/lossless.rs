@@ -1,0 +1,364 @@
+//! `lossless.c`: the inverse transforms and the conversion to RGBA.
+
+use core::cell::Cell;
+use core::mem::take;
+
+use super::predictors::{BLACK, Block, Pixel, add_pixel, add_pixels, block_of, first_pixel};
+use crate::util::{Bug, Checked, SliceExt};
+use crate::vp8l::common::{
+    MAX_PALETTE_SIZE, Multipliers, TransformType, color_transform_delta, sub_sample_size,
+};
+use crate::vp8l::predictors::{predict, uses_left};
+
+/// The size of `Transform::data` for `ColorIndexing`, whatever the number of colors, so that any index is valid.
+pub(super) const COLOR_MAP_SIZE: usize = MAX_PALETTE_SIZE;
+
+pub(super) struct Transform {
+    pub(super) kind: TransformType,
+    /// Tiles are `1 << bits` pixels wide and high. For `ColorIndexing`, a pixel holds `1 << bits` indices.
+    pub(super) bits: u32,
+    /// The width of the image that the inverse transform makes.
+    pub(super) xsize: usize,
+    /// Pixels as 0xAARRGGBB.
+    pub(super) data: Vec<u32>,
+}
+
+/// `block` without its first pixel.
+#[inline(always)]
+fn shift(block: Block) -> Block {
+    let [_, _, _, _, b0, b1, b2, b3, c0, c1, c2, c3, d0, d1, d2, d3] = block;
+    [b0, b1, b2, b3, c0, c1, c2, c3, d0, d1, d2, d3, 0, 0, 0, 0]
+}
+
+/// `block` without its first pixel, followed by the first pixel of `last`.
+#[inline(always)]
+fn shift_in(block: Block, last: Block) -> Block {
+    let [_, _, _, _, b0, b1, b2, b3, c0, c1, c2, c3, d0, d1, d2, d3] = block;
+    let [l0, l1, l2, l3] = first_pixel(last);
+    [
+        b0, b1, b2, b3, c0, c1, c2, c3, d0, d1, d2, d3, l0, l1, l2, l3,
+    ]
+}
+
+fn blocks(pixels: &[Pixel]) -> &[Block] {
+    pixels.as_flattened().as_chunks().0
+}
+
+/// `row[x..x_end]`, with `x` not 0, as blocks of four pixels and the pixels that are left, and the row above.
+struct Span<'a> {
+    left: Pixel,
+    whole: &'a mut [Block],
+    rest: &'a mut [Pixel],
+    top_left: &'a [Pixel],
+    top: &'a [Pixel],
+    top_right: &'a [Pixel],
+    /// To the top right of the last pixel of a row is the first pixel of that row.
+    first: Pixel,
+}
+
+impl<'a> Span<'a> {
+    fn new(upper: &'a [Pixel], row: &'a mut [Pixel], x: usize, x_end: usize) -> Checked<Self> {
+        let (done, out) = row.sub_mut(..x_end)?.split_at_mid(x)?;
+        let top_right = upper.sub(x + 1..)?;
+        let (whole, rest) = out.split_at_mid(out.len().min(top_right.len()) & !3)?;
+        Ok(Self {
+            left: *done.last().ok_or(Bug)?,
+            whole: whole.as_flattened_mut().as_chunks_mut().0,
+            rest,
+            top_left: upper.sub(x - 1..)?,
+            top: upper.sub(x..)?,
+            top_right,
+            first: *done.first().ok_or(Bug)?,
+        })
+    }
+
+    /// Each block with those to its top left, top and top right.
+    #[inline(always)]
+    fn whole(&mut self) -> impl Iterator<Item = (&mut Block, Block, Block, Block)> {
+        let above = blocks(self.top_left).iter().zip(blocks(self.top));
+        let above = above.zip(blocks(self.top_right));
+        let whole = self.whole.iter_mut().zip(above);
+        whole.map(|(out, ((&top_left, &top), &top_right))| (out, top_left, top, top_right))
+    }
+
+    /// The same for each pixel that is left.
+    #[inline(always)]
+    fn rest(&mut self) -> impl Iterator<Item = (&mut Pixel, Block, Block, Block)> {
+        let skip = 4 * self.whole.len();
+        let top_right = self.top_right.iter().skip(skip).chain([&self.first]);
+        let above = self.top_left.iter().zip(self.top).skip(skip).zip(top_right);
+        self.rest
+            .iter_mut()
+            .zip(above)
+            .map(|(out, ((&top_left, &top), &top_right))| {
+                (out, block_of(top_left), block_of(top), block_of(top_right))
+            })
+    }
+}
+
+/// `VP8LPredictorsAdd[MODE]`. Not inlined: each mode compiles to a better loop alone.
+#[inline(never)]
+fn predictor_add<const MODE: u32>(mut span: Span<'_>) {
+    let mut left = block_of(span.left);
+    for (out, top_left, top, top_right) in span.whole() {
+        if !uses_left(MODE) {
+            *out = add_pixels(*out, predict(MODE, left, top_left, top, top_right));
+            continue;
+        }
+        let (mut residuals, mut top_left, mut top, mut top_right) =
+            (*out, top_left, top, top_right);
+        for _ in 0..4 {
+            left = add_pixels(residuals, predict(MODE, left, top_left, top, top_right));
+            *out = shift_in(*out, left);
+            residuals = shift(residuals);
+            (top_left, top, top_right) = (shift(top_left), shift(top), shift(top_right));
+        }
+    }
+    for (out, top_left, top, top_right) in span.rest() {
+        left = add_pixels(
+            block_of(*out),
+            predict(MODE, left, top_left, top, top_right),
+        );
+        *out = first_pixel(left);
+    }
+}
+
+fn predictor_add_mode(
+    mode: u32,
+    upper: &[Pixel],
+    row: &mut [Pixel],
+    x: usize,
+    x_end: usize,
+) -> Checked {
+    let span = Span::new(upper, row, x, x_end)?;
+    match mode {
+        1 => predictor_add::<1>(span),
+        2 => predictor_add::<2>(span),
+        3 => predictor_add::<3>(span),
+        4 => predictor_add::<4>(span),
+        5 => predictor_add::<5>(span),
+        6 => predictor_add::<6>(span),
+        7 => predictor_add::<7>(span),
+        8 => predictor_add::<8>(span),
+        9 => predictor_add::<9>(span),
+        10 => predictor_add::<10>(span),
+        11 => predictor_add::<11>(span),
+        12 => predictor_add::<12>(span),
+        13 => predictor_add::<13>(span),
+        _ => predictor_add::<0>(span),
+    }
+    Ok(())
+}
+
+/// `VP8LAddGreenToBlueAndRed`
+fn add_green_to_blue_and_red(pixels: &mut [Pixel]) {
+    for pixel in pixels {
+        let argb = u32::from_le_bytes(*pixel);
+        let green = (argb >> 8) & 0xff;
+        let red_blue = (argb & 0x00ff_00ff) + ((green << 16) | green);
+        *pixel = ((argb & 0xff00_ff00) | (red_blue & 0x00ff_00ff)).to_le_bytes();
+    }
+}
+
+/// `VP8LTransformColorInverse`
+#[inline]
+fn transform_color_inverse(m: Multipliers, pixels: &mut [Pixel]) {
+    for pixel in pixels {
+        let argb = u32::from_le_bytes(*pixel);
+        let green = (argb >> 8) as i8;
+        let mut new_red = ((argb >> 16) & 0xff) as i32;
+        let mut new_blue = (argb & 0xff) as i32;
+        new_red += color_transform_delta(m.green_to_red as i8, green);
+        new_red &= 0xff;
+        new_blue += color_transform_delta(m.green_to_blue as i8, green);
+        new_blue += color_transform_delta(m.red_to_blue as i8, new_red as i8);
+        new_blue &= 0xff;
+        let argb = (argb & 0xff00_ff00) | ((new_red as u32) << 16) | new_blue as u32;
+        *pixel = argb.to_le_bytes();
+    }
+}
+
+impl Transform {
+    /// `rows` starts with the row above `y_start`, if there is one.
+    fn predictor_inverse(&self, y_start: usize, y_end: usize, mut rows: &mut [Pixel]) -> Checked {
+        let width = self.xsize;
+        let tile_width = 1 << self.bits;
+        let tiles_per_row = sub_sample_size(width, self.bits);
+        for y in y_start..y_end {
+            let (upper, below) = take(&mut rows).split_at_mid(width)?;
+            let row = below.sub_mut(..width)?;
+            let first = row.at_mut(0)?;
+            let above = if y == 0 { BLACK } else { upper.at(0)? };
+            *first = add_pixel(*first, above);
+            if y == 0 {
+                if width > 1 {
+                    predictor_add_mode(1, upper, row, 1, width)?;
+                }
+            } else {
+                let modes = self.data.sub((y >> self.bits) * tiles_per_row..)?;
+                let mut modes = modes.iter().map(|mode| (mode >> 8) & 0xf).peekable();
+                let mut x = 1;
+                while x < width {
+                    let mode = modes.next().ok_or(Bug)?;
+                    let mut x_end = (x & !(tile_width - 1)) + tile_width;
+                    // The tiles that follow with the same mode are done along with this one.
+                    while modes
+                        .next_if(|&next| next == mode && x_end < width)
+                        .is_some()
+                    {
+                        x_end += tile_width;
+                    }
+                    let x_end = x_end.min(width);
+                    predictor_add_mode(mode, upper, row, x, x_end)?;
+                    x = x_end;
+                }
+            }
+            rows = below;
+        }
+        Ok(())
+    }
+
+    fn color_space_inverse(&self, y_start: usize, rows: &mut [Pixel]) -> Checked {
+        let tiles_per_row = sub_sample_size(self.xsize, self.bits);
+        for (y, row) in (y_start..).zip(rows.chunks_exact_mut(self.xsize)) {
+            let codes = self.data.sub((y >> self.bits) * tiles_per_row..)?;
+            for (tile, &color_code) in row.chunks_mut(1 << self.bits).zip(codes) {
+                // Without multipliers, which is common, nothing changes.
+                if color_code & 0x00ff_ffff != 0 {
+                    transform_color_inverse(Multipliers::from_color_code(color_code), tile);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `color_index_inverse` with `N`, more than one, for `1 << bits`.
+    #[inline(always)]
+    fn map_bundled<const N: usize, T>(
+        &self,
+        mut indices: impl Iterator<Item = u8>,
+        dst: &[Cell<T>],
+        convert: impl Fn(u32) -> T,
+    ) -> Checked {
+        let color_map = self.data.array_at::<COLOR_MAP_SIZE>(0)?;
+        let bits_per_pixel = const { u8::BITS / N as u32 };
+        let unpack = |mut packed_pixels: u32, pixels: &[Cell<T>]| -> Checked {
+            for dst in pixels {
+                let index = packed_pixels & ((1 << bits_per_pixel) - 1);
+                dst.set(convert(color_map.at(index as usize)?));
+                packed_pixels >>= bits_per_pixel;
+            }
+            Ok(())
+        };
+        for row in dst.chunks_exact(self.xsize) {
+            let (whole, rest) = row.as_chunks::<N>();
+            for (pixels, packed_pixels) in whole.iter().zip(&mut indices) {
+                unpack(packed_pixels.into(), pixels)?;
+            }
+            if !rest.is_empty() {
+                unpack(indices.next().ok_or(Bug)?.into(), rest)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets `dst`, whole rows, to the colors, converted. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
+    #[inline(always)]
+    fn color_index_inverse<T>(
+        &self,
+        indices: impl Iterator<Item = u8>,
+        dst: &[Cell<T>],
+        convert: impl Fn(u32) -> T,
+    ) -> Checked {
+        match self.bits {
+            0 => {
+                let color_map = self.data.array_at::<COLOR_MAP_SIZE>(0)?;
+                for (dst, index) in dst.iter().zip(indices) {
+                    dst.set(convert(color_map.at(index.into())?));
+                }
+                Ok(())
+            }
+            1 => self.map_bundled::<2, T>(indices, dst, convert),
+            2 => self.map_bundled::<4, T>(indices, dst, convert),
+            _ => self.map_bundled::<8, T>(indices, dst, convert),
+        }
+    }
+
+    /// `VP8LColorIndexInverseTransformAlpha`: whole rows, of which only the green channel is stored.
+    pub(super) fn color_index_inverse_alpha(&self, src: &[u8], dst: &mut [u8]) -> Checked {
+        let dst = Cell::from_mut(dst).as_slice_of_cells();
+        self.color_index_inverse(src.iter().copied(), dst, |argb| (argb >> 8) as u8)
+    }
+
+    /// `VP8LInverseTransform`, from `rows_in` or in place, to `cache[top..]`. Before that is the predictor's last row.
+    pub(super) fn inverse(
+        &self,
+        y_start: usize,
+        y_end: usize,
+        rows_in: Option<&[u32]>,
+        cache: &mut [Pixel],
+        top: usize,
+    ) -> Checked {
+        let width = self.xsize;
+        let num_rows = y_end.checked_sub(y_start).ok_or(Bug)?;
+        let end = top + num_rows * width;
+        // Bundled pixels go to the end, so that none is overwritten before it is read.
+        let in_width = match self.kind {
+            TransformType::ColorIndexing => sub_sample_size(width, self.bits),
+            _ => width,
+        };
+        let in_start = end - num_rows * in_width;
+        match rows_in {
+            Some(rows_in) => copy_pixels(rows_in, cache.sub_mut(in_start..end)?),
+            None if in_start != top => cache.move_within(top, in_start, end - in_start)?,
+            None => {}
+        }
+        match self.kind {
+            TransformType::SubtractGreen => add_green_to_blue_and_red(cache.sub_mut(top..end)?),
+            TransformType::Predictor => {
+                let rows = cache.sub_mut(top.checked_sub(width).ok_or(Bug)?..end)?;
+                self.predictor_inverse(y_start, y_end, rows)?;
+                rows.move_within(num_rows * width, 0, width)?;
+            }
+            TransformType::CrossColor => {
+                self.color_space_inverse(y_start, cache.sub_mut(top..end)?)?;
+            }
+            TransformType::ColorIndexing => {
+                let out = Cell::from_mut(cache.sub_mut(top..end)?).as_slice_of_cells();
+                let bundled = out.sub(in_start - top..)?;
+                let indices = bundled.iter().map(|pixel| green_of(pixel.get()));
+                self.color_index_inverse(indices, out, u32::to_le_bytes)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[inline(always)]
+fn green_of(pixel: Pixel) -> u8 {
+    let [_, green, _, _] = pixel;
+    green
+}
+
+/// `WebPExtractGreen`. Shifting whole pixels, unlike reading one byte of each, compiles to a byte shuffle.
+pub(super) fn extract_green(src: &[Pixel], dst: &mut [u8]) {
+    for (dst, &pixel) in dst.iter_mut().zip(src) {
+        *dst = (u32::from_le_bytes(pixel) >> 8) as u8;
+    }
+}
+
+/// `src` holds pixels as 0xAARRGGBB.
+pub(super) fn copy_pixels(src: &[u32], dst: &mut [Pixel]) {
+    for (dst, argb) in dst.iter_mut().zip(src) {
+        *dst = argb.to_le_bytes();
+    }
+}
+
+/// `VP8LConvertBGRAToRGBA`. Arithmetic on whole pixels, unlike moving their bytes, compiles to a shuffle of four pixels.
+pub(super) fn convert_bgra_to_rgba(src: &[Pixel], dst: &mut [u8]) {
+    for (dst, &pixel) in dst.as_chunks_mut().0.iter_mut().zip(src) {
+        let argb = u32::from_le_bytes(pixel);
+        let abgr = (argb & 0xff00_ff00) | (argb & 0x00ff_00ff).rotate_left(16);
+        *dst = abgr.to_le_bytes();
+    }
+}

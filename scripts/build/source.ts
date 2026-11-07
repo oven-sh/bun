@@ -475,7 +475,6 @@ export type DepName =
   | "libdeflate"
   | "libjpeg-turbo"
   | "libuv"
-  | "libwebp"
   | "lolhtml"
   | "lshpack"
   | "lsqpack"

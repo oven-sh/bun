@@ -1,234 +1,42 @@
-//! libwebp decode/encode for `Bun.Image`.
+//! WebP decode/encode for `Bun.Image`, on `bun_webp`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
-use core::ffi::{c_int, c_void};
-use core::ptr::NonNull;
-
 use super::codecs;
-use crate::encoded_wrap_free;
 
-unsafe extern "C" {
-    pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
-    fn WebPDecodeRGBAInto(
-        data: *const u8,
-        len: usize,
-        output: *mut u8,
-        output_len: usize,
-        output_stride: c_int,
-    ) -> *mut u8;
-    fn WebPEncodeRGBA(
-        rgba: *const u8,
-        w: c_int,
-        h: c_int,
-        stride: c_int,
-        q: f32,
-        out: *mut *mut u8,
-    ) -> usize;
-    fn WebPEncodeLosslessRGBA(
-        rgba: *const u8,
-        w: c_int,
-        h: c_int,
-        stride: c_int,
-        out: *mut *mut u8,
-    ) -> usize;
-    pub(crate) fn WebPFree(ptr: *mut c_void);
-}
-
-// ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
-// WebP carries colour profiles (and EXIF/XMP) in a VP8X RIFF container that
-// wraps the VP8/VP8L bitstream. `WebPEncodeRGBA` only emits the bare
-// bitstream chunk, and `WebPDecodeRGBAInto` only reads it — neither touches
-// the surrounding chunks. To pull an ICCP chunk out of an input (decode)
-// or to attach one to an output (encode) we go through the separate
-// demux/mux APIs, which operate on the whole RIFF file. Both are
-// statically linked from the same libwebp checkout.
-//
-// ABI version constants below are pinned to the libwebp commit in
-// `scripts/build/deps/libwebp.ts` (v1.6.0). If that commit is bumped, check
-// `src/webp/mux.h` / `demux.h` for `WEBP_{MUX,DEMUX}_ABI_VERSION` — the
-// *Internal entry points reject a caller with a different major byte.
-const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
-const WEBP_MUX_ABI_VERSION: c_int = 0x0109;
-/// `WebPFormatFeature.WEBP_FF_FORMAT_FLAGS` — selector for `WebPDemuxGetI`
-/// that returns the VP8X feature bitmask.
-const WEBP_FF_FORMAT_FLAGS: c_int = 0;
-/// `WebPFeatureFlags.ICCP_FLAG` — set when an ICCP chunk is present in the
-/// VP8X container.
-const ICCP_FLAG: u32 = 0x20;
-/// `WebPMuxError.WEBP_MUX_OK` — the only non-error return from mux calls.
-const WEBP_MUX_OK: c_int = 1;
-
-/// `struct WebPData` — borrowed-bytes view used by both mux and demux.
-/// Memory is `WebPMalloc`-owned when libwebp writes to it (e.g.
-/// `WebPMuxAssemble` output) and caller-owned when libwebp reads it.
-#[repr(C)]
-struct WebPData {
-    bytes: *const u8,
-    size: usize,
-}
-impl Default for WebPData {
-    fn default() -> Self {
-        Self {
-            bytes: core::ptr::null(),
-            size: 0,
+/// `failed` is what every error but running out of memory becomes.
+fn convert(failed: codecs::Error) -> impl FnOnce(bun_webp::Error) -> codecs::Error {
+    move |error| {
+        debug_assert_ne!(error, bun_webp::Error::Bug);
+        match error {
+            bun_webp::Error::Alloc(_) => codecs::Error::OutOfMemory,
+            _ => failed,
         }
     }
 }
 
-/// `struct WebPChunkIterator` — cursor into a VP8X chunk list. Only `chunk`
-/// is read; `pad`/`private_` are libwebp-internal bookkeeping that
-/// `WebPDemuxReleaseChunkIterator` walks. `chunk.bytes` is a borrowed view
-/// INTO the original input buffer — dupe it out before `WebPDemuxDelete`.
-#[repr(C)]
-struct WebPChunkIterator {
-    chunk_num: c_int,
-    num_chunks: c_int,
-    chunk: WebPData,
-    pad: [u32; 6],
-    private_: *mut c_void,
-}
-
-bun_opaque::opaque_ffi! {
-    pub(crate) struct WebPDemuxer;
-    pub(crate) struct WebPMux;
-}
-
-// `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and
-// just forward to these version-checked entry points with the ABI constant.
-unsafe extern "C" {
-    fn WebPDemuxInternal(
-        data: *const WebPData,
-        allow_partial: c_int,
-        state: *mut c_int,
-        version: c_int,
-    ) -> *mut WebPDemuxer;
-    fn WebPDemuxDelete(dmux: *mut WebPDemuxer);
-    fn WebPDemuxGetI(dmux: *const WebPDemuxer, feature: c_int) -> u32;
-    fn WebPDemuxGetChunk(
-        dmux: *const WebPDemuxer,
-        fourcc: *const u8,
-        chunk_number: c_int,
-        iter: *mut WebPChunkIterator,
-    ) -> c_int;
-    fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
-
-    safe fn WebPNewInternal(version: c_int) -> *mut WebPMux;
-    fn WebPMuxDelete(mux: *mut WebPMux);
-    fn WebPMuxSetImage(mux: *mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
-    fn WebPMuxSetChunk(
-        mux: *mut WebPMux,
-        fourcc: *const u8,
-        chunk_data: *const WebPData,
-        copy_data: c_int,
-    ) -> c_int;
-    fn WebPMuxAssemble(mux: *mut WebPMux, assembled_data: *mut WebPData) -> c_int;
+/// The width and the height, from the headers alone.
+pub(crate) fn probe(bytes: &[u8]) -> Result<bun_webp::Info, codecs::Error> {
+    bun_webp::get_info(bytes).map_err(convert(codecs::Error::DecodeFailed))
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
-    let mut cw: c_int = 0;
-    let mut ch: c_int = 0;
-    // Header-only probe first so the pixel guard fires before libwebp
-    // allocates the full canvas internally. WebPGetInfo can hand back
-    // non-positive on a malformed header; reject before the cast traps.
-    // SAFETY: bytes.ptr/len describe a valid readable slice.
-    if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
-        || cw <= 0
-        || ch <= 0
-    {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    let w: u32 = u32::try_from(cw).expect("int cast");
-    let h: u32 = u32::try_from(ch).expect("int cast");
+    // Header-only probe first so the pixel guard fires before anything is allocated.
+    let bun_webp::Info {
+        width: w,
+        height: h,
+    } = probe(bytes)?;
     codecs::guard(w, h, max_pixels)?;
     // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
     // (the pin only blocks detach), so the decoder can see a different image
-    // than the probe did. libwebp fails if that image is bigger than `out`.
+    // than the probe did. It fails if that image is bigger than `out`.
     // If it's smaller, the rest of `out` is zero.
     let stride: usize = (w as usize) * 4;
     let mut out: Vec<u8> = vec![0; stride * (h as usize)];
-    // SAFETY: `bytes` is a valid readable slice and `out` is a valid writable one.
-    let decoded = unsafe {
-        WebPDecodeRGBAInto(
-            bytes.as_ptr(),
-            bytes.len(),
-            out.as_mut_ptr(),
-            out.len(),
-            c_int::try_from(stride).map_err(|_| codecs::Error::DecodeFailed)?,
-        )
-    };
-    if decoded.is_null() {
-        return Err(codecs::Error::DecodeFailed);
-    }
+    bun_webp::decode_rgba_into(bytes, &mut out, stride)
+        .map_err(convert(codecs::Error::DecodeFailed))?;
 
-    // Extract the ICCP chunk (if any) from the RIFF container. A plain
-    // VP8/VP8L WebP with no VP8X wrapper has no ICCP, and we skip the chunk
-    // walk. The chunk iterator hands back a borrowed view into `bytes`;
-    // dupe into the global allocator to match JPEG/PNG ownership so the
-    // pipeline can free it uniformly. Propagate OutOfMemory on the dupe
-    // rather than silently dropping colour management — the pixels may be
-    // Display P3 / Adobe RGB / XYB where "no profile" reinterprets them as
-    // sRGB and visibly shifts colour, which is the exact bug #30197 is
-    // about. A failed demux (malformed container) falls through with
-    // `icc_profile = None`; the pixels decoded fine so the image is still
-    // usable.
-    let icc: Option<Vec<u8>> = 'blk: {
-        // Byte 20 is the flags byte of a leading VP8X chunk.
-        if bytes.len() <= 20 || &bytes[12..16] != b"VP8X" || u32::from(bytes[20]) & ICCP_FLAG == 0 {
-            break 'blk None;
-        }
-        // The demuxer reads each chunk tag more than once and crashes if the
-        // reads disagree, so give it a copy that JS can't write to.
-        let bytes = bytes.to_vec();
-        let data = WebPData {
-            bytes: bytes.as_ptr(),
-            size: bytes.len(),
-        };
-        // SAFETY: `data` points to a valid WebPData; null state ptr is allowed.
-        let dmux = unsafe {
-            WebPDemuxInternal(
-                &raw const data,
-                0,
-                core::ptr::null_mut(),
-                WEBP_DEMUX_ABI_VERSION,
-            )
-        };
-        if dmux.is_null() {
-            break 'blk None;
-        }
-        let _free_dmux = scopeguard::guard(dmux, |d| {
-            // SAFETY: d was returned by WebPDemuxInternal above and is non-null; matching destructor.
-            unsafe { WebPDemuxDelete(d) }
-        });
-        // SAFETY: dmux is a live demuxer handle.
-        if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
-            break 'blk None;
-        }
-        let mut iter = WebPChunkIterator {
-            chunk_num: 0,
-            num_chunks: 0,
-            chunk: WebPData::default(),
-            pad: [0; 6],
-            private_: core::ptr::null_mut(),
-        };
-        // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
-        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
-            break 'blk None;
-        }
-        let iter = scopeguard::guard(iter, |mut it| {
-            // SAFETY: it was populated by WebPDemuxGetChunk above; matching release call.
-            unsafe { WebPDemuxReleaseChunkIterator(&raw mut it) }
-        });
-        if iter.chunk.bytes.is_null() {
-            break 'blk None;
-        }
-        if iter.chunk.size == 0 {
-            break 'blk None;
-        }
-        // SAFETY: chunk.bytes points into `bytes` for chunk.size bytes per libwebp contract.
-        break 'blk Some(
-            unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec(),
-        );
-    };
+    // Without its profile a Display P3 or Adobe RGB image is read as sRGB (#30197). A malformed container has none.
+    let icc = bun_webp::icc_profile(bytes).map(<[u8]>::to_vec);
     Ok(codecs::Decoded {
         rgba: out,
         width: w,
@@ -245,106 +53,14 @@ pub(crate) fn encode(
     lossless: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    let mut out: *mut u8 = core::ptr::null_mut();
-    let stride: c_int = c_int::try_from(w * 4).expect("int cast");
-    let len = if lossless {
-        // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
-        unsafe {
-            WebPEncodeLosslessRGBA(
-                rgba.as_ptr(),
-                c_int::try_from(w).expect("int cast"),
-                c_int::try_from(h).expect("int cast"),
-                stride,
-                &raw mut out,
-            )
-        }
+    let compression = if lossless {
+        bun_webp::Compression::Lossless
     } else {
-        // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
-        unsafe {
-            WebPEncodeRGBA(
-                rgba.as_ptr(),
-                c_int::try_from(w).expect("int cast"),
-                c_int::try_from(h).expect("int cast"),
-                stride,
-                quality as f32,
-                &raw mut out,
-            )
+        bun_webp::Compression::Lossy {
+            quality: f32::from(quality),
         }
     };
-    if len == 0 {
-        return Err(codecs::Error::EncodeFailed);
-    }
-    let Some(out) = NonNull::new(out) else {
-        return Err(codecs::Error::EncodeFailed);
-    };
-    let bitstream = NonNull::slice_from_raw_parts(out, len);
-
-    // Fast path: no profile to attach, so the bare VP8/VP8L RIFF that
-    // `WebPEncodeRGBA` produced is already the final container. Avoids the
-    // mux round-trip (and its extra copy) for the common sRGB case.
-    let Some(profile) = icc_profile else {
-        return Ok(codecs::Encoded {
-            bytes: bitstream,
-            free: encoded_wrap_free!(WebPFree),
-        });
-    };
-    if profile.is_empty() {
-        return Ok(codecs::Encoded {
-            bytes: bitstream,
-            free: encoded_wrap_free!(WebPFree),
-        });
-    }
-
-    // Wrap the bitstream in a VP8X container with an ICCP chunk. libwebpmux
-    // builds a new RIFF file from the image + chunk and allocates the
-    // assembled output via `WebPMalloc`; hand THAT buffer to JS with
-    // `WebPFree` as the finaliser and drop the intermediate encode. With
-    // `copy_data = 0` the mux borrows our buffers until `WebPMuxAssemble`
-    // returns, so `bitstream`/`profile` must outlive the assemble call
-    // (both do — `bitstream` is freed below, `profile` is caller-owned).
-    let _free_bitstream = scopeguard::guard(out.as_ptr(), |p| {
-        // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
-        unsafe { WebPFree(p.cast::<c_void>()) }
-    });
-    let mux = WebPNewInternal(WEBP_MUX_ABI_VERSION);
-    if mux.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    let _free_mux = scopeguard::guard(mux, |m| {
-        // SAFETY: m was returned by WebPNewInternal above and is non-null; matching destructor.
-        unsafe { WebPMuxDelete(m) }
-    });
-    let img = WebPData {
-        bytes: out.as_ptr(),
-        size: len,
-    };
-    // SAFETY: mux is live; img points to valid borrowed data.
-    if unsafe { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
-        return Err(codecs::Error::EncodeFailed);
-    }
-    let icc = WebPData {
-        bytes: profile.as_ptr(),
-        size: profile.len(),
-    };
-    // SAFETY: mux is live; fourcc reads exactly 4 bytes; icc points to valid borrowed data.
-    if unsafe { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
-        return Err(codecs::Error::EncodeFailed);
-    }
-    let mut assembled = WebPData::default();
-    // SAFETY: mux is live; assembled is a valid out-param.
-    if unsafe { WebPMuxAssemble(mux, &raw mut assembled) } != WEBP_MUX_OK {
-        // `WebPMuxAssemble` writes a half-built buffer into `assembled` even
-        // on failure; its contract says `WebPDataClear` (i.e. `WebPFree`) is
-        // safe to call on any return.
-        // SAFETY: WebPFree accepts null; assembled.bytes is WebPMalloc-owned or null.
-        unsafe { WebPFree(assembled.bytes as *mut c_void) };
-        return Err(codecs::Error::EncodeFailed);
-    }
-    let Some(assembled_ptr) = NonNull::new(assembled.bytes.cast_mut()) else {
-        return Err(codecs::Error::EncodeFailed);
-    };
-    Ok(codecs::Encoded {
-        bytes: NonNull::slice_from_raw_parts(assembled_ptr, assembled.size),
-        free: encoded_wrap_free!(WebPFree),
-    })
+    bun_webp::encode_rgba(rgba, w, h, compression, icc_profile)
+        .map(codecs::Encoded::from_owned)
+        .map_err(convert(codecs::Error::EncodeFailed))
 }

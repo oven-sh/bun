@@ -854,16 +854,18 @@ describe("equality", () => {
     for (const falsy of [0, "", null, undefined]) expect(returning(falsy)).not.toEqual(h("i"));
   });
 
-  test("isEqualNode() that returns a promise or another thenable throws", async () => {
+  test("isEqualNode() that returns a promise or another thenable throws", () => {
     const returning = (returned: unknown) => Object.assign(h("i"), { isEqualNode: () => returned });
     const refused = (returned: string) =>
       `isEqualNode() returned ${returned}. It has to return its answer synchronously`;
-    const rejectsLater = Promise.withResolvers<boolean>();
+    // The matcher leaves a promise to its owner, so this test handles the rejection.
+    const rejected = Promise.reject(new Error("rejected before it was returned"));
+    rejected.catch(() => {});
     for (const [returned, described] of [
       [Promise.resolve(true), "a promise"],
       [Promise.resolve(false), "a promise"],
-      [Promise.reject(new Error("rejected before it was returned")), "a promise"],
-      [rejectsLater.promise, "a promise"],
+      [rejected, "a promise"],
+      [new Promise(() => {}), "a promise"],
       [{ then() {} }, "a thenable"],
     ] as const) {
       for (const assertion of [
@@ -877,10 +879,6 @@ describe("equality", () => {
       }
     }
     expect(returning({ then: true })).toEqual<Node>(h("b"));
-
-    // An unhandled rejection is reported once the microtasks have run, and fails the test that is running then.
-    rejectsLater.reject(new Error("rejected after the matcher threw"));
-    await new Promise(resolve => setImmediate(resolve));
   });
 
   test("toMatchObject uses isEqualNode() for two nodes and properties for a plain pattern", () => {

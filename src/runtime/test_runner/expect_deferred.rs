@@ -582,9 +582,7 @@ impl Answerer {
     #[cold]
     #[optimize(size)]
     fn refuse_thenable(self, global: &JSGlobalObject, answer: JSValue) -> JsResult<()> {
-        let returned = if let Some(promise) = answer.as_any_promise() {
-            // The error below reports it. As an unhandled rejection it would also fail whichever test runs then.
-            promise.set_handled(global.vm());
+        let returned = if answer.as_any_promise().is_some() {
             "a promise"
         } else if answer.get(global, "then")?.is_some_and(JSValue::is_callable) {
             "a thenable"

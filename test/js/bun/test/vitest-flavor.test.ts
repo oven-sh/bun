@@ -2790,10 +2790,13 @@ describe.concurrent("behavior depends on the module a function is imported from"
             return error instanceof TypeError ? error.message : "fails";
           }
         };
-        test("answers", async () => {
+        test("answers", () => {
+          // The matcher leaves a promise to its owner, so this test handles the rejection.
+          const rejected = Promise.reject(new Error("rejected before it was returned"));
+          rejected.catch(() => {});
           const answers = {
             "a fulfilled promise": Promise.resolve(false),
-            "a rejected promise": Promise.reject(new Error("rejected before it was returned")),
+            "a rejected promise": rejected,
             "a pending promise": new Promise(() => {}),
             "a thenable": { then() {} },
             "an object": { then: true },
@@ -2802,8 +2805,6 @@ describe.concurrent("behavior depends on the module a function is imported from"
             const node = new Node(answer);
             console.log(what, "|", outcome(() => expect(node).toContain(node)), "|", outcome(() => expect(node).not.toContain(node)));
           }
-          // An unhandled rejection is reported once the microtasks have run, and fails the test that is running then.
-          await new Promise(resolve => setImmediate(resolve));
         });
       `,
     });

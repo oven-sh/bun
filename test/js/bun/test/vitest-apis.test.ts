@@ -1101,7 +1101,7 @@ describe("expect.addEqualityTesters", () => {
     throw new Error("expected the function to throw");
   }
 
-  test("a tester that returns a promise or another thenable throws, whatever the promise holds", async () => {
+  test("a tester that returns a promise or another thenable throws, whatever the promise holds", () => {
     let answer: unknown;
     const sentinel = "vitest-apis-promise";
     expect.addEqualityTesters([(a, b) => (a === sentinel || b === sentinel ? (answer as boolean) : undefined)]);
@@ -1117,7 +1117,9 @@ describe("expect.addEqualityTesters", () => {
       () => expect(fn).toHaveBeenCalledWith("x"),
       () => expect({ deep: sentinel }).toEqual(expect.objectContaining({ deep: "x" })),
     ];
-    const rejectsLater = Promise.withResolvers<boolean>();
+    // The matcher leaves a promise to its owner, so this test handles the rejection.
+    const rejected = Promise.reject(new Error("rejected before the tester returned it"));
+    rejected.catch(() => {});
     class InheritsThen {
       then() {}
     }
@@ -1126,10 +1128,11 @@ describe("expect.addEqualityTesters", () => {
       [Promise.resolve(false), "a promise"],
       [Promise.resolve(undefined), "a promise"],
       [(async () => false)(), "a promise"],
-      [Promise.reject(new Error("rejected before the tester returned it")), "a promise"],
-      [rejectsLater.promise, "a promise"],
+      [rejected, "a promise"],
+      [new Promise(() => {}), "a promise"],
       [{ then() {} }, "a thenable"],
       [new InheritsThen(), "a thenable"],
+      [Object.assign(() => {}, { then() {} }), "a thenable"],
     ];
     for (const [returned, described] of answers) {
       answer = returned;
@@ -1139,10 +1142,6 @@ describe("expect.addEqualityTesters", () => {
         expect(error.message).toBe(refused(described));
       }
     }
-
-    // An unhandled rejection is reported once the microtasks have run, and fails the test that is running then.
-    rejectsLater.reject(new Error("rejected after the matcher threw"));
-    await new Promise(resolve => setImmediate(resolve));
   });
 
   test("an object that a tester returns is an answer unless its `then` is a function, and `then` is read once", () => {
@@ -1232,9 +1231,15 @@ describe("expect.addEqualityTesters", () => {
         `,
         "rejects.test.ts": `
           import { expect, test } from "${module}";
-          expect.addEqualityTesters([async () => { await 0; throw new Error("rejected later"); }]);
-          test("a tester that rejects later", () => { expect({ a: 1 }).toEqual({ a: 1 }); });
-          test("its rejection is not reported", async () => { await new Promise(resolve => setImmediate(resolve)); });
+          const shared = Promise.withResolvers();
+          expect.addEqualityTesters([() => shared.promise]);
+          test("the matcher refuses a promise that it does not own", () => {
+            expect(() => expect(1).toEqual(1)).toThrow(TypeError);
+          });
+          test("a later rejection of that promise is still reported", async () => {
+            shared.reject(new Error("rejected later"));
+            await new Promise(resolve => setImmediate(resolve));
+          });
         `,
       });
       expect(results).toEqual([
@@ -1242,11 +1247,11 @@ describe("expect.addEqualityTesters", () => {
         "(fail) not.toEqual",
         "(fail) resolves.toEqual",
         "(pass) toBe passes without a comparison by the testers",
-        "(fail) a tester that rejects later",
-        "(pass) its rejection is not reported",
+        "(pass) the matcher refuses a promise that it does not own",
+        "(fail) a later rejection of that promise is still reported",
       ]);
-      expect(stderr.split("TypeError: " + refused("a promise")).length - 1).toBe(4);
-      expect(stderr).not.toContain("error: rejected later");
+      expect(stderr.split("TypeError: " + refused("a promise")).length - 1).toBe(3);
+      expect(stderr).toContain("error: rejected later");
       expect(exitCode).toBe(1);
     },
   );

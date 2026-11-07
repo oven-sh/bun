@@ -5370,10 +5370,12 @@ describe("expect()", () => {
       });
 
       // Jest and Vitest take the promise itself for the answer, and don't call an async asymmetricMatch() at all.
-      test_skipIf(!isBun)("asymmetricMatch() that returns a promise or another thenable throws", async () => {
+      test_skipIf(!isBun)("asymmetricMatch() that returns a promise or another thenable throws", () => {
         const refused = (/** @type {string} */ returned) =>
           `asymmetricMatch() returned ${returned}. It has to return its answer synchronously`;
-        const rejectsLater = Promise.withResolvers();
+        // The matcher leaves a promise to its owner, so this test handles the rejection.
+        const rejected = Promise.reject(new Error("rejected before it was returned"));
+        rejected.catch(() => {});
         class InheritsThen {
           then() {}
         }
@@ -5383,10 +5385,11 @@ describe("expect()", () => {
           [{ asymmetricMatch: async () => true }, "a promise"],
           [{ asymmetricMatch: async () => false }, "a promise"],
           [{ asymmetricMatch: () => Promise.resolve(undefined) }, "a promise"],
-          [{ asymmetricMatch: () => Promise.reject(new Error("rejected before it was returned")) }, "a promise"],
-          [{ asymmetricMatch: () => rejectsLater.promise }, "a promise"],
+          [{ asymmetricMatch: () => rejected }, "a promise"],
+          [{ asymmetricMatch: () => new Promise(() => {}) }, "a promise"],
           [{ asymmetricMatch: () => ({ then() {} }) }, "a thenable"],
           [{ asymmetricMatch: () => new InheritsThen() }, "a thenable"],
+          [{ asymmetricMatch: () => Object.assign(() => {}, { then() {} }) }, "a thenable"],
         ]);
         for (const [matcher, returned] of cases) {
           for (const assertion of [
@@ -5404,10 +5407,6 @@ describe("expect()", () => {
             expect(assertion).toThrow(new TypeError(refused(returned)));
           }
         }
-
-        // An unhandled rejection is reported once the microtasks have run, and fails the test that is running then.
-        rejectsLater.reject(new Error("rejected after the matcher threw"));
-        await new Promise(resolve => setImmediate(resolve));
       });
 
       test_skipIf(!isBun)(

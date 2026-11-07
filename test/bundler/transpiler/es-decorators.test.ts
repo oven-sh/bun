@@ -2090,6 +2090,26 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a bundle leaves a class whose static accessor #x reads its module in that module", async () => {
+      // Outside the module the class would read "base" before "base" has its value.
+      using dir = tempDir("es-dec-accessor-stays", {
+        "entry.js": `
+          const { C } = require("./c.js");
+          console.log(C.made());
+        `,
+        "c.js": `
+          const base = 1;
+          export class C { static accessor #s = class { static made = base + 1 }; static made() { return C.#s.made; } }
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "entry.js", "--target=bun", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("a direct eval in the file pins the private field of an undecorated accessor", async () => {
       // The eval keeps every `#private` name of the class. A field the minifier
       // renames next to them gets a one letter name, and all of those are taken.

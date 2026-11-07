@@ -3534,6 +3534,44 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("__defProp");
     },
   });
+  // A class leaves the lazy wrapper of its module only if each static value can be moved. A read that --define makes cannot.
+  itBundled("dce/ClassWithStaticReadOfADefinedObjectStaysInItsModule", {
+    files: {
+      "/entry.js": /* js */ `
+        const { C } = require("./c.js");
+        console.log(C.x);
+      `,
+      "/c.js": /* js */ `
+        export class C { static x = Math.PI }
+      `,
+    },
+    define: { Math: '{"PI":3}' },
+    target: "bun",
+    backend: "cli",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("C = class C {");
+    },
+    run: { stdout: "3" },
+  });
+  // The value of an undecorated `accessor #x` is printed inside a literal that names it. The class is unused only if the value is.
+  itBundled("dce/UnusedClassWithPrivateAccessorIsKeptForTheEffectsOfItsValue", {
+    files: {
+      "/entry.js": /* js */ `
+        class A { static accessor #s = class { static y = console.log("field") } }
+        class B { static accessor #s = class extends (console.log("extends"), Object) {} }
+        class C { static accessor #s = class { static { console.log("block") } } }
+        class D { static accessor #s = class { static [(console.log("key"), "k")] = 1 } }
+        class REMOVE { static accessor #s = class {} }
+        console.log("kept");
+      `,
+    },
+    target: "bun",
+    backend: "cli",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("REMOVE");
+    },
+    run: { stdout: "field\nextends\nblock\nkey\nkept" },
+  });
   // itBundled("dce/TreeShakingJSWithAssociatedCSS", {
   //   // TODO: css assertions. this should contain both button and menu
   //   files: {

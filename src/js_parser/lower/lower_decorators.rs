@@ -262,27 +262,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"_accessor_storage"
     }
 
-    /// `{ "name": value }["name"]`: a property of that name is what names `value`, an anonymous function or class. Only `value` has a position.
-    fn named_by_key(&mut self, value: Expr, name: &'a [u8]) -> Expr {
-        let can_be_removed_if_unused = self.expr_can_be_removed_if_unused(&value);
-        let loc = bun_ast::Loc::EMPTY;
+    /// `{ key: value }`: a property of that name is what names `value`, an anonymous function or class. The caller reads `key` from it.
+    fn naming_literal(
+        &mut self,
+        key: Expr,
+        value: Expr,
+        flags: Flags::PropertySet,
+        loc: bun_ast::Loc,
+    ) -> Expr {
         let mut properties = bun_alloc::AstAlloc::vec();
         VecExt::append(
             &mut properties,
             Property {
-                key: Some(self.new_expr(E::EString::init(name), loc)),
+                key: Some(key),
                 value: Some(value),
+                flags,
                 ..Default::default()
             },
         );
-        let target = self.new_expr(
+        self.new_expr(
             E::Object {
                 properties,
                 is_single_line: true,
+                names_value: true,
                 ..Default::default()
             },
             loc,
-        );
+        )
+    }
+
+    /// `{ "#x": value }["#x"]` for the value of an `accessor #x`. Only `value` has a position.
+    fn named_by_key(&mut self, value: Expr, name: &'a [u8]) -> Expr {
+        let can_be_removed_if_unused = self.expr_can_be_removed_if_unused(&value);
+        let loc = bun_ast::Loc::EMPTY;
+        let key = self.new_expr(E::EString::init(name), loc);
+        let target = self.naming_literal(key, value, Flags::PROPERTY_NONE, loc);
         self.new_expr(
             E::Dot {
                 target,
@@ -1652,24 +1666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     flags.insert(Flags::Property::IsComputed);
                 }
-                let mut properties = bun_alloc::AstAlloc::vec();
-                VecExt::append(
-                    &mut properties,
-                    Property {
-                        key: Some(key),
-                        value: Some(value),
-                        flags,
-                        ..Default::default()
-                    },
-                );
-                let object = self.new_expr(
-                    E::Object {
-                        properties,
-                        is_single_line: true,
-                        ..Default::default()
-                    },
-                    value.loc,
-                );
+                let object = self.naming_literal(key, value, flags, value.loc);
                 self.new_expr(
                     E::Index {
                         target: object,

@@ -740,3 +740,182 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// The period is 251 bytes, so a chunk that is lost, repeated or moved changes
+// the hash.
+function pattern(size: number, seed: number) {
+  const period = Buffer.alloc(251);
+  for (let i = 0; i < period.length; i++) period[i] = (i * 7 + seed) & 0xff;
+  return Buffer.alloc(size, period);
+}
+
+function summary(bytes: Uint8Array) {
+  return { length: bytes.byteLength, sha1: new Bun.CryptoHasher("sha1").update(bytes).digest("hex") };
+}
+
+async function readAll(stream: any) {
+  const chunks: Uint8Array[] = [];
+  for await (const batch of stream) chunks.push(...batch);
+  return Buffer.concat(chunks);
+}
+
+// One connection. After the handshake the server opens one bidirectional
+// stream with `down` as its body, and the client sends `up` on that stream.
+// Resolves with what each end read.
+async function serverOpenedExchange(options: { down: Uint8Array; up: Uint8Array }) {
+  const errors: string[] = [];
+  const serverRead = Promise.withResolvers<Uint8Array>();
+  const clientRead = Promise.withResolvers<Uint8Array>();
+  await using server = await listen(
+    (session: any) => {
+      session.onerror = (err: any) => errors.push(`server: ${err?.message}`);
+      session.closed.catch(() => {});
+      session.opened
+        .then(async () => {
+          const stream = await session.createBidirectionalStream({ body: options.down });
+          stream.closed.catch(() => {});
+          return readAll(stream);
+        })
+        .then(serverRead.resolve, serverRead.reject);
+    },
+    { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+  );
+  // A client endpoint keeps the transport parameters of its first connect().
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(server.address!, {
+    endpoint,
+    alpn: "quic-test",
+    servername: "localhost",
+    verifyPeer: "manual",
+    onerror(err: any) {
+      errors.push(`client: ${err?.message}`);
+    },
+    onstream(stream: any) {
+      stream.closed.catch(() => {});
+      stream.setBody(options.up);
+      readAll(stream).then(clientRead.resolve, clientRead.reject);
+    },
+  } as SessionOptions);
+  client.closed.catch(() => {});
+  const [down, up] = await Promise.all([clientRead.promise, serverRead.promise]);
+  client.close();
+  return { down: summary(down), up: summary(up), errors };
+}
+
+// A client resumes a session and opens a unidirectional stream with `body`
+// before the handshake completes. Resolves with what the server read.
+async function resumedEarlyStream(body: Uint8Array) {
+  const errors: string[] = [];
+  const received = Promise.withResolvers<Uint8Array>();
+  let sessions = 0;
+  await using server = await listen(
+    (session: any) => {
+      const resumed = ++sessions === 2;
+      session.onerror = (err: any) => errors.push(`server: ${err?.message}`);
+      session.closed.catch(() => {});
+      session.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        const read = readAll(stream);
+        if (resumed) read.then(received.resolve, received.reject);
+      };
+    },
+    { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+  );
+  await using endpoint = new QuicEndpoint();
+  const options = { endpoint, alpn: "quic-test", servername: "localhost", verifyPeer: "manual" };
+
+  const ticket = Promise.withResolvers<Buffer>();
+  const token = Promise.withResolvers<Buffer>();
+  const first: any = await connect(server.address!, {
+    ...options,
+    onsessionticket: ticket.resolve,
+    onnewtoken: token.resolve,
+  } as SessionOptions);
+  await first.opened;
+  const [sessionTicket, newToken] = await Promise.all([ticket.promise, token.promise]);
+  await first.close();
+
+  const second: any = await connect(server.address!, {
+    ...options,
+    sessionTicket,
+    token: newToken,
+    onerror(err: any) {
+      errors.push(`client: ${err?.message}`);
+    },
+  } as SessionOptions);
+  second.closed.catch(() => {});
+  const stream = await second.createUnidirectionalStream({ body });
+  stream.closed.catch(() => {});
+  const opened = await second.opened.then(
+    (info: any) => ({ earlyDataAccepted: info.earlyDataAccepted }),
+    (err: any) => ({ error: err?.message }),
+  );
+  const result = { opened, received: summary(await received.promise), errors };
+  second.close();
+  return result;
+}
+
+// lsquic's defaults are for HTTP/3: a window of 0 for a bidirectional stream
+// that the server opens, and a small one for a unidirectional stream. lsquic
+// also picks a stream's first send limit by the role of the connection, and
+// after 0-RTT it gives a unidirectional stream the limit of a bidirectional
+// one. With one window for every kind of stream it reads the right number.
+describe("default stream windows", () => {
+  test("are one value per endpoint", async () => {
+    const serverParams = Promise.withResolvers<any>();
+    await using server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+        session.opened
+          .then(() => ({ local: session.localTransportParams, remote: session.remoteTransportParams }))
+          .then(serverParams.resolve, serverParams.reject);
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client: any = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    const clientParams = { local: client.localTransportParams, remote: client.remoteTransportParams };
+    const windows = (params: any) => ({
+      bidiLocal: params.initialMaxStreamDataBidiLocal,
+      bidiRemote: params.initialMaxStreamDataBidiRemote,
+      uni: params.initialMaxStreamDataUni,
+    });
+    const sent = { server: windows((await serverParams.promise).local), client: windows(clientParams.local) };
+    const received = { server: windows(clientParams.remote), client: windows((await serverParams.promise).remote) };
+    client.close();
+    expect({ sent, received }).toEqual({
+      sent: {
+        server: { bidiLocal: 1048576n, bidiRemote: 1048576n, uni: 1048576n },
+        client: { bidiLocal: 6291456n, bidiRemote: 6291456n, uni: 6291456n },
+      },
+      received: sent,
+    });
+  });
+
+  // 16 times the 16 KiB that lsquic accepted on such a stream while the
+  // window it advertised was 0.
+  test.each([
+    ["to the client", 256 * 1024, 1024],
+    ["from the client", 1024, 256 * 1024],
+  ])("let a bidirectional stream that the server opens carry 256 KiB %s", async (_, downSize, upSize) => {
+    const down = pattern(downSize, 1);
+    const up = pattern(upSize, 2);
+    expect(await serverOpenedExchange({ down, up })).toEqual({ down: summary(down), up: summary(up), errors: [] });
+  });
+
+  test("let a unidirectional stream that a client opens in 0-RTT carry 400000 bytes", async () => {
+    const body = pattern(400000, 3);
+    expect(await resumedEarlyStream(body)).toEqual({
+      opened: { earlyDataAccepted: true },
+      received: summary(body),
+      errors: [],
+    });
+  });
+});

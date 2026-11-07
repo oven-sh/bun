@@ -1615,11 +1615,16 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         globalObj = defaultGlobalObject(obj->vm());
 
     switch (operation) {
-    case JSPromiseRejectionOperation::Reject:
+    case JSPromiseRejectionOperation::Reject: {
         // Whose rejection this is (a Bun.ModuleGraph's or the global object's) is
         // decided now, in the context it is rejected in, and travels with it.
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj));
+        auto& queue = globalObj->m_aboutToBeNotifiedRejectedPromises;
+        JSObject* rejectionOwner = Bun::moduleGraphRejecting(globalObj);
+        if (!rejectionOwner && queue.keepsAsyncContext()) [[unlikely]]
+            rejectionOwner = globalObj->m_asyncContextData.get()->getInternalField(0).getObject();
+        queue.append(obj->vm(), globalObj, promise, rejectionOwner);
         break;
+    }
     case JSPromiseRejectionOperation::Handle:
         // Reported as unhandled before it got this handler: queue the rejectionHandled event.
         if (globalObj->m_aboutToBeNotifiedRejectedPromises.didHandle(globalObj, promise))

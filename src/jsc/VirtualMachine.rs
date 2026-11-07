@@ -349,6 +349,10 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection: OnUnhandledRejection,
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
+    /// `bun test`: while `on_unhandled_rejection` runs for a promise rejection, the `owner` of
+    /// `unhandled_rejection_owned`. The runner looks there for the test that rejected the promise.
+    /// Empty at any other time. The caller keeps the value alive.
+    pub unhandled_rejection_owner: JSValue,
     pub unhandled_error_counter: usize,
     /// `bun test`: what is running is a test or a hook of Vitest's. There, an error that a `process` listener takes is
     /// not the runner's, and arrays of different lengths are never equal.
@@ -4718,7 +4722,8 @@ impl VirtualMachine {
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
-    /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
+    /// takes it), under `bun test` the async context it was rejected in, or null. The tracker
+    /// queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4748,7 +4753,9 @@ impl VirtualMachine {
                 return;
             }
             self.unhandled_error_counter += 1;
+            self.unhandled_rejection_owner = owner;
             (self.on_unhandled_rejection)(self, global_object, reason);
+            self.unhandled_rejection_owner = JSValue::ZERO;
             return;
         }
 

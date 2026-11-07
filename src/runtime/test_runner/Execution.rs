@@ -97,6 +97,10 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// Made when the file starts its first group of two or more sequences. Every callback of such a sequence runs in
+    /// an async context frame that binds this key to the sequence's index in `sequences`, plus one. `owner_of()` reads
+    /// it back from the context of an error that `get_current_state_data()` can't name a sequence for.
+    pub(crate) owner_key: Option<Strong>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -425,6 +429,7 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            owner_key: None,
         }
     }
 
@@ -921,6 +926,28 @@ impl Execution {
         };
     }
 
+    /// In a group of two or more sequences: what the sequence that `error` comes from runs now.
+    /// `rejected_in` is `VirtualMachine::unhandled_rejection_owner`.
+    pub(crate) fn owner_of(&self, global: &JSGlobalObject, error: JSValue, rejected_in: JSValue) -> Option<EntryData> {
+        let key = self.owner_key.as_ref()?;
+        let group = self.active_group_ref()?;
+        if group.sequence_end - group.sequence_start < 2 {
+            return None;
+        }
+        let id = bun_jsc::cpp::Bun__TestOwner__find(global, key.get(), error, rejected_in) as usize;
+        let index = id.checked_sub(1)?;
+        // A sequence of an earlier group has nothing left to fail.
+        if index < group.sequence_start || index >= group.sequence_end {
+            return None;
+        }
+        let sequence = &self.sequences[index];
+        Some(EntryData {
+            sequence_index: index - group.sequence_start,
+            entry: sequence.active_entry?.as_ptr().cast::<()>(),
+            attempt: sequence.attempt,
+        })
+    }
+
     pub(crate) fn handle_uncaught_exception(
         &mut self,
         user_data: &RefDataValue,
@@ -1011,8 +1038,12 @@ fn step_group(
             Execution::on_group_started(global_this);
             group.executing = true;
         }
+        let is_concurrent = group.sequence_end - group.sequence_start > 1;
         // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
         let group_ptr = NonNull::from(group);
+        if is_concurrent && this.owner_key.is_none() {
+            this.owner_key = Some(Strong::create(bun_jsc::cpp::Bun__TestOwner__createKey(global_this), global_this));
+        }
 
         // loop over items in the group and advance their execution
 
@@ -1313,6 +1344,17 @@ fn step_sequence_one(
         let mut callback = cb.get();
         if let Some(captured) = test_context_around::captured_async_context(context, scope) {
             callback = test_context_around::in_async_context(global_this, captured, callback)?;
+        }
+        // SAFETY: group points into this.groups; read-only.
+        let group_ref = unsafe { group.as_ref() };
+        if group_ref.sequence_end - group_ref.sequence_start > 1
+            && let Some(key) = &this.owner_key
+        {
+            // The frame goes on top of the context that `run_test_callback` calls a callback with none of its own in.
+            let vm = global_this.bun_vm();
+            let file_context = vm.test_isolation_state.file_context;
+            let _entered = (file_context != bun_jsc::ContextId::NONE).then(|| vm.enter_context(file_context));
+            callback = bun_jsc::cpp::Bun__TestOwner__wrap(global_this, key.get(), (seq_abs + 1) as u32, callback);
         }
         let set_up_args: [JSValue; 4];
         let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {

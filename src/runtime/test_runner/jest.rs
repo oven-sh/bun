@@ -688,6 +688,13 @@ pub(crate) mod on_unhandled_rejection {
             }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
+            // Tests that run concurrently have no currently active one. The error belongs to the test that started what failed.
+            let rejected_in = core::mem::replace(&mut jsc_vm.unhandled_rejection_owner, JSValue::ZERO);
+            if let RefDataValue::Execution { group_index, entry_data: None } = current_state_data
+                && let Some(owner) = buntest.execution.owner_of(global_object, rejection, rejected_in)
+            {
+                current_state_data = RefDataValue::Execution { group_index, entry_data: Some(owner) };
+            }
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)

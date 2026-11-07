@@ -21,7 +21,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:console`](https://nodejs.org/api/console.html)
 
-🟢 Fully implemented. Bun writes console output directly to the stdout/stderr file descriptors and formats it with its own inspector. As a result, replacing `process.stdout.write` does not capture the output, and object layout differs from `util.inspect`. `console.trace()` writes to stdout and `console.time*()` to stderr.
+🟢 Fully implemented. Bun formats console output with its own inspector and writes it directly to the stdout/stderr file descriptors, unless `process.stdout.write` or `process.stderr.write` has been replaced: then each message is passed to the replacement as one string, as in Node.js. Object layout differs from `util.inspect`. `console.trace()` writes to stdout and `console.time*()` to stderr.
 
 ### [`node:dgram`](https://nodejs.org/api/dgram.html)
 

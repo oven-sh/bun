@@ -4066,8 +4066,194 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (JSObject* streamObject = stream.getObject()) {
+        auto* process = uncheckedDowncast<Process>(processObject);
+        process->setStdioWriteStream(vm, fd, streamObject);
+#if OS(WINDOWS)
+        if (!forceSync) {
+            JSValue sink = resultObject->getIndex(globalObject, 1);
+            RETURN_IF_EXCEPTION(scope, jsUndefined());
+            process->m_stdioSink[static_cast<unsigned>(fd) - 1].set(vm, process, sink);
+        }
+#endif
+    }
     return stream;
 }
+
+extern "C" void Bun__Console__onStdioWriteStreamCreated();
+
+void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    m_stdioWriteStream[slot].set(vm, this, stream);
+    m_pristineStdioWrite[slot].set(vm, this, resolveStdioWrite(vm, slot));
+    Bun__Console__onStdioWriteStreamCreated();
+}
+
+// The `write` the stream has now, read with getDirect so no user code runs. Empty if none is direct.
+JSValue Process::resolveStdioWrite(JSC::VM& vm, unsigned slot)
+{
+    const Identifier& name = WebCore::builtinNames(vm).writePublicName();
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    Structure* structure = stream->structure();
+    // A dictionary structure renumbers its offsets in place when JSC flattens it.
+    if (!structure->isCompiledStructure() && !structure->isDictionary()) {
+        PropertyOffset offset = stream->getDirectOffset(vm, name);
+        if (offset != invalidOffset) {
+            m_stdioWriteStructure[slot].set(vm, this, structure);
+            m_stdioWriteOffset[slot] = offset;
+            return stream->getDirect(offset);
+        }
+    }
+    m_stdioWriteStructure[slot].clear();
+    m_stdioWriteOffset[slot] = invalidOffset;
+    for (JSObject* current = stream; current;) {
+        if (JSValue value = current->getDirect(vm, name))
+            return value;
+        JSValue proto = current->getPrototypeDirect();
+        if (!proto.isObject())
+            return {};
+        current = asObject(proto);
+    }
+    return {};
+}
+
+bool Process::isStdioWriteReplaced(JSC::VM& vm, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    if (!stream)
+        return false;
+    JSValue current = stream->structure() == m_stdioWriteStructure[slot].get()
+        ? stream->getDirect(m_stdioWriteOffset[slot])
+        : resolveStdioWrite(vm, slot);
+    JSValue pristine = m_pristineStdioWrite[slot].get();
+    return pristine && current != pristine;
+}
+
+// Console write path (src/jsc/ConsoleObject.rs). No throw scope: nothing here runs user code.
+extern "C" bool Bun__Process__isStdioWriteReplaced(Zig::GlobalObject* globalObject, int32_t fd)
+{
+    if (!globalObject->hasProcessObject())
+        return false;
+    auto& vm = JSC::getVM(globalObject);
+    return globalObject->processObject()->isStdioWriteReplaced(vm, fd);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleNoop, (JSC::JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+// The callback of the console's write through a replaced `write`: node's createWriteErrorHandler.
+static EncodedJSValue consoleWriteFailed(JSC::JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, int fd)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue error = callFrame->argument(0);
+    auto* process = globalObject->processObject();
+    JSObject* stream = process->stdioWriteStream(fd);
+    if (error.isUndefinedOrNull() || !stream)
+        return JSValue::encode(jsUndefined());
+    JSValue state = stream->get(globalObject, Identifier::fromString(vm, "_writableState"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (state.isObject()) {
+        JSValue emitted = state.get(globalObject, Identifier::fromString(vm, "errorEmitted"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (emitted.toBoolean(globalObject))
+            return JSValue::encode(jsUndefined());
+    }
+    process->addNoopErrorListener(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleStdoutWriteFailed, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return consoleWriteFailed(globalObject, callFrame, 1);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionConsoleStderrWriteFailed, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return consoleWriteFailed(globalObject, callFrame, 2);
+}
+
+// if (stream.listenerCount("error") === 0) stream.once("error", noop)
+void Process::addNoopErrorListener(Zig::GlobalObject* globalObject, JSObject* stream)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer name;
+    name.append(jsString(vm, String("error"_s)));
+    JSValue count = callMethod(globalObject, stream, "listenerCount"_s, name);
+    RETURN_IF_EXCEPTION(scope, );
+    double listeners = count.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (listeners != 0)
+        return;
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, String("error"_s)));
+    args.append(m_consoleNoop.getInitializedOnMainThread(this));
+    callMethod(globalObject, stream, "once"_s, args);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+// One console message to the replaced `write` of the stream for fd, as node's kWriteToConsole does. Zero means it threw.
+extern "C" JSC::EncodedJSValue Bun__Process__writeThroughStdioStream(Zig::GlobalObject* globalObject, int32_t fd, JSC::EncodedJSValue text)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    JSObject* stream = process->stdioWriteStream(fd);
+    if (!stream)
+        return JSValue::encode(jsUndefined());
+#if OS(WINDOWS)
+    // A terminal's sink is not synchronous on Windows. The native console was: keep that for the output it hands on.
+    process->forceStdioSinkSynchronous(globalObject, fd);
+    RETURN_IF_EXCEPTION(scope, {});
+#endif
+    process->addNoopErrorListener(globalObject, stream);
+    if (!scope.exception()) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(text));
+        args.append(process->consoleWriteFailed(fd));
+        callMethod(globalObject, stream, "write"_s, args);
+    }
+    JSC::Exception* kept = nullptr;
+    if (auto* exception = scope.exception()) {
+        if (vm.isTerminationException(exception))
+            return {};
+        auto* error = dynamicDowncast<JSC::ErrorInstance>(exception->value());
+        if (error && error->isStackOverflowError())
+            kept = exception;
+        (void)scope.tryClearException();
+    }
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, String("error"_s)));
+    args.append(process->consoleNoop());
+    callMethod(globalObject, stream, "removeListener"_s, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (kept) {
+        scope.throwException(globalObject, kept);
+        return {};
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+#if OS(WINDOWS)
+void Process::forceStdioSinkSynchronous(Zig::GlobalObject* globalObject, int fd)
+{
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSValue sink = m_stdioSink[slot].get();
+    if (!sink)
+        return;
+    m_stdioSink[slot].clear();
+    Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
+}
+#endif
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
@@ -4852,6 +5038,12 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
+    for (unsigned i = 0; i < 2; ++i) {
+        visitor.append(thisObject->m_stdioWriteStream[i]);
+        visitor.append(thisObject->m_pristineStdioWrite[i]);
+        visitor.append(thisObject->m_stdioWriteStructure[i]);
+        visitor.append(thisObject->m_stdioSink[i]);
+    }
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -4859,6 +5051,9 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_consoleNoop.visit(visitor);
+    thisObject->m_consoleStdoutWriteFailed.visit(visitor);
+    thisObject->m_consoleStderrWriteFailed.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -6268,6 +6463,15 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
+    });
+    m_consoleNoop.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 0, ""_s, Process_functionConsoleNoop, ImplementationVisibility::Private));
+    });
+    m_consoleStdoutWriteFailed.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 1, ""_s, Process_functionConsoleStdoutWriteFailed, ImplementationVisibility::Private));
+    });
+    m_consoleStderrWriteFailed.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 1, ""_s, Process_functionConsoleStderrWriteFailed, ImplementationVisibility::Private));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

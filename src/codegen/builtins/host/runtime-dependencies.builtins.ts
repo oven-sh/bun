@@ -4,6 +4,9 @@ import {
   asyncContextCell,
   closesChannelCell,
   coercesEnvironmentValueCell,
+  consoleNoopCell,
+  consoleStderrWriteFailedCell,
+  consoleStdoutWriteFailedCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
   emitsProcessEventCell,
@@ -149,6 +152,28 @@ const writtenByWarnings = b.memberOfValue(
   b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
 );
 
+// The native console writes through a replaced write() as node's kWriteToConsole does (BunProcess.cpp Bun__Process__writeThroughStdioStream).
+const writtenByConsole = (cell: string, failed: string) => {
+  const listener = { this: b.nativeCell(cell), args: [b.string, b.nativeCell(consoleNoopCell)], result: b.dropped };
+  return [
+    b.memberOfValue(
+      "listenerCount",
+      b.calledByHost({ times: "Repeatedly", this: b.nativeCell(cell), args: [b.string], result: [b.inspectedByHost] }),
+    ),
+    b.memberOfValue("once", b.calledByHost({ times: "Repeatedly", ...listener })),
+    b.memberOfValue("removeListener", b.calledByHost({ times: "Repeatedly", ...listener })),
+    b.memberOfValue(
+      "write",
+      b.calledByHost({
+        times: "Repeatedly",
+        this: b.nativeCell(cell),
+        args: [b.string, b.nativeCell(failed)],
+        result: b.dropped,
+      }),
+    ),
+  ];
+};
+
 // Whatever makes a standard stream, the property of `process` holds it from then on, and so does the one of `console`.
 const usesOfStandardStream: readonly (readonly b.HostUseSpec[])[] = [
   [b.keptIn(standardInputCell)],
@@ -185,7 +210,17 @@ const wholeOutputStream = (descriptor: 1 | 2) =>
       times: "Once",
       this: globalObject,
       args: [processObject, b.int(descriptor, descriptor), b.bool, kindOfDescriptor],
-      result: [b.memberOfValue(0, ...usesOfStandardStream[descriptor]), b.memberOfValue(1, b.inspectedByHost)],
+      result: [
+        b.memberOfValue(
+          0,
+          ...usesOfStandardStream[descriptor],
+          ...writtenByConsole(
+            descriptor === 1 ? standardOutputCell : standardErrorCell,
+            descriptor === 1 ? consoleStdoutWriteFailedCell : consoleStderrWriteFailedCell,
+          ),
+        ),
+        b.memberOfValue(1, b.inspectedByHost),
+      ],
     }),
   );
 
@@ -802,6 +837,24 @@ export default b.declarations(
     reads: ["ExternalState"],
     implementation: b.hostCall,
   }),
+  b.hostFunction(consoleNoopCell, "BunProcess.cpp", "Process_functionConsoleNoop", {
+    returns: b.undefined,
+    capability: "none",
+    implementation: b.hostCall,
+  }),
+  [
+    [consoleStdoutWriteFailedCell, "Process_functionConsoleStdoutWriteFailed"],
+    [consoleStderrWriteFailedCell, "Process_functionConsoleStderrWriteFailed"],
+  ].flatMap(([cell, symbol]) =>
+    b.hostFunction(cell, "BunProcess.cpp", symbol, {
+      args: { error: b.any },
+      returns: b.undefined,
+      capability: "js",
+      throws: true,
+      uses: { error: b.inspected },
+      implementation: b.hostCall,
+    }),
+  ),
   // write() of the FileSink of the descriptor: what the row of %FileSink%.prototype.write says.
   b.hostFunction(writesToStandardSinkCell, "BunProcess.cpp", "Process_functionWriteToStandardSink", {
     args: { descriptor: b.any, data: b.any },

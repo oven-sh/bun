@@ -35,9 +35,32 @@ class Process : public WebCore::JSEventEmitter {
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
+    // process.stdout (0) and process.stderr (1) with the `write` each had when built, and the cached own slot.
+    WriteBarrier<JSObject> m_stdioWriteStream[2];
+    WriteBarrier<Unknown> m_pristineStdioWrite[2];
+    WriteBarrier<Structure> m_stdioWriteStructure[2];
+    PropertyOffset m_stdioWriteOffset[2] = { invalidOffset, invalidOffset };
+
+    // The one-shot 'error' listener and the write callbacks of the console's writes through a replaced `write`.
+    LazyProperty<Process, JSFunction> m_consoleNoop;
+    LazyProperty<Process, JSFunction> m_consoleStdoutWriteFailed;
+    LazyProperty<Process, JSFunction> m_consoleStderrWriteFailed;
+
     void installDefaultWarningListener(JSC::VM&);
+    JSValue resolveStdioWrite(JSC::VM&, unsigned slot);
 
 public:
+    // fd is 1 or 2. Called once per stream when the full JS stream is built.
+    void setStdioWriteStream(JSC::VM&, int fd, JSObject* stream);
+    // Whether the `write` of the stream for fd is no longer the one it was built with. Runs no user code.
+    bool isStdioWriteReplaced(JSC::VM&, int fd);
+    JSObject* stdioWriteStream(int fd) { return m_stdioWriteStream[static_cast<unsigned>(fd) - 1].get(); }
+    JSFunction* consoleNoop() { return m_consoleNoop.getInitializedOnMainThread(this); }
+    JSFunction* consoleWriteFailed(int fd) { return (fd == 1 ? m_consoleStdoutWriteFailed : m_consoleStderrWriteFailed).getInitializedOnMainThread(this); }
+    void addNoopErrorListener(Zig::GlobalObject*, JSObject* stream);
+    // The sink of the stream for fd while it is not synchronous (a terminal on Windows). Cleared once it is made so.
+    WriteBarrier<Unknown> m_stdioSink[2];
+    void forceStdioSinkSynchronous(Zig::GlobalObject*, int fd);
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

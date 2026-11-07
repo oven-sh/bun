@@ -993,7 +993,7 @@ private:
                 RETURN_IF_EXCEPTION(scope, );
                 // The spy was laid there, so the export takes a value. A spy that stays answers undefined to every later test of the process, and nobody hears of it.
                 if (!isBack)
-                    throwTypeError(globalObject, scope, makeString("Cannot restore the spy on '"_s, identifier.string(), "': the module no longer takes a value for it. This is a bug in bun test --aot"_s));
+                    Bun::throwTypeErrorOrOutOfMemory(globalObject, scope, tryMakeString("Cannot restore the spy on '"_s, identifier.string(), "': the module no longer takes a value for it. This is a bug in bun test --aot"_s));
                 return;
             }
 #endif
@@ -2889,7 +2889,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
         ms = WTF::timeClip(vm.dateCache.parseDate(globalObject, vm, dateString));
         RETURN_IF_EXCEPTION(scope, {});
         if (std::isnan(ms)) {
-            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, makeString("setSystemTime() expects a finite number, a Date or a date string. Received \""_s, dateString, '"'));
+            Bun::MessageBuilder message;
+            message.append("setSystemTime() expects a finite number, a Date or a date string. Received \""_s, dateString, '"');
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, message);
         }
     } else {
         ms = argument0.isNumber() ? argument0.asNumber() : PNaN;
@@ -2952,14 +2954,11 @@ __attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObjec
     mock->setInitialImplementation(globalObject, function);
 }
 
-static String propertyKeyForMessage(const Identifier& key)
+// A TypeError that quotes the key, or `RangeError: Out of memory` when that message cannot be created.
+__attribute__((minsize)) static void throwSpyOnTypeError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral before, const Identifier& key, ASCIILiteral after, StringView detail = {}, ASCIILiteral end = ""_s)
 {
-    return key.isSymbol() ? makeString("Symbol("_s, key.string(), ')') : key.string();
-}
-
-static String propertyKeyForFunctionName(const Identifier& key)
-{
-    return key.isSymbol() ? makeString('[', key.string(), ']') : key.string();
+    bool isSymbol = key.isSymbol();
+    Bun::throwTypeErrorOrOutOfMemory(globalObject, scope, tryMakeString(before, isSymbol ? "Symbol("_s : ""_s, key.string(), isSymbol ? ")"_s : ""_s, after, detail, end));
 }
 
 static JSObject* findPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName key, PropertyDescriptor& descriptor)
@@ -2983,6 +2982,20 @@ enum class SpyAccess : uint8_t {
     Get,
     Set,
 };
+
+// "get key" or "set key", with a symbol as "[description]". Throws `RangeError: Out of memory` when that name cannot be created.
+static JSString* accessorSpyName(JSGlobalObject* globalObject, SpyAccess access, const Identifier& key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isSymbol = key.isSymbol();
+    String name = tryMakeString(access == SpyAccess::Get ? "get "_s : "set "_s, isSymbol ? "["_s : ""_s, key.string(), isSymbol ? "]"_s : ""_s);
+    if (name.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return jsString(vm, WTF::move(name));
+}
 
 __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
 {
@@ -3118,8 +3131,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::isNameRefusedByLibraryFunction(object, propertyKey.impl()))) {
         String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.impl());
         if (message.isNull())
-            message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
-        throwTypeError(globalObject, scope, message);
+            message = tryMakeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
+        Bun::throwTypeErrorOrOutOfMemory(globalObject, scope, message);
         return {};
     }
 
@@ -3163,7 +3176,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
         bool isNamespace = isModuleNamespace(object);
         if (isNamespace && !hasValue) {
-            throwTypeError(globalObject, scope, makeString("spyOn(target, prop) expects the module namespace object to export `"_s, propertyKeyForMessage(propertyKey), '`'));
+            throwSpyOnTypeError(globalObject, scope, "spyOn(target, prop) expects the module namespace object to export `"_s, propertyKey, "`"_s);
             return {};
         }
 
@@ -3207,11 +3220,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     // hardmode: a property's getter or setter, or the method a getter returns
     if (!hasValue) {
-        throwTypeError(globalObject, scope, makeString("spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKeyForMessage(propertyKey), '`'));
+        throwSpyOnTypeError(globalObject, scope, "spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKey, "`"_s);
         return {};
     }
     if (isModuleNamespace(object)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Get ? "getter"_s : "setter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` export because the exports of a module namespace object are not accessors"_s));
+        throwSpyOnTypeError(globalObject, scope, access == SpyAccess::Get ? "Cannot spy on the getter of the `"_s : "Cannot spy on the setter of the `"_s, propertyKey, "` export because the exports of a module namespace object are not accessors"_s);
         return {};
     }
     if (propertyKey == vm.propertyNames->prototype && isJSFunctionOrCompiledCallee(object)) {
@@ -3231,7 +3244,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             JSString* type = original.isNull() ? vm.smallStrings.nullString() : jsTypeStringForValue(globalObject, original);
             auto typeView = type->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKey), "` property because it is not a function; "_s, typeView.data, " given instead"_s));
+            throwSpyOnTypeError(globalObject, scope, "Cannot spy on the `"_s, propertyKey, "` property because it is not a function; "_s, typeView.data, " given instead"_s);
             return {};
         }
     }
@@ -3249,15 +3262,26 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         answersForItsElements = false;
 #endif
     if (storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey))) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` property because it cannot be redefined"_s));
+        throwSpyOnTypeError(globalObject, scope, access == SpyAccess::Set ? "Cannot spy on the setter of the `"_s : "Cannot spy on the getter of the `"_s, propertyKey, "` property because it cannot be redefined"_s);
         return {};
+    }
+
+    // A getter or setter spy is named after the key. The name can throw, so it comes before the mock and before anything of the original runs.
+    JSString* name = nullptr;
+    if (access != SpyAccess::Value) {
+        name = accessorSpyName(globalObject, access, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto* mock = createMockFunction(vm, globalObject, isVitest);
     if (original.isCallable()) {
-        wrapFunction(globalObject, mock, original);
-    } else if (access == SpyAccess::Get && descriptor.isDataDescriptor()) {
-        mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, descriptor.value());
+        wrapFunction(globalObject, mock, original, name);
+    } else {
+        // The original of a spy on the value is callable, so this is a getter or a setter that the property lacks.
+        ASSERT(name);
+        mock->setName(name);
+        if (access == SpyAccess::Get && descriptor.isDataDescriptor())
+            mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, descriptor.value());
     }
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -3269,11 +3293,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         break;
     }
     case SpyAccess::Get:
-        mock->setName(makeString("get "_s, propertyKeyForFunctionName(propertyKey)));
         getter = mock;
         break;
     case SpyAccess::Set:
-        mock->setName(makeString("set "_s, propertyKeyForFunctionName(propertyKey)));
         setter = mock;
         break;
     }

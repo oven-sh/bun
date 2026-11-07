@@ -955,6 +955,34 @@ heard.clear()
 # (CPython: the attributes go before the data.)
 print(happened(False))
 
+print("== so is an instance of a type that C has made on top of a class with __slots__")
+make_type_over = declare("make_type_over", py_object, py_object)
+
+
+class WithSlot(Node):
+    __slots__ = ("a",)
+
+
+Over = make_type_over(WithSlot)
+print([cls.__name__ for cls in Over.__mro__], hasattr(Over(), "__dict__"), [cls.__basicsize__ - Node.__basicsize__ for cls in (WithSlot, Over)])
+happened()
+tell(heard)
+tell_of_children(1)
+
+
+def family():
+    child = make(Over, 230)
+    child.a = "in the slot"
+    make(Chatty, 229, child)
+
+
+family()
+print(happened(), type(heard[0]).__name__, getattr(heard[0], "a", "GONE"))
+tell_of_children(0)
+tell(None)
+heard.clear()
+print(happened())
+
 print("== a class that dies with its instance, and leads to it")
 
 

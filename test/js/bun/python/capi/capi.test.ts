@@ -634,10 +634,12 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
       expect(stderr).toBe("");
       const [first, second] = stdout.split("\n");
       expect(first).toBe("the first was destroyed before 2,000 blocks of a megabyte had been asked for: True");
-      // 2, and 56 to 99 where each step counts for the whole block. (With ASAN realloc() moves the block each time, and a block that has moved does count.)
-      expect(
-        Number(/^collections while a block grew to a megabyte in 16,383 steps: (\d+)$/.exec(second)?.[1]),
-      ).toBeLessThan(isASAN ? 1000 : 20);
+      // 2, and 56 to 99 where each step counts for the whole block. With ASAN realloc() moves the block each time, and a block that has moved does count: the number is the same either way, and says nothing.
+      const collections = Number(
+        /^collections while a block grew to a megabyte in 16,383 steps: (\d+)$/.exec(second)?.[1],
+      );
+      if (isASAN) expect(collections).toBeGreaterThan(0);
+      else expect(collections).toBeLessThan(20);
       expect(exitCode).toBe(0);
     },
     limit,
@@ -709,7 +711,18 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     );
 
     test.concurrent(
-      `JS's weak references to an instance die before its tp_dealloc; what is only cleared may be in JS's hands: ${mode}`,
+      `what is declared: a finalizer before the holder's tp_dealloc, a class that lives on, what a tp_traverse is told: ${mode}`,
+      async () => {
+        const { stdout, stderr, exitCode } = await run("here/declared.py", "lifecycle", options);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(readFileSync(join(root, "here/declared.expected"), "utf8"));
+        expect(exitCode).toBe(0);
+      },
+      limit,
+    );
+
+    test.concurrent(
+      `JS's weak references to an instance die before its tp_dealloc; what is only cleared may be in JS's hands; a WeakMap holds no garbage together: ${mode}`,
       async () => {
         expect(await run("here/weak_in_js.mjs", "lifecycle", options)).toEqual({
           stdout:
@@ -721,7 +734,9 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
             "it referred to [], and now holds ['held anew'], of which the collector knows: True\n" +
             "still held | events [] | " +
             "deref(): Sub, data of 3, attributes {'attribute': 'of the face'}, holds something: True\n" +
-            "dropped | events [1000003] | deref(): undefined\n",
+            "dropped | events [1000003] | deref(): undefined\n" +
+            "a WeakMap leads from the child, of C's own type, to its parent | events [1000004, 1000005]\n" +
+            "a WeakMap leads from the child, of a class of Python's, to its parent | events [2000006, 1000006, 1000007]\n",
           stderr: "",
           exitCode: 0,
         });

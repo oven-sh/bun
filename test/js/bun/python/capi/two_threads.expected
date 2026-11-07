@@ -1,4 +1,9 @@
-[(0, 'MainThread'), (1, 'MainThread'), (2, 'MainThread')]
-[1000000, 1000001, 1000002]
+[(0, 'MainThread'), (1, 'MainThread'), (2, 'MainThread'), (3, 'MainThread'), (4, 'MainThread'), (5, 'MainThread'), (6, 'MainThread'), (7, 'MainThread'), (8, 'MainThread'), (9, 'MainThread'), (10, 'MainThread'), (11, 'MainThread'), (12, 'MainThread'), (13, 'MainThread'), (14, 'MainThread')]
+each after its parent: True
+[1000000, 1000001, 1000002, 1000003, 1000004, 1000005, 1000006, 1000007, 1000008, 1000009, 1000010, 1000011, 1000012, 1000013, 1000014]
 [(11, 'MainThread', "when nothing of C's runs for it"), (12, 'MainThread', "when nothing of C's runs for it")]
 [1000011, 1000012]
+cleared more than once: []
+[(21, 'MainThread', "when nothing of C's runs for it")]
+[1000021]
+cleared more than once: []

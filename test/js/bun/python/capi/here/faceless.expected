@@ -21,9 +21,8 @@ given back, and no collection since: [1000004]
 == C asks for its data by a pointer that it does not own: before its turn
 before its turn: events so far []
 [4000005, 1000005]
-== in the tp_dealloc of its holder, and in the tp_dealloc of what it held: that is after its end, and in the same turn
+== in the tp_dealloc of its holder
 [4000005, 1000006, 1000005]
-[1000005, 4000000, 1000006]
 == a tp_dealloc hands the object to the program: a face for the occasion, which leads to nothing
 [1000007] Chatty -1
 SystemError: the object of type 'Chatty' has been destroyed

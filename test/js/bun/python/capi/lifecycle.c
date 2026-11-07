@@ -54,9 +54,18 @@ void be_rude(int on) { is_rude = on; }
 long count_rude_calls(void) { return rude_calls; }
 long count_rude_calls_refused(void) { return rude_calls_refused; }
 
+/* A tp_traverse that asks about what it holds, by the functions that may be called there. What it heard the last time. */
+static long curious_about = -1, heard_of_it;
+void be_curious_about(long id) { curious_about = id; }
+long what_was_heard(void) { return heard_of_it; }
+
 static int node_traverse(PyObject *self, visitproc visit, void *arg)
 {
     Node *node = PyObject_GetTypeData_DuringGC(self, node_type);
+    if (node->id == curious_about) {
+        PyTypeObject *type = Py_TYPE(node->first);
+        heard_of_it = 1000 * !type + 100 * Py_IS_TYPE(node->first, type) + 10 * (type && PyType_IsSubtype(type, type)) + PyObject_GC_IsTracked(node->first);
+    }
     if (is_rude) {
         rude_calls += 2;
         rude_calls_refused += !PyList_New(0);
@@ -406,6 +415,11 @@ void tell(PyObject *list)
 }
 
 void tell_of_children(long whether) { tells_of_children = whether; }
+
+/* A type that C makes on top of whatever class it is given: a class of Python's that derives from Node. */
+static PyType_Slot over_slots[] = { { 0, NULL } };
+static PyType_Spec over_spec = { "lifecycle.Over", 0, 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, over_slots };
+PyObject *make_type_over(PyObject *base) { return PyType_FromSpecWithBases(&over_spec, base); }
 void tell_of_itself(long whether) { tells_of_itself = whether; }
 
 /* Made by C: by tp_alloc, and as PyObject_GC_New() makes them. */

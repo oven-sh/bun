@@ -8,7 +8,12 @@ const worker = new Worker(new URL("./terminated_worker.mjs", import.meta.url).hr
 const closed = new Promise(resolve => worker.addEventListener("close", resolve));
 worker.postMessage(libraries);
 // The parent's, and the first's.
-while (count_events() < 2) await new Promise(resolve => setImmediate(resolve));
+for (const deadline = Date.now() + 300_000; count_events() < 2; await new Promise(resolve => setImmediate(resolve))) {
+  if (Date.now() > deadline) {
+    console.log("they have not begun:", count_events());
+    process.exit(1);
+  }
+}
 console.log("begun when the worker is terminated:", count_events());
 worker.terminate();
 await closed;

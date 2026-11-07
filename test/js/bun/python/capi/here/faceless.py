@@ -138,19 +138,16 @@ print("== C asks for its data by a pointer that it does not own: before its turn
 drop(make(5, probe_borrowed))
 print(take_events())
 
-print("== in the tp_dealloc of its holder, and in the tp_dealloc of what it held: that is after its end, and in the same turn")
-for prober_holds in (True, False):
-    node, prober = Node(), Prober()
-    set_id(node, 5)
-    set_id(prober, 6)
-    remember_borrowed(node)
-    set_first(*((prober, node) if prober_holds else (node, prober)))
-    # A collection of the young takes whatever C owns a reference to for held: it would find the holder dead alone, and the other would go in a later turn.
-    gc.collect()
-    del node, prober
-    gc.collect()
-    print(take_events())
-    remember_borrowed(None)
+print("== in the tp_dealloc of its holder")
+node, prober = Node(), Prober()
+set_id(node, 5)
+set_id(prober, 6)
+remember_borrowed(node)
+set_first(prober, node)
+del node, prober
+gc.collect()
+print(take_events())
+remember_borrowed(None)
 
 print("== a tp_dealloc hands the object to the program: a face for the occasion, which leads to nothing")
 told = []

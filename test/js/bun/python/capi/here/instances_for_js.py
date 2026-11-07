@@ -43,6 +43,15 @@ def make(number, in_a_cycle, act):
     return node
 
 
+# A parent that holds a child in C's data. The child is of a class of Python's, or of C's own type.
+def make_pair(number, of_python):
+    parent, child = Sub.__base__(), (Sub if of_python else Sub.__base__)()
+    lib.set_id(parent, number)
+    lib.set_id(child, number + 1)
+    lib.set_first(parent, child)
+    return [parent, child]
+
+
 def drop_and_collect():
     held.clear()
     gc.collect()

@@ -283,6 +283,10 @@ and the other way round: TypeError: __class__ assignment: 'OfBig' deallocator di
 ['dealloc 226']
 Other True
 ['dealloc 227', 'dealloc 228']
+== so is an instance of a type that C has made on top of a class with __slots__
+['Over', 'WithSlot', 'Node', 'object'] False [8, 8]
+['dealloc 229'] Over in the slot
+['dealloc 230']
 == a class that dies with its instance, and leads to it
 by_an_attribute_of_the_class [(5, 111), (1, 190)] 0
 by_a_method_that_closes_over_it [(5, 111), (1, 191)] 0

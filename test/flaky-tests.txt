@@ -81,8 +81,7 @@ test/js/node/test/parallel/test-cluster-send-deadlock.js  # 1 of 80 builds; wind
 test/js/node/test/parallel/test-cluster-shared-leak.js  # 8 of 80 builds; windows; timeout
 test/js/node/test/parallel/test-fastutf8stream-destroy.js  # 2 of 80 builds; alpine, ubuntu
 test/js/node/test/parallel/test-fs-read-stream-pos.js  # 3 of 80 builds; windows; Mismatched function calls. Expected at least 1, actual 0 (windows)
-test/js/node/test/parallel/test-watch-mode-kill-signal-default.mjs  # 4 of 80 builds; timeout
-test/js/node/test/parallel/test-watch-mode-kill-signal-override.mjs  # 2 of 80 builds; timeout
+test/js/node/test/parallel/test-watch-mode-kill-signal-override.mjs  # 1 of 800 local runs; exit code 1; the parent's SIGTERM reaches the second boot, which has the same pid and prints __SIGTERM received__
 test/js/node/tls/node-tls-server.test.ts  # 2 of 80 builds; mac
 test/js/node/tls/renegotiation.test.ts  # 1 of 80 builds; pauseOnConnect acts on the first handshake only, not on a renegotiation: expect(receiv...
 test/js/node/vm/vm.test.ts  # 6 of 80 builds; microtasks left on an afterEvaluate context by a timed-out script stay bounded: expect...

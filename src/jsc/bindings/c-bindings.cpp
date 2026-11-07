@@ -418,6 +418,9 @@ extern "C" void bun_remember_inherited_file_descriptors()
 }
 #endif
 
+// PosixSignalHandle.rs. Bit N of `resetSignals`: the caller replaced the handler of signal N with SIG_DFL.
+extern "C" void Bun__deliverQueuedPosixSignals(uint64_t resetSignals);
+
 extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
@@ -454,6 +457,7 @@ extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheri
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
+    uint64_t resetSignals = 0;
     for (int s = 1; s < NSIG; s++) {
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
             continue;
@@ -470,12 +474,16 @@ extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheri
             continue;
         if (old.sa_handler == SIG_IGN || old.sa_handler == SIG_DFL)
             continue;
-        sigaction(s, &sa, nullptr);
+        if (sigaction(s, &sa, nullptr) == 0 && s < 64)
+            resetSignals |= uint64_t { 1 } << s;
     }
 
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+
+    // A signal that a handler queued for JS before the reset would be lost with this image.
+    Bun__deliverQueuedPosixSignals(resetSignals);
 }
 
 #if OS(LINUX)

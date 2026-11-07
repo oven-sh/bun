@@ -43,7 +43,7 @@ const CJSModule = require("internal/repl/node-shims").Module;
 
 const vm = require("node:vm");
 
-let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
+let debug: (...args: unknown[]) => void = require("internal/repl/node-shims").debuglog("repl", fn => {
   debug = fn;
 });
 

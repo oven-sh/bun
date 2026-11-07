@@ -261,9 +261,7 @@ function loadImpl(): Loaded {
   const { shouldColorize } = require("internal/repl/node-shims");
   const CJSModule = require("internal/repl/node-shims").Module;
   const { AsyncLocalStorage } = require("node:async_hooks");
-  // `var`, not `let`: the shim's debuglog calls the callback synchronously, so
-  // the assignment would hit `let`'s TDZ now that this runs inside a function.
-  var debug = require("internal/repl/node-shims").debuglog("repl", fn => {
+  let debug: (...args: unknown[]) => void = require("internal/repl/node-shims").debuglog("repl", fn => {
     debug = fn;
   });
   const {

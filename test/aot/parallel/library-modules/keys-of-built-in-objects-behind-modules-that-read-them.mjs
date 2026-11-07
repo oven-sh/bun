@@ -73,7 +73,7 @@ show(
 show(
   "Number.prototype",
   Number.prototype,
-  "toString,constructor,valueOf,toFixed,toLocaleString,toExponential,toPrecision",
+  "toString,constructor,toFixed,valueOf,toLocaleString,toExponential,toPrecision",
 );
 show(
   "Promise",

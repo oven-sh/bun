@@ -36,7 +36,7 @@ unsafe extern "C" {
     pub fn simdutf__validate_ascii(buf: *const u8, len: usize) -> bool;
     pub fn simdutf__validate_ascii_with_errors(buf: *const u8, len: usize) -> SIMDUTFResult;
     pub fn simdutf__validate_utf16le(buf: *const u16, len: usize) -> bool;
-    pub fn simdutf__convert_utf8_to_utf16le_with_errors(
+    pub(crate) fn simdutf__convert_utf8_to_utf16le_with_errors(
         buf: *const u8,
         len: usize,
         utf16_output: *mut u16,
@@ -111,6 +111,67 @@ pub mod convert {
                                 output.as_mut_ptr(),
                             )
                         }
+                    }
+
+                    /// [`le`] into storage that is not initialised. At an ill-formed sequence it
+                    /// stops with the offset of the sequence in `count`, and `output` then holds
+                    /// the conversion of `input[..count]`. simdutf documents the offset only.
+                    /// `test/js/bun/util/toUTF16Alloc.test.ts` checks the output for each kernel.
+                    /// SAFETY: `output` is valid for writes of `length::utf16::from::utf8(input)`
+                    /// units, or of `input.len()` units. simdutf writes no more than the smaller count.
+                    #[inline(always)]
+                    pub unsafe fn le_raw(input: &[u8], output: *mut u16) -> SIMDUTFResult {
+                        // SAFETY: the caller's contract.
+                        unsafe {
+                            simdutf__convert_utf8_to_utf16le_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                output,
+                            )
+                        }
+                    }
+
+                    /// Adds to `output` the units that [`le_raw`] wrote before it stopped at
+                    /// `input[stopped_at]`, and returns the input that it did not convert.
+                    /// SAFETY: that call has just returned, for this `input` and the end of
+                    /// `output`. The first `ascii` bytes of `input` are ASCII.
+                    #[inline]
+                    pub unsafe fn keep_converted<'a>(
+                        input: &'a [u8],
+                        ascii: usize,
+                        stopped_at: usize,
+                        output: &mut Vec<u16>,
+                    ) -> &'a [u8] {
+                        let (converted, rest) = input.split_at(stopped_at.min(input.len()));
+                        let units = match converted.split_at_checked(ascii) {
+                            Some((_, [])) | None => converted.len(),
+                            Some((_, counted)) => ascii + length::utf16::from::utf8(counted),
+                        };
+                        let start = output.len();
+                        assert!(units <= output.capacity() - start);
+                        // SAFETY: `converted` is well-formed, so simdutf wrote `units` units for
+                        // it, and they are within the capacity.
+                        unsafe { output.set_len(start + units) };
+                        if cfg!(debug_assertions) && converted.len() <= MAX_CHECKED_PREFIX {
+                            assert_converted(converted, &output[start..]);
+                        }
+                        rest
+                    }
+
+                    const MAX_CHECKED_PREFIX: usize = 1024 * 1024;
+
+                    fn assert_converted(converted: &[u8], units: &[u16]) {
+                        let mut again: Vec<u16> = Vec::new();
+                        // The decode reports a failed allocation as an error, so this check does not abort for one.
+                        if again.try_reserve_exact(units.len()).is_err() {
+                            return;
+                        }
+                        again.resize(units.len(), 0);
+                        let res = le(converted, &mut again);
+                        assert!(
+                            res.is_successful() && res.count == units.len() && again == units,
+                            "simdutf did not write what it converted before it stopped"
+                        );
                     }
                 }
             }

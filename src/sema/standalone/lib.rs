@@ -146,4 +146,41 @@ mod tests {
         assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
         assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");
     }
+
+    /// `to_utf16_alloc` keeps what the converter wrote in front of an ill-formed sequence: `native`'s has to write it too.
+    #[test]
+    fn utf16_of_ill_formed_utf8_keeps_the_text_around_each_sequence() {
+        let character = "a\u{e9}\u{4e16}\u{1f600}";
+        // Each with the U+FFFD it decodes to: one per maximal subpart.
+        let ill_formed: [(&[u8], usize); 6] = [
+            (b"\xff", 1),
+            (b"\x80", 1),
+            (b"\xbf\xbf\xbf\xbf\xbf", 5),
+            (b"\xe4\xb8", 1),
+            (b"\xed\xa0\x80", 3),
+            (b"\xf0\x9f\x98", 1),
+        ];
+        // From no text to more text than one SIMD block.
+        for count in [0, 1, 9, 300] {
+            let text = character.repeat(count);
+            let units: Vec<u16> = text.encode_utf16().collect();
+            for sentinel in [false, true] {
+                let mut input = Vec::new();
+                let mut expected = Vec::new();
+                for (bytes, replacements) in ill_formed {
+                    input.extend_from_slice(text.as_bytes());
+                    input.extend_from_slice(bytes);
+                    expected.extend_from_slice(&units);
+                    expected.extend(core::iter::repeat_n(0xFFFD, replacements));
+                }
+                input.extend_from_slice(text.as_bytes());
+                expected.extend_from_slice(&units);
+                if sentinel {
+                    expected.push(0);
+                }
+                let decoded = bun_core::strings::to_utf16_alloc(&input, false, sentinel);
+                assert_eq!(decoded.ok().flatten(), Some(expected), "{count} {sentinel}");
+            }
+        }
+    }
 }

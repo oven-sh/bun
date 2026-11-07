@@ -257,6 +257,120 @@ describe("Bun.Transpiler", () => {
       ]);
       expect(exitCode).toBe(0);
     });
+    it("bails out when the key names an anonymous function or class", () => {
+      // `({ f: () => {} }).f.name` is "f". The bare value has no name, or takes
+      // the name of whatever it is assigned to.
+      ts.expectPrintedMin_("x = ({ f: () => {} }).f", "x = { f: () => {} }.f");
+      ts.expectPrintedMin_("x = ({ f: async () => {} }).f", "x = { f: async () => {} }.f");
+      ts.expectPrintedMin_("x = ({ f: class {} }).f", "x = { f: class {\n} }.f");
+      ts.expectPrintedMin_('x = ({ f: () => {} })["f"]', "x = { f: () => {} }.f");
+      ts.expectPrintedMin_('x = ({ "a-b": () => {} })["a-b"]', 'x = { "a-b": () => {} }["a-b"]');
+      ts.expectPrintedMin_("x = new ({ f: class {} }).f()", "x = new { f: class {\n} }.f");
+
+      // A value that has a name of its own is still inlined.
+      ts.expectPrintedMin_("x = ({ f: function g() {} }).f", "x = function g() {}");
+      ts.expectPrintedMin_("x = ({ f: class C {} }).f", "x = class C {\n}");
+      ts.expectPrintedMin_("x = ({ f: [() => {}] }).f", "x = [() => {}]");
+    });
+    it("drops an unused read of an anonymous function or class that stays in its object", () => {
+      // Reading the one data property runs no code.
+      ts.expectPrintedMin_("({ f: () => {} }).f; x", "x");
+      ts.expectPrintedMin_("(({ f: class {} }).f, x)", "x");
+      ts.expectPrintedMin_('({ "a-b": function() {} })["a-b"]; x', "x");
+
+      // The read stays when the value has side effects.
+      ts.expectPrintedMin_(
+        "({ f: class { static { y() } } }).f; x",
+        "({ f: class {\n  static {\n    y();\n  }\n} }).f;\nx",
+      );
+      ts.expectPrintedMin_("({ f: class extends y {} }).f; x", "({ f: class extends y {\n} }).f;\nx");
+    });
+    it("keeps the name an object literal key gives an anonymous function or class", async () => {
+      const src = `
+        const a = ({ aa: async () => {} }).aa;
+        function f() { return ({ bb: () => {} }).bb; }
+        const c = ({ "c-c": function () {} })["c-c"];
+        const d = ({ dd: class {} }).dd;
+        const e = ({ ee: function own() {} }).ee;
+        console.log(JSON.stringify([a.name, f().name, c.name, d.name, e.name, ({ h: () => {} }).h.name]));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["aa", "bb", "c-c", "dd", "own", "h"]);
+      expect(exitCode).toBe(0);
+    });
+    it("keeps the read a value where a later rewrite makes it a callee", async () => {
+      // A function takes `this` from its call. The function that the fold used to
+      // leave was a value, so the read that stays is a value too.
+      ts.expectPrintedMin_("x = ({ f: function() {} }).f", "x = (0, { f: function() {} }.f)");
+      ts.expectPrintedMin_("x = (0, ({ f: function() {} }).f)`a`", "x = (0, { f: function() {} }.f)`a`");
+
+      const X = `({ f: function () { "use strict"; return this; } }).f`;
+      const rows = {
+        call: `${X}()`,
+        viaConst: `(() => { const t = ${X}; return t\`a\`; })()`,
+        viaLet: `(() => { let t = ${X}; return t\`a\`; })()`,
+        commaTag: `(0, ${X})\`a\``,
+        andTag: `(true && ${X})\`a\``,
+        orTag: `(false || ${X})\`a\``,
+        nullishTag: `(null ?? ${X})\`a\``,
+        ternaryTag: `(true ? ${X} : 0)\`a\``,
+        falseTestTag: `(false ? 0 : ${X})\`a\``,
+        pureTestTag: `([] ? ${X} : 0)\`a\``,
+        nullishAssignTag: `(({}).p ??= ${X})\`a\``,
+      };
+      const expected = {
+        call: "object",
+        viaConst: "undefined",
+        viaLet: "undefined",
+        commaTag: "undefined",
+        andTag: "undefined",
+        orTag: "undefined",
+        nullishTag: "undefined",
+        ternaryTag: "undefined",
+        falseTestTag: "undefined",
+        pureTestTag: "undefined",
+        nullishAssignTag: "undefined",
+      };
+      const source = rows => `
+        const show = v => (v === undefined ? "undefined" : v === globalThis ? "globalThis" : typeof v);
+        console.log(JSON.stringify({ ${Object.entries(rows)
+          .map(([name, expr]) => `${name}: show(${expr})`)
+          .join(", ")} }));
+      `;
+      const run = async (args, cwd) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      // bun runs the source: every rewrite is in one pass.
+      const calls = { pureTestCall: `([] ? ${X} : 0)()`, nullishAssignCall: `(({}).p ??= ${X})()` };
+      const direct = await run(["-e", source({ ...rows, ...calls })]);
+      expect(direct.stderr).toBe("");
+      expect(JSON.parse(direct.stdout)).toEqual({
+        ...expected,
+        pureTestCall: "undefined",
+        nullishAssignCall: "undefined",
+      });
+      expect(direct.exitCode).toBe(0);
+
+      // `bun build` without --minify, then bun runs the bundle. The build folds
+      // `(true && x)` to `x` in front of the template, and the object fold runs
+      // when bun loads the bundle.
+      using dir = tempDir("object-fold-this", { "t.js": source(rows) });
+      const build = await run(["build", "t.js", "--outfile=o.js"], String(dir));
+      expect({ exitCode: build.exitCode, stderr: build.stderr }).toMatchObject({ exitCode: 0 });
+      const bundled = await run(["o.js"], String(dir));
+      expect(bundled.stderr).toBe("");
+      expect(JSON.parse(bundled.stdout)).toEqual(expected);
+      expect(bundled.exitCode).toBe(0);
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

@@ -907,14 +907,14 @@ new Array(x, y)
 
 **Mode:** `--minify-syntax`
 
-Inlines property access for objects with a single property.
+Inlines property access for objects with a single property. Bun keeps an anonymous function or class in the object, because the property key is the `name` of that value. For example, `x = ({fn: () => {}}).fn` stays as written.
 
 ```ts Input
-({fn: () => console.log('hi')}).fn
+({fn: handler}).fn
 ```
 
 ```js Output
-() => console.log('hi')
+handler
 ```
 
 ### String charCodeAt constant folding

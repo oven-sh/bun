@@ -29,6 +29,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/SourceCharacters.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/VM.h"
 #include "ZigGlobalObject.h"
@@ -130,6 +131,15 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
     frame.is_async = stackFrame.isAsyncFrame();
 }
 
+static BunString sourceLineView(WTF::StringView source, const LineStartTable::PositionInfo& line)
+{
+    auto text = StringView_slice(source, line.lineStart, line.lineEnd);
+    // JSC's lineEndFor() leaves the terminator on a line when the next line starts at the end of the text.
+    if (!text.isEmpty() && isLineTerminator(text[text.length() - 1]))
+        text = text.left(text.length() - (text.endsWith("\r\n"_s) ? 2 : 1));
+    return Bun::toStringView(text);
+}
+
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
@@ -176,24 +186,6 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit() && !sourceString.isEmpty()) {
-        unsigned int maxSearch = sourceString.length();
-
-        // Search for the beginning of the line. byte_position equals the source length when the expression ends at the end of the source.
-        unsigned int lineStart = std::min<unsigned int>(location.byte_position, maxSearch - 1);
-        while (lineStart > 0 && sourceString[lineStart] != '\n') {
-            lineStart--;
-        }
-
-        // Search for the end of the line
-        unsigned int lineEnd = location.byte_position;
-        while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
-            lineEnd++;
-        }
-
-        const unsigned char* bytes = byteCast<uint8_t>(sourceString.span8().data());
-
-        // Most of the time, when you look at a stack trace, you want a couple lines above.
-
         // It is key to not clone this data because source code strings are large.
         // Usage of toStringView (non-owning) is safe as we ref the provider.
         provider->ref();
@@ -201,41 +193,18 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             (*referenced_source_provider)->deref();
         }
         *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+
+        // The provider's line table has where each line starts and ends, for each line terminator of JavaScript.
+        auto line = provider->positionInfoForOffset(location.byte_position);
+        source_lines[0] = sourceLineView(sourceString, line);
         source_line_numbers[0] = location.line();
 
-        if (lineStart > 0) {
-            auto byte_offset_in_source_string = lineStart - 1;
-            uint8_t source_line_i = 1;
-            auto remaining_lines_to_grab = source_lines_count - 1;
-
-            {
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
-
-            while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
-                unsigned int end_of_line_offset = byte_offset_in_source_string;
-
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
-
-                // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
-
-                source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
-                source_line_i++;
-
-                remaining_lines_to_grab--;
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
+        // Most of the time, when you look at a stack trace, you want a couple lines above.
+        for (uint8_t i = 1; i < source_lines_count && line.lineStart > 0; i++) {
+            // The character before a line is the terminator of the line above it.
+            line = provider->positionInfoForOffset(line.lineStart - 1);
+            source_lines[i] = sourceLineView(sourceString, line);
+            source_line_numbers[i] = OrdinalNumber::fromZeroBasedInt(location.line_zero_based - i);
         }
     }
 }

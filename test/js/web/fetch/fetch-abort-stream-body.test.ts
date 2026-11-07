@@ -389,6 +389,32 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
     },
   );
 
+  // A node stream cannot carry a falsy error, so a falsy reason arrives as an AbortError, as in Node.
+  describe.each(["while it waits for more", "before Readable.fromWeb()"])("Readable.fromWeb(res.body), %s", timing => {
+    test.concurrent.each([[null], [0], [""]])("abort(%p) emits an AbortError", async reason => {
+      using server = await stalledBodyServer();
+      const controller = new AbortController();
+      const res = await fetch(server.url, { signal: controller.signal });
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      if (timing === "before Readable.fromWeb()") controller.abort(reason);
+      const readable = Readable.fromWeb(res.body as any);
+      const settled = new Promise(resolve =>
+        readable
+          .on("error", (error: any) => resolve({ name: error.name, code: error.code }))
+          .on("end", () => resolve("ended"))
+          .on("close", () => resolve("closed")),
+      );
+      if (timing === "while it waits for more") {
+        await once(readable, "data");
+        await new Promise(resolve => setImmediate(resolve));
+        controller.abort(reason);
+      } else {
+        readable.resume();
+      }
+      expect(await settled).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+    });
+  });
+
   // Nothing waits, so nothing can take the reason, and to keep it natively would root it. The
   // source still has to fail: main ended such a stream as if the body were complete.
   test.concurrent("Readable.fromWeb(res.body) that has not read yet fails with an AbortError", async () => {

@@ -103,7 +103,10 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     while i + 4 <= bytes.len() {
         if bytes[i] != 0xFF {
             // libjpeg's next_marker() skips to the next 0xFF with a warning, so the decoder accepts this junk too.
-            let Some(skip) = bun_core::strings::index_of_char_usize(&bytes[i..], 0xFF) else {
+            let rest = &bytes[i..];
+            // SAFETY: `rest` is readable. JavaScript may be writing to it, so the byte found is looked at again.
+            let found = unsafe { bun_highway::index_of_char_raw(rest.as_ptr(), rest.len(), 0xFF) };
+            let Some(skip) = found else {
                 return Orientation::Normal;
             };
             i += skip;

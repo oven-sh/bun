@@ -68,6 +68,7 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/jpeg",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -447,6 +448,7 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_jpeg = { path = "src/jpeg" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -511,6 +513,11 @@ bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+# The codec's loops run for every sample of an image, and at opt-level 0 they take 20 to 60 times as long.
+# The overflow checks and debug assertions stay.
+[profile.dev.package.bun_jpeg]
+opt-level = 3
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
 # checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.

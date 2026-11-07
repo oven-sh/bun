@@ -9773,15 +9773,20 @@ declare module "bun" {
      *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
      *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
-     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
+     *   A damaged JPEG that libjpeg-turbo would decode with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
      *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
      *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
      *   before its last row, or inside the data of the `IDAT` chunk that holds
      *   it, rejects.
+     *   A JPEG with more than 500 scans rejects, and so does one with a scan of
+     *   what an earlier scan has already coded. Encoders write about 10 scans and
+     *   none of them twice, and each costs a pass over the whole image.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
-     *   that its decode or encode needs.
+     *   that its decode or encode needs. Not every allocation is reported this
+     *   way: elsewhere in the pipeline a failed one can end the process, so keep
+     *   `maxPixels` within what your memory allows.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9862,9 +9867,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG and WebP via
-   * statically-linked libjpeg-turbo / libwebp, and its own PNG codec; resize
-   * and rotate are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. JPEG, PNG and WebP codecs are
+   * built in; resize and rotate are SIMD kernels — no native module install,
+   * no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a

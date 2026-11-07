@@ -407,7 +407,7 @@ export interface Config {
   msvcLinker: string | undefined;
   /** Windows: llvm-rc, compiles bun.exe's resources. */
   rc: string | undefined;
-  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** x64: nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -620,7 +620,7 @@ export interface Toolchain extends JsToolchain {
   msvcLinker: string | undefined;
   /** Windows only: llvm-rc (resource compiler). */
   rc: string | undefined;
-  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** x64 targets: nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 }
 

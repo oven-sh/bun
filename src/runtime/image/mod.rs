@@ -20,6 +20,9 @@ pub(crate) mod codecs;
 #[path = "codec_jpeg.rs"]
 pub(crate) mod codec_jpeg;
 
+#[path = "jpeg_rows_testing.rs"]
+pub(crate) mod jpeg_rows_testing;
+
 #[path = "codec_png.rs"]
 pub(crate) mod codec_png;
 

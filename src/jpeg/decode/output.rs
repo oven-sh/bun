@@ -1,0 +1,410 @@
+//! All of decoding after the header (jdmaster.c, jdapistd.c, jdinput.c, jdmainct.c, jdsample.c).
+
+use super::arith::ArithDecoder;
+use super::coef::{CoefController, Entropy, Plane};
+use super::color::{self, Conversion};
+use super::huff::HuffDecoder;
+use super::lossless::DiffController;
+use super::marker::Reached;
+use super::phuff::PHuffDecoder;
+use super::upsample::{self, Method};
+use super::{ColorSpace, DCTSIZE, Decoder, last_group};
+use crate::alloc::{try_box, try_vec_with_capacity};
+use crate::error::{Error, Result};
+
+enum Source {
+    Lossy(CoefController),
+    Lossless(Box<DiffController>),
+}
+
+/// What turns the rows of one component into rows of the image.
+struct Upsampler {
+    method: Method,
+    /// Rows of the component that go into `max_v_samp` rows of the image.
+    rowgroup_height: usize,
+    /// Rows of the component in an iMCU row.
+    rows: usize,
+    /// The same for the last iMCU row, without the rows below the bottom of the image.
+    last_rows: usize,
+    /// Samples in a row, without the ones past the right edge of the image.
+    width: usize,
+    /// The last row of the iMCU row above the current one. Has the room from the start.
+    above: Vec<u8>,
+    /// `max_v_samp` upsampled rows, unless the component has full size.
+    buffer: Option<Plane>,
+}
+
+/// Whether an iMCU row is the first of the image, and whether it is the last. Beyond those the outermost row repeats.
+struct Edges {
+    top: bool,
+    bottom: bool,
+}
+
+pub struct DecodeOptions {
+    /// The size of the result, from 1 to 8 eighths of the size of the image.
+    pub eighths: u32,
+    /// A stream with more scans is refused. A scan can be 10 bytes long and still costs a pass over the whole image.
+    pub max_scans: u32,
+}
+
+impl Decoder<'_> {
+    /// The size of the image that `decode` makes at `eighths`, from 1 to 8.
+    pub fn scaled_size(&self, eighths: u32) -> (u32, u32) {
+        (
+            (self.width * eighths).div_ceil(DCTSIZE),
+            (self.height * eighths).div_ceil(DCTSIZE),
+        )
+    }
+
+    /// 4 bytes per pixel: R, G, B, 255 or, for `Cmyk` and `Ycck`, CMYK as the stream has it: for Adobe, 255 is no ink.
+    pub fn decode(mut self, options: &DecodeOptions) -> Result<Vec<u8>> {
+        let &DecodeOptions { eighths, max_scans } = options;
+        if !(1..=DCTSIZE).contains(&eighths) || (eighths != DCTSIZE && !self.scalable()) {
+            return Err(Error::InvalidArgument);
+        }
+        let (output_width, output_height) = self.scaled_size(eighths);
+        let min_dct_scaled_size = if self.lossless { 1 } else { eighths };
+        if !self.lossless {
+            self.scale_components(eighths);
+        }
+        if self.precision > 8 {
+            return Err(Error::BadPrecision(self.precision));
+        }
+
+        let conversion = self.select_conversion()?;
+        let mut upsamplers = self.select_upsamplers(min_dct_scaled_size, output_width)?;
+        let mut source = if self.lossless {
+            if self.arith_code {
+                return Err(Error::ArithNotImpl);
+            }
+            Source::Lossless(try_box(DiffController::new(&self)?)?)
+        } else {
+            let entropy = if self.arith_code {
+                Entropy::Arith(try_box(ArithDecoder::new(&self)?)?)
+            } else if self.progressive {
+                Entropy::PHuff(try_box(PHuffDecoder::new(&self)?)?)
+            } else {
+                Entropy::Huff(try_box(HuffDecoder::new(&mut self)?)?)
+            };
+            Source::Lossy(CoefController::new(entropy)?)
+        };
+
+        let new_planes = |decoder: &Self| -> Result<Vec<Plane>> {
+            let mut planes = try_vec_with_capacity(decoder.components.len())?;
+            for comp in &decoder.components {
+                let size = comp.dct_scaled_size as usize;
+                planes.push(Plane::new(
+                    comp.width_in_blocks as usize * size,
+                    comp.v_samp as usize * size,
+                )?);
+            }
+            Ok(planes)
+        };
+        let mut current = new_planes(&self)?;
+        let need_context = upsamplers
+            .iter()
+            .any(|upsampler| upsampler.method.needs_context());
+        let mut next = if need_context {
+            new_planes(&self)?
+        } else {
+            Vec::new()
+        };
+
+        let mut pixels = try_vec_with_capacity(output_width as usize * output_height as usize)?;
+
+        self.start_input_pass(&mut source)?;
+        if self.has_multiple_scans {
+            // All of the input comes before any of the output.
+            loop {
+                match &mut source {
+                    Source::Lossy(coef) => coef.consume_scan(&mut self)?,
+                    Source::Lossless(diff) => diff.consume_scan(&mut self)?,
+                }
+                match self.read_markers()? {
+                    Reached::Sos => self.start_input_pass(&mut source)?,
+                    Reached::Eoi => break,
+                }
+                if self.input_scan_number > max_scans {
+                    return Err(Error::TooManyScans(max_scans));
+                }
+            }
+        }
+
+        if let Source::Lossy(coef) = &mut source {
+            coef.start_output_pass(&self)?;
+        }
+
+        let mut emitter = Emitter {
+            conversion,
+            max_v_samp: self.max_v_samp as usize,
+            rowgroups: min_dct_scaled_size as usize,
+            output_width: output_width as usize,
+            rows_left: output_height as usize,
+            pixels: &mut pixels,
+        };
+        let total = self.total_imcu_rows;
+        for imcu_row in 0..total {
+            // With context, an iMCU row is emitted once the one below it is there.
+            let planes = if need_context && imcu_row > 0 {
+                &mut next
+            } else {
+                &mut current
+            };
+            match (&mut source, self.has_multiple_scans) {
+                (Source::Lossy(coef), false) => coef.decompress_onepass(&mut self, planes)?,
+                (Source::Lossy(coef), true) => coef.decompress_data(&self, imcu_row, planes)?,
+                (Source::Lossless(diff), false) => diff.decompress_onepass(&mut self, planes)?,
+                (Source::Lossless(diff), true) => diff.output_data(&self, imcu_row, planes)?,
+            }
+            if !need_context {
+                let (top, bottom) = (imcu_row == 0, imcu_row + 1 == total);
+                emitter.emit(&mut upsamplers, &current, None, Edges { top, bottom })?;
+            } else if imcu_row > 0 {
+                let (top, bottom) = (imcu_row == 1, false);
+                emitter.emit(
+                    &mut upsamplers,
+                    &current,
+                    Some(&next),
+                    Edges { top, bottom },
+                )?;
+                for (upsampler, plane) in upsamplers.iter_mut().zip(&current) {
+                    if upsampler.method.needs_context() {
+                        upsampler.above.clear();
+                        upsampler
+                            .above
+                            .extend_from_slice(plane.row(upsampler.rows - 1)?);
+                    }
+                }
+                core::mem::swap(&mut current, &mut next);
+            }
+        }
+        if need_context {
+            let (top, bottom) = (total == 1, true);
+            emitter.emit(&mut upsamplers, &current, None, Edges { top, bottom })?;
+        }
+
+        // Whatever follows has to be well formed up to the end of the image.
+        if !self.has_multiple_scans && matches!(self.read_markers()?, Reached::Sos) {
+            return Err(Error::EoiExpected);
+        }
+        // The caller takes the size from the header.
+        if emitter.rows_left != 0 {
+            return Err(Error::Internal);
+        }
+        Ok(pixels.into_flattened())
+    }
+
+    /// Where it works out, a larger inverse DCT brings a subsampled component closer to full size and saves upsampling.
+    fn scale_components(&mut self, min_dct_scaled_size: u32) {
+        for comp in &mut self.components {
+            let mut ssize = min_dct_scaled_size;
+            while ssize < DCTSIZE
+                && (self.max_h_samp * min_dct_scaled_size).is_multiple_of(comp.h_samp * ssize * 2)
+                && (self.max_v_samp * min_dct_scaled_size).is_multiple_of(comp.v_samp * ssize * 2)
+            {
+                ssize *= 2;
+            }
+            comp.dct_scaled_size = ssize;
+            comp.downsampled_width =
+                (self.width * comp.h_samp * ssize).div_ceil(self.max_h_samp * DCTSIZE);
+            comp.downsampled_height =
+                (self.height * comp.v_samp * ssize).div_ceil(self.max_v_samp * DCTSIZE);
+        }
+    }
+
+    fn select_conversion(&self) -> Result<Conversion> {
+        Ok(match self.color_space {
+            ColorSpace::Rgb => Conversion::RgbToRgba,
+            ColorSpace::Cmyk => Conversion::Cmyk,
+            // A lossless stream only converts in ways that lose nothing, and libjpeg counts none of these among them.
+            _ if self.lossless => return Err(Error::ConversionNotImpl),
+            ColorSpace::Grayscale => Conversion::GrayToRgba,
+            ColorSpace::YCbCr => Conversion::YccToRgba,
+            ColorSpace::Ycck => Conversion::YcckToCmyk,
+        })
+    }
+
+    fn select_upsamplers(
+        &self,
+        min_dct_scaled_size: u32,
+        output_width: u32,
+    ) -> Result<Vec<Upsampler>> {
+        // At 1/8 there is no room for the rows of context that interpolation needs.
+        let fancy = min_dct_scaled_size > 1;
+        let (h_out, v_out) = (self.max_h_samp, self.max_v_samp);
+        let mut upsamplers = try_vec_with_capacity(self.components.len())?;
+        for comp in &self.components {
+            let h_in = comp.h_samp * comp.dct_scaled_size / min_dct_scaled_size;
+            let v_in = comp.v_samp * comp.dct_scaled_size / min_dct_scaled_size;
+            let replicate = Method::Replicate {
+                h_expand: h_out / h_in,
+                v_expand: v_out / v_in,
+            };
+            let method = if h_in == h_out && v_in == v_out {
+                Method::FullSize
+            } else if h_in * 2 == h_out && v_in == v_out {
+                if fancy && comp.downsampled_width > 2 {
+                    Method::H2V1Fancy
+                } else {
+                    replicate
+                }
+            } else if h_in == h_out && v_in * 2 == v_out && fancy {
+                Method::H1V2Fancy
+            } else if h_in * 2 == h_out && v_in * 2 == v_out {
+                if fancy && comp.downsampled_width > 2 {
+                    Method::H2V2Fancy
+                } else {
+                    replicate
+                }
+            } else if h_out % h_in == 0 && v_out % v_in == 0 {
+                replicate
+            } else {
+                return Err(Error::FractSampleNotImpl);
+            };
+
+            let rows = comp.v_samp * comp.dct_scaled_size;
+            upsamplers.push(Upsampler {
+                method,
+                rowgroup_height: v_in as usize,
+                rows: rows as usize,
+                last_rows: last_group(comp.downsampled_height, rows) as usize,
+                width: comp.downsampled_width as usize,
+                above: if method.needs_context() {
+                    try_vec_with_capacity((comp.width_in_blocks * comp.dct_scaled_size) as usize)?
+                } else {
+                    Vec::new()
+                },
+                buffer: if method == Method::FullSize {
+                    None
+                } else {
+                    let stride = output_width.next_multiple_of(h_out) as usize;
+                    Some(Plane::new(stride, v_out as usize)?)
+                },
+            });
+        }
+        Ok(upsamplers)
+    }
+
+    fn start_input_pass(&mut self, source: &mut Source) -> Result<()> {
+        self.per_scan_setup()?;
+        self.input.insufficient_data = false;
+        if !self.progressive {
+            for i in 0..self.components_in_scan {
+                // libjpeg decodes the component again: a pass over the image for a few bytes, up to `max_scans` times.
+                if core::mem::replace(&mut self.scan_component_mut(i)?.scanned, true) {
+                    return Err(Error::RedundantScan);
+                }
+            }
+        }
+        match source {
+            Source::Lossy(coef) => {
+                self.latch_quant_tables()?;
+                coef.entropy.start_pass(self)?;
+                coef.start_input_pass();
+                Ok(())
+            }
+            Source::Lossless(diff) => diff.start_input_pass(self),
+        }
+    }
+}
+
+struct Emitter<'p> {
+    conversion: Conversion,
+    max_v_samp: usize,
+    /// Row groups in an iMCU row. Each makes `max_v_samp` rows of the image.
+    rowgroups: usize,
+    output_width: usize,
+    /// Rows of the image that are still to be written.
+    rows_left: usize,
+    pixels: &'p mut Vec<[u8; 4]>,
+}
+
+impl Emitter<'_> {
+    /// Writes the rows of the image that the iMCU row in `current` makes. `below` is the next, if upsampling needs it.
+    fn emit(
+        &mut self,
+        upsamplers: &mut [Upsampler],
+        current: &[Plane],
+        below: Option<&[Plane]>,
+        Edges { top, bottom }: Edges,
+    ) -> Result<()> {
+        for rowgroup in 0..self.rowgroups {
+            if self.rows_left == 0 {
+                break;
+            }
+            for (ci, (upsampler, plane)) in upsamplers.iter_mut().zip(current).enumerate() {
+                let Upsampler { above, buffer, .. } = upsampler;
+                let Some(buffer) = buffer else {
+                    continue;
+                };
+                let (width, rows) = (upsampler.width, upsampler.rows);
+                let limit = if bottom { upsampler.last_rows } else { rows };
+                // `y` is one more than the row within the iMCU row, so that 0 is the row above it.
+                let row = |y: usize| -> Result<&[u8]> {
+                    let row = match y.checked_sub(1) {
+                        None if top => plane.row(0)?,
+                        None => above.as_slice(),
+                        Some(y) if y < limit => plane.row(y)?,
+                        Some(_) if bottom => plane.row(limit - 1)?,
+                        Some(y) => below
+                            .and_then(|below| below.get(ci))
+                            .ok_or(Error::Internal)?
+                            .row(y - rows)?,
+                    };
+                    row.get(..width).ok_or(Error::Internal)
+                };
+                let first = rowgroup * upsampler.rowgroup_height + 1;
+                let mut out_rows = buffer.data.chunks_exact_mut(buffer.stride);
+                let mut out_row = || out_rows.next().ok_or(Error::Internal);
+
+                match upsampler.method {
+                    Method::FullSize => return Err(Error::Internal),
+                    Method::H2V1Fancy => {
+                        for y in first..first + upsampler.rowgroup_height {
+                            upsample::h2v1_fancy(row(y)?, out_row()?);
+                        }
+                    }
+                    Method::H1V2Fancy => {
+                        for y in first..first + upsampler.rowgroup_height {
+                            let out = [out_row()?, out_row()?];
+                            upsample::h1v2_fancy(row(y - 1)?, row(y)?, row(y + 1)?, out);
+                        }
+                    }
+                    Method::H2V2Fancy => {
+                        for y in first..first + upsampler.rowgroup_height {
+                            upsample::h2v2_fancy(row(y)?, row(y - 1)?, out_row()?);
+                            upsample::h2v2_fancy(row(y)?, row(y + 1)?, out_row()?);
+                        }
+                    }
+                    Method::Replicate { h_expand, v_expand } => {
+                        for y in first..first + upsampler.rowgroup_height {
+                            let out = out_row()?;
+                            upsample::replicate(row(y)?, h_expand, out);
+                            for _ in 1..v_expand {
+                                out_row()?.copy_from_slice(out);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for r in 0..self.max_v_samp {
+                if self.rows_left == 0 {
+                    break;
+                }
+                self.rows_left -= 1;
+                let mut planes: [&[u8]; 4] = [&[]; 4];
+                for ((input, upsampler), plane) in
+                    planes.iter_mut().zip(upsamplers.iter()).zip(current)
+                {
+                    *input = match &upsampler.buffer {
+                        Some(buffer) => buffer.row(r)?,
+                        None => plane.row(rowgroup * upsampler.rowgroup_height + r)?,
+                    };
+                }
+                color::convert(self.conversion, planes, self.output_width, self.pixels)?;
+            }
+        }
+        Ok(())
+    }
+}

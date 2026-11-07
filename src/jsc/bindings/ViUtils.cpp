@@ -108,15 +108,12 @@ bool stubReplacesWhatSpyReplaced(Zig::GlobalObject* globalObject, const Identifi
 // A spy or a fake timer function that was put on `globalThis[name]` after its first stub replaces what that stub replaced from
 // now on. `replacedByStub` is null if the stub made the global. Returns true if the global then stays as it is. Otherwise
 // `*replacedByStub` may have the fake timer function as its value, so that it is what goes back.
-static bool handOverFromStub(Zig::GlobalObject* globalObject, const Identifier& name, PropertyDescriptor* replacedByStub)
+static NEVER_INLINE bool handOverFromStub(Zig::GlobalObject* globalObject, const Identifier& name, PropertyDescriptor* replacedByStub)
 {
-    auto& mocks = globalObject->mockModule;
-    // Nothing else is known to be over a stub.
-    if (!mocks.fakeTimersAreInstalled && !mocks.mockFunctionStructure.isInitialized()) [[likely]]
-        return false;
     if (name.isSymbol() || parseIndex(name))
         return false;
 
+    auto& mocks = globalObject->mockModule;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue onGlobal = globalObject->getDirect(vm, name);
@@ -157,10 +154,14 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
         toPropertyDescriptor(globalObject, original, descriptor);
         RETURN_IF_EXCEPTION(scope, );
     }
-    bool staysAsItIs = handOverFromStub(defaultGlobalObject(globalObject), name, existed ? &descriptor : nullptr);
-    RETURN_IF_EXCEPTION(scope, );
-    if (staysAsItIs)
-        return;
+    // Only a fake timer function and a spy keep what they replaced, and can be over the stub.
+    auto& mocks = defaultGlobalObject(globalObject)->mockModule;
+    if (mocks.fakeTimersAreInstalled || mocks.hasSpiedOnGlobal) [[unlikely]] {
+        bool staysAsItIs = handOverFromStub(defaultGlobalObject(globalObject), name, existed ? &descriptor : nullptr);
+        RETURN_IF_EXCEPTION(scope, );
+        if (staysAsItIs)
+            return;
+    }
     scope.release();
     if (existed)
         target->methodTable()->defineOwnProperty(target, globalObject, name, descriptor, true);

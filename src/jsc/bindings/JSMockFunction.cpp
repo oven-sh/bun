@@ -1188,6 +1188,8 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
 {
     enter(List::Spies);
     this->isSpy = true;
+    if (target == globalObject()) [[unlikely]]
+        mockModule().hasSpiedOnGlobal = true;
     m_spyTarget = JSC::Weak<JSObject>(target, &weakValueHandleOwner(), nullptr);
     m_spyIdentifier = key;
     m_spyAttributes = attributes;

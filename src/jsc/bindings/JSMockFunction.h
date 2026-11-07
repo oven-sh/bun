@@ -83,6 +83,8 @@ public:
     bool preloadMayBeRunning { true };
     // True while useFakeTimers() has functions on their globals. One of them can be over a spy or a `vi.stubGlobal()`.
     bool fakeTimersAreInstalled { false };
+    // True once spyOn() has replaced a property of the global object. Such a spy can be over a `vi.stubGlobal()`.
+    bool hasSpiedOnGlobal { false };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

@@ -423,7 +423,17 @@ impl Options {
     /// `sourceToProjectReference`, for the file with this name.
     fn referenced_source(&self, name: &[u8]) -> Option<&ProjectFile> {
         let files = self.project_files.as_ref()?;
-        self.with_path(name, |path| self.last_referenced(files.sources.get(path)?))
+        self.with_path(name, |path| self.referenced_source_at(files, path))
+    }
+
+    fn referenced_source_at<'a>(
+        &self,
+        files: &'a ProjectFiles,
+        path: &[u8],
+    ) -> Option<&'a ProjectFile> {
+        let file = self.last_referenced(files.sources.get(path)?)?;
+        // Shared ProjectFiles belongs to every program. Only this program's named roots bypass declaration redirects.
+        (file.output_dts.is_empty() || !self.named_source_roots.contains(path)).then_some(file)
     }
 
     /// `outputDtsToProjectReference`, for the file with this name.
@@ -434,7 +444,7 @@ impl Options {
             // `outputDtsToProjectReference` stores the same `SourceOutputAndProjectReference` values as
             // `sourceToProjectReference`, so the entry is looked up through its source.
             let sources = sources.filter_map(|source| {
-                let file = self.last_referenced(files.sources.get(source)?)?;
+                let file = self.referenced_source_at(files, source)?;
                 (to_path(&file.output_dts, self.use_case_sensitive_file_names) == path)
                     .then_some(file)
             });
@@ -763,6 +773,8 @@ pub struct Options {
     pub referenced_outputs: Vec<(Vec<u8>, Vec<u8>)>,
     /// `tsc -b` reads the declaration file of a referenced project in place of the source (`getParseFileRedirect`).
     pub project_files: Option<std::sync::Arc<ProjectFiles>>,
+    /// Canonical source roots selected for this program. They are checked here instead of redirected to declarations.
+    pub named_source_roots: FxHashSet<Vec<u8>>,
     /// Maps the `ProjectFile::project` of each directly or indirectly referenced project to its
     /// index in `referenced_options`.
     pub referenced_projects: FxHashMap<u32, u32>,

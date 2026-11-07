@@ -6,7 +6,10 @@
 //! that has already listed the directories. What a project includes is decided from its patterns.
 
 use crate::host::{UncachedDisk, from_native};
-use crate::{has_no_installed_dependencies, installed_typescript, major_of_typescript_at};
+use crate::{
+    Listed, has_no_installed_dependencies, installed_typescript, major_of_typescript_at,
+    project_that_checks,
+};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Roots, SplitFilePath};
@@ -14,6 +17,7 @@ use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
 use bun_sema::resolve::{
     CachedConfig, Host, Options, ancestors, contains_path, inside, is_same_path, join,
+    output_declaration_file_name,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -104,19 +108,25 @@ impl Outlines {
         let host = self.uncached_host(false);
         let file = SplitFilePath::new(&path);
         let includes_file = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
-        for (config, project_slot) in self.above(dirname::<Posix>(&path)).iter() {
-            let Some(project) = self.read_into(project_slot, config) else {
-                continue;
-            };
-            // Its references are only read if it doesn't include the file itself.
-            let owner = match includes_file(project) {
-                true => Some(Arc::clone(project)),
-                false => {
+        for (config, _) in self.above(dirname::<Posix>(&path)).iter() {
+            let owner = project_that_checks(config, host.is_case_sensitive(), |config| {
+                let slot = self.project_slot_of(config);
+                let project = self.read_into(&slot, config)?;
+                let listed = includes_file(project).then(|| {
                     let reached = project.reached.get_or_init(|| self.reached_from(project));
-                    reached.iter().filter_map(Weak::upgrade).find(includes_file)
-                }
-            };
+                    // Globals read sources, so build-order cycles do not invalidate their owner.
+                    let redirects = output_declaration_file_name(&path, None).is_some()
+                        && reached
+                            .iter()
+                            .filter_map(Weak::upgrade)
+                            .any(|it| includes_file(&it));
+                    (Listed::AsConfigured, redirects)
+                });
+                Some((listed, project.references.clone()))
+            });
             if let Some(owner) = owner {
+                let slot = self.project_slot_of(&owner);
+                let owner = self.read_into(&slot, &owner)?;
                 let outline = || self.outline(&owner.options);
                 return owner.outline.get_or_init(outline).clone();
             }
@@ -193,8 +203,7 @@ impl Outlines {
         found
     }
 
-    /// Returns the projects that `project` references, directly or indirectly, in the order in which
-    /// `Projects::find_project_with` searches them for a file.
+    /// Membership of the referenced projects. `project_that_checks` owns selection order.
     fn reached_from(&self, project: &Project) -> Vec<Weak<Project>> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let mut all = Vec::new();

@@ -2075,3 +2075,74 @@ describe.concurrent("test environment with the real", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// React Testing Library awaits a setTimeout() of 0 at the end of every waitFor(), so also of every findBy query.
+// In bun test such a timer does not wait for Node's minimum of 1 ms.
+describe.concurrent("Testing Library does not wait 1 ms for a setTimeout() of 0", () => {
+  test.each([
+    ["in happy-dom", "--environment=happy-dom"],
+    ["in jsdom", "--environment=jsdom"],
+    // Then setTimeout() is happy-dom's, which passes a delay of 0 on as no delay at all.
+    ["in a happy-dom that a preload registers", "--preload=./register-happy-dom.js"],
+  ])("%s", async (_, flag) => {
+    using dir = tempDir("test-environment-testing-library", {
+      "register-happy-dom.js": `
+        import { GlobalRegistrator } from "@happy-dom/global-registrator";
+        GlobalRegistrator.register();
+      `,
+      "counter.test.js": `
+        import { fireEvent, render, waitFor } from "@testing-library/react";
+        import { expect, test } from "bun:test";
+        import { createElement, useState } from "react";
+
+        function Counter() {
+          const [count, setCount] = useState(0);
+          return createElement("button", { onClick: () => setCount(count + 1) }, count);
+        }
+
+        test("counter", async () => {
+          const waits = [];
+          const { setTimeout } = globalThis;
+          globalThis.setTimeout = (callback, delay, ...args) => {
+            if (delay) return setTimeout(callback, delay, ...args);
+            const start = performance.now();
+            return setTimeout(() => {
+              waits.push(performance.now() - start);
+              callback(...args);
+            }, delay);
+          };
+          try {
+            const button = render(createElement(Counter)).container.firstChild;
+            for (let count = 1; count <= 50; count++) {
+              fireEvent.click(button);
+              await waitFor(() => expect(button.textContent).toBe(String(count)));
+            }
+          } finally {
+            globalThis.setTimeout = setTimeout;
+          }
+          // The median: a busy machine stretches some of the waits, and the minimum stretches all of them.
+          const median = waits.sort((a, b) => a - b)[waits.length >> 1];
+          console.log(waits.length, "waits, the median", median < 1 ? "under 1 ms" : "of " + median + " ms");
+        });
+      `,
+    });
+    // All the packages of the test suite: React and Testing Library beside the two DOMs.
+    symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+    await using proc = Bun.spawn({
+      // In a debug build the 50 rounds take 1 s, and more than the default 5 s when 20 such processes share 4 cores.
+      cmd: [bunExe(), "test", flag, "--timeout=60000"],
+      cwd: String(dir),
+      // CI sets BUN_GARBAGE_COLLECTOR_LEVEL=1, with which every expect() asks for a collection. On Windows the next
+      // turn of the event loop runs it, and that turn is the wait.
+      env: { ...bunEnv, NODE_PATH: undefined, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    // slice(1) drops the "bun test v1.2.3" banner.
+    expect(stdout.split("\n").slice(1).filter(Boolean)).toEqual(["50 waits, the median under 1 ms"]);
+    expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+});

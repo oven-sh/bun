@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "4d45755fed4aeef19e95beb90d3d0c884a2812bd";
+export const WEBKIT_VERSION = "da82a279b916a70c8e3494c6b182b5606d5cbe53";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -374,6 +374,8 @@ const rows: Row[] = [
   ["ENABLE_LAYOUT_TESTS", 0],
   ["ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", 0],
   ["ENABLE_LEGACY_ENCRYPTED_MEDIA", 0],
+  // WebKitFeatures.cmake exposes it where it is off, which is everywhere but Apple. PlatformEnable.h turns it on for macOS.
+  ["ENABLE_LIB_JSC_TOOLS", c => (c.darwin ? undefined : 0)],
   ["ENABLE_LLVM_PROFILE_GENERATION", 0],
   ["ENABLE_MAC_GESTURE_EVENTS", 0],
   ["ENABLE_MALLOC_HEAP_BREAKDOWN", 0],
@@ -452,6 +454,7 @@ const rows: Row[] = [
   ["ENABLE_WEBXR", 0],
   ["ENABLE_WEBXR_HIT_TEST", 0],
   ["ENABLE_WEBXR_LAYERS", 0],
+  ["ENABLE_WEBXR_PLANE_DETECTION", 0],
   ["ENABLE_WEB_API_STATISTICS", 0],
   ["ENABLE_WEB_AUDIO", 1],
   ["ENABLE_WEB_AUTHN", 0],
@@ -718,6 +721,8 @@ function webkitLists(wk: WebKitBuild): WebKitLists {
     ...flag("UNIX", cfg.unix),
     ...flag("APPLE", cfg.darwin),
     ...flag("ANDROID", cfg.abi === "android"),
+    // WebKitFeatures.cmake: on for Apple targets. It is not in cmakeconfig.h. The lists take the corpse headers by it.
+    ...flag("ENABLE_JAVASCRIPTCORE_TOOLS", cfg.darwin),
     ...flag("WTF_CPU_X86_64", cfg.x64),
     ...flag("WTF_CPU_ARM64", cfg.arm64),
     COMPILER_IS_GCC_OR_CLANG: "ON",

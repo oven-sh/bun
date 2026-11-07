@@ -85,8 +85,23 @@ show("sealed, without elements", () => {
   sealed[100] = 1.5;
   return listKeys(sealed);
 });
+// Before WebKit 1d4bed41aca8 the first line of the output was ["9","a"]: the answer of the specification, where the typed array
+// ignores the store. Now the store throws there, as in plain Bun. An object that is made the same one definition at a time, and a
+// frozen one, still get the answer of the specification.
+show("each property made not configurable, an index past the end", () => {
+  const object = below({ a: 1, 9: 1.5 }, new Uint8Array(0));
+  for (const key of Reflect.ownKeys(object)) Object.defineProperty(object, key, { configurable: false });
+  Object.preventExtensions(object);
+  object[100] = 1.5;
+  return listKeys(object);
+});
+show("frozen, an index past the end", () => {
+  const frozen = Object.freeze(below({ a: 1, 9: 1.5 }, new Uint8Array(0)));
+  frozen[100] = 1.5;
+  return listKeys(frozen);
+});
 /* Output:
-sealed, an index past the end ["9","a"]
+sealed, an index past the end throws TypeError
 sealed, its own index ["9","a"]2.5
 sealed, a name throws TypeError
 store number 0 ["0"]
@@ -111,4 +126,6 @@ two above []
 an array below ["length"]
 a subclass above []
 sealed, without elements ["a"]
+each property made not configurable, an index past the end ["9","a"]
+frozen, an index past the end ["9","a"]
 */

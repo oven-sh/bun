@@ -72,10 +72,11 @@ bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots
     return visitor.containsOpaqueRoot(wrapper.impl());
 }
 
-void WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto& wrapper = *static_cast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
     uncacheWrapper(*static_cast<DOMWrapperWorld*>(context), wrapper.impl(), &wrapper);
+    return FinalizeResult::KeepImpl;
 }
 
 } // namespace WebCore

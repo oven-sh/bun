@@ -224,6 +224,46 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("a value that could shape a class is a string ref only after a [ of the script", () => {
+    // A value with none of the shell's special characters is copied into the script, and its word stays one token.
+    expect(JSON.parse(lex`tool --out=${"my-dir"}`)).toEqual([
+      { "Text": "tool" },
+      { "Delimit": {} },
+      { "Text": "--out=my-dir" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    // After a `[` the value could be in a class of the script, where its `-` would make a range. A string ref
+    // starts a token of its own.
+    const after = [{ "Text": "echo" }, { "Delimit": {} }, { "Text": "[x]" }, { "Delimit": {} }];
+    expect(JSON.parse(lex`echo [x] --out=${"my-dir"}`)).toEqual([
+      ...after,
+      { "Text": "--out=" },
+      { "Text": "my-dir" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`echo [x] --out=${"mydir"}`)).toEqual([
+      ...after,
+      { "Text": "--out=mydir" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    // The value before the `[` is copied, and the value after it is a string ref.
+    expect(JSON.parse(lex`tool ${"a-b"} [x] --out=${"my-dir"}`)).toEqual([
+      { "Text": "tool" },
+      { "Delimit": {} },
+      { "Text": "a-b" },
+      { "Delimit": {} },
+      { "Text": "[x]" },
+      { "Delimit": {} },
+      { "Text": "--out=" },
+      { "Text": "my-dir" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
   test("op_and", () => {
     const expected = [
       { "Text": "echo" },

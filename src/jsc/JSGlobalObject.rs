@@ -823,9 +823,7 @@ impl JSGlobalObject {
         self.throw_formatted(ErrorKind::Error, args)
     }
 
-    /// Throws `new <kind>(args)`. If formatting `args` ran JS that threw (a custom inspect method,
-    /// a `Symbol.toPrimitive`), that exception is the one thrown: a caller that throws can hand it
-    /// on, where `create_*_error_instance` has to return an error and clears it.
+    /// If formatting `args` ran JS that threw, that exception is thrown. `error_message` would clear it.
     #[cold]
     #[inline(never)]
     fn throw_formatted(&self, kind: ErrorKind, args: Arguments<'_>) -> JsError {

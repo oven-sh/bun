@@ -691,18 +691,35 @@ describe.concurrent("hoisting", () => {
 
   // A mock updates a loaded project file in place, so this import gets the mock and the helper needs no top-level await.
   test.each([
-    ["vi.mock", `vi.mock("./cfg.json", () => ({ default: { env: "mocked" } }));`, "mocked"],
-    ["vi.unmock", `vi.unmock("./cfg.json");`, "real"],
+    { name: "vi.mock", path: "./cfg.json", call: "vi.mock", expected: "mocked" },
+    { name: "vi.unmock", path: "./cfg.json", call: "vi.unmock", expected: "real" },
+    { name: "a name with node_modules in it", path: "./node_modules-cfg.json", call: "vi.mock", expected: "mocked" },
+    {
+      name: "an alias from imports in package.json",
+      path: "#cfg",
+      call: "vi.mock",
+      expected: "mocked",
+      files: { "package.json": `{ "imports": { "#cfg": "./cfg.json" } }` },
+    },
+    ...["@cfg", "@/cfg"].map(path => ({
+      name: `the alias ${path} from paths in tsconfig.json`,
+      path,
+      call: "vi.mock",
+      expected: "mocked",
+      files: { "tsconfig.json": `{ "compilerOptions": { "paths": { "${path}": ["./cfg.json"] } } }` },
+    })),
   ])(
-    "a helper that names a project file that it imports with attributes runs ahead of the next import: %s",
-    async (_, hoisted, expected) => {
+    "a helper that names a project file that it imports with attributes runs ahead of the next import: $name",
+    async ({ path, call, expected, files }) => {
+      const factory = call === "vi.mock" ? `, () => ({ default: { env: "mocked" } })` : ``;
       expect(
         await events({
-          "cfg.json": `{ "env": "real" }`,
+          [path.startsWith(".") ? path : "cfg.json"]: `{ "env": "real" }`,
+          ...files,
           "helper.ts": `
             import { vi } from "bun:test";
-            import cfg from "./cfg.json" with { type: "json" };
-            ${hoisted}
+            import cfg from "${path}" with { type: "json" };
+            ${call}("${path}"${factory});
             globalThis.env = cfg.env;
           `,
           "app.ts": `(globalThis.events ??= []).push(globalThis.env);`,

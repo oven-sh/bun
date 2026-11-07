@@ -1117,6 +1117,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     // Same mono-proto structure means the same prototype chain, so a data slot found on it is val2.constructor too.
                     bool inheritedFromSharedChain = slot1.isCacheableValue() && slot1.slotBase() != protoCheck1
                         && protoCheck1->structureID() == protoCheck2->structureID() && !protoCheck1->structure()->hasPolyProto();
+#if ENABLE(AOT)
+                    // The Structure of a compiled object doesn't say which properties it has.
+                    if (inheritedFromSharedChain && JSC::AOT::PropertyWalk::isCompiledObject(protoCheck2)) [[unlikely]]
+                        inheritedFromSharedChain = JSC::AOT::PropertyWalk::hasOwnProperty(protoCheck2, constructorName.impl()) == JSC::AOT::PropertyWalk::Presence::Absent;
+#endif
                     if (!inheritedFromSharedChain) {
                         JSValue constructor2 = protoCheck2->get(globalObject, constructorName);
                         RETURN_IF_EXCEPTION(scope, false);

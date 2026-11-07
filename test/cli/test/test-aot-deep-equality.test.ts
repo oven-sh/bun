@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { raiseDefaultTimeout } from "../../aot/harness/default-timeout";
 import { run } from "../../aot/harness/run";
 import { test } from "../../aot/supported";
 
-setDefaultTimeout(60_000);
+raiseDefaultTimeout(60_000);
 
 const files = {
   "cases.ts": readFileSync(join(import.meta.dir, "../../aot/parallel/typed-objects/deep-equality/cases.ts"), "utf8"),
@@ -38,12 +39,34 @@ test("asymmetric matchers against typed objects", () => {
 `,
 };
 
-async function rowsOf(cwd: string, aot: boolean) {
-  const { stdout, stderr, exitCode } = await run(
-    [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
-    cwd,
-  );
-  return { rows: stdout.split("\n").filter(line => line.startsWith("ROW ")), stderr: exitCode ? stderr : "", exitCode };
+const constructorFiles = {
+  "pairs.cjs": readFileSync(
+    join(
+      import.meta.dir,
+      "../../aot/parallel/objects/deep-comparison-of-two-records-one-with-constructor-beside-a-late-key/pairs.cjs",
+    ),
+    "utf8",
+  ),
+  "constructors.test.cjs": `
+const { describe } = require("bun:jsc");
+const { test } = require("bun:test");
+const { isDeepStrictEqual } = require("node:util");
+const pairs = require("./pairs.cjs");
+const structureOf = object => /StructureID: (\\d+)/.exec(describe(object))[1];
+test("two records, one of which owns a constructor", () => {
+  for (const [name, make] of pairs) {
+    const [first, second] = make();
+    console.log("SHAPE", name + ":", structureOf(first) === structureOf(second) ? "one Structure" : "two Structures");
+    console.log("ROW", name + ":", isDeepStrictEqual(first, second));
+  }
+});
+`,
+};
+
+async function rowsOf(cwd: string, aot: boolean, file = "./matchers.test.ts") {
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--debug-aot"] : []), file], cwd);
+  const lines = (prefix: string) => stdout.split("\n").filter(line => line.startsWith(prefix));
+  return { rows: lines("ROW "), shapes: lines("SHAPE "), stderr: exitCode ? stderr : "", exitCode };
 }
 
 test("under bun test --aot, matchers that compare deeply answer for typed objects as for plain ones", async () => {
@@ -52,5 +75,20 @@ test("under bun test --aot, matchers that compare deeply answer for typed object
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);
   expect(expected.rows.length).toBe(88);
   expect(actual).toEqual(expected);
+  expect(actual.exitCode).toBe(0);
+});
+
+test("under bun test --aot, node:util answers for two records of one Structure, one of which owns a constructor, as without it", async () => {
+  using expectedDir = tempDir("test-aot-deep-equality", constructorFiles);
+  using actualDir = tempDir("test-aot-deep-equality", constructorFiles);
+  const [{ shapes: _, ...expected }, { shapes, ...actual }] = await Promise.all([
+    rowsOf(String(expectedDir), false, "./constructors.test.cjs"),
+    rowsOf(String(actualDir), true, "./constructors.test.cjs"),
+  ]);
+  expect(expected.rows.length).toBe(9);
+  expect(actual).toEqual(expected);
+  // The comparison skips the read of the second constructor only for two objects of one Structure: without such a pair no row asks for it.
+  expect(shapes).toContain("SHAPE a value that is not enumerable, on the second: one Structure");
+  expect(shapes).toContain("SHAPE a getter that is not enumerable, on the second: one Structure");
   expect(actual.exitCode).toBe(0);
 });

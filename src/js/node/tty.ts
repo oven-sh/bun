@@ -133,7 +133,8 @@ const prototypeOfReadStream = {
             return this;
           }
         }
-      } else {
+      } else if (!this.destroyed) {
+        // A destroyed stream has no handle in Node (https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L79): only the flag is recorded.
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
         const err = ttySetMode(this.fd, flag, state);
         if (err) {
@@ -148,6 +149,9 @@ const prototypeOfReadStream = {
     };
 
     Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
+      // The stream that set raw mode gives the terminal back, as https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tty.c#L358-L366.
+      const state = this[kRawModeState];
+      if (process.platform !== "win32" && state) ttySetMode(this.fd, false, state);
       if (isStdio(this.fd)) return cb(err);
       require("internal/fs/streams").ReadStream.prototype._destroy.$call(this, err, cb);
     };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
@@ -1868,6 +1868,70 @@ describe("bundler", () => {
     target: "bun",
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("h(");
+    },
+  });
+  // A path in `external` names the same file or folder with and without a separator at its end.
+  // Each row: the external, what the entry point imports, and whether those imports stay imports.
+  const externalPathRows: [id: string, external: string, specifiers: string[], kept: boolean][] = [
+    ["Folder", "./lib/", ["./lib"], true],
+    ["AbsoluteFolder", "{{root}}/lib/", ["./lib"], true],
+    ["TwoSeparators", "./lib//", ["./lib"], true],
+    ["File", "./lib/index.js/", ["./lib/index.js"], true],
+    ["ImportEndsInDot", "./lib/", ["./lib/."], true],
+    ["MissingTarget", "./absent/", ["./absent"], true],
+    ["ImportEndsInSeparator", "./lib/", ["./lib/"], true],
+    ["BothImportSpellings", "./lib/", ["./lib", "./lib/"], true],
+    // The match is on the whole path: a folder does not cover the files inside it.
+    ["FileInsideFolder", "./lib/", ["./lib/index.js"], false],
+    ["ParentFolder", "./", ["./lib"], false],
+  ];
+  if (isWindows) {
+    externalPathRows.push(["Backslashes", ".\\lib\\", ["./lib"], true]);
+  } else {
+    // An import by absolute path has a compare of its own in the resolver. On Windows that compare
+    // is on the import as written, which has no drive letter or has `/` where the list has `\`.
+    externalPathRows.push(
+      ["AbsoluteImport", "./lib/", ["{{root}}/lib", "{{root}}/lib/"], true],
+      ["RootedImport", "/api/", ["/api", "/api/"], true],
+    );
+  }
+  for (const backend of ["cli", "api"] as const) {
+    for (const [id, external, specifiers, kept] of externalPathRows) {
+      const imports = specifiers.map((specifier, i) => `import v${i} from ${JSON.stringify(specifier)};`);
+      itBundled(`edgecase/ExternalPathEndsInSeparator/${id}/${backend}`, {
+        backend,
+        files: {
+          "/entry.js": `${imports.join("\n")}\nconsole.log(${specifiers.map((_, i) => `v${i}`)});`,
+          "/lib/index.js": `export default "LIB";`,
+        },
+        external: [external],
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect({
+            imports: out.match(/^import .+$/gm) ?? [],
+            bundlesLib: out.includes(`"LIB"`),
+          }).toEqual({
+            imports: kept ? imports.map(line => line.replaceAll("{{root}}", api.root)) : [],
+            bundlesLib: !kept,
+          });
+        },
+      });
+    }
+  }
+  // bunfig.toml gives `bun build` the same list.
+  itBundled("edgecase/ExternalPathEndsInSeparator/Bunfig", {
+    backend: "cli",
+    files: {
+      "/entry.js": `import v from "./lib";\nconsole.log(v);`,
+      "/lib/index.js": `export default "LIB";`,
+      "/bunfig.toml": `external = ["./lib/"]`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect({
+        imports: out.match(/^import .+$/gm) ?? [],
+        bundlesLib: out.includes(`"LIB"`),
+      }).toEqual({ imports: [`import v from "./lib";`], bundlesLib: false });
     },
   });
   // `bun build --compile --aot` resolves entry points with a resolver of its own, to the same answers.

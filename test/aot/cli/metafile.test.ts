@@ -190,6 +190,7 @@ describe.concurrent("--metafile with --aot", () => {
 import type { Shape } from "./shape";
 import { unused } from "./unused";
 import * as marked from "marked-external";
+import * as outside from "./outside";
 import test from "node:test";
 let missing: unknown;
 try {
@@ -197,11 +198,12 @@ try {
 } catch {}
 const shape: Shape = { name: process.argv[2] ?? "b" };
 const chosen = require("./chosen/" + shape.name + ".ts");
-console.log(typeof marked, typeof test, typeof missing, chosen.name, import.meta.resolve("./resolved.ts").endsWith("resolved.ts"));
+console.log(typeof marked, typeof outside, typeof test, typeof missing, chosen.name, import.meta.resolve("./resolved.ts").endsWith("resolved.ts"));
 `,
           "marked-external.d.ts": `declare module "marked-external";\n`,
           "shape.ts": `export interface Shape {\n  name: string;\n}\n`,
           "unused.ts": `export const unused = 1;\n`,
+          "outside/index.ts": `export const outside = 1;\n`,
           "resolved.ts": `export const resolved = 1;\n`,
           "chosen/a.ts": `export const name = "a";\n`,
           "chosen/b.ts": `export const name = "b";\n`,
@@ -211,12 +213,14 @@ console.log(typeof marked, typeof test, typeof missing, chosen.name, import.meta
           await bun(
             // Only the metafile is read. An executable that loads code at run time would hold every built-in module.
             ...[folder, "build", "--compile", "--aot", "--no-builtin-modules", "--external", "marked-external"],
-            ...["--metafile=meta.json", "main.ts", "--outfile", "app"],
+            // A folder is external with a separator at the end of its path too.
+            ...["--external", "./outside/", "--metafile=meta.json", "main.ts", "--outfile", "app"],
           ),
         );
         const metafile = read(join(folder, "meta.json"));
         expect(Object.keys(metafile.inputs).sort()).toEqual(["chosen/a.ts", "chosen/b.ts", "main.ts", "resolved.ts"]);
         expect(metafile.inputs["main.ts"].imports.map(line).sort()).toEqual([
+          "import-statement ./outside external",
           "import-statement marked-external external",
           "import-statement node:test external",
           "require-call ./not-there external",

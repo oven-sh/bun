@@ -1,7 +1,7 @@
 // Tests for the React Compiler rules: oxlint's 22 `react/*` rules and eslint-plugin-react-hooks's 27 `react-hooks/*`
 // rules. oracle/react-compiler/expected.json has what oxlint and ESLint report for the same inputs. expected.ts in that
 // directory writes it.
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { endChildren, spawn } from "../children";
@@ -70,6 +70,13 @@ const slow = isDebug || isASAN ? 120_000 : undefined;
 type Found = { code: string; labels: { span: { line: number; column: number } }[] };
 const locationsOf = (found: unknown[]) =>
   (found as Found[]).map(it => [it.code, it.labels[0].span.line, it.labels[0].span.column]).sort();
+
+/** The name of the component of `text` that `line` is in, and the number of the line in it. */
+function componentAt(text: string, line: number): [name: string, line: number] {
+  const lines = text.split("\n");
+  const start = lines.findLastIndex((it, index) => index < line && it.startsWith("function "));
+  return [lines[start].slice("function ".length, lines[start].indexOf("(")), line - start];
+}
 
 const memo = (params: string, values: string, listed: string) => `import { useMemo } from "react";
 
@@ -199,6 +206,44 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     const { diagnostics, exit } = await report(small.casts);
     expect(diagnostics).toEqual(expected.reports.casts.diagnostics);
     expect(diagnostics["casts.tsx"]).toHaveLength(8);
+    expect(exit).toBe(1);
+  });
+
+  test("the value of an assignment or an update is a constant, and of `x += 1` a read of `x`", async () => {
+    const { diagnostics, files, exit } = await report(small.constants);
+    expect(diagnostics).toEqual(expected.reports.constants.diagnostics);
+    /** Each component's diagnostics: the rule, and where the first label is in the component. */
+    const reported = (name: string) => {
+      const components: Record<string, string[]> = {};
+      for (const { code, labels } of diagnostics[name] as Found[]) {
+        const [component, line] = componentAt(small.constants[name], labels[0].span.line);
+        (components[component] ??= []).push(`${code} ${line}:${labels[0].span.column}`);
+      }
+      return components;
+    };
+    // The other ten have an `if` whose test is falsy. It's pruned, along with the hook call or the write to the ref
+    // in it.
+    expect(reported("values.jsx")).toEqual({
+      // `ref.current[i++] += 1` updates a property of the ref's value. The update is reported at `[i++]`.
+      MemberUpdateKey: ["react(refs) 4:3", "react(refs) 4:14"],
+      KeyOfPostfix: ["react(refs) 5:3", "react(refs) 5:14"],
+      KeyOfPrefix: ["react(refs) 5:3", "react(refs) 5:14"],
+      KeyOfStore: ["react(refs) 5:3", "react(refs) 5:14"],
+      // Here the key isn't a constant, and the update is reported at `.current`.
+      NotAConstant: ["react(refs) 5:3", "react(refs) 5:6"],
+      IfStoreSetState: ["react(set-state-in-render) 6:5"],
+      PostfixTruthySetState: ["react(set-state-in-render) 6:5"],
+      PrefixTruthySetState: ["react(set-state-in-render) 6:5"],
+      DecrementTruthySetState: ["react(set-state-in-render) 6:5"],
+      NotOfStoreSetState: ["react(set-state-in-render) 6:5"],
+      CompoundTruthySetState: ["react(set-state-in-render) 6:5"],
+      // `y` is `x`, which is assigned again after the `useMemo` call.
+      CompoundOfCaptured: ["react(preserve-manual-memoization) 5:37"],
+      StoreGlobalCapitalized: ["react(capitalized-calls) 4:13"],
+    });
+    // oxc's compiler doesn't report an update of a `const`.
+    expect(reported("const.jsx")).toEqual({ ConstUpdateKey: ["react(refs) 4:3", "react(refs) 4:14"] });
+    expect(files).toBe(expected.reports.constants.files);
     expect(exit).toBe(1);
   });
 
@@ -466,6 +511,15 @@ describe.concurrent(
           ([name]) => !expected.eslint.without.includes(name) && !name.includes("node_modules/"),
         ),
       );
+    // `eslintSmall` is linted once, for the two tests that read it. With an ESLint config, a debug build can take longer
+    // to start than a test has.
+    let lintedSmall: Awaited<ReturnType<typeof messages>>;
+    beforeAll(async () => {
+      lintedSmall = await messages(eslintSmall);
+    }, slow);
+    const inConstants = (name: string) => name.startsWith("constants/");
+    const only = <T>(files: Record<string, T>, keep: (name: string) => boolean) =>
+      Object.fromEntries(Object.entries(files).filter(([name]) => keep(name)));
 
     test(
       "on oxlint's test cases: the rule, location and first line",
@@ -552,12 +606,53 @@ describe.concurrent(
       expect(exitCode).toBe(1);
     });
 
+    test("the value of an assignment or an update is a constant, but not if the plugin doesn't compile it", () => {
+      const { files, exitCode } = lintedSmall;
+      expect(only(files, inConstants)).toEqual(only(expected.eslint.small, inConstants));
+      /** Each component's messages: the rule, and where it is in the component. */
+      const reported = (name: string) => {
+        const components: Record<string, string[]> = {};
+        for (const { ruleId, line, column, endColumn } of files[`constants/${name}`].messages) {
+          const [component, at] = componentAt(eslintSmall[`constants/${name}`], line);
+          (components[component] ??= []).push(`${ruleId} ${at}:${column}-${endColumn}`);
+        }
+        return components;
+      };
+      // The other ten have an `if` whose test is falsy. It's pruned, along with the hook call or the write to the
+      // ref in it.
+      expect(reported("values.jsx")).toEqual({
+        // The update in `ref.current[i++] += 1` is reported at `ref.current[i++]`.
+        MemberUpdateKey: ["react-hooks/refs 4:3-19", "react-hooks/refs 4:3-19"],
+        KeyOfPostfix: ["react-hooks/refs 5:3-17", "react-hooks/refs 5:3-17"],
+        KeyOfPrefix: ["react-hooks/refs 5:3-17", "react-hooks/refs 5:3-17"],
+        KeyOfStore: ["react-hooks/refs 5:3-17", "react-hooks/refs 5:3-17"],
+        // Here the key isn't a constant, and the update is reported at `ref.current`.
+        NotAConstant: ["react-hooks/refs 5:3-17", "react-hooks/refs 5:3-14"],
+        IfStoreSetState: ["react-hooks/set-state-in-render 6:5-13"],
+        PostfixTruthySetState: ["react-hooks/set-state-in-render 6:5-13"],
+        PrefixTruthySetState: ["react-hooks/set-state-in-render 6:5-13"],
+        DecrementTruthySetState: ["react-hooks/set-state-in-render 6:5-13"],
+        NotOfStoreSetState: ["react-hooks/set-state-in-render 6:5-13"],
+        CompoundTruthySetState: ["react-hooks/set-state-in-render 6:5-13"],
+        // `y` is `x`, which is assigned again after the `useMemo` call.
+        CompoundOfCaptured: ["react-hooks/preserve-manual-memoization 5:37-38"],
+        StoreGlobalCapitalized: ["react-hooks/capitalized-calls 4:13-16"],
+      });
+      // Unlike oxc's compiler, the plugin's reports an update of a `const`, and the update has no value.
+      expect(reported("const.jsx")).toEqual({
+        ConstPostfixHook: ["react-hooks/syntax 5:7-8", "react-hooks/hooks 6:5-14"],
+        ConstPrefixHook: ["react-hooks/syntax 5:9-10", "react-hooks/hooks 6:5-14"],
+        ConstUpdateKey: ["react-hooks/refs 4:3-19", "react-hooks/refs 4:3-14", "react-hooks/syntax 4:15-16"],
+      });
+      expect(exitCode).toBe(1);
+    });
+
     test("on complete messages, suggestions, disable comments, and files the plugin doesn't compile", async () => {
-      const { files, exitCode } = await messages(eslintSmall);
+      const { files, exitCode } = lintedSmall;
       expect(files).toEqual(expected.eslint.small);
       // Nothing is reported for `$FlowFixMe[react-rule-hook]` and `[react-rule-unsafe-ref]`, for a file with a
       // decorator, or for a component without a name.
-      expect(briefly(files)).toEqual({
+      expect(briefly(only(files, name => !inConstants(name)))).toEqual({
         "casts.tsx": [
           "react-hooks/static-components 7:8-7:13 Error: Cannot create components during render",
           "react-hooks/immutability 13:4-13:16 Error: This value cannot be modified",

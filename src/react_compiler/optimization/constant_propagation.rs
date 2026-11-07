@@ -390,9 +390,10 @@ fn evaluate_instruction(
             let previous = read(constants, value);
             if let Some(Constant::Primitive {
                 value: PrimitiveValue::Number(n),
-                ..
+                loc: prev_loc,
             }) = previous
             {
+                let (n, prev_loc) = (*n, *prev_loc);
                 let next_val = apply_update(*operation, n.value());
                 // Store the updated value for the lvalue
                 let lvalue_id = lvalue.identifier;
@@ -403,6 +404,14 @@ fn evaluate_instruction(
                         loc: *loc,
                     },
                 );
+                if env.config.stores_print_in_place {
+                    return None;
+                }
+                // But return the value prior to the update (preserving its original loc)
+                return Some(Constant::Primitive {
+                    value: PrimitiveValue::Number(n),
+                    loc: prev_loc,
+                });
             }
             None
         }
@@ -425,7 +434,12 @@ fn evaluate_instruction(
                 };
                 // Store the updated value for the lvalue
                 let lvalue_id = lvalue.identifier;
-                constants.insert(lvalue_id, result);
+                if env.config.stores_print_in_place {
+                    constants.insert(lvalue_id, result);
+                    return None;
+                }
+                constants.insert(lvalue_id, result.clone());
+                return Some(result);
             }
             None
         }
@@ -617,11 +631,14 @@ fn evaluate_instruction(
             Some(constant)
         }
         InstructionValue::StoreLocal { lvalue, value, .. } => {
-            if let Some(constant) = read(constants, value).cloned() {
-                constants.insert(lvalue.place.identifier, constant);
-            }
+            let constant = read(constants, value).cloned()?;
             // Not in upstream: see `PostfixUpdate`.
-            None
+            if env.config.stores_print_in_place {
+                constants.insert(lvalue.place.identifier, constant);
+                return None;
+            }
+            constants.insert(lvalue.place.identifier, constant.clone());
+            Some(constant)
         }
         InstructionValue::FunctionExpression { lowered_func, .. } => {
             let func_id = lowered_func.func;

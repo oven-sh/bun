@@ -406,6 +406,88 @@ function NotNull(props: Props) {
 }
 `;
 
+/** A component for each entry of `bodies`, named by its key. */
+const components = (bodies: Record<string, string>) =>
+  Object.entries(bodies)
+    .map(([name, body]) => `function ${name}(props) {\n${body}}\n`)
+    .join("\n");
+
+/** `first`, then an update of the ref's value at `key`. With a constant key that's an update of one of its properties. */
+const keyed = (first: string, key: string) => `  const ref = useRef([0, 0]);
+  ${first};
+  ref.current[${key}] += 1;
+  return <div />;
+`;
+
+/** `first`, then `then` in an `if` that tests `test`. The compiler prunes an `if` whose test is a constant. */
+const tested = (first: string, test: string, then: string) => `  const ref = useRef(0);
+  const [state, setState] = useState(0);
+  ${first};
+  if (${test}) {
+    ${then};
+  }
+  return <div>{state}</div>;
+`;
+
+const callsHook = "useEffect(() => {})";
+
+const constants: Files = {
+  // To constant propagation, the value of `x = 1`, `x++` or `++x` is a constant if what's stored is one.
+  "values.jsx": components({
+    MemberUpdateKey: keyed("let i = 0", "i++"),
+    KeyOfPostfix: keyed("let i = 0;\n  const k = i++", "k"),
+    KeyOfPrefix: keyed("let i = -1;\n  const k = ++i", "k"),
+    KeyOfStore: keyed("let x;\n  const y = (x = 1) + 1", "y"),
+    NotAConstant: keyed("let i = props.n;\n  const k = i++", "k"),
+    IfStoreHook: tested("let x", "(x = 0)", callsHook),
+    IfPostfixHook: tested("let x = 0", "x++", callsHook),
+    IfPrefixHook: tested("let x = -1", "++x", callsHook),
+    IfStoreRef: tested("let x", "(x = 0)", "ref.current = 1"),
+    IfStoreSetState: tested("let x", "(x = 1)", "setState(1)"),
+    // `x++` has the value from before the update, and `++x` the one after it.
+    PostfixFalsyRef: tested("let x = 0", "x++", "ref.current = 1"),
+    PostfixTruthySetState: tested("let x = -1", "x++", "setState(1)"),
+    PrefixFalsyRef: tested("let x = -1", "++x", "ref.current = 1"),
+    PrefixTruthySetState: tested("let x = 0", "++x", "setState(1)"),
+    DecrementFalsyRef: tested("let x = 1", "--x", "ref.current = 1"),
+    DecrementTruthySetState: tested("let x = 1", "x--", "setState(1)"),
+    ChainedStoreHook: tested("let x, y", "(x = y = 0)", callsHook),
+    NotOfStoreSetState: tested("let x", "!(x = 0)", "setState(1)"),
+    // The value of `x += 1` is a read of `x` after the store.
+    CompoundFalsyHook: tested("let x = 1", "(x -= 1)", callsHook),
+    CompoundTruthySetState: tested("let x = 0", "(x += 1)", "setState(1)"),
+    CompoundOfCaptured: `  let x = props.a;
+  const read = () => x;
+  const y = (x += props.b);
+  const value = useMemo(() => [y], [y]);
+  x = props.c;
+  return <div onClick={read}>{value}</div>;
+`,
+    InCallback: `  const ref = useRef(0);
+  const f = () => {
+    let x;
+    if ((x = 0)) {
+      ref.current = 1;
+    }
+  };
+  f();
+  return <div />;
+`,
+    // A global is a constant too.
+    StoreGlobalCapitalized: `  let F;
+  const k = (F = Foo);
+  const v = k();
+  return <div>{v}{typeof F}</div>;
+`,
+  }),
+  // The plugin's compiler reports an update of a `const` and gives it no value. oxc's compiles it like any other.
+  "const.jsx": components({
+    ConstPostfixHook: tested("const x = 0", "x++", callsHook),
+    ConstPrefixHook: tested("const x = -1", "++x", callsHook),
+    ConstUpdateKey: keyed("const i = 0", "i++"),
+  }),
+};
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -610,6 +692,7 @@ function Component(props) {
 `,
   },
   casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
+  constants: { ".oxlintrc.json": rc(), ...constants },
   long: {
     ".oxlintrc.json": rc(),
     "statements.tsx": long(
@@ -744,6 +827,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   return <div>{value}</div>;
 });
 `,
+  ...Object.fromEntries(Object.entries(constants).map(([name, text]) => [`constants/${name}`, text])),
 };
 
 type EslintMessage = {

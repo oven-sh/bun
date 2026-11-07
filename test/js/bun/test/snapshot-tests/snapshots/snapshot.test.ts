@@ -2765,6 +2765,307 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
   });
 });
 
+describe("a snapshot of a built-in Temporal value has its class and its value", () => {
+  const day = (day: number) => new Temporal.PlainDate(2020, 1, day);
+
+  test("for each class", () => {
+    expect({
+      Instant: Temporal.Instant.from("2020-01-01T00:00:00Z"),
+      PlainDateTime: Temporal.PlainDateTime.from("2020-01-01T10:20:30"),
+      PlainDate: day(1),
+      PlainTime: Temporal.PlainTime.from("10:20:30"),
+      // The instant and the zone, not the local time: that depends on the time zone data of the machine.
+      ZonedDateTime: Temporal.ZonedDateTime.from("2020-01-01T00:00:00-10:00[Pacific/Honolulu]"),
+      PlainYearMonth: Temporal.PlainYearMonth.from("2020-01"),
+      PlainMonthDay: Temporal.PlainMonthDay.from("01-01"),
+      Duration: Temporal.Duration.from({ hours: 1, minutes: 30 }),
+    }).toMatchInlineSnapshot(`
+      {
+        "Duration": Temporal.Duration PT1H30M,
+        "Instant": Temporal.Instant 2020-01-01T00:00:00Z,
+        "PlainDate": Temporal.PlainDate 2020-01-01,
+        "PlainDateTime": Temporal.PlainDateTime 2020-01-01T10:20:30,
+        "PlainMonthDay": Temporal.PlainMonthDay 01-01,
+        "PlainTime": Temporal.PlainTime 10:20:30,
+        "PlainYearMonth": Temporal.PlainYearMonth 2020-01,
+        "ZonedDateTime": Temporal.ZonedDateTime 2020-01-01T10:00:00Z[Pacific/Honolulu],
+      }
+    `);
+  });
+
+  test("alone, and in each place of another value", async () => {
+    expect(day(1)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
+    expect([day(1)]).toMatchInlineSnapshot(`
+      [
+        Temporal.PlainDate 2020-01-01,
+      ]
+    `);
+    expect(new Map([[day(1), day(2)]])).toMatchInlineSnapshot(`
+      Map {
+        Temporal.PlainDate 2020-01-01 => Temporal.PlainDate 2020-01-02,
+      }
+    `);
+    expect(new Set([day(1)])).toMatchInlineSnapshot(`
+      Set {
+        Temporal.PlainDate 2020-01-01,
+      }
+    `);
+    expect(expect.objectContaining(day(1))).toMatchInlineSnapshot(`ObjectContaining Temporal.PlainDate 2020-01-01`);
+    const props = { when: day(1), children: ["on", day(1)] };
+    expect({ $$typeof: Symbol.for("react.element"), type: "time", key: null, props }).toMatchInlineSnapshot(
+      `<time when=Temporal.PlainDate 2020-01-01>\n  on\n  Temporal.PlainDate 2020-01-01\n</time>`,
+    );
+    expect({ id: 1, when: day(1) }).toMatchInlineSnapshot(
+      { id: expect.any(Number) },
+      `
+      {
+        "id": Any<Number>,
+        "when": Temporal.PlainDate 2020-01-01,
+      }
+    `,
+    );
+    await expect(Promise.resolve(day(1))).resolves.toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
+    expect(() => {
+      throw Object.assign(new Error(), { message: day(1) });
+    }).toThrowErrorMatchingInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
+  });
+
+  // The tests before and after these four are not concurrent, so these run beside each other and beside no other test.
+  test.concurrent("and runs no toJSON or toString, and is not the text of the string", async () => {
+    using dir = tempDir("snapshot-temporal-read", {
+      "a.test.js": `
+          import { test, expect, spyOn, setSystemTime } from "bun:test";
+          const date = () => Temporal.PlainDate.from("2020-01-01");
+          test("no script", () => {
+            const classes = ["Instant", "PlainDateTime", "PlainDate", "PlainTime", "ZonedDateTime", "PlainYearMonth", "PlainMonthDay", "Duration"];
+            const spies = classes.flatMap(name => [spyOn(Temporal[name].prototype, "toJSON"), spyOn(Temporal[name].prototype, "toString")]);
+            const own = { toJSON() { throw new Error("toJSON"); }, toString() { throw new Error("toString"); } };
+            const values = () => [
+              Temporal.Instant.from("2020-01-01T00:00:00Z"),
+              Temporal.PlainDateTime.from("2020-01-01T10:20:30"),
+              Object.assign(date(), own),
+              Temporal.PlainTime.from("10:20:30"),
+              Temporal.ZonedDateTime.from("2020-01-01T00:00:00+00:00[UTC]"),
+              Temporal.PlainYearMonth.from("2020-01"),
+              Temporal.PlainMonthDay.from("01-01"),
+              Temporal.Duration.from({ hours: 1 }),
+            ];
+            expect(values()).toMatchSnapshot();
+            expect(() => expect(values()).toEqual([])).toThrow("Temporal.Duration PT1H,");
+            const called = spies.filter(spy => spy.mock.calls.length).length;
+            for (const spy of spies) spy.mockRestore();
+            expect([spies.length, called]).toEqual([16, 0]);
+          });
+          test("a string", () => {
+            expect(() => expect(date().toString()).toMatchSnapshot()).toThrow('Received: "2020-01-01"');
+            expect(() => expect(date()).toMatchSnapshot()).toThrow("Received: Temporal.PlainDate 2020-01-01");
+          });
+          test("a value of Temporal.Now", () => {
+            expect({ at: Temporal.Now.instant() }).toMatchSnapshot({ at: expect.any(Temporal.Instant) });
+            setSystemTime(new Date("2020-01-01T00:00:00Z"));
+            expect(Temporal.Now.plainDateISO("UTC")).toMatchSnapshot();
+            setSystemTime();
+          });
+          test("a matcher for one part of the value", () => {
+            expect(date()).toMatchSnapshot({ year: expect.any(Number) });
+            expect(() => expect(date()).toMatchSnapshot({ year: expect.any(String) })).toThrow("propertyMatchers");
+          });
+          test("a class of a polyfill", () => {
+            class PlainDate { #day; constructor(day) { this.#day = day; } toJSON() { return "2020-01-" + this.#day; } }
+            expect([new PlainDate("01"), new PlainDate("02")]).toMatchSnapshot();
+          });
+          test("a serializer", () => {
+            expect.addSnapshotSerializer({ test: value => value instanceof Temporal.PlainDate, serialize: value => "Date<" + value.year + ">" });
+            expect({ date: date(), time: Temporal.PlainTime.from("10:20:30") }).toMatchSnapshot();
+          });
+        `,
+      "__snapshots__/a.test.js.snap":
+        headers.bun +
+        `
+exports[\`no script 1\`] = \`
+[
+  Temporal.Instant 2020-01-01T00:00:00Z,
+  Temporal.PlainDateTime 2020-01-01T10:20:30,
+  Temporal.PlainDate 2020-01-01,
+  Temporal.PlainTime 10:20:30,
+  Temporal.ZonedDateTime 2020-01-01T00:00:00Z[UTC],
+  Temporal.PlainYearMonth 2020-01,
+  Temporal.PlainMonthDay 01-01,
+  Temporal.Duration PT1H,
+]
+\`;
+
+exports[\`a string 1\`] = \`Temporal.PlainDate 2020-01-01\`;
+
+exports[\`a string 2\`] = \`"2020-01-01"\`;
+
+exports[\`a value of Temporal.Now 1\`] = \`
+{
+  "at": Any<Instant>,
+}
+\`;
+
+exports[\`a value of Temporal.Now 2\`] = \`Temporal.PlainDate 2020-01-01\`;
+
+exports[\`a matcher for one part of the value 1\`] = \`Temporal.PlainDate 2020-01-01\`;
+
+exports[\`a class of a polyfill 1\`] = \`
+[
+  PlainDate {},
+  PlainDate {},
+]
+\`;
+
+exports[\`a serializer 1\`] = \`
+{
+  "date": Date<2020>,
+  "time": Temporal.PlainTime 10:20:30,
+}
+\`;
+`,
+      // A file in Jest's format keeps what pretty-format stores: the text that toJSON() returns.
+      "b.test.js": `test("in the format of Jest", () => { expect([Temporal.PlainDate.from("2020-01-01")]).toMatchSnapshot(); });`,
+      "__snapshots__/b.test.js.snap":
+        headers.jest + '\nexports[`in the format of Jest 1`] = `\n[\n  "2020-01-01",\n]\n`;\n',
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ stderr: exitCode ? stderr : "", exitCode, pass, fail }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      pass: 7,
+      fail: 0,
+    });
+  });
+
+  // Before Bun stored the value, a Temporal value was the name of its constructor, and the properties of the object if it had any.
+  const olderValues = (module: string) => `
+      import { test, expect } from ${JSON.stringify(module)};
+      const day = process.env.DAY;
+      class Later extends Temporal.PlainDate { unit = "day"; }
+      const date = () => Temporal.PlainDate.from("2020-01-" + day);
+      const values = () => ({
+        when: date(),
+        list: [Temporal.Duration.from({ hours: Number(day) })],
+        later: new Later(2020, 1, Number(day)),
+        tagged: Object.assign(date(), { tag: "x" }),
+        zoned: Temporal.ZonedDateTime.from("2020-01-" + day + "T00:00:00+00:00[UTC]"),
+      });
+    `;
+  const olderBunValues = `{
+  "later": Temporal.PlainDate Later {
+    "unit": "day",
+  },
+  "list": [
+    Duration {},
+  ],
+  "tagged": Temporal.PlainDate PlainDate {
+    "tag": "x",
+  },
+  "when": PlainDate {},
+  "zoned": ZonedDateTime {},
+}`;
+  const snapshotFile = (alone: string, inside: string) =>
+    headers.bun + `\nexports[\`alone 1\`] = \`${alone}\`;\n\nexports[\`inside 1\`] = \`\n${inside}\n\`;\n`;
+
+  test.concurrent.each([
+    ["bun:test", "Temporal.PlainDate 2020-01-02"],
+    ["vitest", '"2020-01-02"'],
+  ])("but passes when it is what an older Bun wrote, whatever the value, in a test of %j", async (module, printed) => {
+    using dir = tempDir("snapshot-temporal-older-bun", {
+      "a.test.js": `
+          ${olderValues(module)}
+          test("alone", () => { expect(date()).toMatchSnapshot(); });
+          test("inside", () => { expect(values()).toMatchSnapshot(); });
+          test("inline", () => {
+            expect(date()).toMatchInlineSnapshot(\`PlainDate {}\`);
+            expect(date()).toMatchInlineSnapshot(\`${printed}\`);
+            expect(values()).toMatchInlineSnapshot(\`\n${olderBunValues}\n\`);
+          });
+          test("but for one line", () => {
+            expect(() => expect({ ...values(), more: 1 }).toMatchInlineSnapshot(\`\n${olderBunValues}\n\`)).toThrow('"more": 1');
+            expect(() => expect({ when: date(), more: 1 }).toMatchInlineSnapshot(\`\n{\n  "when": PlainDate {},\n}\n\`)).toThrow('"more": 1');
+          });
+        `,
+      "__snapshots__/a.test.js.snap": snapshotFile("PlainDate {}", olderBunValues),
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true", DAY: "02" });
+    expect({ stderr: exitCode ? stderr : "", exitCode, pass, fail }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      pass: 4,
+      fail: 0,
+    });
+  });
+
+  test.concurrent(
+    "what an older Bun wrote stays as it is, and --update-snapshots rewrites it to the value",
+    async () => {
+      const older = snapshotFile("PlainDate {}", olderBunValues);
+      using dir = tempDir("snapshot-temporal-update", {
+        "a.test.js": `
+          ${olderValues("bun:test")}
+          test("alone", () => { expect(date()).toMatchSnapshot(); });
+          test("inside", () => { expect(values()).toMatchSnapshot(); });
+          test("inline", () => { expect(date()).toMatchInlineSnapshot(\`PlainDate {}\`); });
+        `,
+        "__snapshots__/a.test.js.snap": older,
+      });
+      const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+      const testFile = () => readFileSync(join(String(dir), "a.test.js"), "utf8");
+      const olderTestFile = testFile();
+      // Outside of CI, where Bun writes a snapshot that is new.
+      const kept = await runTests(String(dir), { CI: "false", DAY: "02" });
+      expect(kept.stderr).toContain(" 3 snapshots, ");
+      expect({ snap: snap(), testFile: testFile() }).toEqual({ snap: older, testFile: olderTestFile });
+
+      const updated = {
+        snap: snapshotFile(
+          "Temporal.PlainDate 2020-01-02",
+          `{
+  "later": Temporal.PlainDate 2020-01-02,
+  "list": [
+    Temporal.Duration PT2H,
+  ],
+  "tagged": Temporal.PlainDate 2020-01-02,
+  "when": Temporal.PlainDate 2020-01-02,
+  "zoned": Temporal.ZonedDateTime 2020-01-02T00:00:00Z[UTC],
+}`,
+        ),
+        testFile: olderTestFile.replace("`PlainDate {}`", "`Temporal.PlainDate 2020-01-02`"),
+      };
+      const first = await runTests(String(dir), { CI: "true", DAY: "02" }, "--update-snapshots");
+      expect({ snap: snap(), testFile: testFile() }).toEqual(updated);
+      const second = await runTests(String(dir), { CI: "true", DAY: "02" }, "--update-snapshots");
+      expect({ snap: snap(), testFile: testFile() }).toEqual(updated);
+      const other = await runTests(String(dir), { CI: "true", DAY: "03" });
+      expect(other.stderr).toContain("Received: Temporal.PlainDate 2020-01-03");
+      expect([kept.exitCode, first.exitCode, second.exitCode, other.exitCode, other.fail]).toEqual([0, 0, 0, 1, 3]);
+    },
+  );
+
+  // Bun.deepEquals reads the class that the engine gave the value, and nothing else of the object.
+  test("with no subclass, property or prototype of the object", () => {
+    class Later extends Temporal.PlainDate {
+      unit = "day";
+    }
+    expect(new Later(2020, 1, 1)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
+    expect(Object.assign(day(1), { tag: "x" })).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
+    expect(Object.setPrototypeOf(day(1), null)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
+  });
+
+  test("and fails for another value, and for the string of the value", () => {
+    expect(() => expect(day(2)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`)).toThrow(
+      "Received: Temporal.PlainDate 2020-01-02",
+    );
+    expect(() => expect("2020-01-01").toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`)).toThrow(
+      'Received: "2020-01-01"',
+    );
+    expect(() =>
+      expect({ when: day(2) }).toMatchInlineSnapshot(`\n{\n  "when": Temporal.PlainDate 2020-01-01,\n}\n`),
+    ).toThrow('+   "when": Temporal.PlainDate 2020-01-02,');
+  });
+});
+
 describe.concurrent("a snapshot that does not match what the value prints as", () => {
   async function logOf(files: Record<string, string>) {
     using dir = tempDir("snapshot-mismatch", files);

@@ -298,6 +298,10 @@ With `--update-snapshots`, Bun removes entries that no test uses anymore from a 
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 
+Bun's format stores a built-in Temporal value as its class and its value: `Temporal.PlainDate 2020-01-02`. `pretty-format` stores the string that `toJSON()` returns, `"2020-01-02"`. For a `Temporal.ZonedDateTime`, Bun's format stores the instant and the time zone, `Temporal.ZonedDateTime 2020-01-01T10:00:00Z[Pacific/Honolulu]`, because the local time depends on the time zone data of the machine. A value from a Temporal polyfill is an object of a class of the polyfill. Give it a [serializer](#custom-serializers).
+
+Earlier versions of Bun stored only the class name, `PlainDate {}`. An entry like that passes for any value until `--update-snapshots` rewrites it. After that, a value from `Temporal.Now` fails on the next run. Match the property that holds the value, as in `expect({ at: Temporal.Now.instant() }).toMatchSnapshot({ at: expect.any(Temporal.Instant) })`, or set the clock with [`setSystemTime()`](/test/dates-times#setsystemtime). A matcher for one part of the value, such as `{ year: expect.any(Number) }`, does not change the stored text.
+
 ## Best Practices
 
 ### Keep Snapshots Small

@@ -663,12 +663,9 @@ impl JestPrettyFormat {
                     return printed;
                 }
             }
-            // Only a failure message tracks `output_length`. A snapshot keeps `PlainDate {}`.
-            if formatter.snapshot.output_length.is_some()
-                && matches!(tag, Tag::Object)
-                && value.js_type() == JSType::Object
-                && print_temporal(formatter, writer, value)?
-            {
+            // Older versions printed a Temporal value as its class name alone: `PlainDate {}`.
+            if matches!(tag, Tag::Object) && value.js_type() == JSType::Object && print_temporal(formatter, writer, value)? {
+                formatter.snapshot.same_as_older_bun = false;
                 return Ok(true);
             }
         }

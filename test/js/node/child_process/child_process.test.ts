@@ -1707,6 +1707,111 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
   });
 });
 
+// `timeout` is one timer per call, and it calls child.kill(): spawn() arms it
+// for spawn and fork, execFile() for execFile and exec. As in Node, it keeps the
+// parent alive until it fires or the child is gone, child.unref() or not.
+describe("options.timeout", () => {
+  const fixture = path.join(import.meta.dir, "fixtures", "child-process-timeout-fixture.js");
+
+  // What the parent in the fixture reports as it exits, and whether the child
+  // it started is still there afterwards.
+  type Expected = { killed?: boolean; kills: number; events?: string[]; callback?: unknown; alive?: boolean };
+  const cases: Record<string, Expected> = {
+    // Only the deadline keeps the parent alive. It waits, signals once, and then reaps the child.
+    "spawn": { killed: true, kills: 1, events: ["exit", "close"], alive: false },
+    // Node emits no 'close' once the parent has called disconnect(), so the events are not part of this case.
+    "fork": { killed: true, kills: 1, alive: false },
+    "execFile": { killed: true, kills: 1, events: ["exit", "close"], callback: { killed: true }, alive: false },
+    "exec": { killed: true, kills: 1, events: ["exit", "close"], callback: { killed: true }, alive: false },
+    "execFile, pipes open at the deadline": {
+      killed: true,
+      kills: 1,
+      events: ["exit", "close"],
+      callback: { killed: true },
+    },
+    // The callback has its error, so the deadline is over. The child ends by itself.
+    "execFile, 'error' before the deadline": {
+      killed: false,
+      kills: 0,
+      events: ["error", "exit", "close"],
+      callback: { killed: false },
+    },
+    // The child is gone before the deadline. The parent hears of it, and the timer does not keep it.
+    "spawn, child exits first": { kills: 0, events: ["exit", "close"] },
+    "fork, child exits first": { kills: 0, events: ["exit", "close"] },
+    "execFile, child exits first": { kills: 0, events: ["exit", "close"], callback: "no error" },
+    // No 'close' comes after these 'exit's (Node emits one), so the events are not part of the cases.
+    "spawn, 'exit' listener pauses stdout": { killed: false, kills: 0 },
+    "execFile, 'exit' listener pauses the pipes": { killed: false, kills: 0 },
+    "spawn of a missing file": { kills: 0, events: ["error", "close"] },
+    // The timers are not the globals, which a fake-timers library replaces. A fake setTimeout would
+    // arm nothing, and the parent would be gone before the 'exit'. A fake clearTimeout would clear
+    // nothing, and the parent would wait for the deadline.
+    "spawn, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"] },
+    "execFile, timers replaced after the module loaded": { kills: 0, events: ["exit", "close"], callback: "no error" },
+    // execFile()'s timer stops holding the parent at 'exit'. No 'exit' comes here, so only the clear releases it.
+    "execFile of a missing file, timers replaced after the module loaded": {
+      kills: 0,
+      events: ["error", "close"],
+      callback: { killed: false },
+    },
+    "timers replaced while the module loads, then restored": {
+      killed: true,
+      kills: 1,
+      events: ["exit", "close"],
+      alive: false,
+    },
+    // No timeout, no timer: the parent leaves at once and the child stays.
+    "no timeout": { killed: false, kills: 0, events: [], alive: true },
+    // The graph ends its child and its timers. No 'close' comes to clear the deadline.
+    "spawn in a Bun.ModuleGraph that is disposed": { killed: false, kills: 0 },
+  };
+
+  const isAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // One at a time: a case is two processes, and a debug build that starts
+  // them all together needs the whole test timeout for the slowest.
+  it.each(Object.entries(cases))("%s", async (mode, expected) => {
+    await using parent = Bun.spawn({
+      cmd: [bunExe(), fixture, mode],
+      // The runner sets this flag on ASAN lanes. With it the parent kills its
+      // child as it exits, whether or not the deadline was reached.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([parent.stdout.text(), parent.stderr.text(), parent.exited]);
+    const report = stdout ? JSON.parse(stdout) : {};
+    // A child whose 'exit' the parent saw is reaped, and its pid can be another process by now.
+    const pid: number | undefined = report.events?.includes("exit") ? undefined : report.pid;
+    try {
+      const alive = pid !== undefined && isAlive(pid);
+      const reported = Object.fromEntries(
+        Object.keys(expected).map(key => [key, key === "alive" ? alive : report[key]]),
+      );
+      expect({ stderr, ...reported, exitCode, signalCode: parent.signalCode }).toEqual({
+        stderr: "",
+        ...expected,
+        exitCode: 0,
+        signalCode: null,
+      });
+    } finally {
+      if (pid !== undefined) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+    }
+  });
+});
+
 // A 'data' handler runs inside the native read loop that delivered its chunk,
 // and node streams pull again from there, so that pull reads synchronously,
 // nested in the outer loop, and can run all the way to EOF. The reader used to

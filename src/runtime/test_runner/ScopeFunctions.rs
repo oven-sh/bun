@@ -442,9 +442,9 @@ pub(crate) fn call_as_function<'a>(
                     formatted_label.as_deref(),
                     &args.options,
                     if is_vitest {
-                        Calling::Vitest { context: this.rows == Rows::For }
+                        Calling::ContextStyle { context: this.rows == Rows::For }
                     } else {
-                        Calling::Jest { done: callback_length > args_list.len() }
+                        Calling::DoneStyle { done: callback_length > args_list.len() }
                     },
                     parameter.as_ref(),
                     line_no,
@@ -460,7 +460,7 @@ pub(crate) fn call_as_function<'a>(
             args.callback,
             args.description.as_deref(),
             &args.options,
-            if is_vitest { Calling::Vitest { context: true } } else { Calling::Jest { done: callback_length >= 1 } },
+            if is_vitest { Calling::ContextStyle { context: true } } else { Calling::DoneStyle { done: callback_length >= 1 } },
             parameter.as_ref(),
             line_no,
         )?;

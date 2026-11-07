@@ -226,9 +226,9 @@ pub(crate) mod js_fns {
 
             let calling = match (flavor, args.callback) {
                 // An around hook's parameters are the same in every flavor.
-                _ if tag.around().is_some() => Calling::Vitest { context: true },
-                (Flavor::Vitest, _) => Calling::Vitest { context: true },
-                (Flavor::Jest, Some(callback)) => Calling::Jest { done: callback.without_async_context().get_length(global_this)? > 0 },
+                _ if tag.around().is_some() => Calling::ContextStyle { context: true },
+                (Flavor::Vitest, _) => Calling::ContextStyle { context: true },
+                (Flavor::Jest, Some(callback)) => Calling::DoneStyle { done: callback.without_async_context().get_length(global_this)? > 0 },
                 (Flavor::Jest, None) => Calling::default(),
             };
             // An extended `test` binds its `beforeAll` / `afterAll` / `aroundAll` with its `TestFixtures` as `this`.
@@ -831,7 +831,7 @@ impl BunTest {
             ExecutionEntry::create(
                 None,
                 None,
-                ExecutionEntryCfg::new(Flavor::OF_FIXTURES, Calling::Vitest { context: false }),
+                ExecutionEntryCfg::new(Flavor::OF_FIXTURES, Calling::ContextStyle { context: false }),
                 None,
                 BaseScopeCfg::default(),
                 AddedInPhase::Collection,
@@ -861,7 +861,7 @@ impl BunTest {
         let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
             None,
             Some(callback),
-            ExecutionEntryCfg { timeout, ..ExecutionEntryCfg::new(flavor, Calling::Vitest { context }) },
+            ExecutionEntryCfg { timeout, ..ExecutionEntryCfg::new(flavor, Calling::ContextStyle { context }) },
             None,
             BaseScopeCfg::default(),
             AddedInPhase::Execution,
@@ -1955,22 +1955,23 @@ impl Flavor {
     pub(crate) const OF_FIXTURES: Flavor = Flavor::Vitest;
 }
 
-/// How an entry's callback is called. An around hook and a callback of the test context are called like Vitest's in
-/// every module, so the module is `ExecutionEntry::flavor`.
+/// How an entry's callback is called. It doesn't tell the entry's module, which is `ExecutionEntry::flavor`: every
+/// module calls an around hook and a callback of the test context the way Vitest does.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Calling {
-    Jest { done: bool },
-    Vitest { context: bool },
+    /// Jest's way. `done`: the callback has a parameter for a `done` callback, and the entry waits for it.
+    DoneStyle { done: bool },
+    /// Vitest's way. `context`: the callback gets the test context, or `({}, suite)` outside of a test.
+    ContextStyle { context: bool },
 }
 impl Default for Calling {
     fn default() -> Self {
-        Calling::Jest { done: false }
+        Calling::DoneStyle { done: false }
     }
 }
 impl Calling {
-    /// Whether the callback is called the way Vitest calls one, with or without the context.
     pub(crate) fn is_context_style(self) -> bool {
-        matches!(self, Calling::Vitest { .. })
+        matches!(self, Calling::ContextStyle { .. })
     }
 }
 
@@ -2280,7 +2281,7 @@ impl DescribeScope {
             HookTag::BeforeAll if is_vitest => {
                 let slot_cfg = ExecutionEntryCfg {
                     timeout: cfg.timeout,
-                    ..ExecutionEntryCfg::new(cfg.flavor, Calling::Vitest { context: false })
+                    ..ExecutionEntryCfg::new(cfg.flavor, Calling::ContextStyle { context: false })
                 };
                 let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
                 self.after_all.insert(first_teardown_slot, slot);
@@ -2290,7 +2291,7 @@ impl DescribeScope {
                 let slot_cfg = ExecutionEntryCfg {
                     timeout: cfg.timeout,
                     around: Some((Around::All, AroundPhase::TearDown)),
-                    ..ExecutionEntryCfg::new(cfg.flavor, Calling::Vitest { context: false })
+                    ..ExecutionEntryCfg::new(cfg.flavor, Calling::ContextStyle { context: false })
                 };
                 let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
                 self.around_all_teardown.insert(0, slot);
@@ -2442,7 +2443,7 @@ impl ExecutionEntry {
             let is_test_entry = sequence
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
-            let has_done_parameter = self.calling == Calling::Jest { done: true };
+            let has_done_parameter = self.calling == Calling::DoneStyle { done: true };
             sequence.result = if self.around.is_some() {
                 // `Execution::report_around_timeout` fails the sequence with an error.
                 sequence.result

@@ -1255,11 +1255,11 @@ fn step_sequence_one(
         }
         let mut args = [JSValue::UNDEFINED; 2];
         let args: &[JSValue] = match (next_item.calling, context, next_item.base.parent) {
-            (Calling::Vitest { context: true }, Some(context), _) => {
+            (Calling::ContextStyle { context: true }, Some(context), _) => {
                 args[0] = context;
                 &args[..1]
             }
-            (Calling::Vitest { context: true }, None, Some(scope)) => {
+            (Calling::ContextStyle { context: true }, None, Some(scope)) => {
                 args[0] = match &next_item.fixtures {
                     Some(fixtures) => TestFixtures::suite_hook_context(fixtures.get(), global_this)?,
                     None => JSValue::create_empty_object(global_this, 0),
@@ -1336,7 +1336,7 @@ fn step_sequence_one(
             global_this,
             callback,
             args,
-            next_item.calling == Calling::Jest { done: true },
+            next_item.calling == Calling::DoneStyle { done: true },
             callback_data,
             &next_item.timespec,
         )

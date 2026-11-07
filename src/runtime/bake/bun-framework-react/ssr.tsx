@@ -106,6 +106,8 @@ export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: reado
   const Root = () => React.use(promise);
   const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
+    // An error outside every <Suspense> boundary leaves no HTML, and a newer React does not call `onAllReady` after it.
+    onShellError: error => stream.destroy(error),
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
     onAllReady: () => pipe(stream),
@@ -203,6 +205,8 @@ class RscInjectionStream extends EventEmitter {
       this.controller.write(data);
       this.html = HtmlState.Flowing;
     }
+    // React takes any other return value as a full buffer and waits for a "drain" event. This stream has none.
+    return true;
   }
 
   drainRscChunks() {
@@ -280,6 +284,8 @@ class StaticRscInjectionStream extends EventEmitter {
 
   write(chunk) {
     this.chunks.push(chunk);
+    // As in `RscInjectionStream.write`.
+    return true;
   }
 
   end() {

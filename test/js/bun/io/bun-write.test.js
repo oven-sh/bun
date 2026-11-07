@@ -17,6 +17,7 @@ import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
+import { dupPathDestinationRows, opensAsDup, runs, run as runWithRedirect } from "./dup-path-destination";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -538,6 +539,100 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
       expect(exitCode).toBe(0);
     });
+  });
+
+  // See dup-path-destination.ts.
+  describe.skipIf(!opensAsDup)("a destination path that opens as a dup of a descriptor", () => {
+    dupPathDestinationRows(
+      [
+        {
+          title: "Bun.write(path, Bun.file(src))",
+          write: dest => `await Bun.write(${dest}, Bun.file(process.env.SRC))`,
+          size: 100,
+          result: "100",
+        },
+        {
+          title: "Bun.write(path, Bun.file(src above 64 KiB))",
+          write: dest => `await Bun.write(${dest}, Bun.file(process.env.LARGE_SRC))`,
+          size: 300_000,
+          result: "300000",
+        },
+        {
+          title: "Bun.write(path, string)",
+          write: dest => `await Bun.write(${dest}, Buffer.alloc(100, "S").toString())`,
+          size: 100,
+          result: "100",
+        },
+        {
+          title: "Bun.write(path, Uint8Array)",
+          write: dest => `await Bun.write(${dest}, Buffer.alloc(100, "S"))`,
+          size: 100,
+          result: "100",
+        },
+        {
+          title: "Bun.write(path, string above 256 KiB)",
+          write: dest => `await Bun.write(${dest}, Buffer.alloc(300_000, "S").toString())`,
+          size: 300_000,
+          result: "300000",
+        },
+      ],
+      [
+        { title: `Bun.write(path, "")`, write: `await Bun.write("/dev/stdout", "")`, result: "0" },
+        {
+          title: "Bun.write(path, new Uint8Array(0))",
+          write: `await Bun.write("/dev/stdout", new Uint8Array(0))`,
+          result: "0",
+        },
+        {
+          title: "Bun.write(path, new Blob([]))",
+          write: `await Bun.write("/dev/stdout", new Blob([]))`,
+          result: "0",
+        },
+        {
+          title: "Bun.write(path, Bun.file(empty))",
+          write: `await Bun.write("/dev/stdout", Bun.file(process.env.EMPTY_SRC))`,
+          result: "0",
+        },
+      ],
+    );
+
+    // The slice is the most that the copy writes. It is not a length to cut the file to.
+    it("Bun.write(Bun.file(path).slice(0, 50), Bun.file(src)) keeps the other bytes of a file that stdout appends to (>>)", async () => {
+      const script = `fs.writeSync(2, String(await Bun.write(Bun.file("/dev/stdout").slice(0, 50), Bun.file(process.env.SRC))));`;
+      const { stdout, stderr, exitCode, log } = await runWithRedirect(`"$EXE" -e "$SCRIPT" >> "$LOG"`, script);
+
+      expect({ stdout, stderr, log }).toEqual({ stdout: "", stderr: "50", log: "A×200 S×50" });
+      expect(exitCode).toBe(0);
+    });
+
+    // Only the exact names are known. These two open as the same dup, and the file is still cut.
+    for (const [spelling, dest] of [
+      ["a symlink to /dev/stdout", "process.env.LINK"],
+      ["//dev/stdout", `"//dev/stdout"`],
+    ]) {
+      it.failing(
+        `Bun.write(path, string) keeps the other bytes of a file that stdout appends to (>>) through ${spelling}`,
+        async () => {
+          const script = `fs.writeSync(2, String(await Bun.write(${dest}, Buffer.alloc(100, "S").toString())));`;
+          const { stdout, stderr, exitCode, log } = await runWithRedirect(`"$EXE" -e "$SCRIPT" >> "$LOG"`, script);
+
+          expect({ stdout, stderr, log }).toEqual({ stdout: "", stderr: "100", log: "A×200 S×100" });
+          expect(exitCode).toBe(0);
+        },
+      );
+    }
+
+    // Through another spelling the copy still goes to fcopyfile, which gives a pipe nothing.
+    (isMacOS ? it.failing : it)(
+      "Bun.write(path, Bun.file(src)) writes to a pipe through a symlink to /dev/stdout",
+      async () => {
+        const script = `fs.writeSync(2, String(await Bun.write(process.env.LINK, Bun.file(process.env.SRC))));`;
+        const { stdout, stderr, exitCode } = await runWithRedirect(`"$EXE" -e "$SCRIPT" | cat`, script);
+
+        expect({ stdout: runs(stdout), stderr }).toEqual({ stdout: "S×100", stderr: "100" });
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop

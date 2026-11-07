@@ -1559,6 +1559,8 @@ struct HttpResponseData;
                             if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                             }
+                            /* Reset before the last callback, like a Content-Length body: a sweep from that callback, or an EOF after it stopped the parse, reads this. */
+                            remainingStreamingBytes = 0;
                         }
                         const bool fin = chunk.length() == 0;
                         void *returnedUser = dataHandler(user, chunk, fin);
@@ -1567,6 +1569,10 @@ struct HttpResponseData;
                              * so we do not dispatch pipelined requests on a dead socket. The caller's
                              * bytes start behind the body, and a body that has not ended leaves none. */
                             return HttpParserResult::success(fin ? consumedTotal + (length - (unsigned int) dataToConsume.length()) : HttpParserResult::WHOLE_READ, returnedUser);
+                        }
+                        /* Not back into the decoder: with the state reset it would read the next request as a chunk size. */
+                        if (IsNodeHttp && fin) {
+                            break;
                         }
                     }
                     if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1657,11 +1663,17 @@ public:
                         if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                         }
+                        /* Reset before the last callback, like a Content-Length body: a sweep from that callback, or an EOF after it stopped the parse, reads this. */
+                        remainingStreamingBytes = 0;
                     }
                     const bool fin = chunk.length() == 0;
                     void *returnedUser = dataHandler(user, chunk, fin);
                     if (returnedUser != user) {
                         return HttpParserResult::success(fin ? (unsigned int) (dataToConsume.data() - readStart) : HttpParserResult::WHOLE_READ, returnedUser);
+                    }
+                    /* Not back into the decoder: with the state reset it would read the next request as a chunk size. */
+                    if (IsNodeHttp && fin) {
+                        break;
                     }
                 }
                 if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1773,11 +1785,17 @@ public:
                                 if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                                 }
+                                /* Reset before the last callback, like a Content-Length body: a sweep from that callback, or an EOF after it stopped the parse, reads this. */
+                                remainingStreamingBytes = 0;
                             }
                             const bool fin = chunk.length() == 0;
                             void *returnedUser = dataHandler(user, chunk, fin);
                             if (returnedUser != user) {
                                 return HttpParserResult::success(fin ? (unsigned int) (dataToConsume.data() - readStart) : HttpParserResult::WHOLE_READ, returnedUser);
+                            }
+                            /* Not back into the decoder: with the state reset it would read the next request as a chunk size. */
+                            if (IsNodeHttp && fin) {
+                                break;
                             }
                         }
                         if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {

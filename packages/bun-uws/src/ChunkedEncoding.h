@@ -189,10 +189,12 @@ namespace uWS {
      * final 0-size chunk" (RFC 9112 7.1.2). The flag combinations cannot occur in
      * any other state: STATE_WAITING_FOR_LF is only ever set while the chunk-size
      * line is incomplete, i.e. before STATE_HAS_SIZE is set. _DONE means the
-     * section (and thus the message) completed and the fin chunk was emitted; the
-     * next call resets the state without touching the remaining bytes. The
-     * sub-state must not be derived from the captured section's contents: the fin
-     * delivery can synchronously run JS that consumes (and clears) the capture. */
+     * section completed and the fin chunk was returned, not that the message is
+     * accepted: HttpParser's chunk loops check the section, then reset the state
+     * themselves and do not call again (a call behind the fin chunk only resets
+     * the state). A section they reject leaves _DONE. The sub-state must not be
+     * derived from the captured section's contents: the fin delivery can
+     * synchronously run JS that consumes (and clears) the capture. */
     constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
     constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
 

@@ -334,7 +334,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options);
+    auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     KeyObject keyObject;

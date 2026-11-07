@@ -1554,6 +1554,12 @@ pub(crate) fn run_nested_until_settled(
         .map_err(|stopped| stopped.throw(global_object))
 }
 
+pub(crate) fn entered_count() -> i32 {
+    VirtualMachine::get()
+        .event_loop_shared()
+        .entered_event_loop_count as i32
+}
+
 /// Testing API to expose event loop state
 pub(crate) fn get_active_tasks(
     heap: &crate::bindgen::JsHeap<'_>,
@@ -1570,7 +1576,6 @@ pub(crate) fn get_active_tasks(
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls.get() };
     crate::generated_bindgen::event_loop::ActiveTasks {
-        entered_count: event_loop.entered_event_loop_count as i32,
         active_tasks: vm_ref.active_tasks,
         tasks: event_loop.tasks.readable_length(),
         immediate_tasks: event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len(),

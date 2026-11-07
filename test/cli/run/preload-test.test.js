@@ -306,10 +306,10 @@ plugin({
     test("a reload that loads the preloads again waits for them at the top of the event loop", async () => {
       // The depth a timer callback sees. It's one more when the event loop runs inside one of its own tasks.
       const logDepth = name => `
-        import { getEventLoopStats } from "bun:internal-for-testing";
+        import { eventLoopEnteredCount } from "bun:internal-for-testing";
         await new Promise(resolve =>
           setTimeout(() => {
-            console.log("${name}: " + getEventLoopStats().enteredCount);
+            console.log("${name}: " + eventLoopEnteredCount());
             resolve();
           }, 1),
         );

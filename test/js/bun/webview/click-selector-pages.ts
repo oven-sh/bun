@@ -17,7 +17,8 @@ const atFirstLooks = (times: number, act: string) => `
   </script>`;
 
 /** Begins the animation of 80 ms of `.go` again, so that it has yet to start. */
-const beginAgain = (animated: string) => `${animated}.className = ""; ${animated}.offsetWidth; ${animated}.className = "go";`;
+const beginAgain = (animated: string) =>
+  `${animated}.className = ""; ${animated}.offsetWidth; ${animated}.className = "go";`;
 
 const button = `<button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>`;
 export const slideLeft = "from { left: 0; } to { left: 100px; }";
@@ -54,8 +55,12 @@ const movesByFrame = (frames: string) => `
     };
   </script>`;
 
-/** A still button on a page that counts the looks. Every frame carries `time`. `rest` is the rest of the page. */
-const countsLooks = (time: string, rest = "") => `
+/**
+ * A still button on a page that counts the looks. Every frame carries `time`. `rest` is the rest of the page. With
+ * `timer` the page makes its frames with a timer: it needs no display, where the real requestAnimationFrame never calls
+ * back.
+ */
+const countsLooks = (time: string, rest = "", timer = false) => `
   <button id=b onclick="window.__hit=1">b</button>
   <script>
     window.__looks = 0;
@@ -64,16 +69,33 @@ const countsLooks = (time: string, rest = "") => `
       __looks++;
       return querySelector.call(this, selector);
     };
-    const nextFrame = requestAnimationFrame;
+    const nextFrame = ${timer ? "callback => setTimeout(callback, 16)" : "requestAnimationFrame"};
     let frame = 0;
     window.requestAnimationFrame = callback => nextFrame(() => callback(${time}));
   </script>
   ${rest}`;
+/** The same page on frames from a timer, for a row that also runs without a display. */
+const withoutDisplay = (time: string, rest = "") => ({ page: countsLooks(time, rest, true), withoutDisplay: true });
 // 16 ms more in every frame, so that a busy machine cannot make two frames look like one.
 const clock = "++frame * 16";
 const clickAndLooks = `window.__hit + " click, " + __looks + " looks"`;
 // One look before the first frame, one that takes the box, one that finds it equal.
 const still = "1 click, 3 looks";
+
+/**
+ * An animation slides the button from 0 to 100px. At the first three looks the page makes it again and sets where it
+ * is in its run, so that the box is the same at those looks. `run` is what differs from an animation of 80 ms.
+ */
+const slidesFrom = (start: string, run = `{ duration: 80, fill: "forwards" }`) => `
+  <style>#mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }</style>
+  ${button}
+  <script>let animation;</script>
+  ${atFirstLooks(
+    3,
+    `animation?.cancel();
+    animation = mover.animate([{ left: "0px" }, { left: "100px" }], ${run});
+    ${start}`,
+  )}`;
 
 export interface ClickSelectorPage {
   name: string;
@@ -85,6 +107,8 @@ export interface ClickSelectorPage {
   /** Evaluated in the page after the click. */
   report: string;
   want: string;
+  /** The page makes its own frames and no animation has to run, so the row passes without a display. */
+  withoutDisplay?: boolean;
 }
 
 export const clickSelectorPages: ClickSelectorPage[] = [
@@ -141,20 +165,47 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     report: "String(window.__hit)",
     want: "100",
   },
+  // An animation that is not pending can have yet to move its element. The page sets the start time, to get the same
+  // in every browser.
+  // - WebKit 18.4 starts an animation at once, at the time of the frame.
+  // - Motion builds an animation about 100 ms before it moves, and sets a start time that is ahead by that much.
+  // - One that began 6 ms before the frame has moved the button by 7.5px at each of these looks, so the boxes are
+  //   equal. No look has seen it run: the look before this one was 8 ms ago or more.
+  ...(
+    [
+      ["starts at the time of this frame", "+ 0"],
+      ["starts 50 ms after this frame", "+ 50"],
+      ["began 6 ms before this frame", "- 6"],
+    ] as const
+  ).map(([when, offset]) => ({
+    name: `waits for an animation that ${when}`,
+    page: slidesFrom(`animation.startTime = document.timeline.currentTime ${offset};`),
+    selector: "#mover",
+    report: "String(window.__hit)",
+    want: "100",
+  })),
   {
-    // WebKit 18.4 starts an animation at once, at time 0: in the next frame it is not pending and has not moved. The
-    // page sets the start time to get the same in every browser.
-    name: "waits for an animation that has started in this frame",
+    // The run begins at the end of the effect, so its start time is 300 ms ahead. WebKit 18.4 reports reverse() so in
+    // the next frame. The button comes to rest at 0.
+    name: "waits for an animation that starts in reverse at the time of this frame",
+    page: slidesFrom(
+      `animation.playbackRate = -1;
+      animation.startTime = document.timeline.currentTime + 300;`,
+      `{ duration: 300, fill: "both" }`,
+    ),
+    selector: "#mover",
+    report: "String(window.__hit)",
+    want: "0",
+  },
+  {
+    // document.host, document.assignedSlot and document.parentNode are the windows of the frames, of another origin: to
+    // read a property of one throws. document.nodeType is the image. The walk from the element to the shadow trees
+    // around it must stop at the document and ask it for nothing, or the search ends early and finds no animation.
+    name: "waits for an animation that has yet to start on a page that gives the names of the walk to frames",
     page: `
-      <style>#mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }</style>
-      ${button}
-      <script>let animation;</script>
-      ${atFirstLooks(
-        3,
-        `animation?.cancel();
-        animation = mover.animate([{ left: "0px" }, { left: "100px" }], { duration: 80, fill: "forwards" });
-        animation.startTime = document.timeline.currentTime;`,
-      )}`,
+      ${slidesAtLooks("mover", slideLeft, 3)}
+      <img hidden name=nodeType>
+      ${["host", "assignedSlot", "parentNode"].map(name => `<iframe hidden name=${name} src="data:text/html,frame"></iframe>`).join("")}`,
     selector: "#mover",
     report: "String(window.__hit)",
     want: "100",
@@ -184,6 +235,19 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     selector: "#b",
     report: clickAndLooks,
     want: still,
+  },
+  {
+    // The search must not throw on that animation: a throw counts as nothing found, and click() would not wait for the
+    // slide.
+    name: "waits for an animation that has yet to start beside an animation without a timeline",
+    page: `
+      ${slidesAtLooks("mover", slideLeft, 3)}
+      <script>
+        new Animation(new KeyframeEffect(document.body, [{ opacity: 0.5 }, { opacity: 1 }], 1000), null).play();
+      </script>`,
+    selector: "#mover",
+    report: "String(window.__hit)",
+    want: "100",
   },
   {
     // The first callback that click() asks for runs in the frame that asked: nothing has moved by then. The second
@@ -256,7 +320,7 @@ export const clickSelectorPages: ClickSelectorPage[] = [
   },
   {
     name: "clicks when every frame carries the same time",
-    page: countsLooks("1000"),
+    ...withoutDisplay("1000"),
     selector: "#b",
     timeout: 2000,
     report: "String(window.__hit)",
@@ -264,14 +328,14 @@ export const clickSelectorPages: ClickSelectorPage[] = [
   },
   {
     name: "looks three times at a still element",
-    page: countsLooks(clock),
+    ...withoutDisplay(clock),
     selector: "#b",
     report: clickAndLooks,
     want: still,
   },
   {
     name: "looks three times at a still element at 120 frames a second",
-    page: countsLooks("++frame * 8.34"),
+    ...withoutDisplay("++frame * 8.34"),
     selector: "#b",
     report: clickAndLooks,
     want: still,
@@ -291,16 +355,71 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     want: still,
   },
   {
-    // document.host is the image. The walk from the element to the shadow trees around it ends there.
-    name: "looks three times at a still element on a page with an image named host",
-    page: countsLooks(clock, `<img name=host>`),
+    // Its start time is later than the time of its timeline for as long as it runs, and its run began long ago.
+    name: "looks three times at a still element while an animation runs in reverse",
+    page: countsLooks(
+      clock,
+      `<script>document.body.animate([{ opacity: 0.8 }, { opacity: 1 }], 100000).reverse();</script>`,
+    ),
+    selector: "#b",
+    settle: "Promise.all(document.getAnimations().map(animation => animation.ready)).then(() => 1)",
+    report: clickAndLooks,
+    want: still,
+  },
+  {
+    // click() waits 8 frames at most, so it does not wait for a start that is further ahead.
+    name: "looks three times at a still element while an animation has a start time 60 s ahead",
+    page: countsLooks(
+      clock,
+      `<script>
+        document.body.animate([{ opacity: 0.8 }, { opacity: 1 }], 1000).startTime = document.timeline.currentTime + 60000;
+      </script>`,
+    ),
+    selector: "#b",
+    report: clickAndLooks,
+    want: still,
+  },
+  {
+    // 8.34 ms is a frame at 120 frames a second: the look before this one saw that animation run.
+    name: "looks three times at a still element while an animation began 8.34 ms before every look",
+    page: countsLooks(
+      clock,
+      `<script>
+        const animation = document.body.animate([{ opacity: 0.8 }, { opacity: 1 }], 1000);
+        const look = document.querySelector;
+        document.querySelector = function (selector) {
+          animation.startTime = document.timeline.currentTime - 8.34;
+          return look.call(this, selector);
+        };
+      </script>`,
+    ),
+    selector: "#b",
+    report: clickAndLooks,
+    want: still,
+  },
+  {
+    // form.parentNode is the input, and the parent of the input is the form. The walk must not go in a circle.
+    name: "looks three times at a still element in a form with a control named parentNode",
+    ...withoutDisplay(
+      clock,
+      `<form id=form onsubmit="return false"><input name=parentNode></form>
+      <script>form.prepend(b);</script>`,
+    ),
+    selector: "#b",
+    report: clickAndLooks,
+    want: still,
+  },
+  {
+    // document.getAnimations is the image: the search for animations throws. click() then clicks as if it found none.
+    name: "looks three times at a still element on a page with an image named getAnimations",
+    ...withoutDisplay(clock, `<img name=getAnimations>`),
     selector: "#b",
     report: clickAndLooks,
     want: still,
   },
   {
     name: "looks three times at a still element when frames carry no time",
-    page: countsLooks("undefined"),
+    ...withoutDisplay("undefined"),
     selector: "#b",
     report: clickAndLooks,
     want: still,

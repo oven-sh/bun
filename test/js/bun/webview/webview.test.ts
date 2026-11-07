@@ -596,8 +596,8 @@ itRendering("click(selector) waits for element to stop animating", async () => {
   expect(Number(left)).toBe(100);
 });
 
-for (const { name, page, selector, settle, timeout, report, want } of clickSelectorPages) {
-  itRendering(`click(selector) ${name}`, async () => {
+for (const { name, page, selector, settle, timeout, report, want, withoutDisplay } of clickSelectorPages) {
+  (withoutDisplay ? it : itRendering)(`click(selector) ${name}`, async () => {
     await using view = new Bun.WebView({ width: 300, height: 300 });
     await view.navigate(html(page));
     if (settle) await view.evaluate(settle);

@@ -345,7 +345,7 @@ An element is actionable when it:
 
 The check runs page-side at `requestAnimationFrame` rate and takes at least two frames. If the element never becomes actionable within `timeout` milliseconds (default `30000`), the promise rejects with an error like `timeout waiting for '#submit' to be actionable`.
 
-An animation or transition that the page has just created holds its element still until the browser starts it. Bun waits up to eight more frames for one to start, anywhere in the document, before it clicks. Bun does not wait for an `animation-delay`, a `transition-delay`, or a movement that a script begins later.
+An animation or transition that the page has just created holds its element still until the browser starts it. Bun waits up to eight more frames for one to start before it clicks. It looks for them in the document and in the shadow trees that the element is slotted into. Bun does not wait for an `animation-delay`, a `transition-delay`, or a movement that a script begins later.
 
 Bun passes the selector as data instead of interpolating it into a script, so selectors containing quotes or JavaScript syntax are safe.
 

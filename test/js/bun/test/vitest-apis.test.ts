@@ -1235,7 +1235,7 @@ describe("expect.addEqualityTesters", () => {
       expect(make()).not.toEqual(make());
       expect(make()).not.toStrictEqual(make());
       expect([make()]).not.toContainEqual(make());
-      if (!(make() instanceof Map)) expect({ a: make() }).not.toMatchObject({ a: make() });
+      expect({ a: make() }).not.toMatchObject({ a: make() });
     }
     expect({ a: unequal, b: 1 }).not.toEqual({ b: 1, a: unequal });
     expect(new Float64Array([1, 2])).toEqual(new Float64Array([1, 2]));

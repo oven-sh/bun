@@ -7,6 +7,7 @@
  */
 
 import { stripVTControlCharacters } from "node:util";
+import { runInNewContext } from "node:vm";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -4194,6 +4195,579 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // Jest, Vitest and toEqual() do not see a #field of a class.
+    test("the private fields of a class are not compared", () => {
+      class Counter {
+        #n;
+        constructor(/** @type {number} */ n) {
+          this.#n = n;
+          this.name = "c";
+        }
+        get n() {
+          return this.#n;
+        }
+      }
+      class Holder {
+        #o;
+        constructor(/** @type {number} */ n) {
+          this.#o = { n };
+        }
+        get o() {
+          return this.#o;
+        }
+      }
+      expect(new Counter(1)).toMatchObject(new Counter(2));
+      expect({ k: new Counter(1) }).toMatchObject({ k: new Counter(2) });
+      expect([new Counter(1)]).toMatchObject([new Counter(2)]);
+      expect(new Holder(1)).toMatchObject(new Holder(2));
+      expect({ name: "c" }).toMatchObject(new Counter(1));
+      // the other properties are compared as before
+      const other = new Counter(1);
+      other.name = "d";
+      expect(new Counter(1)).not.toMatchObject(other);
+      expect({}).not.toMatchObject(new Counter(1));
+    });
+
+    test("an expected array needs an array", () => {
+      expect({}).not.toMatchObject([]);
+      expect({ k: {} }).not.toMatchObject({ k: [] });
+      expect({ 0: 1, length: 1 }).not.toMatchObject([1]);
+      expect(new Uint8Array([1])).not.toMatchObject([1]);
+      const arrayLike = Object.create(Array.prototype);
+      arrayLike[0] = 1;
+      arrayLike.length = 1;
+      expect(arrayLike).not.toMatchObject([1]);
+      // an expected object can be satisfied by an array
+      expect([1]).toMatchObject({ 0: 1 });
+      expect([]).toMatchObject({});
+      // an array without a prototype and an array of another realm are arrays
+      expect(Object.setPrototypeOf(["x"], null)).toMatchObject(["x"]);
+      const otherRealm = () => runInNewContext("[1, { a: 1 }]");
+      expect(otherRealm()).toMatchObject([1, { a: 1 }]);
+      expect([1, { a: 1 }]).toMatchObject(otherRealm());
+      expect({ k: otherRealm() }).toMatchObject({ k: [1, { a: 1 }] });
+      expect(otherRealm()).not.toMatchObject([1, { a: 2 }]);
+    });
+
+    if (isBun) {
+      test("Bun.deepMatch leaves out private fields, and an array in the subset needs an array", () => {
+        class Counter {
+          #n;
+          constructor(/** @type {number} */ n) {
+            this.#n = n;
+          }
+          get n() {
+            return this.#n;
+          }
+        }
+        expect(Bun.deepMatch(new Counter(2), new Counter(1))).toBe(true);
+        expect(Bun.deepMatch({ k: [new Counter(2)] }, { k: [new Counter(1)] })).toBe(true);
+        expect(Bun.deepMatch([], {})).toBe(false);
+        expect(Bun.deepMatch([1], { 0: 1, length: 1 })).toBe(false);
+        expect(Bun.deepMatch({ 0: 1 }, [1])).toBe(true);
+        expect(Bun.deepMatch(["x"], Object.setPrototypeOf(["x"], null))).toBe(true);
+        expect(Bun.deepMatch([1, 2], runInNewContext("[1, 2]"))).toBe(true);
+      });
+    }
+
+    // A Date and an Error have no enumerable properties. Jest and Vitest compare an expected
+    // Date by its time value and an expected Error by its message.
+    test("an expected Date is compared by its time value", () => {
+      expect({ d: new Date(5) }).toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: new Date(6) });
+      expect({ a: { d: new Date(5) } }).not.toMatchObject({ a: { d: new Date(6) } });
+      expect({ a: [new Date(5)] }).toMatchObject({ a: [new Date(5)] });
+      expect({ a: [new Date(5)] }).not.toMatchObject({ a: [new Date(6)] });
+      expect({ d: {} }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: { x: 1 } }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: 5 }).not.toMatchObject({ d: new Date(5) });
+      expect(new Date(5)).toMatchObject(new Date(5));
+      expect(new Date(5)).not.toMatchObject(new Date(6));
+      // a plain expected object still matches the properties of a Date
+      expect({ d: new Date(5) }).toMatchObject({ d: {} });
+    });
+
+    test("an expected Error is compared by its message", () => {
+      expect({ e: new Error("x") }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: new Error("y") });
+      expect({ a: [new Error("x")] }).not.toMatchObject({ a: [new Error("y")] });
+      expect({ e: {} }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: { message: "x" } }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: "x" }).not.toMatchObject({ e: new Error("x") });
+      expect(new Error("x")).toMatchObject(new Error("x"));
+      expect(new Error("x")).not.toMatchObject(new Error("y"));
+      // a plain expected object still matches the properties of an Error
+      expect({ e: new Error("x") }).toMatchObject({ e: { message: "x" } });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: { message: "y" } });
+    });
+
+    test("an expected Date under a received object that refers to itself", () => {
+      /** @type {any} */
+      const received = { at: new Date(5) };
+      received.self = received;
+      expect(received).toMatchObject({ self: { at: new Date(5) } });
+      expect(received).not.toMatchObject({ self: { at: new Date(6) } });
+    });
+
+    test("a Date or an Error in a private field is not compared", () => {
+      class Stamp {
+        #at;
+        constructor(/** @type {number} */ time) {
+          this.#at = new Date(time);
+        }
+        get at() {
+          return this.#at;
+        }
+      }
+      class Failure {
+        #error;
+        constructor(/** @type {string} */ message) {
+          this.#error = new Error(message);
+        }
+        get error() {
+          return this.#error;
+        }
+      }
+      expect(new Stamp(1)).toMatchObject(new Stamp(2));
+      expect({ k: [new Stamp(1)] }).toMatchObject({ k: [new Stamp(2)] });
+      expect(new Failure("a")).toMatchObject(new Failure("b"));
+    });
+
+    // A Set and a Map do not keep what they hold in enumerable properties either. Jest and Vitest
+    // compare an expected Set or Map by its members.
+    test("an expected Set is compared by its members", () => {
+      expect({ s: new Set([1, "a"]) }).toMatchObject({ s: new Set([1, "a"]) });
+      expect({ s: new Set([1]) }).not.toMatchObject({ s: new Set([2]) });
+      expect({ s: new Set([1, 2, 3]) }).not.toMatchObject({ s: new Set([1, 2]) });
+      expect({ s: new Set([1]) }).not.toMatchObject({ s: new Set([1, 2]) });
+      expect({ s: new Set([1]) }).not.toMatchObject({ s: new Set() });
+      expect({ s: new Set() }).toMatchObject({ s: new Set() });
+      expect({ s: new Set([NaN]) }).toMatchObject({ s: new Set([NaN]) });
+      expect({ a: [new Set([1])] }).not.toMatchObject({ a: [new Set([2])] });
+      expect(new Set([1])).toMatchObject(new Set([1]));
+      expect(new Set([1])).not.toMatchObject(new Set([2]));
+      // a member matches a member of the expected Set as a subset
+      expect({ s: new Set([{ a: 1, b: 2 }]) }).toMatchObject({ s: new Set([{ a: 1 }]) });
+      expect({ s: new Set([{ a: 1 }]) }).not.toMatchObject({ s: new Set([{ a: 1, b: 2 }]) });
+      expect({ s: new Set([{ a: 1 }, { a: 2 }]) }).toMatchObject({ s: new Set([{ a: 2 }, { a: 1 }]) });
+      expect({ s: new Set([{ a: 1 }]) }).not.toMatchObject({ s: new Set([{ a: 2 }]) });
+      expect({ s: new Set([[1, 2]]) }).not.toMatchObject({ s: new Set([[1]]) });
+      // as in Jest, two received members can match the same expected member
+      expect({
+        s: new Set([
+          { a: 1, b: 1 },
+          { a: 1, b: 2 },
+        ]),
+      }).toMatchObject({ s: new Set([{ a: 1 }, { c: 3 }]) });
+      expect({ s: new Set([new Date(5)]) }).toMatchObject({ s: new Set([new Date(5)]) });
+      expect({ s: new Set([new Date(5)]) }).not.toMatchObject({ s: new Set([new Date(6)]) });
+      expect({ s: new Set([new Set([1])]) }).toMatchObject({ s: new Set([new Set([1])]) });
+      expect({ s: new Set([new Set([1])]) }).not.toMatchObject({ s: new Set([new Set([2])]) });
+      expect({ s: new Set([5]) }).toMatchObject({ s: new Set([expect.any(Number)]) });
+      expect({ s: new Set(["x"]) }).not.toMatchObject({ s: new Set([expect.any(Number)]) });
+      expect({ s: new Set([{ id: 1, kind: "a" }]) }).toMatchObject({
+        s: new Set([{ id: expect.any(Number), kind: "a" }]),
+      });
+      // only a Set matches an expected Set
+      expect({ s: [1] }).not.toMatchObject({ s: new Set([1]) });
+      expect({ s: {} }).not.toMatchObject({ s: new Set() });
+      expect({ s: new Map() }).not.toMatchObject({ s: new Set() });
+      expect({ s: new Set([1]) }).not.toMatchObject({ s: [1] });
+      // a plain expected object still matches the properties of a Set
+      expect({ s: new Set([1]) }).toMatchObject({ s: {} });
+      expect({ s: new Set([1]) }).toMatchObject({ s: { size: 1 } });
+      expect({ s: new Set([1]) }).not.toMatchObject({ s: { size: 2 } });
+    });
+
+    test("an expected Map is compared by its entries", () => {
+      expect({ m: new Map([["a", 1]]) }).toMatchObject({ m: new Map([["a", 1]]) });
+      expect({ m: new Map([["a", 1]]) }).not.toMatchObject({ m: new Map([["a", 2]]) });
+      expect({ m: new Map([["a", 1]]) }).not.toMatchObject({ m: new Map([["b", 1]]) });
+      // prettier-ignore
+      expect({ m: new Map([["a", 1], ["b", 2]]) }).not.toMatchObject({ m: new Map([["a", 1]]) });
+      // prettier-ignore
+      expect({ m: new Map([["a", 1]]) }).not.toMatchObject({ m: new Map([["a", 1], ["b", 2]]) });
+      // prettier-ignore
+      expect({ m: new Map([["a", 1], ["b", 2]]) }).toMatchObject({ m: new Map([["b", 2], ["a", 1]]) });
+      expect({ m: new Map([["a", undefined]]) }).not.toMatchObject({ m: new Map([["b", undefined]]) });
+      expect({ m: new Map([[NaN, 1]]) }).toMatchObject({ m: new Map([[NaN, 1]]) });
+      expect({ a: [new Map([["a", 1]])] }).not.toMatchObject({ a: [new Map([["a", 2]])] });
+      expect(new Map([["a", 1]])).toMatchObject(new Map([["a", 1]]));
+      expect(new Map([["a", 1]])).not.toMatchObject(new Map([["a", 2]]));
+      // a value matches the expected value as a subset
+      expect({ m: new Map([["a", { x: 1, y: 2 }]]) }).toMatchObject({ m: new Map([["a", { x: 1 }]]) });
+      expect({ m: new Map([["a", { x: 1 }]]) }).not.toMatchObject({ m: new Map([["a", { x: 1, y: 2 }]]) });
+      expect({ m: new Map([["a", new Date(5)]]) }).not.toMatchObject({ m: new Map([["a", new Date(6)]]) });
+      expect({ m: new Map([["a", new Set([1])]]) }).not.toMatchObject({ m: new Map([["a", new Set([2])]]) });
+      expect({ m: new Map([["a", 5]]) }).toMatchObject({ m: new Map([["a", expect.any(Number)]]) });
+      expect({ m: new Map([["a", "x"]]) }).not.toMatchObject({ m: new Map([["a", expect.any(Number)]]) });
+      expect({ m: new Map([["a", { id: 1 }]]) }).toMatchObject({ m: new Map([["a", { id: expect.any(Number) }]]) });
+      // a key that is not in the expected Map matches an expected key as a subset
+      expect({ m: new Map([[{ a: 1 }, 1]]) }).toMatchObject({ m: new Map([[{ a: 1 }, 1]]) });
+      expect({ m: new Map([[{ a: 1 }, 1]]) }).not.toMatchObject({ m: new Map([[{ a: 2 }, 1]]) });
+      expect({ m: new Map([[{ a: 1 }, 1]]) }).not.toMatchObject({ m: new Map([[{ a: 1 }, 2]]) });
+      expect({ m: new Map([["a", 1]]) }).toMatchObject({ m: new Map([[expect.any(String), 1]]) });
+      expect({ m: new Map([[1, 1]]) }).not.toMatchObject({ m: new Map([[expect.any(String), 1]]) });
+      // as in Jest, two received entries can match the same expected entry
+      // prettier-ignore
+      expect({ m: new Map([[{ k: 1, x: 1 }, 1], [{ k: 1, x: 2 }, 1]]) }).toMatchObject({
+        m: new Map([[{ k: 1 }, 1], [{ z: 9 }, 2]]),
+      });
+      // the value under the same key differs, and another expected entry matches
+      // prettier-ignore
+      expect({ m: new Map([["z", 0], ["a", 1]]) }).toMatchObject({
+        m: new Map([["a", 2], [expect.any(String), expect.any(Number)]]),
+      });
+      const sameKey = { id: 1 };
+      // prettier-ignore
+      expect({ m: new Map([[sameKey, { x: 1 }], [{ id: 1 }, { x: 2 }]]) }).toMatchObject({
+        m: new Map([[sameKey, { x: 2 }], [{ id: 1 }, { x: 1 }]]),
+      });
+      // prettier-ignore
+      expect({ m: new Map([[{ id: 0 }, 0], [sameKey, { x: 1 }]]) }).not.toMatchObject({
+        m: new Map([[{ id: 0 }, 0], [sameKey, { x: 2 }]]),
+      });
+      // only a Map matches an expected Map
+      expect({ m: {} }).not.toMatchObject({ m: new Map() });
+      expect({ m: new Set() }).not.toMatchObject({ m: new Map() });
+      expect({ m: new WeakMap() }).not.toMatchObject({ m: new Map() });
+      // a plain expected object still matches the properties of a Map
+      expect({ m: new Map([["a", 1]]) }).toMatchObject({ m: {} });
+    });
+
+    test("a Set member or a Map entry that fails one candidate is compared again with the next", () => {
+      // The first candidate compares { v: 2 } with `shared` and fails. The second one has to compare them again.
+      const shared = { v: 1 };
+      expect({
+        s: new Set([
+          { k: { v: 2 }, z: 2 },
+          { z: 2, k: { v: 1 } },
+        ]),
+      }).not.toMatchObject({
+        s: new Set([
+          { k: shared, z: 1 },
+          { z: 2, k: shared },
+        ]),
+      });
+      expect({
+        s: new Set([
+          { k: { v: 1 }, z: 2 },
+          { z: 1, k: { v: 1 } },
+        ]),
+      }).toMatchObject({
+        s: new Set([
+          { k: shared, z: 1 },
+          { z: 2, k: shared },
+        ]),
+      });
+      // prettier-ignore
+      expect({ m: new Map([[{ id: 1 }, { k: { v: 2 }, z: 2 }], [{ id: 2 }, { z: 2, k: { v: 1 } }]]) }).not.toMatchObject({
+        m: new Map([[{ id: 1 }, { k: shared, z: 1 }], [{ id: 1 }, { z: 2, k: shared }]]),
+      });
+      // prettier-ignore
+      expect({ m: new Map([[{ id: 1 }, { k: { v: 1 }, z: 2 }], [{ id: 1 }, { z: 1, k: { v: 1 } }]]) }).toMatchObject({
+        m: new Map([[{ id: 1 }, { k: shared, z: 1 }], [{ id: 1 }, { z: 2, k: shared }]]),
+      });
+    });
+
+    /** @type {<T>(items: T[]) => T[][]} */
+    const permutations = items =>
+      items.length <= 1
+        ? [items]
+        : items.flatMap((item, i) =>
+            permutations([...items.slice(0, i), ...items.slice(i + 1)]).map(rest => [item, ...rest]),
+          );
+
+    test("the order of the members of a Set or a Map does not change the result", () => {
+      const ids = [0, 1, 2, 3];
+      const members = () => ids.map(id => ({ id, extra: true }));
+      for (const order of permutations(ids)) {
+        expect({ s: new Set(members()) }).toMatchObject({ s: new Set(order.map(id => ({ id }))) });
+        expect({ m: new Map(members().map(member => [member, 1])) }).toMatchObject({
+          m: new Map(order.map(id => [{ id }, 1])),
+        });
+        for (const missing of ids) {
+          // one expected member matches no received member
+          const expected = order.map(id => ({ id: id === missing ? -1 : id }));
+          expect({ s: new Set(members()) }).not.toMatchObject({ s: new Set(expected) });
+          expect({ m: new Map(members().map(member => [member, 1])) }).not.toMatchObject({
+            m: new Map(expected.map(key => [key, 1])),
+          });
+        }
+      }
+    });
+
+    test("a Set member or a Map entry that fails a candidate leaves nothing behind, in each order", () => {
+      for (const received of permutations([0, 1, 2])) {
+        for (const expected of permutations([0, 1, 2])) {
+          for (const v of [1, 2]) {
+            // `shared` is in two candidates. { v: 2 } matches neither.
+            const shared = { v: 1 };
+            const members = [{ k: { v: 1 }, z: 1 }, { k: { v }, z: 2 }, { z: 3 }];
+            const patterns = [{ k: shared, z: 1 }, { z: 2, k: shared }, { z: 3 }];
+            const set = expect({ s: new Set(received.map(i => members[i])) });
+            (v === 1 ? set : set.not).toMatchObject({ s: new Set(expected.map(i => patterns[i])) });
+            const map = expect({ m: new Map(received.map(i => [members[i], 1])) });
+            (v === 1 ? map : map.not).toMatchObject({ m: new Map(expected.map(i => [patterns[i], 1])) });
+          }
+        }
+      }
+    });
+
+    test("a matcher that throws ends the comparison of a Set or a Map with its error", () => {
+      const only = (/** @type {number} */ n) => ({
+        asymmetricMatch: (/** @type {unknown} */ value) => {
+          if (value !== n) throw new RangeError("not my member");
+          return true;
+        },
+      });
+      for (const order of [
+        [0, 2, 1],
+        [2, 1, 0],
+      ]) {
+        expect(() =>
+          expect({ s: new Set([0, 1, 2].map(id => ({ id }))) }).toMatchObject({
+            s: new Set(order.map(id => ({ id: only(id) }))),
+          }),
+        ).toThrow(new RangeError("not my member"));
+        expect(() =>
+          expect({ m: new Map([0, 1, 2].map(id => [{ id }, 1])) }).toMatchObject({
+            m: new Map(order.map(id => [{ id: only(id) }, 1])),
+          }),
+        ).toThrow(new RangeError("not my member"));
+      }
+    });
+
+    test("ends on cycles through a Set or a Map", () => {
+      const throughSet = (/** @type {number} */ n) => {
+        /** @type {any} */
+        const o = {};
+        o.s = new Set([o]);
+        o.n = n;
+        return o;
+      };
+      expect(throughSet(1)).toMatchObject(throughSet(1));
+      expect(throughSet(1)).not.toMatchObject(throughSet(2));
+      const throughMap = (/** @type {number} */ n) => {
+        /** @type {any} */
+        const o = {};
+        o.m = new Map([["self", o]]);
+        o.n = n;
+        return o;
+      };
+      expect(throughMap(1)).toMatchObject(throughMap(1));
+      expect(throughMap(1)).not.toMatchObject(throughMap(2));
+    });
+
+    test("a Set or a Map inside a candidate that fails leaves nothing behind", () => {
+      // The nested Set matches, then the candidate fails on `v`. The second candidate shares `inner`.
+      const inner = { s: new Set([{ q: 1 }]), v: 1 };
+      const received = (/** @type {number} */ v) => ({ s: new Set([{ q: 1 }]), v });
+      // prettier-ignore
+      expect({ o: new Set([{ a: received(2), z: 2 }, { a: received(1), z: 1 }]) }).not.toMatchObject({
+        o: new Set([{ a: inner, z: 1 }, { z: 2, a: inner }]),
+      });
+      // prettier-ignore
+      expect({ o: new Set([{ a: received(1), z: 2 }, { a: received(1), z: 1 }]) }).toMatchObject({
+        o: new Set([{ a: inner, z: 1 }, { z: 2, a: inner }]),
+      });
+      // `shared` is compared after the nested Set `n` has matched.
+      const shared = { v: 1 };
+      const n = () => new Set([{ q: 1 }]);
+      // prettier-ignore
+      expect({ o: new Set([{ n: n(), k: { v: 2 }, z: 2 }, { n: n(), k: { v: 1 }, z: 1 }]) }).not.toMatchObject({
+        o: new Set([{ n: n(), k: shared, z: 1 }, { z: 2, n: n(), k: shared }]),
+      });
+      // prettier-ignore
+      expect({ o: new Set([{ n: n(), k: { v: 1 }, z: 2 }, { n: n(), k: { v: 1 }, z: 1 }]) }).toMatchObject({
+        o: new Set([{ n: n(), k: shared, z: 1 }, { z: 2, n: n(), k: shared }]),
+      });
+      // Inside the member, { a: 1 } fails against { a: 2 } first. Then `back` returns to the member.
+      const cyclic = (/** @type {object[]} */ members, /** @type {number} */ count) => {
+        /** @type {any} */
+        const m = { t: new Set(members), count };
+        m.back = m;
+        return m;
+      };
+      expect({ set: new Set([cyclic([{ a: 1 }, { a: 2 }], 1)]) }).toMatchObject({
+        set: new Set([cyclic([{ a: 2 }, { a: 1 }], 1)]),
+      });
+      expect({ set: new Set([cyclic([{ a: 1 }, { a: 2 }], 1)]) }).not.toMatchObject({
+        set: new Set([cyclic([{ a: 2 }, { a: 1 }], 2)]),
+      });
+    });
+
+    test("a Set or a Map in a private field is not compared", () => {
+      class Tags {
+        #set;
+        #map;
+        constructor(/** @type {number} */ value) {
+          this.#set = new Set([value]);
+          this.#map = new Map([["k", value]]);
+        }
+        get size() {
+          return this.#set.size + this.#map.size;
+        }
+      }
+      expect(new Tags(1)).toMatchObject(new Tags(2));
+      expect({ k: [new Tags(1)] }).toMatchObject({ k: [new Tags(2)] });
+    });
+
+    test("a matcher beside a value that only has the type of a matcher is applied", () => {
+      // A Response and a URL are objects of the type that the built-in matchers have.
+      const isResponse = { asymmetricMatch: (/** @type {unknown} */ value) => value instanceof Response };
+      const isNumber = { asymmetricMatch: (/** @type {unknown} */ value) => typeof value === "number" };
+      expect({ k: new Set([new Response("")]) }).toMatchObject({ k: new Set([isResponse]) });
+      expect({ k: new Set([new Response("")]) }).not.toMatchObject({ k: new Set([isNumber]) });
+      expect({ k: new Map([["a", new URL("http://a/")]]) }).toMatchObject({
+        k: new Map([["a", { asymmetricMatch: (/** @type {unknown} */ value) => value instanceof URL }]]),
+      });
+      expect({ k: new Set([expect.any(Response)]) }).toMatchObject({ k: new Set([new Response("")]) });
+      // under a property, and in toEqual()
+      expect({ k: new Response("") }).toMatchObject({ k: isResponse });
+      expect({ k: new Response("") }).not.toMatchObject({ k: isNumber });
+      expect({ k: expect.any(Response) }).toMatchObject({ k: new Response("") });
+      expect({ k: new Response("") }).toEqual({ k: isResponse });
+      expect({ k: new Response("") }).not.toEqual({ k: isNumber });
+      expect({ k: { asymmetricMatch: (/** @type {unknown} */ value) => value instanceof URL } }).toEqual({
+        k: new URL("http://a/"),
+      });
+      expect({ k: expect.any(Number) }).not.toEqual({ k: new Response("") });
+      expect({ k: expect.any(Response) }).toEqual({ k: new Response("") });
+    });
+
+    if (isBun) {
+      test("Bun.deepMatch compares an expected Date and Error", () => {
+        expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(2) }, { d: new Date(1) })).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(1) }, { d: new Date(1) })).toBe(true);
+        expect(Bun.deepMatch(new Error("b"), new Error("a"))).toBe(false);
+        expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("x") })).toBe(true);
+        expect(Bun.deepMatch({ d: new Date() }, { d: {} })).toBe(false);
+        expect(Bun.deepMatch({ d: {} }, { d: new Date() })).toBe(true);
+      });
+
+      test("details of the Date and Error comparison", () => {
+        // an invalid Date equals no Date, as in toEqual and in Jest
+        expect({ d: new Date(NaN) }).not.toMatchObject({ d: new Date(NaN) });
+        // as in Jest, the class, the name and the cause of an Error are not compared
+        expect({ e: new TypeError("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x", { cause: 2 }) });
+        // a DOMException is an Error
+        expect({ e: new DOMException("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new DOMException("x") }).not.toMatchObject({ e: new Error("y") });
+        // the enumerable properties of the expected Date or Error are matched, as before
+        const withCode = () => Object.assign(new Error("x"), { code: 1 });
+        expect({ e: Object.assign(withCode(), { extra: 2 }) }).toMatchObject({ e: withCode() });
+        expect({ e: new Error("x") }).not.toMatchObject({ e: withCode() });
+        expect({ d: new Date(5) }).not.toMatchObject({ d: Object.assign(new Date(5), { x: 1 }) });
+      });
+
+      test("Bun.deepMatch compares an expected Set and Map", () => {
+        expect(Bun.deepMatch(new Set([1]), new Set([2]))).toBe(false);
+        expect(Bun.deepMatch({ s: new Set([2]) }, { s: new Set([1]) })).toBe(false);
+        expect(Bun.deepMatch({ s: new Set([{ a: 1 }]) }, { s: new Set([{ a: 1, b: 2 }]) })).toBe(true);
+        expect(Bun.deepMatch({ s: new Set([{ a: 1, b: 2 }]) }, { s: new Set([{ a: 1 }]) })).toBe(false);
+        expect(Bun.deepMatch(new Map([["a", 1]]), new Map([["a", 2]]))).toBe(false);
+        expect(Bun.deepMatch({ m: new Map([["a", { x: 1 }]]) }, { m: new Map([["a", { x: 1, y: 2 }]]) })).toBe(true);
+        expect(Bun.deepMatch({ m: new Map() }, { m: {} })).toBe(false);
+        expect(Bun.deepMatch({ m: {} }, { m: new Map() })).toBe(true);
+        // Bun.deepMatch has no asymmetric matchers
+        expect(Bun.deepMatch({ s: new Set([expect.any(Number)]) }, { s: new Set([5]) })).toBe(false);
+      });
+
+      test("details of the Set and Map comparison", () => {
+        // a received Set or Map keeps its members when they match a matcher
+        const received = { s: new Set([5]), m: new Map([["a", 5]]) };
+        expect(received).toMatchObject({ s: new Set([expect.any(Number)]), m: new Map([["a", expect.any(Number)]]) });
+        expect([...received.s, ...received.m]).toEqual([5, ["a", 5]]);
+        // the class of a Set or a Map is not compared, as in toEqual
+        class MySet extends Set {}
+        expect({ s: new MySet([1]) }).toMatchObject({ s: new Set([1]) });
+        expect({ s: new MySet([1]) }).not.toMatchObject({ s: new Set([2]) });
+        // the enumerable properties of the expected Set or Map are matched, as before
+        const withTag = () => Object.assign(new Set([1]), { tag: 1 });
+        expect({ s: Object.assign(withTag(), { extra: 2 }) }).toMatchObject({ s: withTag() });
+        expect({ s: new Set([1]) }).not.toMatchObject({ s: withTag() });
+        // an object in the expected Set needs an object, as a property does
+        expect({ s: new Set([1]) }).not.toMatchObject({ s: new Set([{}]) });
+        // a function in a Set or a Map is matched as a function under a property is
+        expect({ s: new Set([() => 1]) }).toMatchObject({ s: new Set([() => 2]) });
+        // a received Proxy is not read as a Set or a Map. Its properties are matched, as before.
+        expect({ s: new Proxy(new Set([1]), {}) }).toMatchObject({ s: new Set([2]) });
+        expect({ m: new Proxy(new Map(), {}) }).toMatchObject({ m: new Map([["a", 1]]) });
+        // expect.objectContaining() still takes a Set or a Map as an object with no properties
+        expect({ a: 1 }).toEqual(expect.objectContaining(new Set([1])));
+      });
+
+      test("members of a Set or a Map that follow each other in the same order take one try each", () => {
+        // Each expected member holds a matcher. One call of `tried` is one try of a candidate: [received id, candidate id].
+        const tried = jest.fn((/** @type {unknown} */ value, /** @type {number} */ id) => value === id);
+        const counted = (/** @type {number} */ id) => ({
+          id: { asymmetricMatch: (/** @type {unknown} */ value) => tried(value, id) },
+        });
+        const ids = Array.from({ length: 50 }, (_, id) => id);
+
+        // A scan from the first expected member for each received member makes 1275 tries.
+        expect({ s: new Set(ids.map(id => ({ id }))) }).toMatchObject({ s: new Set(ids.map(counted)) });
+        expect(tried).toHaveBeenCalledTimes(ids.length);
+        tried.mockClear();
+        expect({ m: new Map(ids.map(id => [{ id }, 1])) }).toMatchObject({
+          m: new Map(ids.map(id => [counted(id), 1])),
+        });
+        expect(tried).toHaveBeenCalledTimes(ids.length);
+        tried.mockClear();
+
+        // Another order: the try behind the last match fails. The scan from the start then leaves that candidate out.
+        // prettier-ignore
+        const pairs = [[0, 1], [0, 0], [1, 2], [1, 1], [2, 0], [2, 1], [2, 2]];
+        expect({ s: new Set([0, 1, 2].map(id => ({ id }))) }).toMatchObject({ s: new Set([1, 0, 2].map(counted)) });
+        expect(tried.mock.calls).toEqual(pairs);
+        tried.mockClear();
+        expect({ m: new Map([0, 1, 2].map(id => [{ id }, 1])) }).toMatchObject({
+          m: new Map([1, 0, 2].map(id => [counted(id), 1])),
+        });
+        expect(tried.mock.calls).toEqual(pairs);
+        tried.mockClear();
+
+        // A member that the expected Set holds itself does not move the first try, so the scan starts at the front again.
+        expect({ s: new Set(ids.flatMap(id => ["s" + id, { id }])) }).toMatchObject({
+          s: new Set(ids.flatMap(id => ["s" + id, counted(id)])),
+        });
+        expect(tried).toHaveBeenCalledTimes(1275);
+      });
+
+      test("a pair that a Set or a Map compared first still shows its matcher under a property", () => {
+        const item = { id: 5 };
+        const shape = { id: expect.any(Number) };
+        const messageOf = (/** @type {() => void} */ fn) => {
+          try {
+            fn();
+          } catch (e) {
+            return stripVTControlCharacters(/** @type {Error} */ (e).message);
+          }
+          return "no error";
+        };
+        // `z` is the one property that differs. The matcher under `p` matched, so `p` is not listed.
+        const setFirst = messageOf(() =>
+          expect({ s: new Set([item]), p: item, z: 1 }).toMatchObject({ s: new Set([shape]), p: shape, z: 2 }),
+        );
+        const propertyFirst = messageOf(() =>
+          expect({ p: item, s: new Set([item]), z: 1 }).toMatchObject({ p: shape, s: new Set([shape]), z: 2 }),
+        );
+        expect(setFirst).toContain("- Expected  - 2");
+        expect(setFirst).toBe(propertyFirst);
+        const mapFirst = messageOf(() =>
+          expect({ m: new Map([["k", item]]), p: item, z: 1 }).toMatchObject({
+            m: new Map([["k", shape]]),
+            p: shape,
+            z: 2,
+          }),
+        );
+        expect(mapFirst).toContain("- Expected  - 2");
+      });
+    }
   });
 
   describe("toMatch()", () => {

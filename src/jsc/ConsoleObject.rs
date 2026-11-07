@@ -1569,8 +1569,10 @@ pub mod formatter {
         pub same_as_older_bun: bool,
         /// Bytes written so far. Only failure messages track it.
         pub output_length: Option<&'a core::cell::Cell<usize>>,
-        /// The `target` of the event that a failure message prints. It prints as `[Class]`.
+        /// The `target` of the event that a failure message prints. It prints one level deep.
         pub dispatcher: JSValue,
+        /// A value at a deeper indent is inside the `dispatcher` and prints as `[Class]`.
+        pub shallow_below: u32,
     }
 
     impl Default for Snapshot<'_> {
@@ -1584,6 +1586,7 @@ pub mod formatter {
                 same_as_older_bun: true,
                 output_length: None,
                 dispatcher: JSValue::ZERO,
+                shallow_below: u32::MAX,
             }
         }
     }

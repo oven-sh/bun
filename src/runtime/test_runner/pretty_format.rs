@@ -622,14 +622,24 @@ impl JestPrettyFormat {
                     return Ok(false);
                 }
             }
-            if value == formatter.snapshot.dispatcher {
-                let _ = writer.write_fmt(format_args!("[{}]", value.get_class_name(global)?));
+            if formatter.indent > formatter.snapshot.shallow_below && !matches!(tag, Tag::Function | Tag::Class | Tag::Error) {
+                let name = value.get_class_name(global)?;
+                let _ = if name.is_empty() { writer.write_all(b"[Object]") } else { writer.write_fmt(format_args!("[{name}]")) };
                 return Ok(true);
+            }
+            // `toEqual` compares the object that dispatched an event, and that object can be large.
+            if value == formatter.snapshot.dispatcher {
+                let dispatcher = core::mem::take(&mut formatter.snapshot.dispatcher);
+                let outer = core::mem::replace(&mut formatter.snapshot.shallow_below, formatter.indent);
+                let printed = formatter.format::<false>(console_object::TagResult { tag: *tag, cell: value.js_type() }, writer, value, global);
+                formatter.snapshot.shallow_below = outer;
+                formatter.snapshot.dispatcher = dispatcher;
+                return printed.map(|()| true);
             }
             // The walk of the Object arm prints what `toEqual` reads of an event.
             if matches!(tag, Tag::Event) {
                 let dispatcher = match value.get(global, "target") {
-                    Ok(target) => target.filter(|target| *target != value).unwrap_or(JSValue::ZERO),
+                    Ok(target) => target.filter(|target| *target != value).unwrap_or_default(),
                     Err(JsError::Thrown) if global.clear_exception_except_termination() => JSValue::ZERO,
                     Err(error) => return Err(error),
                 };

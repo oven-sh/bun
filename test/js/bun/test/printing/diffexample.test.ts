@@ -1185,6 +1185,18 @@ test("prints an event by its class, with its own properties, also for the types 
     '  "error": 1,',
     '  "message": "m",',
   ]);
+  // For another type the getter is not called: toEqual does not read it, and a snapshot does not show it.
+  let calls = 0;
+  class Tick extends Event {
+    get message() {
+      calls++;
+      return "m";
+    }
+  }
+  expect(printedInFailure(new Tick("tick")).filter(line => /^  "(message|type)"/.test(line))).toEqual([
+    '  "type": "tick",',
+  ]);
+  expect(calls).toBe(0);
 });
 
 test("prints an event that holds itself once, and a getter of an event that throws as [native code]", () => {
@@ -1221,28 +1233,83 @@ test("prints an event that holds itself once, and a getter of an event that thro
   ]);
 });
 
-test("prints the object that dispatched an event as its class", () => {
+test("prints the object that dispatched an event one level deep", () => {
+  // An event that was dispatched is not equal to a new one: it has a target.
+  const target = new EventTarget();
+  const listener = mock();
+  target.addEventListener("a", listener);
+  target.dispatchEvent(new CustomEvent("a", { detail: 1 }));
+  expect(differing(() => expect(listener.mock.calls[0][0]).toEqual(new CustomEvent("a", { detail: 1 })))).toEqual([
+    '- "srcElement": null,',
+    '- "target": null,',
+    '+ "srcElement": EventTarget {},',
+    '+ "target": EventTarget {},',
+  ]);
+
   class Socket extends EventTarget {
     received = new Uint8Array(4096);
+    constructor(public id: number) {
+      super();
+    }
   }
-  const socket = new Socket();
-  let event: Event | undefined;
-  let inTheListener: string[] = [];
-  socket.addEventListener("message", received => {
-    event = received;
-    inTheListener = printedInFailure(received);
-  });
-  socket.dispatchEvent(new MessageEvent("message", { data: { socket } }));
-  // `currentTarget`, `srcElement` and `target` are the same object. In full it has 4,100 lines.
-  expect(inTheListener.filter(line => line.includes("Socket"))).toEqual([
-    '  "currentTarget": [Socket],',
-    '    "socket": [Socket],',
-    '  "srcElement": [Socket],',
-    '  "target": [Socket],',
+  const dispatch = (socket: Socket, data: unknown) => {
+    let event: Event | undefined;
+    let inTheListener: string[] = [];
+    socket.addEventListener("message", received => {
+      event = received;
+      inTheListener = printedInFailure(received);
+    });
+    socket.dispatchEvent(new MessageEvent("message", { data }));
+    return { event, inTheListener };
+  };
+  const socket = new Socket(1);
+  // `currentTarget`, `srcElement` and `target` are the same object. In full it has 4,101 lines.
+  const { inTheListener } = dispatch(socket, { socket });
+  expect(inTheListener.filter(line => /Socket|"id"|"received"|^ +\},/.test(line))).toEqual([
+    '  "currentTarget": EventTarget Socket {',
+    '    "id": 1,',
+    '    "received": [Uint8Array],',
+    "  },",
+    '    "socket": EventTarget Socket {',
+    '      "id": 1,',
+    '      "received": [Uint8Array],',
+    "    },",
+    "  },",
+    '  "srcElement": EventTarget Socket {',
+    '    "id": 1,',
+    '    "received": [Uint8Array],',
+    "  },",
+    '  "target": EventTarget Socket {',
+    '    "id": 1,',
+    '    "received": [Uint8Array],',
+    "  },",
   ]);
-  expect(inTheListener).toHaveLength(23);
+  // toEqual compares the two objects that dispatched the events.
+  expect(differing(() => expect(dispatch(socket, 1).event).toEqual(dispatch(new Socket(2), 1).event))).toEqual([
+    '- "id": 2,',
+    '+ "id": 1,',
+    '- "id": 2,',
+    '+ "id": 1,',
+  ]);
   // Where no event holds it, it prints in full.
-  expect(printedInFailure({ socket })).toHaveLength(4102);
+  expect(printedInFailure({ socket })).toHaveLength(4103);
+
+  // A function and an error take one line, so they print as they do elsewhere.
+  class Hub extends EventTarget {
+    failure = new Error("e");
+    handler = () => {};
+    self = this;
+  }
+  const hub = new Hub();
+  hub.addEventListener("a", listener);
+  hub.dispatchEvent(new Event("a"));
+  expect(printedInFailure(listener.mock.calls[1][0]).slice(-8, -3)).toEqual([
+    '  "target": EventTarget Hub {',
+    '    "failure": [Error: e],',
+    '    "handler": [Function],',
+    '    "self": [Hub],',
+    "  },",
+  ]);
 });
 
 test("does not print the accessors of a value that is not a native event", () => {

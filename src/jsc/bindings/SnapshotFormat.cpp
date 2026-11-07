@@ -1,6 +1,8 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "EventNames.h"
+#include "JSEvent.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/ArrayConstructor.h>
@@ -377,10 +379,17 @@ void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, Prope
     PropertyNameArrayBuilder found(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     event->getPropertyNames(globalObject, found, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, );
-    // The event text of a snapshot shows these three for the types "message" and "error", also where they are not enumerable.
-    const Identifier* const alsoShown[] = { &WebCore::builtinNames(vm).dataPublicName(), &vm.propertyNames->error, &vm.propertyNames->message };
+    // A snapshot shows `data` for the type "message", and `message` and `error` for the type "error", also where they are not enumerable.
+    const Identifier* const ofMessage[] = { &WebCore::builtinNames(vm).dataPublicName() };
+    const Identifier* const ofError[] = { &vm.propertyNames->message, &vm.propertyNames->error };
+    const AtomString& type = uncheckedDowncast<WebCore::JSEvent>(event)->wrapped().type();
+    std::span<const Identifier* const> alsoShown;
+    if (type == WebCore::eventNames().messageEvent)
+        alsoShown = ofMessage;
+    else if (type == WebCore::eventNames().errorEvent)
+        alsoShown = ofError;
     const size_t enumerable = found.size();
-    for (size_t i = 0; i < enumerable + std::size(alsoShown); i++) {
+    for (size_t i = 0; i < enumerable + alsoShown.size(); i++) {
         const Identifier& name = i < enumerable ? found[i] : *alsoShown[i - enumerable];
         for (JSObject* holder = event; holder; holder = holder->getPrototypeDirect().getObject()) {
             PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);

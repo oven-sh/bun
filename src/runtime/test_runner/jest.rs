@@ -656,12 +656,10 @@ pub(crate) mod on_unhandled_rejection {
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
             if let Some(entry) = entry_ptr {
-                // SAFETY: `entry` belongs to the running file.
-                let mode = unsafe { (*entry).base.mode };
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
-                        || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
+                        || sequence.is_expected_to_fail()
                     {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;

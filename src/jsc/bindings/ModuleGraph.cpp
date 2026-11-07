@@ -365,12 +365,12 @@ Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
     return structure;
 }
 
-JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous)
+JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous, JSValue value)
 {
     VM& vm = globalObject->vm();
     JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
     frame->putDirectOffset(vm, FrameStorage, storage);
-    frame->putDirectOffset(vm, FrameValue, jsUndefined());
+    frame->putDirectOffset(vm, FrameValue, value);
     frame->putDirectOffset(vm, FramePrev, previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
     JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();

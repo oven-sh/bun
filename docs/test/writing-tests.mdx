@@ -258,6 +258,10 @@ Use it to track known bugs you plan to fix later, or for test-driven development
 
 Neither one counts an uncaught exception or an unhandled rejection, because it may have come from an earlier test. Bun reports it as an unhandled error between tests.
 
+A matcher that isn't awaited, `expect.soft()` and `expect.poll()` are different: the test takes their failure, so it counts. It only counts when the test's own code calls them. Bun tells by the async context of the call, which is what `AsyncLocalStorage` uses. The test's own code is what the test function and its `beforeEach()` and `afterEach()` hooks call directly, and what they start: code after an `await`, and their timers and promise callbacks.
+
+Any other call belongs to the file. The test doesn't wait for it, and a failure is an unhandled error between tests. That is the case for code that an earlier test, an earlier attempt of the same test, a `beforeAll()` hook or the top of the file started. It is also the case for a callback that doesn't [get the async context](/runtime/nodejs-compat#node-async_hooks) of the code that set it, such as a `MessagePort` or `Worker` event. In a concurrent test, only the calls before its first `await` are known to be its own. To make the failure of a matcher count, `await` the matcher in the test function, or return its promise from it. That doesn't work for `expect.soft()`, which never rejects: call it from the test's own code.
+
 ### Combining modifiers
 
 You can chain modifiers in any order. Repeating a modifier, as in `test.skip.skip`, has no effect. `skip` wins over `todo`, and `todo` wins over `failing`.
@@ -564,7 +568,7 @@ test("promises", async () => {
 });
 ```
 
-If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
+If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. The file also waits for a matcher that other code calls while a [`test.failing()` or `test.fails()`](#test-failing) test runs. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
 
 In a `"bun:test"` test, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. In a `"vitest"` test, the matcher always returns a promise.
 

@@ -41,7 +41,7 @@ pub(crate) struct ViWait {
     callback_pending: Cell<bool>,
     /// The wait is dropped once the test file that started it ends.
     test_file: Option<u32>,
-    /// For `Kind::Poll`, the wait is also dropped once this test ends.
+    /// For `Kind::Poll`, the wait is also dropped once this test ends. If the test only ran beside the call, the wait fails then.
     test: Option<RunningEntry>,
     pub(crate) timer: JsCell<EventLoopTimer>,
     abort_handle: AbortHandle,
@@ -228,9 +228,25 @@ impl ViWait {
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             this.deadline.set(now.add_ms(i64::from(timeout_ms)));
             this.arm(&now);
+            if let Some(test) = &this.test {
+                test.keep_poll(global, this_value);
+            }
         }
         this_value.ensure_still_alive();
         Ok(promise)
+    }
+
+    /// Ends a pending `expect.poll()` wait with its last error, because the test that ran beside it has ended.
+    pub(crate) fn end_with_test(global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
+        let Some(this) = ViWait::from_js(this_value) else {
+            return Ok(());
+        };
+        // SAFETY: `this_value` is on the stack and owns the payload.
+        let this = unsafe { &*this };
+        if !this.is_pending() {
+            return Ok(());
+        }
+        this.time_out(global, this_value)
     }
 
     fn is_pending(&self) -> bool {
@@ -422,7 +438,8 @@ impl ViWait {
             .abort_handle
             .context_id()
             .map(|context| vm.enter_context(context));
-        let result = if self.timer.get().next.order(&self.deadline.get()).is_lt() {
+        let outlived = self.test.as_ref().is_some_and(RunningEntry::outlived_bystander);
+        let result = if !outlived && self.timer.get().next.order(&self.deadline.get()).is_lt() {
             self.poll(global, this_value, false)
         } else {
             self.time_out(global, this_value)

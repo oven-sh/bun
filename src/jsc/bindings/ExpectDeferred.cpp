@@ -1,7 +1,10 @@
 #include "root.h"
 
+#include "AsyncContextFrame.h"
+#include "BunClientData.h"
 #include "ErrorStackTrace.h"
 #include "GeneratedExpectDeferred.h"
+#include "ModuleGraph.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ErrorInstance.h>
@@ -103,4 +106,52 @@ extern "C" void ExpectDeferred__location(JSGlobalObject* globalObject, EncodedJS
         *outColumn = OrdinalNumber::fromZeroBasedInt(remapped[0].position.column_zero_based).oneBasedInt();
         return;
     }
+}
+
+// `callback`, bound to an async context frame that names `attempt` on top of the context it would run in.
+// The frame's storage is the `bun:test` module object, which no AsyncLocalStorage, module graph or mock is.
+extern "C" EncodedJSValue ExpectDeferred__bindToAttempt(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedCallback, uint32_t attempt)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue callback = JSValue::decode(encodedCallback);
+    auto* bound = dynamicDowncast<AsyncContextFrame>(callback);
+    JSValue outer = bound ? bound->context.get() : globalObject->m_asyncContextData.get()->getInternalField(0);
+    // Promise reactions only capture the async context once tracking is on.
+    globalObject->setAsyncContextTrackingEnabled(true);
+    JSObject* frame = Bun::createAsyncContextFrame(globalObject, globalObject->lazyTestModuleObject(), outer, jsNumber(attempt));
+    return JSValue::encode(AsyncContextFrame::create(globalObject, bound ? bound->callback.get() : callback, frame));
+}
+
+// Resolves `promise` with `thenable`, as `JSPromise::resolve` does. If `ExpectDeferred__bindToAttempt` bound `callback`,
+// which returned `thenable`, the job that calls `then` runs in the async context of `callback`: that work is the attempt's too.
+extern "C" void ExpectDeferred__followThenable(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedCallback, JSPromise* promise, EncodedJSValue encodedThenable)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = getVM(globalObject);
+    JSValue attempt;
+    if (auto* bound = dynamicDowncast<AsyncContextFrame>(JSValue::decode(encodedCallback))) {
+        JSObject* frame = bound->context.get().getObject();
+        if (frame && frame->getDirect(vm, WebCore::builtinNames(vm).storagePublicName()) == globalObject->lazyTestModuleObject())
+            attempt = frame;
+    }
+    AsyncContextScope context(globalObject, attempt);
+    promise->resolve(globalObject, vm, JSValue::decode(encodedThenable));
+}
+
+// The attempt that the innermost frame of `ExpectDeferred__bindToAttempt` in the current async context names, or 0.
+extern "C" uint32_t ExpectDeferred__callingAttempt(JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = getVM(globalObject);
+    auto& names = WebCore::builtinNames(vm);
+    JSObject* storage = globalObject->lazyTestModuleObject();
+    for (JSObject* frame = globalObject->m_asyncContextData.get()->getInternalField(0).getObject(); frame;) {
+        if (frame->getDirect(vm, names.storagePublicName()) == storage) {
+            JSValue attempt = frame->getDirect(vm, vm.propertyNames->value);
+            return attempt && attempt.isUInt32() ? attempt.asUInt32() : 0;
+        }
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    return 0;
 }

@@ -87,6 +87,11 @@ fn nn(p: Option<*mut ExecutionEntry>) -> Option<NonNull<ExecutionEntry>> {
 
 bun_core::declare_scope!(jest, visible);
 
+unsafe extern "C" {
+    safe fn ExpectDeferred__bindToAttempt(global: &JSGlobalObject, callback: JSValue, attempt: u32) -> JSValue;
+    safe fn ExpectDeferred__callingAttempt(global: &JSGlobalObject) -> u32;
+}
+
 pub(crate) struct Execution {
     pub(crate) groups: Box<[ConcurrentGroup]>,
     // was `pub(self)`; widened so `RefDataValue::sequence` can
@@ -173,6 +178,9 @@ pub(crate) struct ExecutionSequence {
     pub(crate) pending_matchers: u32,
     /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
     pub(crate) callback_done: bool,
+    /// Names this attempt in the async context of its callbacks. Unlike `attempt`, no other sequence has the same one.
+    /// 0 unless `is_expected_to_fail()`, because only then does `RunningEntry::of` ask `is_caller()`.
+    pub(crate) attempt_id: u32,
     /// Names `Snapshots::add_count` counted during this attempt, for `reset_sequence` to undo.
     pub(crate) counted_snapshots: Vec<Box<[u8]>>,
     /// Errors thrown during this attempt, for the JUnit report.
@@ -205,6 +213,7 @@ impl ExecutionSequence {
             context: None,
             pending_matchers: 0,
             callback_done: false,
+            attempt_id: 0,
             counted_snapshots: Vec::new(),
             failure: None,
             earlier_failures: Vec::new(),
@@ -223,6 +232,30 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+
+    /// `test.failing` or `test.fails`: a failure of the test's own code makes it pass.
+    /// `Execution::handle_uncaught_exception` hides it in the test callback, and for `test.fails` in a hook too.
+    pub(crate) fn is_expected_to_fail(&self) -> bool {
+        matches!(self.entry_mode(), ScopeMode::Failing | ScopeMode::Fails)
+    }
+
+    /// `callback`, bound to an async context that names this attempt.
+    fn bind_to_attempt(&mut self, buntest: &BunTestPtr, global: &JSGlobalObject, callback: JSValue) -> JSValue {
+        if self.attempt_id == 0 {
+            self.attempt_id = buntest.bun_test_root.get().next_attempt_id();
+        }
+        // An unbound callback runs in its file's context, which `run_test_callback` enters for the call.
+        // Enter it here too, so that the frame goes on top of it.
+        let vm = global.bun_vm();
+        let file_context = vm.test_isolation_state.file_context;
+        let _entered = (file_context != bun_jsc::ContextId::NONE).then(|| vm.enter_context(file_context));
+        ExpectDeferred__bindToAttempt(global, callback, self.attempt_id)
+    }
+
+    /// Whether the running code descends from a callback of this attempt.
+    pub(crate) fn is_caller(&self, global: &JSGlobalObject) -> bool {
+        self.attempt_id != 0 && ExpectDeferred__callingAttempt(global) == self.attempt_id
     }
 
     pub(crate) fn context(
@@ -1308,6 +1341,10 @@ fn step_sequence_one(
         if let Some(captured) = test_context_around::captured_async_context(context, scope) {
             callback = test_context_around::in_async_context(global_this, captured, callback)?;
         }
+        let is_expected_to_fail = sequence.is_expected_to_fail();
+        if is_expected_to_fail {
+            callback = sequence.bind_to_attempt(buntest_strong, global_this, callback);
+        }
         let set_up_args: [JSValue; 4];
         let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {
             let suite = match (args.get(1), scope) {
@@ -1322,6 +1359,10 @@ fn step_sequence_one(
                 suite,
             ];
             callback = AroundHook::set_up_function(global_this);
+            // It calls `then()` of what the hook returns.
+            if is_expected_to_fail {
+                callback = sequence.bind_to_attempt(buntest_strong, global_this, callback);
+            }
             &set_up_args[..]
         } else {
             args

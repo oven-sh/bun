@@ -6,6 +6,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
 use bun_collections::VecExt;
+use bun_core::strings;
 
 use crate::lower::import_meta_glob::object_of;
 use crate::p::P;
@@ -339,10 +340,16 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             })
     }
 
-    fn is_named_by_hoisted_mock(&self, path: &[u8]) -> bool {
-        self.hoisted_mock_paths
-            .iter()
-            .any(|named| named.slice() == path)
+    /// A mock updates a loaded project file in place. Only an import that can be in a package has to load behind the call that names it.
+    fn loads_behind_hoisted_mock(&self, path: &[u8]) -> bool {
+        let can_be_in_package = bun_paths::is_package_path(path)
+            || strings::contains(path, b"node_modules")
+            || strings::contains(self.source.path.text, b"node_modules");
+        can_be_in_package
+            && self
+                .hoisted_mock_paths
+                .iter()
+                .any(|named| named.slice() == path)
     }
 
     fn import_bindings(import: &S::Import) -> impl Iterator<Item = (Ref, js_ast::StoreStr)> + '_ {
@@ -364,8 +371,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         if import.phase_defer || record.tag != js_ast::ImportRecordTag::None {
             return MockHoistOrder::InPlace;
         }
-        // An import with attributes stays static, unless that leaves it linked ahead of a mock of the same path.
-        if record.loader.is_some() && !self.is_named_by_hoisted_mock(record.path.text) {
+        // An import with attributes stays static, unless a hoisted mock of its path would miss it.
+        if record.loader.is_some() && !self.loads_behind_hoisted_mock(record.path.text) {
             return MockHoistOrder::InPlace;
         }
         // `export { a }` needs `a` to be a binding.
@@ -428,7 +435,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     return true;
                 };
                 let record = &self.import_records.items()[import.import_record_index as usize];
-                is_mocked |= self.is_named_by_hoisted_mock(record.path.text);
+                is_mocked |= self.loads_behind_hoisted_mock(record.path.text);
                 // "chai" binds `assert` and `should` of "vitest", which a mock of "chai" doesn't reach in Vitest.
                 !record
                     .flags

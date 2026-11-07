@@ -689,14 +689,63 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["mocked"]]);
   });
 
+  // A mock updates a loaded project file in place, so this import gets the mock and the helper needs no top-level await.
+  test.each([
+    ["vi.mock", `vi.mock("./cfg.json", () => ({ default: { env: "mocked" } }));`, "mocked"],
+    ["vi.unmock", `vi.unmock("./cfg.json");`, "real"],
+  ])(
+    "a helper that names a project file that it imports with attributes runs ahead of the next import: %s",
+    async (_, hoisted, expected) => {
+      expect(
+        await events({
+          "cfg.json": `{ "env": "real" }`,
+          "helper.ts": `
+            import { vi } from "bun:test";
+            import cfg from "./cfg.json" with { type: "json" };
+            ${hoisted}
+            globalThis.env = cfg.env;
+          `,
+          "app.ts": `(globalThis.events ??= []).push(globalThis.env);`,
+          "hoist.test.ts": `
+            import { test } from "bun:test";
+            import "./helper";
+            import "./app";
+            ${print}
+          `,
+        }),
+      ).toEqual([[expected]]);
+    },
+  );
+
+  test("require() loads a helper that names a project file that it imports with attributes", async () => {
+    expect(
+      await events({
+        "cfg.json": `{ "env": "real" }`,
+        "helper.ts": `
+          import { vi } from "bun:test";
+          import cfg from "./cfg.json" with { type: "json" };
+          vi.mock("./cfg.json", () => ({ default: { env: "mocked" } }));
+          globalThis.env = cfg.env;
+        `,
+        "hoist.test.ts": `
+          import { test } from "bun:test";
+          require("./helper");
+          (globalThis.events ??= []).push(globalThis.env);
+          ${print}
+        `,
+      }),
+    ).toEqual([["mocked"]]);
+  });
+
   test("an import with attributes that a hoisted call names keeps its loader", async () => {
     expect(
       await events({
-        "data.ts": `not typescript`,
+        "node_modules/pkg/package.json": `{ "name": "pkg" }`,
+        "node_modules/pkg/data.ts": `not typescript`,
         "hoist.test.ts": `
           import { test, vi } from "vitest";
-          import text from "./data.ts" with { type: "text" };
-          vi.unmock("./data.ts");
+          import text from "pkg/data.ts" with { type: "text" };
+          vi.unmock("pkg/data.ts");
           function read() { return text; }
           (globalThis.events ??= []).push(text, read.toString().replace(/\\s+/g, " "));
           ${print}

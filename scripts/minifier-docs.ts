@@ -13,7 +13,7 @@
 // a section prints needs `--write` with the new build.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 export const pagePath = join(import.meta.dirname, "..", "docs", "bundler", "minifier.mdx");
 
@@ -148,7 +148,8 @@ const without = (flags: string[], flag: string) => flags.filter(it => it !== fla
  * of flags, whatever the number of sections.
  *
  * `outputs` has each section's Output block. `problems` also lists a flag that changes nothing in its section: the
- * Mode line says the transformation needs that flag, and it doesn't.
+ * Mode line says the transformation needs that flag, and it doesn't. A flag for whitespace changes almost every
+ * Output, so this finds the syntax, identifier and drop flags that a section doesn't need.
  */
 async function outputsOf(sections: Section[], dir: string, build: Build) {
   const problems: string[] = [];
@@ -168,7 +169,12 @@ async function outputsOf(sections: Section[], dir: string, build: Build) {
   mkdirSync(source, { recursive: true });
   writeFileSync(join(source, "package.json"), "{}\n");
   writeFileSync(join(source, "tsconfig.json"), "{}\n");
-  const folderOf = (section: Section) => String(sections.indexOf(section));
+  // Unless whitespace is minified, Bun writes a comment with the path above the code of each source file, such as
+  // `// section-3/input.ts`. No Input has the name of a folder in it, so such a line is never a line of an Input.
+  let prefix = "section-";
+  while (sections.some(it => Object.values(it.files).some(text => text.includes(prefix)))) prefix += "-";
+  const folderOf = (section: Section) => prefix + sections.indexOf(section);
+  const sectionIn = new Map(sections.map(it => [folderOf(it), it]));
   for (const section of sections) {
     for (const [name, text] of Object.entries(section.files)) {
       const path = join(source, folderOf(section), name);
@@ -187,8 +193,8 @@ async function outputsOf(sections: Section[], dir: string, build: Build) {
         const built = await build(source, [...entries, ...group.flags, "--root", ".", "--outdir", outdir]);
         if (built.exitCode !== 0) {
           // The path of a file in an error becomes the title of its section.
-          const errors = built.stderr.replaceAll(/\S*[\\/]src[\\/](\d+)[\\/]/g, (path, folder) => {
-            const section = sections[Number(folder)];
+          const errors = built.stderr.replaceAll(/\S*[\\/]src[\\/]([^\\/\s]+)[\\/]/g, (path, folder) => {
+            const section = sectionIn.get(folder);
             return section ? `"${section.title}": ` : path;
           });
           return { command, exitCode: built.exitCode, errors: errors.trim() };
@@ -200,11 +206,10 @@ async function outputsOf(sections: Section[], dir: string, build: Build) {
             problems.push(`\`${command}\` wrote no file for "${section.title}"`);
             continue;
           }
-          // Above the code of each source file there is a comment with its path, unless whitespace is minified.
-          const names = Object.keys(section.files).map(it => it.replaceAll(".", "\\."));
-          const comment = new RegExp(`^// ${folder}[\\\\/](?:${names.join("|")})\n`, "gm");
-          const text = readFileSync(path, "utf8").replaceAll(comment, "").trimEnd();
-          printed.set(`${folder}\0${keyOf(group.flags)}`, text);
+          const comments = new Set(Object.keys(section.files).map(name => `// ${folder}/${name}`));
+          const lines = readFileSync(path, "utf8").split("\n");
+          const text = lines.filter(line => !comments.has(line)).join("\n");
+          printed.set(`${folder}\0${keyOf(group.flags)}`, text.trimEnd());
         }
         return undefined;
       } catch (error) {
@@ -264,7 +269,17 @@ export async function generated(page: string, dir: string, build: Build) {
 
 if (import.meta.main) {
   const flag = (name: string) => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
-  const bun = flag("bun") ?? process.execPath;
+  // A build runs in another folder, so a relative path has to be resolved here.
+  const bun = resolve(flag("bun") ?? process.execPath);
+  let revision: string;
+  try {
+    revision = Bun.spawnSync({ cmd: [bun, "--revision"] })
+      .stdout.toString()
+      .trim();
+  } catch (error) {
+    console.error(`error: cannot run "${bun}": ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
   const write = process.argv.includes("--write");
   const before = readFileSync(pagePath, "utf8").replaceAll("\r\n", "\n");
   const dir = mkdtempSync(join(tmpdir(), "bun-minifier-docs-"));
@@ -273,9 +288,6 @@ if (import.meta.main) {
     for (const problem of problems) console.error(problem);
     if (write && text !== before) writeFileSync(pagePath, text);
     if (!write) for (const title of stale) console.log(`out of date: ${title}`);
-    const revision = Bun.spawnSync({ cmd: [bun, "--revision"] })
-      .stdout.toString()
-      .trim();
     const page = relative(process.cwd(), pagePath);
     console.log(`${stale.length} Output blocks ${write ? "written" : "out of date"} in ${page} (bun ${revision})`);
     if (problems.length || (stale.length && !write)) process.exitCode = 1;

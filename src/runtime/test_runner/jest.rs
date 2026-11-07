@@ -713,10 +713,6 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.is_reporting_uncaught = false;
-            // Such an error doesn't end the hook or the expected failure that runs, so the runner has nothing to step.
-            if matches!(current_state_data, RefDataValue::Start) {
-                return;
-            }
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(

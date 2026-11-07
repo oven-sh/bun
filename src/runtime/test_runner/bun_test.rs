@@ -1065,9 +1065,7 @@ impl BunTest {
 
     fn handle_timeout(&mut self, global_this: &JSGlobalObject, now: &Timespec) {
         let _g = group_begin!();
-        if now.greater(&self.judged_at) {
-            self.judged_at = *now;
-        }
+        self.judged_at = *now;
         let judged = Execution::Execution::judge(self, global_this, now);
         // The last verdict steps the group. Without one, `Start` does.
         if !judged.timed_out {

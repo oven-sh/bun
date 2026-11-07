@@ -1646,6 +1646,49 @@ describe("client TLS options", () => {
       }).toEqual({ min13to12: "refused", max12to12: anonymous, max12to13: "refused", min13to13: anonymous });
     });
 
+    // The error is the one tls.connect() throws. npm ws gives it to the 'error' event for an option of its own, and
+    // lets it out of the constructor for an option of the agent. Bun lets both out of the constructor.
+    it("a key entry that is not valid", async () => {
+      using server = await serve();
+      const cert = read("agent1-cert.pem");
+      const key = read("agent1-key.pem");
+      function failure(options: object) {
+        const { promise, resolve } = Promise.withResolvers<unknown>();
+        try {
+          const ws = new WebSocket(server.url, options);
+          ws.on("error", resolve);
+          ws.on("message", data => {
+            resolve(String(data));
+            ws.terminate();
+          });
+        } catch (error) {
+          resolve(error);
+        }
+        return promise;
+      }
+      const invalid = (message: string) => expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message });
+      const invalidKey = invalid(
+        `The "options.key" property must be of type string or an instance of Buffer, TypedArray, or DataView. Received type number (5)`,
+      );
+      const invalidPassphrase = (received: string) =>
+        invalid(`The "options.passphrase" property must be of type string. Received ${received}`);
+      expect({
+        pem: await failure({ ca, cert, key: [{ pem: 5 }] }),
+        passphrase: await failure({ ca, cert, key: [{ pem: key, passphrase: 5 }] }),
+        binaryPassphrase: await failure({ ca, cert, key: [{ pem: key, passphrase: Buffer.from("x") }] }),
+        agentPem: await failure({ agent: new https.Agent({ ca, cert, key: [{ pem: 5 }] } as any) }),
+        agentPassphrase: await failure({
+          agent: new https.Agent({ ca, cert, key: [{ pem: key, passphrase: 5 }] } as any),
+        }),
+      }).toEqual({
+        pem: invalidKey,
+        passphrase: invalidPassphrase("type number (5)"),
+        binaryPassphrase: invalidPassphrase("an instance of Buffer"),
+        agentPem: invalidKey,
+        agentPassphrase: invalidPassphrase("type number (5)"),
+      });
+    });
+
     it("ciphers", async () => {
       using server = await serveNegotiated();
       using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });

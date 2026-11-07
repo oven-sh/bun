@@ -355,3 +355,22 @@ test.skipIf(!Bun.enableANSIColors)("mix of whitespace-only and non-whitespace-on
     `);
   }
 });
+
+// Unequal values that print the same. A diff of them marks no line, so the message says so.
+test("prints the same - multi-line value", () => {
+  expect([1, Symbol("a"), 3]).toStrictEqual([1, Symbol("a"), 3]);
+});
+
+test("prints the same - one-line value", () => {
+  expect(Symbol("a")).toEqual(Symbol("a"));
+});
+
+test("prints the same - long one-line value", () => {
+  const description = Buffer.alloc(3000, "a").toString();
+  expect(Symbol(description)).toEqual(Symbol(description));
+});
+
+test("prints the same - value too long to print without a changed line", () => {
+  const items = Array.from({ length: 600 }, (_, i) => i);
+  expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+});

@@ -87,6 +87,17 @@ pub(crate) struct FormatOptions {
     pub(crate) quote_strings: bool,
 }
 
+/// Vitest's `maxOutputLength`. Past it, nested objects and arrays print as `[Object]` or `[Array]`.
+pub(crate) const OUTPUT_BUDGET: usize = 1_000_000;
+
+/// What one side of a failure message has printed so far.
+#[derive(Default)]
+struct OutputBudget {
+    length: core::cell::Cell<usize>,
+    /// A value printed as `[Array]` or `[Object]` because `length` had passed the budget.
+    cut: core::cell::Cell<bool>,
+}
+
 struct CountedWriter<'a, W: bun_io::Write> {
     writer: &'a mut W,
     length: &'a core::cell::Cell<usize>,
@@ -100,6 +111,7 @@ impl<W: bun_io::Write> bun_io::Write for CountedWriter<'_, W> {
 }
 
 impl JestPrettyFormat {
+    /// Returns whether the output budget cut a nested value short.
     pub(crate) fn format<W: bun_io::Write>(
         level: MessageLevel,
         global: &JSGlobalObject,
@@ -107,23 +119,23 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut W,
         options: FormatOptions,
-    ) -> JsResult<()> {
+    ) -> JsResult<bool> {
         // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
         // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
         // type up front so the whole `Formatter` tree is instantiated once.
         let flush = options.flush;
+        let budget = OutputBudget::default();
         let result = {
-            let length = core::cell::Cell::new(0);
-            let mut counted = CountedWriter { writer: &mut *writer, length: &length };
+            let mut counted = CountedWriter { writer: &mut *writer, length: &budget.length };
             let mut bridge = AsFmt::new(&mut counted);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options, &length)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options, &budget)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
             let _ = writer.flush();
         }
-        result
+        result.map(|()| budget.cut.get())
     }
 
     fn format_adapted(
@@ -133,7 +145,7 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut bun_io::write::FmtAdapter<'_, AsFmt<'_>>,
         options: FormatOptions,
-        output_length: &core::cell::Cell<usize>,
+        budget: &OutputBudget,
     ) -> JsResult<()> {
         use bun_io::Write as _;
         type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
@@ -145,7 +157,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
-            fmt.output_length = Some(output_length);
+            fmt.budget = Some(budget);
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -192,7 +204,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
-        fmt.output_length = Some(output_length);
+        fmt.budget = Some(budget);
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -323,8 +335,8 @@ pub(crate) struct Formatter<'a> {
     /// Set by `did_older_bun_print`. The cell turns true once the output has diverged, so printing can stop.
     like_older_bun: Option<&'a core::cell::Cell<bool>>,
     same_as_older_bun: bool,
-    /// Bytes written so far. Only failure messages track it.
-    output_length: Option<&'a core::cell::Cell<usize>>,
+    /// Only failure messages track it.
+    budget: Option<&'a OutputBudget>,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -358,7 +370,7 @@ impl<'a> Formatter<'a> {
             snapshot_format: SnapshotFormat::Bun,
             like_older_bun: None,
             same_as_older_bun: true,
-            output_length: None,
+            budget: None,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -476,6 +488,18 @@ pub(crate) struct TagResult {
 impl Default for TagResult {
     fn default() -> Self {
         Self { tag: Tag::Undefined, cell: JSType::Cell }
+    }
+}
+
+impl TagResult {
+    /// Whether `value` can print other values. If not, it is one token, like a function or a Date.
+    fn prints_nested_values(self, value: JSValue) -> bool {
+        match self.tag {
+            Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::TypedArray | Tag::JSX | Tag::Event => true,
+            Tag::JSON => self.cell != JSType::JSDate,
+            Tag::Private => !expect::Expect::is_asymmetric_matcher(value),
+            _ => false,
+        }
     }
 }
 
@@ -2536,8 +2560,12 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
-        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
-        if !result.tag.is_primitive() && self.output_length.is_some_and(|length| length.get() > 1_000_000) {
+        // A React fiber or `window` would print hundreds of megabytes.
+        if let Some(budget) = self.budget
+            && budget.length.get() > OUTPUT_BUDGET
+            && result.prints_nested_values(value)
+        {
+            budget.cut.set(true);
             let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
             return Ok(());
         }
@@ -3820,9 +3848,8 @@ impl Formatter<'_> {
         if self.is_inline
             && let Some(output) = self.output_at_depth.get_mut(self.depth as usize)
         {
-            // Vitest's `maxOutputLength`.
             *output += strings::element_length_utf8_into_utf16(&out[start..]);
-            if *output > 1_000_000 {
+            if *output > OUTPUT_BUDGET {
                 self.max_depth = 0;
             }
         }

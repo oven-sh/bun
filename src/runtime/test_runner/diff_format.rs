@@ -14,6 +14,10 @@ pub(crate) struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
+    /// The output budget cut a nested value short on either side.
+    cut: bool,
+    /// Set by `this.utils.diff()`: sides that print the same get only the sentence, like jest-diff.
+    pub(crate) sentence_only: bool,
 }
 
 impl<'a> DiffFormatter<'a> {
@@ -31,7 +35,7 @@ impl<'a> DiffFormatter<'a> {
             quote_strings: true,
         };
         let mut received_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
+        let received_cut = JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
             core::slice::from_ref(&received),
@@ -40,7 +44,7 @@ impl<'a> DiffFormatter<'a> {
             fmt_options,
         )?;
         let mut expected_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
+        let expected_cut = JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
             core::slice::from_ref(&expected),
@@ -52,6 +56,8 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),
             not,
+            cut: received_cut || expected_cut,
+            sentence_only: false,
         })
     }
 
@@ -60,6 +66,8 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),
             not,
+            cut: false,
+            sentence_only: false,
         }
     }
 }
@@ -81,6 +89,8 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
         print_diff_main(
             self.not,
+            self.cut,
+            self.sentence_only,
             &self.received_string,
             &self.expected_string,
             f,

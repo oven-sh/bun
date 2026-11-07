@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
@@ -13,6 +13,9 @@ function cleanOutput(output: string) {
 function cleanAnsiEscapes(output: string) {
   return output.replaceAll(/\x1B\[[0-9;]*m/g, "");
 }
+const sentence = "Compared values have no visual difference.";
+const cutNote =
+  "note: each side prints nested objects and arrays as [Object] or [Array] after its first 1,000,000 bytes. Compare one of them directly to see its diff.";
 
 test.concurrent("no color", async () => {
   const noColorSpawn = Bun.spawn({
@@ -713,13 +716,75 @@ test.concurrent("no color", async () => {
           at <anonymous> (FILE:LINE)
     (fail) mix of whitespace-only and non-whitespace-only differences
     (skip) mix of whitespace-only and non-whitespace-only differences (ANSI)
+    356 |   }
+    357 | });
+    358 | 
+    359 | // Unequal values that print the same. A diff of them marks no line, so the message says so.
+    360 | test("prints the same - multi-line value", () => {
+    361 |   expect([1, Symbol("a"), 3]).toStrictEqual([1, Symbol("a"), 3]);
+                                        ^
+    error: expect(received).toStrictEqual(expected)
+
+      [
+        1,
+        Symbol(a),
+        3,
+      ]
+
+    Compared values have no visual difference.
+
+          at <anonymous> (FILE:LINE)
+    (fail) prints the same - multi-line value
+    360 | test("prints the same - multi-line value", () => {
+    361 |   expect([1, Symbol("a"), 3]).toStrictEqual([1, Symbol("a"), 3]);
+    362 | });
+    363 | 
+    364 | test("prints the same - one-line value", () => {
+    365 |   expect(Symbol("a")).toEqual(Symbol("a"));
+                                ^
+    error: expect(received).toEqual(expected)
+
+      Symbol(a)
+
+    Compared values have no visual difference.
+
+          at <anonymous> (FILE:LINE)
+    (fail) prints the same - one-line value
+    365 |   expect(Symbol("a")).toEqual(Symbol("a"));
+    366 | });
+    367 | 
+    368 | test("prints the same - long one-line value", () => {
+    369 |   const description = Buffer.alloc(3000, "a").toString();
+    370 |   expect(Symbol(description)).toEqual(Symbol(description));
+                                        ^
+    error: expect(received).toEqual(expected)
+
+      Symbol(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (2808 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+
+    Compared values have no visual difference.
+
+          at <anonymous> (FILE:LINE)
+    (fail) prints the same - long one-line value
+    370 |   expect(Symbol(description)).toEqual(Symbol(description));
+    371 | });
+    372 | 
+    373 | test("prints the same - value too long to print without a changed line", () => {
+    374 |   const items = Array.from({ length: 600 }, (_, i) => i);
+    375 |   expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+                                               ^
+    error: expect(received).toEqual(expected)
+
+    Compared values have no visual difference.
+
+          at <anonymous> (FILE:LINE)
+    (fail) prints the same - value too long to print without a changed line
 
      0 pass
      2 skip
      1 todo
-     16 fail
-     16 expect() calls
-    Ran 19 tests across 1 file.
+     20 fail
+     20 expect() calls
+    Ran 23 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
@@ -870,6 +935,27 @@ test.concurrent("color", async () => {
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
 
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[0m\x1B[2mSymbol(a)\x1B[0m
+
+    \x1B[2mCompared values have no visual difference.\x1B[0m
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoStrictEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[0m\x1B[2m[\x1B[0m
+      \x1B[0m\x1B[2m  1,\x1B[0m
+      \x1B[0m\x1B[2m  Symbol(a),\x1B[0m
+      \x1B[0m\x1B[2m  3,\x1B[0m
+      \x1B[0m\x1B[2m]\x1B[0m
+
+    \x1B[2mCompared values have no visual difference.\x1B[0m
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    \x1B[2mCompared values have no visual difference.\x1B[0m
+    \x1B[34mnote\x1B[0m\x1B[2m:\x1B[0m each side prints nested objects and arrays as [Object] or [Array] after its first 1,000,000 bytes. Compare one of them directly to see its diff.
+
     "
   `);
   expect(spawn.exitCode).toBe(0);
@@ -967,4 +1053,159 @@ test("stops printing deeper once a value has printed 1,000,000 characters", () =
   expect(message).toContain(`"list": [Array],\n`);
   expect(message).toContain(`"right": [Object],\n`);
   expect(message.length).toBeWithin(1_000_000, 1_500_000);
+  // (slice so a failure doesn't print the whole ~1 MB message)
+  expect(message.slice(-220)).toContain(`\n\n${cutNote}\n\n- Expected  - 1\n+ Received  + `);
+});
+
+function messageOf(fail: () => unknown): string {
+  try {
+    fail();
+  } catch (e) {
+    return cleanAnsiEscapes((e as Error).message);
+  }
+  throw new Error("the matcher did not fail");
+}
+
+const calledWith = (...args: unknown[]) => {
+  const fn = mock();
+  fn(...args);
+  return fn;
+};
+const returned = (value: unknown) => {
+  const fn = mock(() => value);
+  fn();
+  return fn;
+};
+const resolved = async (value: unknown) => {
+  const fn = mock(async () => value);
+  await fn();
+  return fn;
+};
+
+// Two symbols with one description, two functions and two mocks are never equal and print the same.
+test.each<[string, () => unknown]>([
+  ["toEqual", () => expect(Symbol("a")).toEqual(Symbol("a"))],
+  ["toEqual of two functions", () => expect({ cb() {} }).toEqual({ cb() {} })],
+  ["toEqual of two mocks", () => expect({ cb: mock() }).toEqual({ cb: mock() })],
+  ["toStrictEqual", () => expect([1, Symbol("a"), 3]).toStrictEqual([1, Symbol("a"), 3])],
+  ["toMatchObject", () => expect({ id: Symbol("a") }).toMatchObject({ id: Symbol("a") })],
+  ["toHaveProperty", () => expect({ id: Symbol("a") }).toHaveProperty("id", Symbol("a"))],
+  ["toHaveBeenCalledWith", () => expect(calledWith(Symbol("a"))).toHaveBeenCalledWith(Symbol("a"))],
+  ["toHaveBeenLastCalledWith", () => expect(calledWith(Symbol("a"))).toHaveBeenLastCalledWith(Symbol("a"))],
+  ["toHaveBeenNthCalledWith", () => expect(calledWith(Symbol("a"))).toHaveBeenNthCalledWith(1, Symbol("a"))],
+  [
+    "toHaveBeenCalledExactlyOnceWith",
+    () => expect(calledWith(Symbol("a"))).toHaveBeenCalledExactlyOnceWith(Symbol("a")),
+  ],
+  ["resolves.toEqual", () => expect(Promise.resolve(Symbol("a"))).resolves.toEqual(Symbol("a"))],
+  // The next seven print a diff for two strings only. Two lone surrogates both print as U+FFFD.
+  ["toBe", () => expect("\uD800").toBe("\uD801")],
+  ["toHaveReturnedWith", () => expect(returned("\uD800")).toHaveReturnedWith("\uD801")],
+  ["toHaveLastReturnedWith", () => expect(returned("\uD800")).toHaveLastReturnedWith("\uD801")],
+  ["toHaveNthReturnedWith", () => expect(returned("\uD800")).toHaveNthReturnedWith(1, "\uD801")],
+  ["toHaveResolvedWith", async () => expect(await resolved("\uD800")).toHaveResolvedWith("\uD801")],
+  ["toHaveLastResolvedWith", async () => expect(await resolved("\uD800")).toHaveLastResolvedWith("\uD801")],
+  ["toHaveNthResolvedWith", async () => expect(await resolved("\uD800")).toHaveNthResolvedWith(1, "\uD801")],
+  // The printer writes "\r\n" as "\n", so the two strings print the same.
+  ["toBe of two line endings", () => expect("a\r\nb").toBe("a\nb")],
+])("%s says when both values print the same", async (_, fail) => {
+  let message = "";
+  try {
+    await fail();
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  // Neither an `Expected: x` / `Received: x` pair nor the `- Expected  - 0` footer of an empty diff.
+  expect(message.split("\n").filter(line => /Expected|Received|Compared/.test(line))).toEqual([sentence]);
+});
+
+test("the note appears exactly when the output budget hides the difference", () => {
+  // `meta` differs. It prints in full until the text before it is longer than 1,000,000 bytes.
+  const message = (length: number) => {
+    const body = Buffer.alloc(length, "x").toString();
+    return messageOf(() => expect({ body, meta: { a: 1 } }).toEqual({ body, meta: { a: 2 } }));
+  };
+  // Each side prints `\n{\n  "body": "<body>",\n  "meta": ` before the value of `meta`.
+  // The diff trims the leading newline later, but it counts toward the budget.
+  const before = `\n{\n  "body": "`.length + `",\n  "meta": `.length;
+  const shown = message(1_000_000 - before);
+  expect(shown).toContain(`\n-     "a": 2,\n+     "a": 1,\n`);
+  expect(shown).toEndWith("\n\n- Expected  - 1\n+ Received  + 1\n");
+  expect(shown).not.toContain("note:");
+  const hidden = message(1_000_000 - before + 1);
+  expect(hidden).toBe(`expect(received).toEqual(expected)\n\n${sentence}\n${cutNote}\n`);
+});
+
+test("a diff of values that were cut short has the note above the footer", () => {
+  const body = Buffer.alloc(1_001_000, "x").toString();
+  const message = messageOf(() =>
+    expect({ body, first: 1, meta: { a: 1 } }).toEqual({ body, first: 2, meta: { a: 2 } }),
+  );
+  expect(message).toContain(`\n-   "first": 2,\n+   "first": 1,\n    "meta": [Object],\n`);
+  expect(message).toEndWith(`\n\n${cutNote}\n\n- Expected  - 1\n+ Received  + 1\n`);
+  // Only the expected value is cut short.
+  expect(messageOf(() => expect({ first: 1 }).toEqual({ body, first: 2, meta: { a: 2 } }))).toEndWith(
+    `\n\n${cutNote}\n\n- Expected  - 3\n+ Received  + 1\n`,
+  );
+});
+
+test("a one-line value that was cut short has the note too", () => {
+  const element = (props: object) => ({
+    $$typeof: Symbol.for("react.transitional.element"),
+    type: "b",
+    key: null,
+    props,
+  });
+  const title = Buffer.alloc(1_001_000, "x").toString();
+  expect(
+    messageOf(() => expect(element({ title, style: { a: 1 } })).toEqual(element({ title, style: { a: 2 } }))),
+  ).toEndWith(`style=[Object] />\n\n${sentence}\n${cutNote}\n`);
+  expect(
+    messageOf(() =>
+      expect(element({ title: title + "A", style: { a: 1 } })).toEqual(
+        element({ title: title + "B", style: { a: 2 } }),
+      ),
+    ),
+  ).toEndWith(`style=[Object] />\n\n${cutNote}\n\n- Expected  - 1\n+ Received  + 1\n`);
+});
+
+test("a value that prints as one token is not cut short", () => {
+  const body = Buffer.alloc(1_001_000, "x").toString();
+  const message = messageOf(() =>
+    expect({ body, cb: function a() {}, error: new Error("a"), when: new Date(0) }).toEqual({
+      body,
+      cb: function b() {},
+      error: new Error("b"),
+      when: new Date(1),
+    }),
+  );
+  expect(message).toContain(
+    `\n-   "cb": [Function: b],\n-   "error": [Error: b],\n-   "when": 1970-01-01T00:00:00.001Z,\n` +
+      `+   "cb": [Function: a],\n+   "error": [Error: a],\n+   "when": 1970-01-01T00:00:00.000Z,\n`,
+  );
+  expect(message).not.toContain("note:");
+  // An asymmetric matcher prints its name. The object inside one is cut short.
+  const matchers = messageOf(() =>
+    expect({ body, n: "1", o: { a: 1 } }).toEqual({
+      body,
+      n: expect.any(Number),
+      o: expect.objectContaining({ a: 2 }),
+    }),
+  );
+  expect(matchers).toContain(`\n-   "n": Any<Number>,\n-   "o": ObjectContaining [Object],\n+   "n": "1",\n`);
+  expect(matchers).toContain(`\n\n${cutNote}\n\n- Expected  - `);
+});
+
+test("no note when no value was cut short", () => {
+  const long = Buffer.alloc(1_600_000, "x").toString();
+  // The budget does not apply to a top-level string. The printer elides the
+  // middle of the over-long line, and that elision is not the cut the note reports.
+  const diff = messageOf(() => expect(long + "A").toEqual(long + "B"));
+  expect(diff).toStartWith("expect(received).toEqual(expected)");
+  expect(diff).toMatch(/^Expected: "x+\.\.\. \(\d+ bytes truncated\) \.\.\.x+B"$/m);
+  expect(diff).toMatch(/^Received: "x+\.\.\. \(\d+ bytes truncated\) \.\.\.x+A"$/m);
+  expect(diff).not.toContain("note:");
+  expect(messageOf(() => expect([long, Symbol("a")]).toEqual([long, Symbol("a")]))).toBe(
+    `expect(received).toEqual(expected)\n\n${sentence}\n`,
+  );
 });

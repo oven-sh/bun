@@ -686,6 +686,9 @@ describe("MatcherContext", () => {
       [[null, null], "Compared values have no visual difference."],
       [[{ a: 1 }, { a: 1 }], "Compared values have no visual difference."],
       [[[1], [1]], "Compared values have no visual difference."],
+      [[{}, {}], "Compared values have no visual difference."],
+      [[[], []], "Compared values have no visual difference."],
+      [[Symbol("a"), Symbol("a")], "Compared values have no visual difference."],
       [[1, 1n], "  Comparing two different types of values. Expected number but received bigint."],
       [["1", 1], "  Comparing two different types of values. Expected string but received number."],
       [[1], "  Comparing two different types of values. Expected number but received undefined."],
@@ -729,6 +732,15 @@ describe("MatcherContext", () => {
         "Expected: [Error: a]\nReceived: [Error: b]",
       );
       expect(Bun.stripANSI(utils.diff(Symbol("a"), Symbol("b")))).toBe("Expected: Symbol(a)\nReceived: Symbol(b)");
+    });
+
+    test("diff says when printing stopped before the difference", () => {
+      // Each side stops printing nested values after 1,000,000 bytes, so both print `"meta": [Object]`.
+      const body = Buffer.alloc(1_001_000, "x").toString();
+      expect(Bun.stripANSI(utils.diff({ body, meta: { a: 1 } }, { body, meta: { a: 2 } }))).toBe(
+        "Compared values have no visual difference.\n" +
+          "note: each side prints nested objects and arrays as [Object] or [Array] after its first 1,000,000 bytes. Compare one of them directly to see its diff.",
+      );
     });
 
     test("diff rethrows an error thrown while printing a value", () => {

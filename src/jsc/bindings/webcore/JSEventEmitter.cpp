@@ -190,7 +190,7 @@ static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
     { "removeAllListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeAllListeners, 1 } },
     { "emit"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_emit, 1 } },
     { "eventNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_eventNames, 0 } },
-    { "listenerCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listenerCount, 1 } },
+    { "listenerCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listenerCount, 2 } },
     { "listeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listeners, 1 } },
     // TODO: Need to double check the difference between rawListeners and listeners.
     { "rawListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listeners, 1 } },
@@ -476,12 +476,33 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl.listenerCount(eventType))));
+    JSValue listener = callFrame->argument(1);
+    if (listener.isUndefinedOrNull())
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl.listenerCount(eventType))));
+
+    // As in events.ts: a registration counts when it is `listener`, or when its `listener` property is.
+    JSC::MarkedArgumentBuffer registered;
+    for (auto* function : impl.getListeners(eventType))
+        registered.append(function);
+    auto listenerName = Identifier::fromString(vm, "listener"_s);
+    int count = 0;
+    for (size_t i = 0; i < registered.size(); ++i) {
+        JSValue function = registered.at(i);
+        bool matches = function == listener;
+        if (!matches) {
+            JSValue wrapped = function.get(lexicalGlobalObject, listenerName);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            matches = JSValue::strictEqual(lexicalGlobalObject, wrapped, listener);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        count += matches;
+    }
+    return JSC::JSValue::encode(JSC::jsNumber(count));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody>(*lexicalGlobalObject, *callFrame, "listeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody>(*lexicalGlobalObject, *callFrame, "listenerCount");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)

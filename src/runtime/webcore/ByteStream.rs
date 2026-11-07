@@ -558,6 +558,25 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
+    /// Whether the producer answers [`Self::signal_drained`] with script, not only with bytes.
+    #[inline]
+    pub(crate) fn producer_runs_script(&self) -> bool {
+        match self.parent_const().producer.get() {
+            streams::SourceHandle::HTMLRewriter(_) => true,
+            streams::SourceHandle::None
+            | streams::SourceHandle::FetchResponseBody(_)
+            | streams::SourceHandle::ServerRequestBody(_)
+            | streams::SourceHandle::S3DownloadBody(_)
+            | streams::SourceHandle::TestingCancelOnDrain(_)
+            // The source of a sink, never the producer of a `ByteStream`.
+            | streams::SourceHandle::JSController(_)
+            | streams::SourceHandle::ByteStream(_)
+            | streams::SourceHandle::FileReader(_)
+            | streams::SourceHandle::Subprocess(_)
+            | streams::SourceHandle::ShellWritable(_) => false,
+        }
+    }
+
     /// Take the untaken bytes. The caller calls [`Self::signal_drained`] after it writes them.
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
         Vec::<u8>::move_from_list(self.buffered.take())

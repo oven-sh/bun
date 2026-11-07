@@ -779,6 +779,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// True if an index signature of a member with apparent type `t` provides the union's property `name`, which the
+    /// member doesn't have.
+    pub(super) fn has_index_signature_for_missing(&mut self, t: TypeId, name: Atom) -> bool {
+        let is_late_bound = self.atoms().is_symbol_name(name);
+        let missing = self.missing_from_member(t, name, is_late_bound);
+        matches!(missing, Missing::IndexSignature { .. })
+    }
+
     /// The rest of `createUnionOrIntersectionProperty`, after its first loop.
     fn finish_union_property(
         &mut self,

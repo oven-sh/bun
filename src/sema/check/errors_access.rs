@@ -1488,6 +1488,10 @@ impl<'p> Checker<'p, '_> {
         for &member in self.parts(reduced) {
             let member = self.apparent_type(member);
             let Some((prop, _)) = self.prop_ref(member, name) else {
+                // `propSet` has the properties of the other members.
+                if self.has_index_signature_for_missing(member, name) {
+                    continue;
+                }
                 return true;
             };
             constituents.push(prop);

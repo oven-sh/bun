@@ -2352,6 +2352,38 @@ export class Sub extends K { m<T extends Sub | ({ q: true } & Sub)>(v: T, t: thi
 
   // The constituents' properties decide, not the modifiers of the one declaration they have: a mapped type's property has
   // that declaration too, without the modifiers. The expected output is tsc's.
+  // The union's property is made of the properties that the other members declare, so their modifiers count.
+  test("a `private` or `protected` setter counts in a union with a member that has an index signature", async () => {
+    using dir = project({
+      "a.ts": `class V { get grams() { return 7; } private set grams(value: number) {} }
+class P { get grams() { return 7; } protected set grams(value: number) {} }
+class A { grams = 1; }
+class J { [key: string]: any; }
+class R { readonly [key: string]: number; }
+declare let vj: V | J, pj: P | J, avj: A | V | J, vr: V | R, vo: V | { other: 1 };
+vj.grams = 1;
+pj.grams = 1;
+avj.grams = 1;
+vr.grams = 1;
+vo.grams = 1;
+[vj.grams, pj.grams, avj.grams];
+class Inside extends P { m(q: P | J, s: Inside | J) { q.grams = 1; s.grams = 1; } }
+export {};
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(`a.ts(7,4): error TS2341: Property 'grams' is private and only accessible within class 'V'.
+a.ts(8,4): error TS2445: Property 'grams' is protected and only accessible within class 'P' and its subclasses.
+a.ts(9,5): error TS2341: Property 'grams' is private and only accessible within class 'A | J | V'.
+a.ts(10,4): error TS2341: Property 'grams' is private and only accessible within class 'V'.
+a.ts(10,4): error TS2540: Cannot assign to 'grams' because it is a read-only property.
+a.ts(11,4): error TS2339: Property 'grams' does not exist on type 'V | { other: 1; }'.
+  Property 'grams' does not exist on type '{ other: 1; }'.
+a.ts(13,57): error TS2446: Property 'grams' is protected and only accessible through an instance of class 'Inside'. This is an instance of class 'J | P'.
+a.ts(13,70): error TS2446: Property 'grams' is protected and only accessible through an instance of class 'Inside'. This is an instance of class 'Inside | J'.`);
+    expect(exitCode).toBe(1);
+  });
+
   test("drops `readonly`, `private` and `protected` from a property shared with a mapped type in an intersection or union", async () => {
     using dir = tempDir("bun-check", {
       "tsconfig.json": JSON.stringify({

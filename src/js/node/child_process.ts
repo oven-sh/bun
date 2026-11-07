@@ -22,13 +22,9 @@ function getSignals() {
   return (signals ??= require("node:os").constants.signals);
 }
 
-var ArrayPrototypeJoin = Array.prototype.join;
-var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
-const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
 const ArrayPrototypeSplice = Array.prototype.splice;
 
@@ -43,7 +39,9 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 
-// `list.slice(start)` behind `lead` empty slots. By index, because script can replace slice(), unshift() and the array iterator.
+// These read a list by index, because script can replace the functions of Array.prototype and the array iterator.
+
+// `list.slice(start)` behind `lead` empty slots.
 function copyArray(list, start: number, lead: number) {
   const count = list.length - start;
   const copy = $newArrayWithSize<any>(count > 0 ? lead + count : lead);
@@ -53,6 +51,17 @@ function copyArray(list, start: number, lead: number) {
     if (from in list) $putByValDirect(copy, lead + i, list[from]);
   }
   return copy;
+}
+
+// `list.slice(first).join(separator)`
+function joinArray(list, first: number, separator: string) {
+  let joined = "";
+  for (let i = first; i < list.length; i++) {
+    const item = list[i];
+    if (i > first) joined += separator;
+    if (item != null) joined += `${item}`;
+  }
+  return joined;
 }
 
 // spawnargs is `[argv0, ...args]`. Bun.spawn() takes argv0 apart and wants the program in cmd[0].
@@ -326,13 +335,13 @@ function execFile(file, args, options?, callback?: ExecCallback) {
     let stdout;
     let stderr;
     if (encoding || child.stdout?.readableEncoding) {
-      stdout = ArrayPrototypeJoin.$call(_stdout, "");
+      stdout = joinArray(_stdout, 0, "");
     } else {
       stdout = BufferConcat(_stdout as Buffer[]);
     }
 
     if (encoding || child.stderr?.readableEncoding) {
-      stderr = ArrayPrototypeJoin.$call(_stderr, "");
+      stderr = joinArray(_stderr, 0, "");
     } else {
       stderr = BufferConcat(_stderr as Buffer[]);
     }
@@ -342,7 +351,7 @@ function execFile(file, args, options?, callback?: ExecCallback) {
       return;
     }
 
-    if (args?.length) cmd += ` ${ArrayPrototypeJoin.$call(args, " ")}`;
+    if (args?.length) cmd += ` ${joinArray(args, 0, " ")}`;
     if (!ex) {
       const { getSystemErrorName } = require("node:util");
       let message = `Command failed: ${cmd}`;
@@ -734,8 +743,8 @@ function execFileSync(file, args, options) {
   let retStderr;
   if (inheritStderr && (retStderr = ret.stderr)) process.stderr.write(retStderr);
 
-  const errArgs = [options.argv0 || file];
-  ArrayPrototypePush.$apply(errArgs, args);
+  const errArgs = copyArray(args, 0, 1);
+  $putByValDirect(errArgs, 0, options.argv0 || file);
   const err = checkExecSyncError(ret, errArgs);
 
   if (err) throw err;
@@ -864,7 +873,7 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
-  } else if (!ArrayPrototypeIncludes.$call(options.stdio, "ipc")) {
+  } else if (!includesIpc(options.stdio)) {
     throw $ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
@@ -1045,12 +1054,7 @@ function normalizeSpawnArguments(file, args, options?) {
   // Handle shell
   if (shell) {
     validateArgumentNullCheck(shell, "options.shell");
-    // `[file, ...args].join(" ")`
-    let command = file;
-    for (let i = 1; i < args.length; i++) {
-      const arg = args[i];
-      command += arg == null ? " " : ` ${arg}`;
-    }
+    const command = args.length > 1 ? `${file} ${joinArray(args, 1, " ")}` : file;
     // Set the shell, switches, and commands.
     if (process.platform === "win32") {
       if (typeof shell === "string") file = shell;
@@ -1089,20 +1093,21 @@ function normalizeSpawnArguments(file, args, options?) {
 
   let envKeys: string[] = [];
   for (const key in env) {
-    ArrayPrototypePush.$call(envKeys, key);
+    $arrayPush(envKeys, key);
   }
 
   if (process.platform === "win32") {
     // On Windows env keys are case insensitive. Filter out duplicates, keeping only the first one (in lexicographic order)
     const sawKey = new Set();
-    envKeys = ArrayPrototypeFilter.$call(ArrayPrototypeSort.$call(envKeys), key => {
+    const sortedKeys = ArrayPrototypeSort.$call(envKeys);
+    envKeys = [];
+    for (let i = 0; i < sortedKeys.length; i++) {
+      const key = sortedKeys[i];
       const uppercaseKey = StringPrototypeToUpperCase.$call(key);
-      if (sawKey.has(uppercaseKey)) {
-        return false;
-      }
+      if (sawKey.has(uppercaseKey)) continue;
       sawKey.add(uppercaseKey);
-      return true;
-    });
+      $arrayPush(envKeys, key);
+    }
   }
 
   for (let i = 0; i < envKeys.length; i++) {
@@ -1144,7 +1149,7 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
     delete err.error;
   } else if (ret.status !== 0) {
     let msg = "Command failed: ";
-    msg += cmd || ArrayPrototypeJoin.$call(args, " ");
+    msg += cmd || joinArray(args, 0, " ");
     const stderr = ret.stderr;
     if (stderr && stderr.length > 0) msg += `\n${stderr.toString()}`;
     err = genericNodeError(msg, ret);
@@ -1885,10 +1890,12 @@ function fdToStdioName(fd: number) {
 function loadStdioModules(bunStdio) {
   for (let i = 0; i < bunStdio.length; i++) {
     const io = bunStdio[i];
-    if (io !== "pipe" && io !== "socket-fd") continue;
-    if (i === 0) require("internal/fs/streams");
-    else if (i <= 2) require("internal/streams/native-readable");
-    else require("node:net");
+    if (i > 2) {
+      if (io === "pipe" || io === "socket-fd") require("node:net");
+    } else if (io === "pipe") {
+      if (i === 0) require("internal/fs/streams");
+      else require("internal/streams/native-readable");
+    }
   }
 }
 

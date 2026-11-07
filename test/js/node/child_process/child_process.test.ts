@@ -1831,8 +1831,10 @@ describe("functions of Array.prototype that a script replaced", () => {
       const real = names.map(name => Array.prototype[name]);
       const calls = {};
       let armed = false;
+      let installed = false;
 
       function install() {
+        installed = true;
         for (let i = 0; i < names.length; i++) {
           const name = names[i];
           const original = real[i];
@@ -1851,20 +1853,38 @@ describe("functions of Array.prototype that a script replaced", () => {
       }
 
       function restore() {
+        installed = false;
         for (let i = 0; i < names.length; i++) Array.prototype[names[i]] = real[i];
+      }
+
+      // While the functions are replaced, only the call itself is watched: the streams of Node call slice() too. Once they
+      // are restored, only a copy that a module kept can still reach a replacement, so everything is watched.
+      function callIsOver() {
+        if (installed) armed = false;
       }
 
       function spawned(cp, options) {
         const wasArmed = armed;
         const child = cp.spawn(echo, echoed(), options);
-        // Only the call is watched. What the streams do afterwards is not about argv.
-        armed = false;
+        callIsOver();
         let out = "";
         child.stdout.on("data", chunk => (out += chunk));
         return new Promise(resolve => {
           child.on("close", () => {
             armed = wasArmed;
             resolve(out);
+          });
+        });
+      }
+
+      function execFiled(cp) {
+        const wasArmed = armed;
+        // The call sets the encoding of the streams, and setEncoding() of Node calls slice().
+        callIsOver();
+        return new Promise(resolve => {
+          cp.execFile(echo, echoed(), { env, encoding: "utf8" }, (error, stdout) => {
+            armed = wasArmed;
+            resolve(error ? String(error) : stdout);
           });
         });
       }
@@ -1876,6 +1896,7 @@ describe("functions of Array.prototype that a script replaced", () => {
           result.shell = String(cp.spawnSync(echo, echoed(), { env, shell: true }).stdout);
         }
         result.execFileSync = cp.execFileSync(echo, echoed(), { env, encoding: "utf8" });
+        result.execFile = await execFiled(cp);
         result.spawn = await spawned(cp, { env });
         result.spawnWithFourthPipe = await spawned(cp, { env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
         return result;
@@ -1953,6 +1974,7 @@ describe("functions of Array.prototype that a script replaced", () => {
     spawnSync: echoed,
     ...(isWindows ? {} : { shell: echoed }),
     execFileSync: echoed,
+    execFile: echoed,
     spawn: echoed,
     spawnWithFourthPipe: echoed,
   };

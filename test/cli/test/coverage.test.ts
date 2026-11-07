@@ -1510,7 +1510,7 @@ test("every line and every called function of a class with an undecorated access
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("(pass) use");
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   expect(lcov.match(/^DA:\d+,0$/gm)).toBeNull();

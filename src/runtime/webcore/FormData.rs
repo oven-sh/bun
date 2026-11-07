@@ -352,9 +352,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                         break;
                     }
                 }
-            } else if !value.is_empty()
-                && strings::eql_case_insensitive_ascii(key, b"content-type", true)
-            {
+            } else if strings::eql_case_insensitive_ascii(key, b"content-type", true) {
                 let trimmed = strings::trim(value, b"; \t");
                 // Only an exact `\r\n` terminates a header line above, so a bare
                 // CR or LF can survive into the value. Reject anything outside
@@ -362,7 +360,9 @@ pub(crate) fn for_each_multipart_entry<C>(
                 // reflected verbatim into outgoing request headers. HTAB stays
                 // allowed: it is valid optional whitespace inside a field value
                 // and cannot start a new header line.
-                if trimmed
+                if trimmed.is_empty() {
+                    field.content_type = bun_semver::String::default();
+                } else if trimmed
                     .iter()
                     .all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b))
                 {

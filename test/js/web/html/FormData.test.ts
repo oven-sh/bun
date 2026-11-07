@@ -368,6 +368,9 @@ describe("FormData", () => {
       it(`uses the last Content-Type line (${C.name})`, async () => {
         const body = buildPart([disposition("banner"), "Content-Type: text/plain", "Content-Type: image/webp"], webp);
         expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
+        // An empty last line clears the declared type, so the file name decides.
+        const empty = buildPart([disposition("a.txt"), "Content-Type: image/webp", "Content-Type:"], webp);
+        expect(((await parse(C, empty)).get("file") as File).type).toBe("text/plain;charset=utf-8");
       });
 
       it(`uses the last Content-Disposition line whole (${C.name})`, async () => {

@@ -65,20 +65,10 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
 {
 #if OS(WINDOWS)
     CONSOLE_SCREEN_BUFFER_INFO csbi;
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    switch (fd) {
-    case 0:
-        handle = GetStdHandle(STD_INPUT_HANDLE);
-        break;
-    case 1:
-        handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        break;
-    case 2:
-        handle = GetStdHandle(STD_ERROR_HANDLE);
-        break;
-    default:
-        break;
-    }
+    if (fd < 0)
+        return false;
+    // A fd from JS is a CRT fd, 0 to 2 included: SetStdHandle can point a standard handle somewhere else.
+    HANDLE handle = uv_get_osfhandle(fd);
     if (handle == INVALID_HANDLE_VALUE)
         return false;
 

@@ -15,6 +15,7 @@ const {
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
+const { setSecureContextSymbol } = require("internal/http");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -597,11 +598,12 @@ function Server(options, requestListener): void {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, options);
   }
+  http.Server.$call(this, options, requestListener);
+  this.ALPNProtocols = options.ALPNProtocols;
   this.ALPNCallback = options.ALPNCallback;
   const blockList = options.blockList;
   if (blockList) {
@@ -615,6 +617,9 @@ function Server(options, requestListener): void {
 $toClass(Server, "Server", http.Server);
 // A listener of this class speaks TLS whatever its options hold.
 Server.prototype[isTlsSymbol] = true;
+Server.prototype.setSecureContext = function setSecureContext(options) {
+  return this[setSecureContextSymbol](options);
+};
 
 function createServer(options, requestListener) {
   return new Server(options, requestListener);

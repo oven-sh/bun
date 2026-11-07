@@ -3377,6 +3377,9 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
   // tunnel, where it fails the TLS handshake.
   const replies = [
     'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="corp"\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
+    // Both framing headers on a refused CONNECT: the proxy's head is still what
+    // the caller gets, not a framing error (its body is never read).
+    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="corp"\r\nTransfer-Encoding: chunked\r\nContent-Length: 15\r\n\r\nf\r\n{"forged":true}\r\n0\r\n\r\n',
     'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
     'HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{"forged":true}',
     // Not a tunnel, and not an upgrade anyone asked for.
@@ -3409,6 +3412,7 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
     }
   }
   expect(outcomes).toEqual([
+    { code: "ERR_PROXY_TUNNEL", status: 407, authenticate: 'Basic realm="corp"', connects: ["CONNECT"] },
     { code: "ERR_PROXY_TUNNEL", status: 407, authenticate: 'Basic realm="corp"', connects: ["CONNECT"] },
     // The JSON is not a TLS ServerHello: the handshake inside the "tunnel" fails.
     { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },

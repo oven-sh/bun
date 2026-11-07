@@ -4,6 +4,7 @@ use crate::check::errors_aliases::Directives;
 use crate::check::sink::Reported;
 use crate::hir::{
     ExprId, ExprKind, Flags, FnId, PatId, StmtId, StmtKind, TypeNodeId, TypeNodeKind,
+    is_parenthesized,
 };
 use crate::node::{Node, NodeData};
 use crate::program::FileId;
@@ -97,17 +98,27 @@ impl Checker<'_, '_> {
             }
         }
         for id in (0..hir.exprs.len() as u32).map(ExprId) {
-            // An assignment may have a pattern: `({ a } = this)`.
-            if matches!(
-                hir[id].kind,
-                ExprKind::Dot { .. }
-                    | ExprKind::Index { .. }
-                    | ExprKind::PrivateIdentifier(_)
-                    | ExprKind::Assign { op: None, .. }
-            ) && !bound.is_unchecked(id.idx())
-                && self.is_in_dead_code(hir[id].pos)
-            {
-                self.type_of_expr(file, id);
+            if bound.is_unchecked(id.idx()) || !self.is_in_dead_code(hir[id].pos) {
+                continue;
+            }
+            match hir[id].kind {
+                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::PrivateIdentifier(_) => {
+                    self.type_of_expr(file, id);
+                }
+                // `({ a } = this)`. A build only checks a pattern in the walk of the file.
+                ExprKind::Assign {
+                    op: None,
+                    target,
+                    value,
+                } if target.is_some()
+                    && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
+                    && !is_parenthesized(hir, target)
+                    && !self.is_assignment_element_with_initializer(file, id) =>
+                {
+                    let source = self.type_of_expr(file, value);
+                    self.check_destructuring_assignment(file, target, source);
+                }
+                _ => {}
             }
         }
         for id in (0..hir.pats.len() as u32).map(PatId) {

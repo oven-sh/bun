@@ -242,6 +242,33 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  // A loader map gives `jsonc` by its name to a file ending: `--loader`, `loader` of Bun.build() and `[loader]` of bunfig.toml.
+  const importsJsonc = (ending: string) => ({
+    "/entry.ts": `import data from './data${ending}';\nconsole.write(JSON.stringify(data));`,
+    [`/data${ending}`]: `// a comment\n{"a":[1,],}\n`,
+  });
+  for (const [backend, ending] of [
+    ["cli", ".x"],
+    ["cli", ".json"],
+    ["cli", ".txt"],
+    ["api", ".x"],
+    ["api", ".json"],
+  ] as const) {
+    itBundled(`bun/loader-map-jsonc-${backend}-${ending.slice(1)}`, {
+      target: "bun",
+      backend,
+      loader: { [ending]: "jsonc" },
+      files: importsJsonc(ending),
+      run: { stdout: '{"a":[1]}' },
+    });
+  }
+  itBundled("bun/loader-map-jsonc-bunfig", {
+    target: "bun",
+    backend: "cli",
+    files: { ...importsJsonc(".x"), "/bunfig.toml": `[loader]\n".x" = "jsonc"\n` },
+    run: { stdout: '{"a":[1]}' },
+  });
+
   itBundled("bun/loader-json5-proto-key-is-own-property", {
     target: "bun",
     files: {

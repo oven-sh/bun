@@ -34,6 +34,21 @@ describe("dirname", async () => {
   TestBuilder.command`dirname /catalog`.exitCode(0).stdout("/\n").stderr("").runAsTest("at root");
 
   TestBuilder.command`dirname /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
+
+  TestBuilder.command`dirname //`.exitCode(0).stdout("/\n").stderr("").runAsTest("only slashes");
+
+  TestBuilder.command`dirname //a`.exitCode(0).stdout("/\n").stderr("").runAsTest("repeated leading slashes");
+
+  TestBuilder.command`dirname a`.exitCode(0).stdout(".\n").stderr("").runAsTest("no slash");
+
+  TestBuilder.command`dirname a/`.exitCode(0).stdout(".\n").stderr("").runAsTest("no slash before trailing slash");
+
+  // POSIX dirname step 7: strip every trailing slash of the remaining prefix (issue #48111).
+  TestBuilder.command`dirname a//b /a//b a///b a//b/ a//b// ///a///b///`
+    .exitCode(0)
+    .stdout("a\n/a\na\na\na\n///a\n")
+    .stderr("")
+    .runAsTest("strips the run of slashes before the last component");
 });
 
 describe("dirname without stdout", async () => {

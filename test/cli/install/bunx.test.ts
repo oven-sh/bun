@@ -3251,7 +3251,7 @@ describe("flags", () => {
   // `bun run` runs `bun x` where a script says `npx`.
   it.concurrent("the flags of npx and npm are skipped", async () => {
     const flags =
-      "--no --quiet -q -n -c -dd --offline --prefer-offline --loglevel=error --registry=http://localhost:1 --yes=true --";
+      "--no --quiet -q -n -c -dd --offline --prefer-offline --loglevel=error --registry=http://localhost:1 --yes=true --ignore-engines=true --";
     using box = sandbox(undefined, {
       cwd: { "package.json": JSON.stringify({ scripts: { tool: `npx ${flags} local-tool ${flags}` } }) },
     });

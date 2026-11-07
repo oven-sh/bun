@@ -69,6 +69,8 @@ new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_
 // if it fires the request fails with `error.Timeout`. Covers the TLS
 // handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
+// Skips the warning for a `packageManager` in package.json that pins another bun version.
+new!(pub BUN_CONFIG_IGNORE_ENGINES: boolean, "BUN_CONFIG_IGNORE_ENGINES", { default: false });
 // Opening-handshake timeout for the `new WebSocket()` client, in seconds.
 // A peer that accepts the TCP connection but never answers the upgrade fails
 // with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
@@ -218,6 +220,8 @@ new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
 // What a Bun that has `bun check` and not the other two sets in its place. Only read.
 new!(pub BUN_INTERNAL_CHECK_SCRIPTS: string, "BUN_INTERNAL_CHECK_SCRIPTS", {});
+// `<version>\n<pin>\n<path>`: a pin that a bun of that version checked. Its child skips it.
+new!(pub BUN_INTERNAL_BUN_VERSION_CHECKED: string, "BUN_INTERNAL_BUN_VERSION_CHECKED", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.

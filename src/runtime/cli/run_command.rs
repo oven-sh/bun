@@ -92,6 +92,8 @@ pub(crate) struct ConfigureEnvOptions {
     /// for callers that go on to read files through it, like `bunx` resolving
     /// a package's `bin`.
     pub(crate) store_root_fd: bool,
+    /// Off for `bun pm pack`, whose install half checked, and for `bunx`, whose tool is foreign.
+    pub(crate) check_bun_version: bool,
 }
 
 pub(crate) struct RunCommand;
@@ -772,7 +774,53 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
+        if opts.check_bun_version {
+            Self::check_bun_version(root_dir_info, ctx.debug.silent, env_loader)?;
+        }
+
         Ok((this_transpiler, root_dir_info))
+    }
+
+    /// The nearest `packageManager` above the working directory, never a dependency's.
+    fn check_bun_version(
+        root_dir_info: bun_resolver::DirInfoRef,
+        silent: bool,
+        env: &mut DotEnv::Loader,
+    ) -> crate::Result<()> {
+        if root_dir_info.is_inside_node_modules() {
+            return Ok(());
+        }
+        let mut dir_info = Some(root_dir_info);
+        while let Some(info) = dir_info {
+            if let Some(package_json) = info.enclosing_package_json
+                && let Some(package_manager) = package_json.package_manager()
+            {
+                if let Some(checked) = bun_semver::running_bun::check(
+                    package_json.source.path.text,
+                    package_manager,
+                    silent,
+                ) {
+                    env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", &checked)?;
+                    // `--watch` starts this process again with its environment, on POSIX.
+                    #[cfg(not(windows))]
+                    {
+                        let value = bun_core::ZBox::from_bytes(&checked);
+                        // SAFETY: both strings are NUL-terminated; setenv copies them. A failure
+                        // (ENOMEM) only repeats the warning after a restart.
+                        let _ = unsafe {
+                            libc::setenv(
+                                c"BUN_INTERNAL_BUN_VERSION_CHECKED".as_ptr(),
+                                value.as_ptr().cast(),
+                                1,
+                            )
+                        };
+                    }
+                }
+                return Ok(());
+            }
+            dir_info = info.get_parent();
+        }
+        Ok(())
     }
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to
@@ -2475,6 +2523,7 @@ impl RunCommand {
             ConfigureEnvOptions {
                 log_errors,
                 store_root_fd: false,
+                check_bun_version: true,
             },
         )?;
         bun_core::asan::register_root_region(

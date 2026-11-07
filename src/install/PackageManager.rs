@@ -2228,6 +2228,38 @@ fn find_workspace_root_above<'a>(
     Ok(None)
 }
 
+/// Reads the root package.json into the cache, where the later reads find it and report it.
+fn check_bun_version(
+    cache: &mut WorkspacePackageJSONCache,
+    root_package_json_path: &ZStr,
+    quiet: bool,
+    env: &mut dot_env::Loader,
+) -> Result<(), Error> {
+    let mut scratch_log = bun_ast::Log::init();
+    let crate::GetJsonResult::Entry(entry) = cache.get_with_path(
+        &mut scratch_log,
+        root_package_json_path.as_bytes(),
+        Default::default(),
+    ) else {
+        return Ok(());
+    };
+    let package_manager = entry.root.get(b"packageManager");
+    let Some(package_manager) = package_manager
+        .as_ref()
+        .and_then(bun_ast::Expr::as_utf8_string_literal)
+    else {
+        return Ok(());
+    };
+    // The path as the resolver spells it too, so that `bun run` finds the same marker.
+    if let Some(checked) =
+        bun_semver::running_bun::check(root_package_json_path.as_bytes(), package_manager, quiet)
+    {
+        // Lifecycle scripts get a copy of this map.
+        env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", &checked)?;
+    }
+    Ok(())
+}
+
 /// Returns true if `dir` is sticky and group- or world-writable, like `/tmp`. Any local user can
 /// create a `package.json` there.
 #[cfg(unix)]
@@ -2647,6 +2679,23 @@ pub fn init(
     // security scanner get a copy of this map.
     env.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
     env.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+
+    // A package in node_modules is not the project: its lifecycle script can run `bun install`.
+    if cli.checks_bun_version
+        && !no_project
+        && !cli.global
+        && !strings::contains(
+            root_package_json_path.as_bytes(),
+            bun_paths::NODE_MODULES_NEEDLE,
+        )
+    {
+        check_bun_version(
+            &mut workspace_package_json_cache,
+            root_package_json_path,
+            cli.ignore_engines || cli.log_level.is_silent(),
+            env,
+        )?;
+    }
 
     initialize_store();
 

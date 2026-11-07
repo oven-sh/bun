@@ -176,7 +176,20 @@ struct History {
     position: usize,
     temp_line: Option<Box<[u8]>>,
     file_path: Option<Box<[u8]>>,
-    modified: bool,
+    /// The newest entries that are not in the file yet: their write failed.
+    unwritten: usize,
+    /// The entries in the file, as far as this session knows.
+    file_entries: usize,
+    /// The file may not end in a newline, so the next append starts with one.
+    unterminated: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HistoryWrite {
+    /// The unwritten entries go after what the file holds.
+    Append,
+    /// The entries replace what the file holds.
+    Rewrite,
 }
 
 impl History {
@@ -186,7 +199,9 @@ impl History {
             position: 0,
             temp_line: None,
             file_path: None,
-            modified: false,
+            unwritten: 0,
+            file_entries: 0,
+            unterminated: false,
         }
     }
 
@@ -208,7 +223,13 @@ impl History {
         };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
+        let fd = match sys::open(path, sys::O::RDONLY, 0) {
+            sys::Result::Ok(fd) => fd,
+            sys::Result::Err(_) => return Ok(()),
+        };
+        let content = sys::File::borrow(&fd).read_to_end();
+        Self::close(fd);
+        let content: Box<[u8]> = match content {
             sys::Result::Ok(bytes) => bytes.into(),
             sys::Result::Err(_) => return Ok(()),
         };
@@ -218,49 +239,82 @@ impl History {
                 self.entries.push(Box::<[u8]>::from(line));
             }
         }
+        self.unterminated = !content.is_empty() && !content.ends_with(b"\n");
+        self.file_entries = self.entries.len();
 
         // Trim to max size
-        while self.entries.len() > MAX_HISTORY_SIZE {
-            let _ = self.entries.remove(0);
+        let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
+        self.entries.drain(..excess);
+        // `add` only appends. A file that holds twice the cap is cut back here to the newest.
+        if excess >= MAX_HISTORY_SIZE {
+            self.write(HistoryWrite::Rewrite);
         }
 
         self.position = self.entries.len();
         Ok(())
     }
 
-    fn save(&mut self) {
-        if !self.modified {
-            return;
-        }
+    /// The only writer of the history file.
+    fn write(&mut self, how: HistoryWrite) {
         let Some(path) = self.file_path.as_deref() else {
             return;
         };
-
-        // Build content
-        let start = if self.entries.len() > MAX_HISTORY_SIZE {
-            self.entries.len() - MAX_HISTORY_SIZE
-        } else {
-            0
+        let rewrite = how == HistoryWrite::Rewrite;
+        let count = match how {
+            HistoryWrite::Append => self.unwritten.min(self.entries.len()),
+            HistoryWrite::Rewrite => self.entries.len(),
         };
+        if count == 0 {
+            return;
+        }
 
-        let mut content: Vec<u8> = Vec::new();
-        for entry in &self.entries[start..] {
+        let flags = sys::O::WRONLY | sys::O::CREAT | if rewrite { 0 } else { sys::O::APPEND };
+        let fd = match sys::open_a(path, flags, 0o600) {
+            sys::Result::Ok(fd) => fd,
+            sys::Result::Err(_) => return,
+        };
+        #[cfg(unix)]
+        let _ = sys::fchmod(fd, 0o600);
+
+        let entries = &self.entries[self.entries.len() - count..];
+        let len: usize = entries.iter().map(|entry| entry.len() + 1).sum();
+        let mut content: Vec<u8> = Vec::with_capacity(len + 1);
+        if self.unterminated && !rewrite {
+            content.push(b'\n');
+        }
+        for entry in entries {
             content.extend_from_slice(entry);
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
-            sys::Result::Ok(fd) => sys::File::from_fd(fd),
-            sys::Result::Err(_) => return,
-        };
-        #[cfg(unix)]
-        let _ = sys::fchmod(file.fd(), 0o600);
-        match file.write_all(&content) {
-            sys::Result::Ok(()) => {}
-            sys::Result::Err(_) => return,
+        let mut rest: &[u8] = &content;
+        while !rest.is_empty() {
+            match sys::write(fd, rest) {
+                sys::Result::Ok(n) if n > 0 => rest = &rest[n..],
+                _ => break,
+            }
         }
+        // The length is set after the write: `O::TRUNC` leaves an empty file if the write fails.
+        let written =
+            rest.is_empty() && (!rewrite || sys::ftruncate(fd, content.len() as i64).is_ok());
+        if written {
+            match how {
+                HistoryWrite::Append => {
+                    self.unwritten = 0;
+                    self.file_entries += count;
+                }
+                HistoryWrite::Rewrite => self.file_entries = count,
+            }
+        }
+        // An append that stops part way leaves a line without its newline.
+        let cut_short = !rewrite && !rest.is_empty() && rest.len() < content.len();
+        self.unterminated = !written && (self.unterminated || cut_short);
+        Self::close(fd);
+    }
 
-        self.modified = false;
+    /// `File` never closes fd 0 to 2, and `fd` is one of them after the REPL's code closed it.
+    fn close(fd: Fd) {
+        let _ = sys::FdExt::close_allowing_standard_io(fd, None);
     }
 
     fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
@@ -278,12 +332,23 @@ impl History {
 
         self.entries.push(Box::<[u8]>::from(line));
         self.position = self.entries.len();
-        self.modified = true;
+        self.unwritten += 1;
 
         // Trim if too large
         while self.entries.len() > MAX_HISTORY_SIZE {
             let _ = self.entries.remove(0);
             self.position = self.position.saturating_sub(1);
+        }
+
+        // Written now: `process.exit()` and a signal end the process without any code of the REPL.
+        let before = self.file_entries;
+        self.write(HistoryWrite::Append);
+        // The append that brings the file to twice the cap reads it again, which cuts it back.
+        if before < 2 * MAX_HISTORY_SIZE && self.file_entries >= 2 * MAX_HISTORY_SIZE {
+            let entries = core::mem::take(&mut self.entries);
+            let _ = self.load();
+            self.entries = entries;
+            self.position = self.entries.len();
         }
         Ok(())
     }
@@ -2509,7 +2574,8 @@ impl<'a> Repl<'a> {
         }
 
         self.restore_terminal();
-        self.history.save();
+        // Only the entries whose write failed are left to write.
+        self.history.write(HistoryWrite::Append);
         Ok(())
     }
 
@@ -2840,7 +2906,6 @@ impl<'a> Repl<'a> {
 impl<'a> Drop for Repl<'a> {
     fn drop(&mut self) {
         self.restore_terminal();
-        self.history.save();
         // line_editor, history, multiline_buffer, editor_buffer, last_result,
         // last_error dropped automatically (ProtectedJSValue unprotects).
     }

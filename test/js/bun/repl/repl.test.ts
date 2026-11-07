@@ -22,16 +22,18 @@ async function runRepl(
     cwd?: string;
     /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
     home?: string;
+    /** A command that runs the REPL's command line, for example a shell that sets a limit first. */
+    launcher?: string[];
   } = {},
-): Promise<{ stdout: string; stderr: string; exitCode: number; outputs: string[] }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number; signalCode: NodeJS.Signals | null; outputs: string[] }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { env = {}, cwd } = options;
+  const { env = {}, cwd, launcher = [] } = options;
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
   using tempHome = tempDir("repl-home", {});
   const home = options.home ?? String(tempHome);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: [...launcher, bunExe(), "repl"],
     stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
@@ -53,7 +55,7 @@ async function runRepl(
     .slice(1, -1)
     .map(chunk => chunk.replace(/^ +at .*\n?/gm, "").trim());
 
-  return { stdout, stderr, exitCode, outputs };
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode, outputs };
 }
 
 interface Screen {
@@ -215,7 +217,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
+    home?: string;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -226,7 +233,8 @@ async function withTerminalRepl(
   const decoder = new TextDecoder();
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
-  using home = tempDir("repl-home", {});
+  using tempHome = tempDir("repl-home", {});
+  const home = options.home ?? String(tempHome);
   await using terminal = new Bun.Terminal({
     cols,
     rows,
@@ -247,8 +255,8 @@ async function withTerminalRepl(
       ...bunEnv,
       TERM: "xterm-256color",
       ...options.env,
-      HOME: String(home),
-      USERPROFILE: String(home),
+      HOME: home,
+      USERPROFILE: home,
     },
   });
 
@@ -325,7 +333,7 @@ async function withTerminalRepl(
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
   // would leave the REPL running until the test times out).
-  if (proc.exitCode === null) {
+  if (proc.exitCode === null && proc.signalCode === null) {
     send("\x01\x0b.exit\n");
     await proc.exited;
   }
@@ -1831,8 +1839,8 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   });
 });
 
-// History file written on REPL exit must be owner-only (0600), since it can
-// contain pasted credentials. See src/runtime/cli/repl.rs History::save.
+// The history file must be owner-only (0600), since it can contain pasted
+// credentials. See src/runtime/cli/repl.rs History::write.
 describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
   const secret = 'const dbUrl = "postgres://user:hunter2@db.internal/prod"';
 
@@ -1846,7 +1854,7 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
     expect(exitCode).toBe(0);
 
     // Legitimate behavior still works: the typed line is persisted to
-    // $HOME/.bun_repl_history on exit.
+    // $HOME/.bun_repl_history.
     const historyPath = path.join(home, ".bun_repl_history");
     expect(await Bun.file(historyPath).text()).toBe(`${secret}\n`);
 
@@ -1879,6 +1887,231 @@ test("skips the history file when $HOME is longer than PATH_MAX", async () => {
   expect(outputs).toEqual(["2"]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// An entry is written to $HOME/.bun_repl_history when it is accepted, before it
+// is evaluated (History::add in src/runtime/cli/repl.rs). No way out of the
+// process writes the file, so no way out can lose the session.
+describe.concurrent("REPL history is written when an entry is accepted", () => {
+  const historyPath = (home: string) => path.join(home, ".bun_repl_history");
+  const historyText = async (home: string) => {
+    const file = Bun.file(historyPath(home));
+    return (await file.exists()) ? await file.text() : null;
+  };
+  const oldEntries = (count: number) => Array.from({ length: count }, (_, i) => `old${i}`);
+  // What `.history` prints in a session that holds 1000 entries, the last of them `entries`: the last 20.
+  const listed = (entries: string[]) =>
+    ["Command History:", ...entries.slice(-20).map((entry, i) => `  ${String(981 + i).padStart(4)}  ${entry}`)].join(
+      "\n",
+    );
+  // A script for `.load`, which is a REPL command and so adds no entry.
+  const onHistoryFile = (call: string) => (dir: { root: string }) =>
+    `require("fs").${call.replace("FILE", () => JSON.stringify(historyPath(dir.root)))};`;
+
+  test.each([
+    { way: "process.exit() at the prompt", last: "process.exit(3)", exitCode: 3 },
+    {
+      way: "process.exit() from a timer during an await",
+      last: "setTimeout(() => process.exit(4), 1), await new Promise(() => {})",
+      exitCode: 4,
+    },
+  ])("$way keeps the session", async ({ last, exitCode }) => {
+    using dir = tempDir("repl-history-exit", {});
+    const home = String(dir);
+
+    // An entry equal to the one before it is not written again.
+    const result = await runRepl(["111 + 1", "111 + 1", "222 + 1", last], { home });
+    expect(result.outputs).toEqual(["112", "112", "223"]);
+    expect(result.stderr).toBe("");
+    expect(await historyText(home)).toBe(`111 + 1\n222 + 1\n${last}\n`);
+    expect(result.exitCode).toBe(exitCode);
+  });
+
+  // No code of the process runs on SIGKILL.
+  test.skipIf(isWindows)("SIGKILL keeps the session, and the file is owner-only", async () => {
+    using dir = tempDir("repl-history-sigkill", { ".bun_repl_history": "1 + 1\n" });
+    const home = String(dir);
+    chmodSync(historyPath(home), 0o644);
+    const kill = 'process.kill(process.pid, "SIGKILL")';
+
+    // The first line is equal to the last entry of the file: not written again.
+    const result = await runRepl(["1 + 1", "111 + 1", kill], { home });
+    expect(result.outputs).toEqual(["2", "112"]);
+    expect(await historyText(home)).toBe(`1 + 1\n111 + 1\n${kill}\n`);
+    expect(statSync(historyPath(home)).mode & 0o777).toBe(0o600);
+    expect(result.signalCode).toBe("SIGKILL");
+  });
+
+  describe.todoIf(isWindows)("on a terminal", () => {
+    test.each(["SIGTERM", "SIGHUP"] as const)("%s from outside keeps the session", async signal => {
+      using dir = tempDir("repl-history-signal", {});
+      const home = String(dir);
+
+      await withTerminalRepl(
+        async ({ proc, send, waitFor }) => {
+          send("111 + 1\r");
+          await waitFor("112");
+          send("222 + 1\r");
+          await waitFor("223");
+          // Both entries are in the file while the session still runs.
+          expect(await historyText(home)).toBe("111 + 1\n222 + 1\n");
+
+          proc.kill(signal);
+          await proc.exited;
+          expect(proc.signalCode).toBe(signal);
+        },
+        { home },
+      );
+
+      expect(await historyText(home)).toBe("111 + 1\n222 + 1\n");
+      expect(statSync(historyPath(home)).mode & 0o777).toBe(0o600);
+    });
+  });
+
+  test("an entry that another session appended stays in the file", async () => {
+    // More entries than a session loads (1000), fewer than a session cuts back (2000).
+    const old = oldEntries(1003);
+    using dir = tempDir("repl-history-other-session", {
+      ".bun_repl_history": old.join("\n") + "\n",
+      // What another session does when it accepts `333 + 1`.
+      "other-session.js": onHistoryFile('appendFileSync(FILE, "333 + 1\\n")'),
+    });
+    const home = String(dir);
+
+    const result = await runRepl([".load other-session.js", "222 + 1", ".exit"], { home, cwd: home });
+    expect(result.stderr).toBe("");
+    expect((await historyText(home))?.split("\n")).toEqual([...old, "333 + 1", "222 + 1", ""]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("an entry starts a new file after the file is removed", async () => {
+    using dir = tempDir("repl-history-removed", { "remove.js": onHistoryFile("rmSync(FILE)") });
+    const home = String(dir);
+
+    const result = await runRepl(["111 + 1", ".load remove.js", "222 + 1", ".exit"], { home, cwd: home });
+    expect(result.stderr).toBe("");
+    expect(await historyText(home)).toBe("222 + 1\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("an entry starts on a new line after a file without a final newline", async () => {
+    using dir = tempDir("repl-history-no-newline", { ".bun_repl_history": "old1\n\nold2" });
+    const home = String(dir);
+
+    const result = await runRepl(["111 + 1", "222 + 1", "process.exit(0)"], { home });
+    expect(result.outputs).toEqual(["112", "223"]);
+    expect(await historyText(home)).toBe("old1\n\nold2\n111 + 1\n222 + 1\nprocess.exit(0)\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // A new descriptor gets the lowest free number: 1, where `File` does not close it.
+  test.skipIf(isWindows)(
+    "after its code closes stdout, the REPL keeps fd 1 free and its output out of the file",
+    async () => {
+      const old = oldEntries(1998);
+      using dir = tempDir("repl-history-closed-stdout", { ".bun_repl_history": old.join("\n") + "\n" });
+      const home = String(dir);
+      // The second entry makes 2000 entries: the session writes the entry, reads the file again and cuts it back.
+      const entries = [
+        'require("fs").closeSync(1)',
+        "222 + 1",
+        'console.error((() => { try { require("fs").fstatSync(1); return "fd 1 is open"; } catch { return "fd 1 is closed"; } })())',
+      ];
+
+      const result = await runRepl([...entries, ".exit"], { home });
+      expect((await historyText(home))?.split("\n")).toEqual([...old.slice(1000), ...entries, ""]);
+      expect(result.stderr).toBe("fd 1 is closed\n");
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
+  test("a session without an entry does not write the file", async () => {
+    const existing = "old1\n\nold2";
+    using dir = tempDir("repl-history-untouched", { none: {}, some: { ".bun_repl_history": existing } });
+    const none = path.join(String(dir), "none");
+    const some = path.join(String(dir), "some");
+    if (!isWindows) chmodSync(historyPath(some), 0o644);
+
+    // REPL commands and empty lines are not entries.
+    const results = await Promise.all([none, some].map(home => runRepl([".help", "", ".exit"], { home })));
+    expect(results.map(result => result.exitCode)).toEqual([0, 0]);
+    expect(await historyText(none)).toBeNull();
+    expect(await historyText(some)).toBe(existing);
+    if (!isWindows) expect(statSync(historyPath(some)).mode & 0o777).toBe(0o644);
+  });
+
+  test("a history file that cannot be written does not stop the REPL", async () => {
+    using dir = tempDir("repl-history-unwritable", { ".bun_repl_history": {} });
+    const home = String(dir);
+
+    const result = await runRepl(["111 + 1", "222 + 1", ".exit"], { home });
+    expect(result.outputs).toEqual(["112", "223"]);
+    expect(result.stderr).toBe("");
+    expect(statSync(historyPath(home)).isDirectory()).toBe(true);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each([
+    { when: "with the next entry", rest: ["222 + 1", "process.exit(0)"], file: "111 + 1\n222 + 1\nprocess.exit(0)\n" },
+    { when: "at a clean exit", rest: [".exit"], file: "111 + 1\n" },
+  ])("an entry whose write failed is written $when", async ({ rest, file }) => {
+    // The write fails while a directory has the name of the file.
+    using dir = tempDir("repl-history-retry", {
+      ".bun_repl_history": {},
+      "remove.js": onHistoryFile("rmdirSync(FILE)"),
+    });
+    const home = String(dir);
+
+    const result = await runRepl(["111 + 1", ".load remove.js", ...rest], { home, cwd: home });
+    expect(result.stderr).toBe("");
+    expect(await historyText(home)).toBe(file);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a session cuts the file back when its own entry makes 2000", async () => {
+    const old = oldEntries(1999);
+    using dir = tempDir("repl-history-cut-in-session", { ".bun_repl_history": old.join("\n") + "\n" });
+    const home = String(dir);
+
+    const result = await runRepl(["process.exit(0)"], { home });
+    expect((await historyText(home))?.split("\n")).toEqual([...old.slice(1000), "process.exit(0)", ""]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a session cuts a file of 2000 entries back to the newest 1000", async () => {
+    const old = oldEntries(2000);
+    using dir = tempDir("repl-history-cut", {
+      under: { ".bun_repl_history": old.slice(1).join("\n") + "\n" },
+      at: { ".bun_repl_history": old.join("\n") + "\n" },
+    });
+    const under = path.join(String(dir), "under");
+    const at = path.join(String(dir), "at");
+
+    const results = await Promise.all([under, at].map(home => runRepl([".history", ".exit"], { home })));
+    // Each session holds the newest 1000 entries.
+    expect(results.map(result => result.outputs)).toEqual([[listed(old)], [listed(old)]]);
+    expect((await historyText(under))?.split("\n")).toEqual([...old.slice(1), ""]);
+    expect((await historyText(at))?.split("\n")).toEqual([...old.slice(1000), ""]);
+  });
+
+  // The shell limits the REPL to files of 512 or 1024 bytes. The newest 1000 entries are 8000 bytes.
+  test.skipIf(isWindows)("a file that cannot be cut back keeps its newest entries", async () => {
+    const old = oldEntries(2000);
+    const existing = old.join("\n") + "\n";
+    const cut = old.slice(1000).join("\n") + "\n";
+    using dir = tempDir("repl-history-failed-cut", { ".bun_repl_history": existing });
+    const home = String(dir);
+
+    const limited = await runRepl([".exit"], { home, launcher: ["sh", "-c", 'ulimit -f 1 && exec "$0" "$@"'] });
+    // The write stops at the limit, or the system refuses all of it. The file keeps the rest.
+    const stopped = [0, 512, 1024].map(written => cut.slice(0, written) + existing.slice(written));
+    expect(stopped).toContain(await historyText(home));
+    expect(limited.exitCode).toBe(0);
+
+    const next = await runRepl([".history", ".exit"], { home });
+    expect(next.outputs).toEqual([listed(old)]);
+    expect(next.exitCode).toBe(0);
+  });
 });
 
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a

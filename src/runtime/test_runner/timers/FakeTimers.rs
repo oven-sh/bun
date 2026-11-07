@@ -377,7 +377,8 @@ struct Replaced {
     api: Api,
     original: Strong,
     fake: Strong,
-    /// Set while a spy or `vi.stubGlobal()` replaces the same property. The record then says what goes back, and `original` is what was there before any of them.
+    /// The `PropertyLayers` record (JSMockFunction.cpp), while a spy or `vi.stubGlobal()` replaces the same property.
+    /// It says what goes back, and `original` is what was there before any of them.
     layers: StrongOptional,
 }
 
@@ -605,7 +606,11 @@ extern "C" fn Bun__FakeTimers__fakeOf(
 extern "C" fn Bun__FakeTimers__setLayers(global: &JSGlobalObject, fake: JSValue, layers: JSValue) {
     // SAFETY: per-thread `timer::All`; nothing below re-enters it.
     let this = unsafe { &mut (*timer_all()).fake_timers };
-    if let Some(replaced) = this.replaced.iter_mut().find(|replaced| replaced.fake.get() == fake) {
+    if let Some(replaced) = this
+        .replaced
+        .iter_mut()
+        .find(|replaced| replaced.fake.get() == fake)
+    {
         replaced.layers.set(global, layers);
     }
 }
@@ -931,7 +936,13 @@ impl FakeTimers {
                 }
             });
         }
-        for Replaced { api, original, fake, layers } in deactivated.replaced {
+        for Replaced {
+            api,
+            original,
+            fake,
+            layers,
+        } in deactivated.replaced
+        {
             let owner = api.owner(global);
             match layers.get() {
                 Some(layers) if owner.is_object() => JSMock__removeFakeFromLayers(

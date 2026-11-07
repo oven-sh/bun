@@ -2,8 +2,6 @@
 pub enum Error {
     #[error("RequestBodyTooLarge")]
     RequestBodyTooLarge,
-    #[error("FailedToOpenSocket")]
-    FailedToOpenSocket,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -15,7 +13,6 @@ impl Error {
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::RequestBodyTooLarge => "RequestBodyTooLarge",
-            Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Alloc(_) => "OutOfMemory",
             Self::Sys(e) => <&'static str>::from(e),
         }

@@ -659,12 +659,6 @@ pub struct ByIdIndirect<I, T, P: Policy = Frozen, A: Alloc = Global> {
     held_handle: Option<fn(&mut T) -> &mut Handle>,
 }
 
-impl<I: Id, T, P: Policy, A: Alloc + Default> Default for ByIdIndirect<I, T, P, A> {
-    fn default() -> Self {
-        Self::new_in(A::default())
-    }
-}
-
 impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
     pub fn new_in(alloc: A) -> Self {
         ByIdIndirect {
@@ -702,12 +696,6 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
         self.slot = slot.typed();
         assert!(P::SLOT == NO_SLOT || P::SLOT == self.slot.number());
-    }
-}
-
-impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc + Default> Default for ByKey<K, V, P, A> {
-    fn default() -> Self {
-        Self::new_in(A::default())
     }
 }
 

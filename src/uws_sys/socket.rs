@@ -939,11 +939,6 @@ mod sock_c {
 pub enum ConnectError {
     FailedToOpenSocket,
 }
-impl From<ConnectError> for crate::Error {
-    fn from(_: ConnectError) -> Self {
-        crate::Error::FailedToOpenSocket
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // AnySocket

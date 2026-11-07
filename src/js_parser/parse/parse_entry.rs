@@ -2024,30 +2024,13 @@ impl<'a> Parser<'a> {
         if reject_import_statements {
             p.reject_eager_import_meta_globs();
         }
-        // Glob imports go before the file's own imports, whether or not they're lowered.
-        let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
-        for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
-            let is_lowered = !(hoisted_mocks.is_empty() && imports_after_hoisted_mocks.is_empty())
-                && matches!(
-                    stmt.data,
-                    js_ast::StmtData::SImport(import)
-                        if matches!(
-                            p.plan_import(&import, &Default::default()),
-                            MockHoistOrder::LoweredImport
-                        )
-                );
-            let sliced = p.arena.alloc_slice_copy(&[stmt]);
-            p.append_part(
-                if is_lowered {
-                    &mut lowered_glob_imports
-                } else {
-                    &mut before
-                },
-                sliced,
+        if !p.import_meta_glob_imports.is_empty() {
+            p.place_import_meta_glob_imports(
+                &mut before,
+                &hoisted_mocks,
+                &mut imports_after_hoisted_mocks,
             )?;
         }
-        lowered_glob_imports.append(&mut imports_after_hoisted_mocks);
-        let mut imports_after_hoisted_mocks = lowered_glob_imports;
         if let Some(stmt) = p.import_meta_glob_definition() {
             before.insert(
                 0,

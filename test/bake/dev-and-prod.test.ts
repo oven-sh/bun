@@ -1,4 +1,5 @@
 // Tests which apply to both dev and prod. They are run twice.
+import { expect } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
 
@@ -135,6 +136,41 @@ devAndProductionTest("inline script and styles appear", {
     await using c = await dev.client("/");
     await c.expectMessage("hello 3");
     await c.style("body").backgroundColor.expect.toBe("red");
+  },
+});
+devAndProductionTest("import.meta.glob evaluates eager entries before the file's other imports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./first.ts";
+      import "./own.css";
+      import.meta.glob(["./modules/*.ts", "./sheets/*.css"], { eager: true });
+      import "./last.ts";
+      console.log(globalThis.loaded.join());
+    `,
+    "first.ts": `(globalThis.loaded ??= []).push("first");`,
+    "last.ts": `(globalThis.loaded ??= []).push("last");`,
+    "modules/a.ts": `(globalThis.loaded ??= []).push("a");`,
+    "modules/b.ts": `(globalThis.loaded ??= []).push("b");`,
+    "own.css": `.own { color: red; }`,
+    "sheets/a.css": `.a { color: red; }`,
+    "sheets/b.css": `.b { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a,b,first,last");
+
+    const html = await dev.fetch("/").text();
+    let css = "";
+    for (const [, href] of html.matchAll(/<link rel="stylesheet"[^>]*href="([^"]+)"/g)) {
+      css += await dev.fetch(href).text();
+    }
+    const rules = css.match(/\.(own|a|b)\b/g) ?? [];
+    // The dev server links the stylesheets in reverse (#28117), so the two of the glob are compared in any order.
+    expect({ glob: rules.slice(0, 2).sort(), own: rules.slice(2) }).toEqual({ glob: [".a", ".b"], own: [".own"] });
   },
 });
 // TODO: revive production

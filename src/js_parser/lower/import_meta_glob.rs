@@ -13,6 +13,7 @@ use bun_paths::resolve_path::{self, platform};
 use bun_paths::{fs, path_buffer_pool};
 
 use crate::lexer::T;
+use crate::lower::hoist_test_mocks::MockHoistOrder;
 use crate::p::P;
 use crate::parser::TransposeState;
 
@@ -1097,6 +1098,50 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         if self.import_meta_glob_use == ImportMetaGlobUse::ImportedEagerly {
             self.import_meta_glob_use = ImportMetaGlobUse::Called;
         }
+    }
+
+    /// Glob imports go before the file's own imports, as in Vite. A tree-shaken bundle already has those in `before`.
+    #[cold]
+    pub(crate) fn place_import_meta_glob_imports(
+        &mut self,
+        before: &mut bun_alloc::ArenaVec<'a, js_ast::Part>,
+        hoisted_mocks: &[js_ast::Part],
+        lowered_imports: &mut bun_alloc::ArenaVec<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        let lowers_imports = !(hoisted_mocks.is_empty() && lowered_imports.is_empty());
+        let before_len = before.len();
+        let mut lowered_glob_imports = bun_alloc::ArenaVec::new_in(self.arena);
+        let imports = core::mem::replace(
+            &mut self.import_meta_glob_imports,
+            bun_alloc::ArenaVec::new_in(self.arena),
+        );
+        for stmt in imports {
+            let is_lowered = lowers_imports
+                && matches!(
+                    stmt.data,
+                    js_ast::StmtData::SImport(import)
+                        if matches!(
+                            self.plan_import(&import, &Default::default()),
+                            MockHoistOrder::LoweredImport
+                        )
+                );
+            let stmts = self.arena.alloc_slice_copy(&[stmt]);
+            self.append_part(
+                if is_lowered {
+                    &mut lowered_glob_imports
+                } else {
+                    &mut *before
+                },
+                stmts,
+            )?;
+        }
+        lowered_glob_imports.append(lowered_imports);
+        *lowered_imports = lowered_glob_imports;
+        if self.options.bundle {
+            let new_in_before = before.len() - before_len;
+            before[js_ast::NAMESPACE_EXPORT_PART_INDEX as usize + 1..].rotate_right(new_in_before);
+        }
+        Ok(())
     }
 
     /// `import.meta.glob = () => { throw ... }`, so `typeof import.meta.glob` is "function" as in Vite.

@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
 import { readdirSync } from "node:fs";
 import { cases, tree, type Entry } from "../js/bun/resolve/import-meta-glob-cases";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 // Nothing exists above the bundle's root, and the bundler can't resolve a path with a query, so skip those cases.
 const files = Object.fromEntries(
@@ -86,6 +86,308 @@ describe("bundler", () => {
     },
     dce: true,
     run: { stdout: `{"./modules/a.ts":"a","./modules/b.ts":"b"}` },
+  });
+
+  // An eager glob is the same as its import statements written at the top of the file, wherever the call stands, as
+  // in Vite. So the files that it matches are evaluated before the file's other imports.
+  const eager = `import.meta.glob("./modules/*.ts", { eager: true })`;
+  type CallSite = { code: string; globbed?: string[]; logs?: string };
+  const callSites: Record<string, CallSite> = {
+    between: { code: `import "./first.ts"; ${eager}; import "./last.ts";` },
+    behind: { code: `import "./first.ts"; import "./last.ts"; ${eager};` },
+    ahead: { code: `${eager}; import "./first.ts"; import "./last.ts";` },
+    kept: {
+      code: `import "./first.ts"; const kept = ${eager}; import "./last.ts"; globalThis.loaded.push("kept " + Object.keys(kept));`,
+      logs: "./modules/a.ts,./modules/b.ts",
+    },
+    called: { code: `import "./first.ts"; import "./last.ts"; function load() { return ${eager}; } load();` },
+    uncalled: { code: `import "./first.ts"; import "./last.ts"; function unused() { return ${eager}; }` },
+    two: {
+      code: `import "./first.ts"; ${eager}; import.meta.glob("./more/*.ts", { eager: true }); import "./last.ts";`,
+      globbed: ["modules/a", "modules/b", "more/c"],
+    },
+    duplicate: { code: `import "./first.ts"; import "./modules/b.ts"; ${eager}; import "./last.ts";` },
+    reexport: { code: `export * from "./first.ts"; ${eager}; export * from "./last.ts";` },
+    named: {
+      code: `
+        import "./first.ts";
+        const names = import.meta.glob("./modules/*.ts", { eager: true, import: "name" });
+        import "./last.ts";
+        globalThis.loaded.push("named " + Object.values(names));`,
+      logs: "modules/a,modules/b",
+    },
+    mixed: {
+      code: `
+        import "./first.ts";
+        const lazy = import.meta.glob("./more/*.ts");
+        ${eager};
+        import "./last.ts";
+        globalThis.loaded.push("mixed " + Object.keys(lazy));`,
+      logs: "./more/c.ts",
+    },
+    // A lowered top-level `using` keeps every statement of the file in one part.
+    using: { code: `import "./first.ts"; ${eager}; import "./last.ts"; using unused = null;` },
+  };
+  const pushes = (name: string) => `(globalThis.loaded ??= []).push("${name}");`;
+  /** The directory `dir` with `files` in it. Each of its modules pushes "<dir> <name>" when it is evaluated. */
+  const directory = (dir: string, files: Record<string, string>) => ({
+    ...Object.fromEntries(
+      ["first", "last", "modules/a", "modules/b", "more/c"].map(name => [
+        `/${dir}/${name}.ts`,
+        `${pushes(`${dir} ${name}`)} export const name = "${name}";`,
+      ]),
+    ),
+    ...Object.fromEntries(Object.entries(files).map(([name, code]) => [`/${dir}/${name}`, code])),
+  });
+  /** What a call site in `dir` pushes, in order. */
+  const loadedBy = (dir: string, { globbed = ["modules/a", "modules/b"], logs }: Partial<CallSite> = {}) =>
+    [...globbed, "first", "last", ...(logs ? [logs] : [])].map(name => `${dir} ${name}`);
+  const printLoaded = `console.log(globalThis.loaded.join("\\n"));`;
+
+  const everyCallSite = {
+    entryPoints: ["/entry.ts"],
+    files: {
+      ...Object.assign({}, ...Object.entries(callSites).map(([dir, { code }]) => directory(dir, { "index.ts": code }))),
+      "/entry.ts": `
+        ${Object.keys(callSites)
+          .map(dir => `import "./${dir}/index.ts";`)
+          .join("\n")}
+        ${printLoaded}`,
+    },
+  };
+  const everyCallSiteLoaded = Object.entries(callSites)
+    .flatMap(([dir, site]) => loadedBy(dir, site))
+    .join("\n");
+  for (const [kind, options] of Object.entries<Partial<BundlerTestInput>>({
+    TargetBrowser: { target: "browser" },
+    TargetBun: { target: "bun" },
+    FormatCJS: { target: "node", format: "cjs" },
+    FormatIIFE: { format: "iife" },
+    Splitting: { splitting: true, outdir: "/out" },
+    Minify: { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
+    NoTreeShaking: { treeShaking: false },
+  })) {
+    const bundled = { file: options.outdir && "/out/entry.js", stdout: everyCallSiteLoaded };
+    itBundled(`import-meta-glob/EagerEntriesAreEvaluatedBeforeTheOtherImports${kind}`, {
+      ...everyCallSite,
+      ...options,
+      // One of them also runs the files as they are.
+      run: kind === "TargetBun" ? [{ file: "/entry.ts", stdout: everyCallSiteLoaded }, bundled] : bundled,
+    });
+  }
+
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedBeforeTheOtherImportsOfAnEntryPoint", {
+    backend: "cli",
+    entryPoints: ["/app/index.ts"],
+    files: directory("app", { "index.ts": `${callSites.between.code} ${printLoaded}` }),
+    run: { stdout: loadedBy("app").join("\n") },
+  });
+
+  // The modules are in one chunk and the file's own imports in another.
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedBeforeTheOtherImportsInAnotherChunk", {
+    entryPoints: ["/app/index.ts", "/app/modules.ts", "/app/own.ts"],
+    files: directory("app", {
+      "index.ts": `${callSites.between.code} ${printLoaded}`,
+      "modules.ts": `import "./modules/a.ts"; import "./modules/b.ts";`,
+      "own.ts": `import "./first.ts"; import "./last.ts";`,
+    }),
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/index.js", stdout: loadedBy("app").join("\n") },
+  });
+
+  // Under `bun run`, the CommonJS package is evaluated first, also when the imports are written by hand.
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedBeforeACommonJSImport", {
+    entryPoints: ["/app/index.ts"],
+    files: {
+      ...directory("app", { "index.ts": `import "dep"; ${eager}; import "./last.ts"; ${printLoaded}` }),
+      "/node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/dep/index.js": `${pushes("dep")} module.exports = {};`,
+    },
+    run: { stdout: ["app modules/a", "app modules/b", "dep", "app last"].join("\n") },
+  });
+
+  // The order of the imports is also the order of the rules in the stylesheet.
+  const sheets = {
+    "sheets/a.css": `.a { color: red; }`,
+    "sheets/b.css": `.b { color: red; }`,
+    "reset.css": `.reset { color: red; }`,
+    "last.css": `.last { color: red; }`,
+  };
+  const ruleOrder = (css: string) => css.match(/\.(reset|last|a|b)\b/g);
+
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedBeforeTheOtherImportsOfAnHTMLEntryPoint", {
+    entryPoints: ["/index.html"],
+    files: {
+      "/index.html": `<script type="module" src="./app/index.ts"></script>`,
+      ...directory("app", {
+        ...sheets,
+        "index.ts": `
+          import "./reset.css";
+          import "./first.ts";
+          import.meta.glob(["./modules/*.ts", "./sheets/*.css"], { eager: true });
+          import "./last.css";
+          import "./last.ts";
+          ${printLoaded}`,
+      }),
+    },
+    outdir: "/out",
+    entryNaming: "[name].[ext]",
+    chunkNaming: "[name].[ext]",
+    onAfterBundle(api) {
+      expect(ruleOrder(api.readFile("/out/index.css"))).toEqual([".a", ".b", ".reset", ".last"]);
+    },
+    run: { file: "/out/index.js", stdout: loadedBy("app").join("\n") },
+  });
+
+  itBundled("import-meta-glob/EagerStylesheetsGoBeforeTheOtherImports", {
+    entryPoints: ["/app/index.ts"],
+    files: directory("app", {
+      ...sheets,
+      "index.ts": `
+        import "./reset.css";
+        import.meta.glob("./sheets/*.css", { eager: true });
+        import "./last.css";`,
+    }),
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      expect(ruleOrder(api.readFile("/out/index.css"))).toEqual([".a", ".b", ".reset", ".last"]);
+    },
+  });
+
+  for (const splitting of [false, true]) {
+    itBundled(
+      `import-meta-glob/EagerEntriesAreEvaluatedFirstInAModuleThatIsLoadedLater${splitting ? "Splitting" : ""}`,
+      {
+        entryPoints: ["/entry.ts"],
+        files: {
+          ...directory("required", { "index.ts": callSites.between.code }),
+          ...directory("imported", { "index.ts": callSites.between.code }),
+          // The bundle keeps the import statements of a CommonJS module as require() calls.
+          ...directory("commonjs", { "index.js": `${callSites.between.code} module.exports = {};` }),
+          "/entry.ts": `
+            require("./required/index.ts");
+            await import("./imported/index.ts");
+            require("./commonjs/index.js");
+            ${printLoaded}`,
+        },
+        outdir: "/out",
+        splitting,
+        run: {
+          file: "/out/entry.js",
+          stdout: ["required", "imported", "commonjs"].flatMap(dir => loadedBy(dir)).join("\n"),
+        },
+      },
+    );
+  }
+
+  // Where something else than the place of an import decides when a file runs, the glob in "glob" still gives the
+  // order of the import statements that "written" has at the top of the file.
+  const twins = (own: (dir: string) => string, files = (dir: string): Record<string, string> => ({})) => ({
+    ...directory("glob", { "index.ts": `${own("glob")} ${eager};`, ...files("glob") }),
+    ...directory("written", {
+      "index.ts": `import "./modules/a.ts"; import "./modules/b.ts"; ${own("written")}`,
+      ...files("written"),
+    }),
+  });
+  const globIsAsWritten = (names: string[]) => ({
+    validate({ stdout }: { stdout: string }) {
+      const orderIn = (dir: string) =>
+        stdout
+          .split("\n")
+          .filter(line => line.startsWith(dir + " "))
+          .map(line => line.slice(dir.length + 1));
+      expect(orderIn("glob")).toEqual(orderIn("written"));
+      expect(orderIn("written").toSorted()).toEqual(names.toSorted());
+    },
+  });
+  const ownImports = () => `import "./first.ts"; import "./last.ts";`;
+  const everyName = ["first", "last", "modules/a", "modules/b"];
+
+  // The wrapper of a module that is loaded later calls the require_a() of a CommonJS file behind every init_b().
+  itBundled("import-meta-glob/EagerCommonJSEntryIsEvaluatedAsWritten", {
+    entryPoints: ["/entry.ts"],
+    files: {
+      ...twins(ownImports, dir => ({ "modules/a.ts": `${pushes(`${dir} modules/a`)} module.exports = {};` })),
+      "/entry.ts": `require("./glob/index.ts"); require("./written/index.ts"); ${printLoaded}`,
+    },
+    run: globIsAsWritten(everyName),
+  });
+
+  // That wrapper awaits a file with top-level await behind every init_b().
+  itBundled("import-meta-glob/EagerAsyncEntryIsEvaluatedAsWritten", {
+    entryPoints: ["/entry.ts"],
+    files: {
+      ...twins(ownImports, dir => ({ "modules/a.ts": `${pushes(`${dir} modules/a`)} await 0; export {};` })),
+      "/entry.ts": `await import("./glob/index.ts"); await import("./written/index.ts"); ${printLoaded}`,
+    },
+    run: globIsAsWritten(everyName),
+  });
+
+  // An ES module output keeps the import statement of an external package, and every import statement runs first.
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedAsWrittenBehindAnExternalImport", {
+    entryPoints: ["/entry.ts"],
+    files: {
+      ...twins(dir => `import "external-${dir}"; import "./last.ts";`),
+      "/node_modules/external-glob/index.js": pushes("glob external"),
+      "/node_modules/external-written/index.js": pushes("written external"),
+      "/entry.ts": `import "./glob/index.ts"; import "./written/index.ts"; ${printLoaded}`,
+    },
+    external: ["external-glob", "external-written"],
+    run: globIsAsWritten(["external", "last", "modules/a", "modules/b"]),
+  });
+
+  // first.ts is in a chunk that another entry point shares, and a chunk runs as a whole.
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedAsWrittenBehindAnImportInASharedChunk", {
+    entryPoints: ["/entry.ts", "/other-glob.ts", "/other-written.ts"],
+    files: {
+      ...twins(ownImports),
+      "/entry.ts": `import "./glob/index.ts"; import "./written/index.ts"; ${printLoaded}`,
+      "/other-glob.ts": `import "./glob/first.ts";`,
+      "/other-written.ts": `import "./written/first.ts";`,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/entry.js", ...globIsAsWritten(everyName) },
+  });
+
+  // A require() of "react" becomes an import statement.
+  const requireThatBecomesAnImport = {
+    entryPoints: ["/entry.ts"],
+    files: {
+      ...directory("app", {
+        "index.ts": `
+          import "./first.ts";
+          const React = require("react");
+          ${eager};
+          import "./last.ts";
+          globalThis.loaded.push("app requires " + React.name);`,
+      }),
+      "/node_modules/react/package.json": `{ "name": "react", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `${pushes("react")} module.exports = { name: "react" };`,
+      "/entry.ts": `import "./app/index.ts"; ${printLoaded}`,
+    },
+  };
+  const requireThatBecomesAnImportLoaded = [...loadedBy("app"), "react", "app requires react"].join("\n");
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedBeforeARequireThatBecomesAnImport", {
+    ...requireThatBecomesAnImport,
+    run: [
+      { file: "/entry.ts", stdout: requireThatBecomesAnImportLoaded },
+      { stdout: requireThatBecomesAnImportLoaded },
+    ],
+  });
+  itBundled("import-meta-glob/EagerEntriesAreEvaluatedBeforeARequireThatBecomesAnImportNoTreeShaking", {
+    ...requireThatBecomesAnImport,
+    backend: "api",
+    treeShaking: false,
+    run: {
+      // Where the file is one part (no tree shaking, or a lowered `using`), "react" is evaluated ahead of the file's
+      // own imports, with or without a glob. Only the files of the glob are pinned.
+      validate({ stdout }) {
+        expect(stdout.split("\n").slice(0, 2)).toEqual(loadedBy("app").slice(0, 2));
+      },
+    },
   });
 
   for (const splitting of [false, true]) {

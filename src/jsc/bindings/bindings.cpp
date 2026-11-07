@@ -6304,7 +6304,9 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, );
         if (isEventWithAttributes) [[unlikely]] {
             Bun::addEventAttributeNames(globalObject, object, properties);
-            RETURN_IF_EXCEPTION(scope, );
+            // A trap of a Proxy in the prototype chain can throw. The own names are printed then.
+            if (scope.exception() && !scope.tryClearException())
+                return;
         }
     }
 

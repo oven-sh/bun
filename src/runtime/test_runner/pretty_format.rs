@@ -957,10 +957,14 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        let Ok(tag) = Tag::get(value, global_this) else { return };
+        let Ok(mut tag) = Tag::get(value, global_this) else { return };
 
         if tag.cell.is_hidden() {
             return;
+        }
+        // The target of an event that was dispatched on the global object. It holds `process.env`, so it prints by its name.
+        if tag.cell == JSType::GlobalObject && ctx.formatter.output_length.is_some() && ctx.parent.js_type() == JSType::Event {
+            tag.tag = Tag::GlobalObject;
         }
         // reshaped for borrowck — `handle_first_property` needs `&mut *ctx`,
         // so the split borrows of `ctx.formatter`/`ctx.writer` are taken *after* it.

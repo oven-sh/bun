@@ -1071,6 +1071,10 @@ test("a failing matcher shows the attribute of an event that differs", () => {
   expect(
     differing(() => expect(new CloseEvent("c", { code: 1000 })).toEqual(new CloseEvent("c", { code: 1001 }))),
   ).toEqual(['-   "code": 1001,', '+   "code": 1000,']);
+  // A value on a prototype that the program made. toEqual reads it as it reads the accessors.
+  const withKind = (kind: number) =>
+    Object.setPrototypeOf(new Event("a"), Object.assign(Object.create(Event.prototype), { kind }));
+  expect(differing(() => expect(withKind(1)).toEqual(withKind(2)))).toEqual(['-   "kind": 2,', '+   "kind": 1,']);
 
   // An event that was dispatched is not equal to a new one: it has a target.
   const target = new EventTarget();
@@ -1171,7 +1175,7 @@ test("does not print the accessors of a value that is not a native event", () =>
   expect(calls).toBe(0);
 });
 
-test("prints an event that inherits through a Proxy with every name that for-in gives", () => {
+test("prints an event that inherits through a Proxy with every name of for-in, or its own where a trap throws", () => {
   const event: MessageEvent = Object.setPrototypeOf(
     new MessageEvent("message", { data: 1 }),
     new Proxy(MessageEvent.prototype, {}),
@@ -1184,6 +1188,42 @@ test("prints an event that inherits through a Proxy with every name that for-in 
   expect(printed).toContain('  "data": 1,');
   expect(printed).toContain('  "type": "message",');
   expect(printed).toContain('  "NONE": 0,');
+
+  const throws = Object.setPrototypeOf(
+    new Event("a"),
+    new Proxy(Event.prototype, {
+      ownKeys() {
+        throw new Error("from ownKeys");
+      },
+    }),
+  );
+  const message = messageOfFailure(() => expect(throws).toStrictEqual({ a: 1 }));
+  expect(message).toStartWith("expect(received).toStrictEqual(expected)");
+  expect(message).toContain('\n+ Event {\n+   "isTrusted": false,\n  }\n');
+});
+
+test("prints the global object by its name where an event has it as its target", () => {
+  let event: Event | undefined;
+  const listener = (received: Event) => {
+    event = received;
+  };
+  // The global object holds `process.env`.
+  process.env.IN_THE_TARGET_OF_AN_EVENT = "value of a variable of the environment";
+  globalThis.addEventListener("on-the-global-object", listener);
+  try {
+    globalThis.dispatchEvent(new CustomEvent("on-the-global-object", { detail: globalThis }));
+    const printed = printedInFailure(event);
+    expect(printed.filter(line => line.includes("globalThis"))).toEqual([
+      '  "detail": [this.globalThis],',
+      '  "srcElement": [this.globalThis],',
+      '  "target": [this.globalThis],',
+    ]);
+    expect(printed).toHaveLength(17);
+    expect(printed.join("\n")).not.toContain("value of a variable of the environment");
+  } finally {
+    globalThis.removeEventListener("on-the-global-object", listener);
+    delete process.env.IN_THE_TARGET_OF_AN_EVENT;
+  }
 });
 
 test("prints null for a getter of a prototype that throws, when the value is not an event", () => {

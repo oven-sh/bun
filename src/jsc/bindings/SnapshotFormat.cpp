@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
@@ -367,7 +368,7 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
 
 namespace Bun {
 
-// The names that deepEquals reads of an event (those of for-in), without the methods and the constants that it inherits.
+// The names that deepEquals reads of an event (those of for-in), without the methods and the constants of the native prototypes.
 void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, PropertyNameArrayBuilder& names)
 {
     auto& vm = getVM(globalObject);
@@ -381,11 +382,13 @@ void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, Prope
             bool hasOwn = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
             RETURN_IF_EXCEPTION(scope, );
             // A Proxy does not tell this lookup what it holds. The name stays, and the walk reads it through the Proxy as deepEquals does.
-            bool isBehindProxy = slot.isTaintedByOpaqueObject();
+            bool isBehindProxy = !hasOwn && slot.isTaintedByOpaqueObject();
             if (!hasOwn && !isBehindProxy)
                 continue;
             bool isAccessor = hasOwn && (slot.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)) != 0;
-            if (holder == event || isBehindProxy || isAccessor)
+            bool isPlainObject = holder->type() == FinalObjectType || AOT::PropertyWalk::isCompiledObject(holder);
+            // What stays out is a value of a native prototype: a method or a constant, the same for every event.
+            if (holder == event || isBehindProxy || isAccessor || isPlainObject)
                 names.add(name);
             break;
         }

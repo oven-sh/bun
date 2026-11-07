@@ -356,12 +356,9 @@ fn compress(packed: &[u8]) -> Box<[u8]> {
     const FASTEST_LEVEL: i32 = 1;
     let mut compressed = Vec::with_capacity(bun_zstd::compress_bound(packed.len()));
     let is_smaller = COMPRESSION.with_borrow_mut(|contexts| {
-        if contexts.is_none() {
-            *contexts = bun_zstd::Contexts::new();
-        }
-        let result = (contexts.as_mut())
-            .map(|contexts| contexts.compress_append(&mut compressed, packed, FASTEST_LEVEL));
-        matches!(result, Some(bun_zstd::Result::Success(size)) if size < packed.len())
+        let contexts = contexts.get_or_insert_with(bun_zstd::Contexts::new);
+        let result = contexts.compress_append(&mut compressed, packed, FASTEST_LEVEL);
+        matches!(result, Ok(size) if size < packed.len())
     });
     // Not `into_boxed_slice`: the allocator leaves what shrinks to no less than half its size where it is, in a block that is
     // larger than the lists were.
@@ -374,10 +371,7 @@ fn compress(packed: &[u8]) -> Box<[u8]> {
 fn decompress(compressed: &[u8], size: usize) -> Vec<u8> {
     let mut packed = vec![0; size];
     COMPRESSION.with_borrow_mut(|contexts| {
-        if contexts.is_none() {
-            *contexts = bun_zstd::Contexts::new();
-        }
-        let contexts = contexts.as_mut().expect("out of memory");
+        let contexts = contexts.get_or_insert_with(bun_zstd::Contexts::new);
         let result = contexts.decompress_into(&mut packed, compressed);
         result.expect("the bytes come from `compress`");
     });

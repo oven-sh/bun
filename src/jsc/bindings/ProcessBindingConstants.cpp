@@ -10,7 +10,6 @@
 #include <zlib.h>
 #include <brotli/encode.h>
 #include <brotli/decode.h>
-#include <zstd.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -54,6 +53,9 @@ struct NumericConstant {
     const char* name;
     double value;
 };
+
+// src/runtime/node/zlib/NativeZstd.rs
+extern "C" const char* Bun__zstdConstant(size_t index, double* value);
 
 // One loop instead of a `putDirect` call sequence per constant; these objects
 // are each built once, lazily. A long table goes into a dictionary: no other
@@ -1161,70 +1163,12 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
         { "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2) },
         { "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES) },
         { "BROTLI_DECODER_ERROR_UNREACHABLE", static_cast<double>(BROTLI_DECODER_ERROR_UNREACHABLE) },
-        { "ZSTD_e_continue", static_cast<double>(ZSTD_e_continue) },
-        { "ZSTD_e_flush", static_cast<double>(ZSTD_e_flush) },
-        { "ZSTD_e_end", static_cast<double>(ZSTD_e_end) },
-        { "ZSTD_fast", static_cast<double>(ZSTD_fast) },
-        { "ZSTD_dfast", static_cast<double>(ZSTD_dfast) },
-        { "ZSTD_greedy", static_cast<double>(ZSTD_greedy) },
-        { "ZSTD_lazy", static_cast<double>(ZSTD_lazy) },
-        { "ZSTD_lazy2", static_cast<double>(ZSTD_lazy2) },
-        { "ZSTD_btlazy2", static_cast<double>(ZSTD_btlazy2) },
-        { "ZSTD_btopt", static_cast<double>(ZSTD_btopt) },
-        { "ZSTD_btultra", static_cast<double>(ZSTD_btultra) },
-        { "ZSTD_btultra2", static_cast<double>(ZSTD_btultra2) },
-        { "ZSTD_c_compressionLevel", static_cast<double>(ZSTD_c_compressionLevel) },
-        { "ZSTD_c_windowLog", static_cast<double>(ZSTD_c_windowLog) },
-        { "ZSTD_c_hashLog", static_cast<double>(ZSTD_c_hashLog) },
-        { "ZSTD_c_chainLog", static_cast<double>(ZSTD_c_chainLog) },
-        { "ZSTD_c_searchLog", static_cast<double>(ZSTD_c_searchLog) },
-        { "ZSTD_c_minMatch", static_cast<double>(ZSTD_c_minMatch) },
-        { "ZSTD_c_targetLength", static_cast<double>(ZSTD_c_targetLength) },
-        { "ZSTD_c_strategy", static_cast<double>(ZSTD_c_strategy) },
-        { "ZSTD_c_enableLongDistanceMatching", static_cast<double>(ZSTD_c_enableLongDistanceMatching) },
-        { "ZSTD_c_ldmHashLog", static_cast<double>(ZSTD_c_ldmHashLog) },
-        { "ZSTD_c_ldmMinMatch", static_cast<double>(ZSTD_c_ldmMinMatch) },
-        { "ZSTD_c_ldmBucketSizeLog", static_cast<double>(ZSTD_c_ldmBucketSizeLog) },
-        { "ZSTD_c_ldmHashRateLog", static_cast<double>(ZSTD_c_ldmHashRateLog) },
-        { "ZSTD_c_contentSizeFlag", static_cast<double>(ZSTD_c_contentSizeFlag) },
-        { "ZSTD_c_checksumFlag", static_cast<double>(ZSTD_c_checksumFlag) },
-        { "ZSTD_c_dictIDFlag", static_cast<double>(ZSTD_c_dictIDFlag) },
-        { "ZSTD_c_nbWorkers", static_cast<double>(ZSTD_c_nbWorkers) },
-        { "ZSTD_c_jobSize", static_cast<double>(ZSTD_c_jobSize) },
-        { "ZSTD_c_overlapLog", static_cast<double>(ZSTD_c_overlapLog) },
-        { "ZSTD_d_windowLogMax", static_cast<double>(ZSTD_d_windowLogMax) },
-        { "ZSTD_CLEVEL_DEFAULT", static_cast<double>(ZSTD_CLEVEL_DEFAULT) },
-        { "ZSTD_error_no_error", static_cast<double>(ZSTD_error_no_error) },
-        { "ZSTD_error_GENERIC", static_cast<double>(ZSTD_error_GENERIC) },
-        { "ZSTD_error_prefix_unknown", static_cast<double>(ZSTD_error_prefix_unknown) },
-        { "ZSTD_error_version_unsupported", static_cast<double>(ZSTD_error_version_unsupported) },
-        { "ZSTD_error_frameParameter_unsupported", static_cast<double>(ZSTD_error_frameParameter_unsupported) },
-        { "ZSTD_error_frameParameter_windowTooLarge", static_cast<double>(ZSTD_error_frameParameter_windowTooLarge) },
-        { "ZSTD_error_corruption_detected", static_cast<double>(ZSTD_error_corruption_detected) },
-        { "ZSTD_error_checksum_wrong", static_cast<double>(ZSTD_error_checksum_wrong) },
-        { "ZSTD_error_literals_headerWrong", static_cast<double>(ZSTD_error_literals_headerWrong) },
-        { "ZSTD_error_dictionary_corrupted", static_cast<double>(ZSTD_error_dictionary_corrupted) },
-        { "ZSTD_error_dictionary_wrong", static_cast<double>(ZSTD_error_dictionary_wrong) },
-        { "ZSTD_error_dictionaryCreation_failed", static_cast<double>(ZSTD_error_dictionaryCreation_failed) },
-        { "ZSTD_error_parameter_unsupported", static_cast<double>(ZSTD_error_parameter_unsupported) },
-        { "ZSTD_error_parameter_combination_unsupported", static_cast<double>(ZSTD_error_parameter_combination_unsupported) },
-        { "ZSTD_error_parameter_outOfBound", static_cast<double>(ZSTD_error_parameter_outOfBound) },
-        { "ZSTD_error_tableLog_tooLarge", static_cast<double>(ZSTD_error_tableLog_tooLarge) },
-        { "ZSTD_error_maxSymbolValue_tooLarge", static_cast<double>(ZSTD_error_maxSymbolValue_tooLarge) },
-        { "ZSTD_error_maxSymbolValue_tooSmall", static_cast<double>(ZSTD_error_maxSymbolValue_tooSmall) },
-        { "ZSTD_error_stabilityCondition_notRespected", static_cast<double>(ZSTD_error_stabilityCondition_notRespected) },
-        { "ZSTD_error_stage_wrong", static_cast<double>(ZSTD_error_stage_wrong) },
-        { "ZSTD_error_init_missing", static_cast<double>(ZSTD_error_init_missing) },
-        { "ZSTD_error_memory_allocation", static_cast<double>(ZSTD_error_memory_allocation) },
-        { "ZSTD_error_workSpace_tooSmall", static_cast<double>(ZSTD_error_workSpace_tooSmall) },
-        { "ZSTD_error_dstSize_tooSmall", static_cast<double>(ZSTD_error_dstSize_tooSmall) },
-        { "ZSTD_error_srcSize_wrong", static_cast<double>(ZSTD_error_srcSize_wrong) },
-        { "ZSTD_error_dstBuffer_null", static_cast<double>(ZSTD_error_dstBuffer_null) },
-        { "ZSTD_error_noForwardProgress_destFull", static_cast<double>(ZSTD_error_noForwardProgress_destFull) },
-        { "ZSTD_error_noForwardProgress_inputEmpty", static_cast<double>(ZSTD_error_noForwardProgress_inputEmpty) },
         { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants12);
+    double value;
+    for (size_t i = 0; const char* name = Bun__zstdConstant(i, &value); ++i)
+        object->putDirect(vm, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(name)), jsNumber(value));
 
     return object;
 }

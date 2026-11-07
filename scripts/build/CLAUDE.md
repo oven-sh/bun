@@ -22,7 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zlib, zstd, boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zlib, boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
 - `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
@@ -48,7 +48,7 @@ rule cc
   depfile = $out.d
   deps = gcc
 
-build obj/src/foo.c.o: cc ../../src/foo.c | deps/zstd/libzstd.a || codegen/generated.h
+build obj/src/foo.c.o: cc ../../src/foo.c | deps/cares/libcares.a || codegen/generated.h
   cflags = -O2 -I...
 ```
 
@@ -60,9 +60,9 @@ rule dep_fetch
   restat = 1
   pool = dep
 
-build ../../vendor/zstd/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
-  name = zstd
-  repo = facebook/zstd
+build ../../vendor/zlib/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
+  name = zlib
+  repo = zlib-ng/zlib-ng
   commit = abc123...
 ```
 
@@ -174,7 +174,7 @@ For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources, engine)` emits ~20 generation steps (bindgen, bundled modules, LUTs). Returns grouped outputs.
 2. **Rust** — `emitRust(n, cfg, {...})` emits one rustc edge per crate and returns the crates' rlibs, `bun_runtime`'s and std's included, which the link takes beside the C/C++ objects (after resolving the vendored path deps, lolhtml and rust-argon2). cargo plans, ninja executes: the `rust_plan` edge runs `cargo build … --unit-graph` + `cargo metadata` for exactly the arguments `cargoBuildInvocation()` computes and writes `rust/plan.json`; `build.ninja` depends on that file, so a new plan (lockfile/manifest/toolchain change) reconfigures and ninja restarts. `rust/units.ts` turns each unit into a rustc argv/env (cargo's rules, transcribed and diffed against `cargo -vv`), written to `rust/units/<crate>-<hash>.json`; `rust/emit.ts` emits the edges; `rust/run.ts` executes them. Every edge is one process from start to exit, and a crate is one edge: one rustc with the `.rlib` and the `.rmeta` as outputs. Dependent libraries name only the `.rmeta`, which rustc writes long before it has generated code; the edge carries `early_output_prefix`, which asks ninja to release an output when the running command announces it. oven-sh/ninja (what the driver runs, see `ninja-release.ts`) exports the prefix to the command as `NINJA_EARLY_OUTPUT_PREFIX`, `rust/run.ts` prints it with the `.rmeta`'s path when rustc reports the file written, and dependents start while rustc goes on — cargo's pipelining. A stock ninja ignores the binding and releases both outputs at exit: the same graph, built correctly, without the overlap. Build scripts are a compile edge plus a `rust_build_script` run edge whose parsed directives (`output.json`, restat) feed the package's rustc edges. A Windows target has a second graph built the same way, under `rust/shim/`: the `.bin/` launcher (`src/install/windows-shim`), planned with `--profile shim` and `-Zbuild-std`, with a `bin` root that `run.ts` also writes to `<codegenDir>/bun-shim-impl.exe`, where `bun_install` embeds it from (every edge of that package waits for it). Codegen and Rust are emitted before the deps on purpose: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order.
-3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct cc/cxx edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
+3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct cc/cxx edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs. `programDeps` are resolved the same way, but nothing of them is collected for bun: only the programs beside it that name them take them.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH.
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
@@ -259,7 +259,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
 | `ci-images/spec.ts`            | CI's machines in one file: images, version pins, locations, every tool, and the generator of the bake scripts; `bun run ci:images`                                      |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
-| `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
+| `deps/index.ts`                | `allDeps` array — fetch order + link order; `programDeps`                                                                                                               |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
 | `trim/*.ts`                    | The trimmable link: section graph, partition by feature, layout, the trim table (`link.ts` is the entry)                                                                |
 

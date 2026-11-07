@@ -10,7 +10,7 @@ import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sharedCacheDir as resolveSharedCacheDir } from "./config.ts";
-import { allDeps } from "./deps/index.ts";
+import { allDeps, programDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // Machine-shared cache (ccache/cargo/tarballs/webkit): resolveConfig()'s
@@ -56,8 +56,8 @@ function buildProfiles(): string[] {
 const profile = (name: string) => () => [resolve(cwd, "build", name)];
 
 // Deps whose vendor/<name>/ dir is user-managed (manual clone, not fetched
-// by the build system). `deep` skips these; everything else in allDeps gets
-// its vendor dir nuked.
+// by the build system). `deep` skips these; every other dep gets its vendor
+// dir nuked.
 const userManagedDeps = new Set(["WebKit"]);
 
 const presets: Record<string, () => string[]> = {
@@ -81,7 +81,7 @@ const presets: Record<string, () => string[]> = {
   deep: () => [
     resolve(cwd, "build"),
     resolve(cwd, "target"),
-    ...allDeps.filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),
+    ...[...allDeps, ...programDeps].filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),
   ],
 };
 

@@ -512,6 +512,11 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
+# At opt-level 0 a codec is slow enough for tests to time out. The C library that this replaces was optimized in debug
+# builds too.
+[profile.dev.package.bun_zstd]
+opt-level = 3
+
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
 # checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
 [profile.dev.package.bun_png]

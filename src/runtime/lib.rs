@@ -57,6 +57,13 @@ pub(crate) mod checker_queries_testing;
 pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    windows
+))]
+pub(crate) mod icu_decompress;
 #[cfg(debug_assertions)]
 pub(crate) mod imported_class_test;
 pub(crate) mod ipc;

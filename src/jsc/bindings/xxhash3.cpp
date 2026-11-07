@@ -15,7 +15,7 @@
 // verbatim; they do not depend on vector width. Verified against the xxHash
 // reference test vectors and SMHasher constants in test/js/bun/util/hash.test.js.
 //
-// References (byte-identical constants): vendor/zstd/lib/common/xxhash.h
+// References (byte-identical constants): xxhash.h of https://github.com/Cyan4973/xxHash
 // (XXH3_kSecret, PRIME*), and the twox-hash crate this replaces.
 
 // No "root.h" — like the sibling Highway TU image_resize.cpp, this file uses no

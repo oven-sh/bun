@@ -109,8 +109,7 @@ feature BrotliEncoder "Brotli compression"
   c-function BrotliEncoderPrepareDictionary BrotliEncoderDestroyPreparedDictionary BrotliEncoderAttachPreparedDictionary
 
 feature ZstdCompressor "zstd compression"
-  c-function ZSTD_compress ZSTD_compressBound ZSTD_compressStream2 ZSTD_createCCtx ZSTD_freeCCtx
-  c-function ZSTD_CCtx_loadDictionary ZSTD_CCtx_reset ZSTD_CCtx_setParameter ZSTD_CCtx_setPledgedSrcSize
+  cxx-function bun_zstd ^<?bun_zstd::compress
 
 feature NativeAddons "native addons, process.dlopen and N-API"
   exports

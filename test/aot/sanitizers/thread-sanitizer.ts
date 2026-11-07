@@ -10,7 +10,7 @@ compile step (IR to image). No compiled program is run.
 
   build-engine [--ninja <file>] [--jobs <n>] [option of scripts/build.ts ..]   the jsc shell, in build/thread-sanitizer
   build-front-end [--control]      bun-sema, in build/thread-sanitizer-front-end; --codegen <dir>: the codegen folder of
-                                   a build of Bun of the same sources, with zstd's objects in ../obj/vendor/zstd
+                                   a build of Bun of the same sources
                                    --control: every task of the checker adds to one plain word: a data race that must be reported
   compile [--largest <n>] [file..] each program through both; the default: the 100 largest of test/aot/parallel
                                    --jobs <n> at a time, --threads <n> for the engine's compiler, --only front-end | engine

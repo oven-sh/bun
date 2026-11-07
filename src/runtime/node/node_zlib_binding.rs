@@ -33,7 +33,7 @@ impl Drop for CountedKeepAlive {
 
 /// `msg` / `code` are nullable NUL-terminated C strings.
 /// Kept as raw `*const c_char` (not `&'static str`) because zlib (`z_stream.msg`)
-/// and zstd (`ZSTD_getErrorString`) hand back runtime C pointers.
+/// hands back a runtime C pointer.
 #[derive(Clone, Copy)]
 pub(crate) struct Error {
     pub(crate) msg: *const c_char,

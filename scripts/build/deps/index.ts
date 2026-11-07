@@ -34,7 +34,7 @@ import { zlib } from "./zlib.ts";
 import { zstd } from "./zstd.ts";
 
 /**
- * All deps in dependency-resolution + link order.
+ * All deps of bun in dependency-resolution + link order.
  *
  * zlib FIRST — lsquic's fetchDeps reference it.
  * brotli libs in internal dep order (common last on link line).
@@ -46,7 +46,6 @@ export const allDeps: readonly Dependency[] = [
   nodejsHeaders,
 
   zlib,
-  zstd,
   brotli,
   libdeflate,
   // Image codecs.
@@ -71,6 +70,13 @@ export const allDeps: readonly Dependency[] = [
   // above might reference (via JavaScriptCore types in headers).
   webkit,
 ];
+
+/**
+ * What only programs beside bun take (`JSCProgram.sourcesFrom`). Fetched like
+ * the others, but no part of bun: not linked into it, no include dir of its
+ * sources, no entry of its versions.
+ */
+export const programDeps: readonly Dependency[] = [zstd];
 
 // Re-export individuals for direct import when needed.
 export {

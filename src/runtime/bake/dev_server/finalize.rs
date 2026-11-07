@@ -625,9 +625,6 @@ fn finalize_bundle_inner(
     }
     dev.index_failures()?;
 
-    dev.client_graph.ensure_stale_bit_capacity(false)?;
-    dev.server_graph.ensure_stale_bit_capacity(false)?;
-
     dev.generation = dev.generation.wrapping_add(1);
     if Environment::ENABLE_LOGS {
         debug_log!(

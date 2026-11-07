@@ -215,6 +215,14 @@ enum FreeCssMode {
     IgnoreCss,
 }
 
+/// What `add_node` does to the file's bit in `stale_files`.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum StaleBit {
+    Set,
+    Clear,
+    Keep,
+}
+
 /// `Route` on the server must also be registered in `DevServer::route_lookup`.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum RouteKind {
@@ -293,6 +301,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
+    /// Every index below `bundled_files.count()` has a bit. Only `add_node`
+    /// grows it.
     pub(crate) stale_files: DynamicBitSetUnmanaged,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,
@@ -448,17 +458,36 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.current_chunk_parts.clear();
     }
 
-    /// Grows `stale_files` to cover all currently-known files, filling new
-    /// bits with `are_new_files_stale`.
-    pub(crate) fn ensure_stale_bit_capacity(
+    /// The one place that adds a file to `bundled_files`. Interns the key,
+    /// pushes the file's `EdgeLists`, and grows `stale_files` so the new index
+    /// has a bit. Returns the index and whether the file already existed.
+    fn add_node(
         &mut self,
-        are_new_files_stale: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let want = self.bundled_files.count().max(self.stale_files.bit_length);
-        // Align forward to 8 usize words (8*64 bits).
-        const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
-        let aligned = want.div_ceil(STEP) * STEP;
-        self.stale_files.resize(aligned, are_new_files_stale)
+        key: &[u8],
+        stale: StaleBit,
+    ) -> Result<(usize, bool), bun_alloc::AllocError> {
+        let gop = self.bundled_files.get_or_put(key)?;
+        let idx = gop.index;
+        let found_existing = gop.found_existing;
+        if !found_existing {
+            *gop.key_ptr = Box::<[u8]>::from(key);
+            self.edge_lists.push(EdgeLists::default());
+            if idx >= self.stale_files.bit_length {
+                // Grow in steps of 8 usize words (8*64 bits). A file that has
+                // no bit yet is not stale. The ">512 files" fixtures in
+                // test/bake/dev/{css,hot}.test.ts are sized to this step.
+                const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
+                self.stale_files.resize((idx + 1).div_ceil(STEP) * STEP, false)?;
+            }
+        }
+        match stale {
+            StaleBit::Set => self.stale_files.set(idx),
+            StaleBit::Clear => self.stale_files.unset(idx),
+            StaleBit::Keep => {}
+        }
+        debug_assert!(self.stale_files.bit_length >= self.bundled_files.count());
+        debug_assert_eq!(self.edge_lists.len(), self.bundled_files.count());
+        Ok((idx, found_existing))
     }
 
     /// `IncrementalGraph(side).freeFileContent` (client only).
@@ -600,20 +629,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
 
-        let gop = self.bundled_files.get_or_put(key)?;
-        let file_index = FileIndex::<SIDE>::init(gop.index as u32);
-        let found_existing = gop.found_existing;
-        if !found_existing {
-            *gop.key_ptr = Box::<[u8]>::from(key);
-        }
-        // Note: drop `gop` borrow before pushing to other Vecs / re-borrowing.
-        if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
-        }
-
-        if self.stale_files.bit_length > file_index.get() as usize {
-            self.stale_files.unset(file_index.get() as usize);
-        }
+        let (idx, found_existing) = self.add_node(key, StaleBit::Clear)?;
+        let file_index = FileIndex::<SIDE>::init(idx as u32);
 
         *ctx.get_cached_index(SIDE, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
@@ -1362,21 +1379,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => graph == bake::Graph::Client,
             Side::Server => graph != bake::Graph::Client,
         });
-        let gop = self.bundled_files.get_or_put(abs_path)?;
-        let idx = gop.index;
-        let found_existing = gop.found_existing;
-        if found_existing {
-            if matches!(SIDE, Side::Server) && route == RouteKind::Route {
-                gop.value_ptr.is_route = true;
-            }
-        } else {
-            *gop.key_ptr = Box::<[u8]>::from(abs_path);
+        let (idx, found_existing) = self.add_node(abs_path, StaleBit::Set)?;
+        if found_existing && matches!(SIDE, Side::Server) && route == RouteKind::Route {
+            self.bundled_files.values_mut()[idx].is_route = true;
         }
-        if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
-        }
-        self.ensure_stale_bit_capacity(true)?;
-        self.stale_files.set(idx);
 
         match SIDE {
             Side::Client => {
@@ -1435,12 +1441,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
         kind: FileKind,
     ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
-        let gop = self.bundled_files.get_or_put(abs_path)?;
-        let idx = gop.index;
-        let found_existing = gop.found_existing;
+        let (idx, found_existing) = self.add_node(abs_path, StaleBit::Set)?;
         if !found_existing {
-            *gop.key_ptr = Box::<[u8]>::from(abs_path);
-            *gop.value_ptr = match SIDE {
+            self.bundled_files.values_mut()[idx] = match SIDE {
                 Side::Client => File {
                     kind,
                     content: match kind {
@@ -1457,14 +1460,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 },
             };
         }
-        // Capture the interned-key fat ptr now so the `gop` borrow on
-        // `bundled_files` ends before `ensure_stale_bit_capacity` reborrows.
-        let key = bun_ptr::RawSlice::new(&**gop.key_ptr);
-        if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
-            self.ensure_stale_bit_capacity(true)?;
-            self.stale_files.set(idx);
-        }
+        let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
         Ok(InsertEmptyResult {
             index: FileIndex::init(idx as u32),
             key,
@@ -1481,19 +1477,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
     ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
-        let gop = self.bundled_files.get_or_put(abs_path)?;
-        let file_index = FileIndex::<SIDE>::init(gop.index as u32);
-        let found_existing = gop.found_existing;
-        if !found_existing {
-            *gop.key_ptr = Box::<[u8]>::from(abs_path);
-        }
-        *gop.value_ptr = File {
+        let (idx, _) = self.add_node(abs_path, StaleBit::Keep)?;
+        let file_index = FileIndex::<SIDE>::init(idx as u32);
+        self.bundled_files.values_mut()[idx] = File {
             kind: FileKind::Css,
             ..Default::default()
         };
-        if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
-        }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
         Ok(())
@@ -1517,20 +1506,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing, parsed_for) = match key {
             InsertFailureKey::AbsPath(abs_path, graph) => {
-                let gop = self.bundled_files.get_or_put(abs_path)?;
-                if !gop.found_existing {
-                    *gop.key_ptr = Box::<[u8]>::from(abs_path);
-                }
-                let (i, fe) = (gop.index, gop.found_existing);
-                if !fe {
-                    self.edge_lists.push(EdgeLists::default());
-                }
+                let (i, fe) = self.add_node(abs_path, StaleBit::Set)?;
                 (i, fe, Some(graph))
             }
-            InsertFailureKey::Index(i) => (i as usize, true, None),
+            InsertFailureKey::Index(i) => {
+                self.stale_files.set(i as usize);
+                (i as usize, true, None)
+            }
         };
-        self.ensure_stale_bit_capacity(true)?;
-        self.stale_files.set(idx);
 
         match SIDE {
             Side::Client => {

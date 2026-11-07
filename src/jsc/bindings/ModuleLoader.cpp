@@ -53,6 +53,7 @@ using namespace Zig;
 using namespace WebCore;
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
+extern "C" BunLoaderType Bun__getOnLoadDefaultLoader(JSC::JSGlobalObject*, const BunString* key, const BunString* typeAttribute);
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject* globalObject, const WTF::String& specifier)
 {
@@ -263,14 +264,14 @@ static EncodedSlice contentsFromBytes(const void* data, size_t length)
     return { reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(data) | (static_cast<uint64_t>(1) << 61)), length };
 }
 
-static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock)
+static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock, bool isFromOnLoad)
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
     auto& vm = JSC::getVM(globalObject);
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier, typeAttribute);
+    BunLoaderType loader = isFromOnLoad ? Bun__getOnLoadDefaultLoader(globalObject, specifier, typeAttribute) : Bun__getDefaultLoader(globalObject, specifier, typeAttribute);
 
     if (JSC::Exception* exception = dynamicDowncast<JSC::Exception>(objectValue)) {
         result.value.error = exception->value();
@@ -406,7 +407,7 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
     return result;
 }
 
-static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock)
+static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock, bool isFromOnLoad)
 {
     if (dynamicDowncast<JSC::JSPromise>(objectValue)) {
         OnLoadResult result = {};
@@ -416,7 +417,7 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
         return result;
     }
 
-    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock);
+    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock, isFromOnLoad);
 }
 
 // Returns empty when require() should return the module namespace object instead.
@@ -470,7 +471,7 @@ static JSValue handleVirtualModuleResult(
         if (pending)
             virtualModuleResult = pending;
     }
-    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, fetch.typeAttribute, wasModuleMock);
+    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, fetch.typeAttribute, wasModuleMock, !!fetch.onLoad.path);
     RETURN_IF_EXCEPTION(scope, {});
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {

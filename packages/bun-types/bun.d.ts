@@ -6898,6 +6898,10 @@ declare module "bun" {
     onBeforeParse(constraints: PluginConstraints, callback: OnBeforeParseCallback): this;
     /**
      * Register a callback to load imports with a specific import specifier
+     *
+     * In a runtime plugin, a callback without a `namespace` also runs for a file
+     * whose name has no extension, such as `LICENSE` or `bin/cli`. It doesn't run
+     * for built-in modules such as `"fs"`.
      * @param constraints The constraints to apply the plugin to
      * @param callback The callback to handle the import
      * @example
@@ -7023,8 +7027,7 @@ declare module "bun" {
    * - `onLoad` returns source code or an object that becomes the module's exports
    * - `onResolve` redirects a module specifier to another module specifier. It does not chain.
    *
-   * Plugin hooks must define a `filter` RegExp and only match when the
-   * import specifier contains a "." or a ":".
+   * Plugin hooks must define a `filter` RegExp.
    *
    * ES Module resolution semantics mean that plugins may be initialized _after_
    * a module is resolved. You might need to load plugins at the very beginning

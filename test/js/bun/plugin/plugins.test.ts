@@ -2719,6 +2719,502 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
   });
 });
 
+// `bun -e`, `bun -p`, standard input and cron mode run code that is not on disk. Its key is "[eval]" or "[stdin]" in
+// the working directory. A dot in the name of that directory read as an extension, and then onLoad was asked about it.
+describe.concurrent("onLoad is not asked about code that is not on disk", () => {
+  const files = {
+    "plugin.ts": `
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          build.onLoad({ filter: /\\[(eval|stdin)\\]$/ }, () => ({ contents: "console.log('onLoad');", loader: "js" }));
+        },
+      });
+    `,
+    "namespace.ts": `
+      Bun.plugin({
+        name: "moves the code into a namespace",
+        setup(build) {
+          build.onResolve({ filter: /\\[(eval|stdin)\\]$/ }, ({ path }) => ({ path, namespace: "moved" }));
+          build.onLoad({ filter: /.*/, namespace: "moved" }, () => ({ contents: "console.log('onLoad');", loader: "js" }));
+        },
+      });
+    `,
+    "my.app/job.ts": `export default { scheduled: () => console.log("ran") };`,
+    "job.ts": `export default { scheduled: () => console.log("ran") };`,
+  };
+  // Cron mode wraps the job in code of its own, and runs that.
+  const cron = ["run", "--cron-title=job", "--cron-period=* * * * *", "./job.ts"];
+
+  async function run(plugin: string, cwd: string, [first, ...rest]: string[], stdin: string | undefined) {
+    using dir = tempDir("plugin-onload-not-on-disk", files);
+    const preload = ["--preload", resolve(String(dir), plugin)];
+    await using proc = Bun.spawn({
+      cmd: first === "run" ? [bunExe(), "run", ...preload, ...rest] : [bunExe(), ...preload, first, ...rest],
+      cwd: resolve(String(dir), cwd),
+      env: bunEnv,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["-e", "my.app", ["-e", "console.log('ran')"], undefined],
+    ["-e", ".", ["-e", "console.log('ran')"], undefined],
+    ["-p", "my.app", ["-p", "'ran'"], undefined],
+    ["standard input", "my.app", ["-"], "console.log('ran')"],
+    ["standard input", ".", ["-"], "console.log('ran')"],
+    ["cron mode", "my.app", cron, undefined],
+    ["cron mode", ".", cron, undefined],
+  ])("from %s in the directory %s", async (_, cwd, args, stdin) => {
+    expect(await run("plugin.ts", cwd, args, stdin)).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["-e", "my.app", ["-e", "console.log('ran')"], undefined],
+    ["-e", ".", ["-e", "console.log('ran')"], undefined],
+    ["standard input", "my.app", ["-"], "console.log('ran')"],
+    ["cron mode", "my.app", cron, undefined],
+  ])(
+    "but an onLoad of the namespace that an onResolve gave it is, from %s in the directory %s",
+    async (_, cwd, args, stdin) => {
+      expect(await run("namespace.ts", cwd, args, stdin)).toEqual({ stdout: "onLoad\n", stderr: "", exitCode: 0 });
+    },
+  );
+});
+
+// The key of a file that the resolver found is its absolute path. onLoad was asked about it only when a letter followed
+// the last dot of that path: not about "LICENSE" or "bin/cli", except under a directory with such a dot in its name.
+describe.concurrent("a file without an extension", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-onload-no-extension", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  // A catch-all onLoad is asked about every file that the program loads. require.cache says which files those are.
+  // In turn: no extension, a dot in a directory, a name that starts with a dot, a digit after the last dot, a query.
+  const names = [
+    "plain.ts",
+    "LICENSE",
+    "bin/cli",
+    "v1.2/x",
+    "my.app/x",
+    ".rc",
+    "ok.yaml.1",
+    "archive.7z",
+    "x.ts?v=1.2",
+  ];
+  it.each([
+    ["an import statement", "entry.mjs", (name: string) => `import ${JSON.stringify("./" + name)};\n`],
+    ["import()", "entry.mjs", (name: string) => `await import(${JSON.stringify("./" + name)});\n`],
+    ["require()", "entry.cjs", (name: string) => `require(${JSON.stringify("./" + name)});\n`],
+    ["import.meta.require()", "entry.mjs", (name: string) => `import.meta.require(${JSON.stringify("./" + name)});\n`],
+  ])("is asked about for onLoad, like every file that %s loads", async (_, entry, load) => {
+    const files = {
+      ...Object.fromEntries(names.map(name => [name.split("?")[0], `module.exports = "disk";`])),
+      [entry]: names.map(load).join(""),
+      "plugin.ts": `
+        const asked = [];
+        const under = path => path.slice(import.meta.dir.length + 1).replaceAll("\\\\", "/");
+        Bun.plugin({
+          name: "asks",
+          setup(build) {
+            build.onLoad({ filter: /.*/ }, ({ path }) => void asked.push(under(path)));
+          },
+        });
+        process.on("exit", () => {
+          const loaded = Object.keys(require.cache).map(under).filter(name => name !== "plugin.ts");
+          console.log(JSON.stringify({ asked: asked.sort(), loaded: loaded.sort() }));
+        });
+      `,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", entry]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const loaded = [entry, ...names].sort();
+    expect(JSON.parse(stdout[0])).toEqual({ asked: loaded, loaded });
+  });
+
+  // Each file says "disk", and the onLoad says which file it was asked about.
+  const files = {
+    "LICENSE": `export default "disk";`,
+    "v1.2/LICENSE": `export default "disk";`,
+    "bin/main": `console.log("disk main");`,
+    "bin/worker": `postMessage("disk worker");`,
+    "plugin.ts": `
+      import { basename } from "node:path";
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          const answer = (filter, contents) =>
+            build.onLoad({ filter }, ({ path }) => ({
+              contents: contents(JSON.stringify("onLoad " + basename(path))),
+              loader: "js",
+            }));
+          answer(/[\\\\/]LICENSE$/, from => "export default " + from + ";");
+          answer(/[\\\\/]main$/, from => "console.log(" + from + ");");
+          answer(/[\\\\/]worker$/, from => "postMessage(" + from + ");");
+        },
+      });
+    `,
+  };
+  it.each([
+    ["an import statement", "entry.mjs", `import license from "./LICENSE"; console.log(license);`, "onLoad LICENSE"],
+    ["require()", "entry.cjs", `console.log(require("./LICENSE").default);`, "onLoad LICENSE"],
+    ["Bun.ModuleGraph's import()", "entry.mjs", `await new Bun.ModuleGraph().import("./bin/main");`, "onLoad main"],
+    [
+      "a Worker, as its entry point",
+      "entry.mjs",
+      `
+        const worker = new Worker(import.meta.dir + "/bin/worker", { preload: import.meta.dir + "/plugin.ts" });
+        worker.onmessage = ({ data }) => (console.log(data), worker.terminate());
+      `,
+      "onLoad worker",
+    ],
+  ])("is what its onLoad returns for %s", async (_, name, source, loaded) => {
+    expect(await run({ ...files, [name]: source }, ["--preload", "./plugin.ts", name])).toEqual({
+      stdout: [loaded],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is what its onLoad returns as the entry point", async () => {
+    expect(await run(files, ["--preload", "./plugin.ts", "./bin/main"])).toEqual({
+      stdout: ["onLoad main"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // bun test asks plugins before it looks for a builtin module, so that mock.module() can replace one.
+  it("is asked about for onLoad in a test file, and the bare name of a builtin module is not", async () => {
+    const plugin = `
+      import { basename } from "node:path";
+      globalThis.asked = [];
+      Bun.plugin({
+        name: "asks",
+        setup(build) {
+          build.onLoad({ filter: /.*/ }, ({ path }) => {
+            asked.push(basename(path));
+            if (path.endsWith("LICENSE")) return { contents: "export default 'onLoad LICENSE';", loader: "js" };
+          });
+        },
+      });
+    `;
+    const test = `
+      import { expect, test } from "bun:test";
+      import license from "./LICENSE";
+      import { WebSocket } from "ws";
+      test("asked", () => {
+        expect(license).toBe("onLoad LICENSE");
+        expect([typeof WebSocket, typeof require("undici").fetch, typeof require("bun").file]).toEqual(["function", "function", "function"]);
+        expect(asked).toEqual(["x.test.js", "LICENSE"]);
+      });
+    `;
+    const { stderr, exitCode } = await run({ ...files, "plugin.ts": plugin, "x.test.js": test }, [
+      "test",
+      "--preload",
+      "./plugin.ts",
+      "./x.test.js",
+    ]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("is loaded from disk when the onLoad that is asked about it declines", async () => {
+    const source = `
+      const asked = [];
+      Bun.plugin({
+        name: "declines",
+        setup(build) {
+          build.onLoad({ filter: /LICENSE$/ }, ({ path }) => void asked.push(path.slice(import.meta.dir.length + 1)));
+        },
+      });
+      console.log((await import("./LICENSE")).default, require("./v1.2/LICENSE").default, asked.join().replaceAll("\\\\", "/"));
+    `;
+    expect(await run({ ...files, "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: ["disk disk LICENSE,v1.2/LICENSE"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun reads a file without an extension as TSX. An onLoad that gives back the text of the file must not change that.
+  it.each([
+    ["import()", ["-e", `console.log((await import("./bin/cli")).default);`]],
+    ["require()", ["-e", `console.log(require("./bin/cli").default);`]],
+    ["the entry point", ["./bin/cli"]],
+  ])("is read as TSX when its onLoad returns its text and no loader, for %s", async (_, args) => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react", "jsxFactory": "h" } }`,
+      "bin/cli": [
+        `#!/usr/bin/env bun`,
+        `const h = (tag: string) => "TSX " + tag;`,
+        `export default <element />;`,
+        `if (import.meta.main) console.log(<element />);`,
+      ].join("\n"),
+      "plugin.ts": `
+        import { readFileSync } from "node:fs";
+        Bun.plugin({
+          name: "returns the text of the file",
+          setup(build) {
+            build.onLoad({ filter: /[\\\\/]cli$/ }, ({ path }) => (console.log("onLoad"), { contents: readFileSync(path, "utf8") }));
+          },
+        });
+      `,
+    };
+    expect(await run(files, ["--no-install", "--preload", "./plugin.ts", ...args])).toEqual({
+      stdout: ["onLoad", "TSX element"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Only what an onLoad returns for the file itself is read as the file. The loader of any other contents does not change.
+  it("is the only key whose contents without a loader are read as TSX", async () => {
+    // In JavaScript, (a < b) > c is false. In TypeScript, a<b>(c) is a call.
+    const text = `const a = x => "TypeScript", b = 1, c = 2; export default a < b > (c);`;
+    const source = `
+      import { readFileSync } from "node:fs";
+      const read = path => readFileSync(path.split("?")[0], "utf8");
+      const contents = read(import.meta.dir + "/bin/cli");
+      Bun.plugin({
+        name: "returns the text of the file",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/](cli|typed)(\\?|$)|x\\.(ts|weird)/ }, ({ path }) => ({ contents: read(path) }));
+          build.onLoad({ filter: /[\\\\/]text$/ }, ({ path }) => ({ contents: read(path), loader: "text" }));
+          build.module(import.meta.dir + "/a/module", () => ({ contents }));
+          build.module("a-module", () => ({ contents }));
+          build.onResolve({ filter: /^in-a-namespace$/ }, () => ({ path: "thing", namespace: "ns" }));
+          build.onLoad({ filter: /.*/, namespace: "ns" }, () => ({ contents }));
+        },
+      });
+      const show = loaded => (loaded === contents ? "the text" : loaded);
+      for (const name of process.argv.slice(2)) {
+        console.log(name, show((await import(name.replace(/^\\/a\\//, import.meta.dir + "/a/"))).default));
+      }
+      console.log("typed", show((await import("./bin/typed", { with: { type: "text" } })).default));
+    `;
+    const files = {
+      "bin/cli": text,
+      "bin/text": text,
+      "bin/typed": text,
+      "x.ts": text,
+      "x.weird": text,
+      "entry.mjs": source,
+    };
+    const names = ["./bin/cli", "./bin/cli?v=1.2", "./x.ts?v=1", "./x.ts?v=1.2", "./x.weird", "/a/module"];
+    expect(await run(files, ["entry.mjs", ...names, "a-module", "in-a-namespace", "./bin/text"])).toEqual({
+      stdout: [
+        "./bin/cli TypeScript",
+        "./bin/cli?v=1.2 TypeScript",
+        // As "x.ts?v=1": the extension is read at the end of the key.
+        "./x.ts?v=1 false",
+        "./x.ts?v=1.2 false",
+        "./x.weird false",
+        // build.module() is no onLoad.
+        "/a/module false",
+        "a-module false",
+        "in-a-namespace false",
+        "./bin/text the text",
+        "typed the text",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+    // A loader that is set for files without an extension is the loader of the file.
+    expect(await run(files, ["--loader", ":text", "entry.mjs", "./bin/cli", "./bin/cli?v=1.2"])).toEqual({
+      stdout: ["./bin/cli the text", "./bin/cli?v=1.2 the text", "typed the text"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // As for a file with an extension: what an onLoad returns wins over the type of the import.
+  it("is what its onLoad returns when the import has a type attribute", async () => {
+    const source = `
+      Bun.plugin({
+        name: "answers one file",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]NOTICE$/ }, () => ({ contents: "export default 'onLoad';", loader: "js" }));
+          build.onLoad({ filter: /[\\\\/]LICENSE$/ }, () => undefined);
+        },
+      });
+      const { default: notice } = await import("./NOTICE", { with: { type: "text" } });
+      const { default: license } = await import("./LICENSE", { with: { type: "text" } });
+      console.log(notice + ", " + license);
+    `;
+    expect(
+      await run({ "NOTICE": "text of NOTICE", "LICENSE": "text of LICENSE", "entry.mjs": source }, ["entry.mjs"]),
+    ).toEqual({
+      stdout: ["onLoad, text of LICENSE"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // As for a file with an extension: require() cannot wait for an onLoad whose promise is pending.
+  it("is an error for require() when the promise of its onLoad is pending", async () => {
+    const source = `
+      Bun.plugin({
+        name: "async",
+        setup(build) {
+          build.onLoad({ filter: /LICENSE$/ }, async () => {
+            await 0;
+            return { contents: "export default 'onLoad';", loader: "js" };
+          });
+        },
+      });
+      try {
+        require("./LICENSE");
+      } catch (error) {
+        console.log(error.name + ": " + error.message.replace(import.meta.dir, "").replaceAll("\\\\", "/"));
+      }
+      console.log((await import("./LICENSE")).default);
+    `;
+    expect(await run({ ...files, "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: [`TypeError: require() async module "/LICENSE" is unsupported. use "await import()" instead.`, "onLoad"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/4609 and https://github.com/oven-sh/bun/issues/37699: a digit follows the last
+  // dot of "ok.yaml.1", and the last dot of "plain.ts?v=123.456" is in its query.
+  it("is not the only one: a digit after the last dot is no reason to skip a file", async () => {
+    const files = {
+      "ok.yaml.1": "a: 1",
+      "plain.ts": `export default "disk";`,
+      "index.ts": `
+        import {} from "./ok.yaml.1";
+        console.log((await import("./plain.ts?v=123.456")).default);
+        console.log((await import("./plain.ts?mtime=1786494961337.0317")).default);
+      `,
+      "plugin.ts": `
+        import { basename } from "node:path";
+        Bun.plugin({
+          name: "Loader",
+          setup(build) {
+            build.onLoad({ filter: /\\.1$/ }, () => (console.log("success"), { exports: {}, loader: "object" }));
+            build.onLoad({ filter: /plain\\.ts/ }, ({ path }) => ({
+              contents: "export default " + JSON.stringify("onLoad " + basename(path)) + ";",
+              loader: "js",
+            }));
+          },
+        });
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "index.ts"])).toEqual({
+      stdout: ["success", "onLoad plain.ts?v=123.456", "onLoad plain.ts?mtime=1786494961337.0317"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // "/virtual:thing" is an absolute key too. It is in the namespace "/virtual", and the rule for a key in a namespace
+  // does not change: a letter must follow its last dot.
+  it("is not a key in a namespace that starts with a slash", async () => {
+    const source = `
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.onResolve({ filter: /^thing(\\.js)?$/ }, ({ path }) => ({ path: "/virtual:" + path }));
+          build.onLoad({ filter: /.*/, namespace: "/virtual" }, ({ path }) => ({
+            contents: "export default " + JSON.stringify("/virtual onLoad " + path) + ";",
+            loader: "js",
+          }));
+          build.onLoad({ filter: /virtual/ }, () => ({ contents: "export default 'file onLoad';", loader: "js" }));
+        },
+      });
+      console.log((await import("thing.js")).default);
+      console.log(await import("thing").then(module => module.default, error => error.message.split(" imported")[0]));
+    `;
+    expect(await run({ "entry.mjs": source }, ["--no-install", "entry.mjs"])).toEqual({
+      stdout: ["/virtual onLoad thing.js", "Cannot find module '/virtual:thing'"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // An answer of onResolve does not have to be on disk when the filter of an onLoad matches it.
+  it("is what an onLoad serves when onResolve answers with an absolute path that is not on disk", async () => {
+    const root = isWindows ? "C:\\not-on-disk\\" : "/not-on-disk/";
+    const source = `
+      const root = ${JSON.stringify(root)};
+      Bun.plugin({
+        name: "not on disk",
+        setup(build) {
+          build.onResolve({ filter: /^(served|declined)$/ }, ({ path }) => ({ path: root + path }));
+          build.onResolve({ filter: /^relative$/ }, () => ({ path: "./not-on-disk" }));
+          build.onLoad({ filter: /not-on-disk/ }, ({ path }) =>
+            path.endsWith("served") ? { contents: "export default " + JSON.stringify("onLoad " + path) + ";", loader: "js" } : undefined,
+          );
+        },
+      });
+      console.log((await import("served")).default);
+      console.log((await import("./statement.mjs")).default);
+      console.log(require("served").default);
+      console.log(import.meta.require("served").default);
+      console.log(require.resolve("served"));
+      console.log(Bun.resolveSync("served", import.meta.dir));
+      console.log(Bun.fileURLToPath(import.meta.resolve("served")));
+      console.log(await import("declined").then(() => "loaded", error => error.message.split(" imported")[0]));
+      // A relative answer is no file that the resolver found: it keeps the extension test.
+      console.log(await import("relative").then(() => "loaded", error => error.message.split(" imported")[0]));
+      try { require("relative"); } catch (error) { console.log(error.message.split("\\n")[0]); }
+    `;
+    const files = { "entry.mjs": source, "statement.mjs": `export { default } from "served";` };
+    expect(await run(files, ["--no-install", "entry.mjs"])).toEqual({
+      stdout: [
+        `onLoad ${root}served`,
+        `onLoad ${root}served`,
+        `onLoad ${root}served`,
+        `onLoad ${root}served`,
+        `${root}served`,
+        `${root}served`,
+        `${root}served`,
+        `ENOENT reading "${root}declined"`,
+        `Cannot find module './not-on-disk'`,
+        `Cannot find module './not-on-disk'`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A callback is asked before Bun applies an import suffix. One that implements "?raw" returns JavaScript, and no loader.
+  it("is what its onLoad returns for an import with a suffix", async () => {
+    const source = `
+      import { readFileSync } from "node:fs";
+      Bun.plugin({
+        name: "raw",
+        setup(build) {
+          build.onLoad({ filter: /\\?raw$/ }, ({ path }) => ({
+            contents: "export default " + JSON.stringify("onLoad " + readFileSync(path.split("?")[0], "utf8")) + ";",
+          }));
+        },
+      });
+      console.log((await import("./note.txt?raw")).default + ", " + (await import("./LICENSE?raw")).default);
+    `;
+    expect(await run({ "note.txt": "note", "LICENSE": "LICENSE", "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: ["onLoad note, onLoad LICENSE"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // Non-entry files are transpiled off the main thread, where plugins can't run, but a macro's module may need one.
 describe.concurrent("a macro called in a file that is not the entry point", () => {
   const files = {

@@ -6018,17 +6018,22 @@ describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrel
     "slow.js": `export const s = 1;`,
   };
 
-  test("it is called while another load is fetching", async () => {
+  test.each([
+    ["slow.js", String.raw`/slow\.js$/`],
+    ["slow", String.raw`/[\\/]slow$/`],
+  ])("it is called while another load is fetching %s", async (name, filter) => {
     await expectFixturesToPass(
       {
         ...files,
+        "unrelated.js": `export { s } from "./${name}";`,
+        [name]: `export const s = 1;`,
         "another.test.js": `
           import { expect, test, vi } from "bun:test";
           const started = Promise.withResolvers(), gate = Promise.withResolvers();
           Bun.plugin({
             name: "slow",
             setup(build) {
-              build.onLoad({ filter: /slow\\.js$/ }, async () => (started.resolve(), await gate.promise, { contents: "export const s = 2;", loader: "js" }));
+              build.onLoad({ filter: ${filter} }, async () => (started.resolve(), await gate.promise, { contents: "export const s = 2;", loader: "js" }));
             },
           });
           test("the gate is closed", async () => {

@@ -309,19 +309,28 @@ unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize
         .map_or(-1, i32::from)
 }
 
-/// C++ entry point: picks the loader when a plugin returns contents without one, from the import's `type` attribute or
-/// else the file extension. Returns `_none` for a `type` whose loader reads the path rather than the contents.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__getDefaultLoader(
+/// The loader that the extension `ext` names for contents. The `file` loader reads a path, so it names JavaScript.
+fn loader_of_extension(global: &JSGlobalObject, ext: &[u8]) -> Option<bun_ast::Loader> {
+    use bun_ast::Loader;
+    let loaders = &global.bun_vm().transpiler.options.loaders;
+    Some(match loaders.get(ext).copied()? {
+        Loader::File | Loader::Bunsh => Loader::Js,
+        loader => loader,
+    })
+}
+
+/// The loader for contents that have none: from the import's `type`, else the extension of `filename`, else `unnamed`.
+fn default_loader(
     global: &JSGlobalObject,
-    str: &bun_core::String,
+    filename: &[u8],
     type_attribute: Option<&bun_core::String>,
+    unnamed: bun_ast::Loader,
 ) -> bun_options_types::schema::api::Loader {
     use bun_ast::Loader;
     use bun_options_types::schema::api;
-    let filename = str.to_utf8();
     let loader =
         match type_attribute.and_then(|attribute| Loader::from_string(&attribute.to_utf8())) {
+            // A loader that reads the path cannot read contents.
             Some(
                 Loader::File
                 | Loader::Wasm
@@ -335,15 +344,8 @@ extern "C" fn Bun__getDefaultLoader(
             ) => return api::Loader::_none,
             Some(loader) => loader,
             None => {
-                match global
-                    .bun_vm()
-                    .transpiler
-                    .options
-                    .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
-                {
-                    Loader::File | Loader::Bunsh => Loader::Js,
-                    loader => loader,
-                }
+                let ext = bun_resolver::fs::PathName::init(filename).ext;
+                loader_of_extension(global, ext).unwrap_or(unnamed)
             }
         };
     match loader {
@@ -351,6 +353,40 @@ extern "C" fn Bun__getDefaultLoader(
         Loader::Jsonc => api::Loader::jsonc,
         loader => loader.to_api(),
     }
+}
+
+/// C++ entry point: `default_loader` for `str`, JavaScript if nothing names a loader.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__getDefaultLoader(
+    global: &JSGlobalObject,
+    str: &bun_core::String,
+    type_attribute: Option<&bun_core::String>,
+) -> bun_options_types::schema::api::Loader {
+    default_loader(global, &str.to_utf8(), type_attribute, bun_ast::Loader::Js)
+}
+
+/// C++ entry point: the loader when an `onLoad` returns contents for the module `key` without one.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__getOnLoadDefaultLoader(
+    global: &JSGlobalObject,
+    key: &bun_core::String,
+    type_attribute: Option<&bun_core::String>,
+) -> bun_options_types::schema::api::Loader {
+    use bun_ast::Loader;
+    let key = key.to_utf8();
+    // The query of a key is no part of the name of the file.
+    let path = match bun_core::strings::index_of_char_usize(&key, b'?') {
+        Some(query) => &key[..query],
+        None => &key[..],
+    };
+    // Contents for a file without an extension get the loader of that file: TSX, or the one set for no extension.
+    let unnamed = if is_resolved_file(&key) && bun_resolver::fs::PathName::init(path).ext.is_empty()
+    {
+        loader_of_extension(global, b"").unwrap_or(Loader::Tsx)
+    } else {
+        Loader::Js
+    };
+    default_loader(global, &key, type_attribute, unnamed)
 }
 
 /// C++ entry point: `IsolatedModuleCache`'s key for plugin-supplied contents and their loader. Never 0.
@@ -369,7 +405,27 @@ pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
+/// Whether `key` is the module that `-e`, `-p`, stdin or cron mode runs: "[eval]" or "[stdin]" in the working directory.
+fn is_eval_entry(key: &[u8]) -> bool {
+    let eval_source = VirtualMachine::get().module_loader.eval_source.as_deref();
+    eval_source.is_some_and(|source| source.path.text == key)
+}
+
+/// Whether `key` is the key of a file that the resolver found: an absolute path in no namespace.
+fn is_resolved_file(key: &[u8]) -> bool {
+    bun_paths::is_absolute(key) && extract_namespace(key).is_empty()
+}
+
+/// `None` if no `onLoad` runs for `key`.
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
+    // The eval entry is no file.
+    if bun_paths::is_absolute(key) && is_eval_entry(key) {
+        return None;
+    }
+    // A file is asked about whatever its name is.
+    if is_resolved_file(key) {
+        return Some((b"", key));
+    }
     has_extension_or_namespace(key).then(|| namespace_and_path(key))
 }
 

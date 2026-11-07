@@ -2510,6 +2510,7 @@ impl JSValue {
         scope.return_if_exception().map(|()| is_same)
     }
     /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
+    /// They printed an accessor under an index key as null, so this passes null for one.
     #[inline(always)]
     pub fn for_each_property_ordered_with_non_enumerable(
         self,

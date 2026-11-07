@@ -1496,6 +1496,66 @@ describe("own non-enumerable properties are not printed", () => {
   });
 });
 
+describe("sorted prints an accessor under an index key as the unsorted print does", () => {
+  const called = [];
+  // 4294967294 is the last index key. 4294967295 is a named key.
+  function withAccessors(object) {
+    Object.defineProperty(object, 0, { enumerable: true, get: () => called.push("get 0") });
+    Object.defineProperty(object, 7, { enumerable: true, set: () => called.push("set 7") });
+    for (const key of [4294967294, 4294967295]) {
+      Object.defineProperty(object, key, {
+        enumerable: true,
+        get: () => called.push(`get ${key}`),
+        set: () => called.push(`set ${key}`),
+      });
+    }
+    object[3] = null;
+    return object;
+  }
+  const print = lines => `{\n${lines.map(line => `  ${line},\n`).join("")}}`;
+  const unsorted = print([
+    `"0": [Getter]`,
+    `"3": null`,
+    `"7": [Setter]`,
+    `"4294967294": [Getter/Setter]`,
+    `a: 1`,
+    `"4294967295": [Getter/Setter]`,
+  ]);
+  const sorted = print([
+    `"0": [Getter]`,
+    `"3": null`,
+    `"4294967294": [Getter/Setter]`,
+    `"4294967295": [Getter/Setter]`,
+    `"7": [Setter]`,
+    `a: 1`,
+  ]);
+  class Foo {
+    a = 1;
+  }
+
+  it.each([
+    ["a plain object", withAccessors({ a: 1 }), ""],
+    ["a class instance", withAccessors(new Foo()), "Foo "],
+    [
+      "a null-prototype object",
+      withAccessors(Object.assign(Object.create(null), { a: 1 })),
+      "[Object: null prototype] ",
+    ],
+    ["a frozen object", Object.freeze(withAccessors({ a: 1 })), ""],
+    ["a Proxy", new Proxy(withAccessors({ a: 1 }), {}), ""],
+  ])("of %s", (_, object, name) => {
+    expect(Bun.inspect(object)).toBe(name + unsorted);
+    expect(Bun.inspect(object, { sorted: true })).toBe(name + sorted);
+    expect(called).toEqual([]);
+  });
+
+  it("of a nested object", () => {
+    const nested = { b: withAccessors({ a: 1 }), a: 0 };
+    expect(Bun.inspect(nested, { sorted: true })).toBe(`{\n  a: 0,\n  b: ${sorted.replaceAll("\n", "\n  ")},\n}`);
+    expect(called).toEqual([]);
+  });
+});
+
 describe("values of another realm", () => {
   it("the members of its Object.prototype are not printed", () => {
     expect(Bun.inspect(vm.runInNewContext("({ a: 1 })"))).toBe("{\n  a: 1,\n}");

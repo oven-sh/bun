@@ -74,6 +74,19 @@ describe("inspect.table", () => {
     expect(out).toContain("[ [Array ...] ]");
     expect(out).toContain("Map(1) { 1: [Map ...] }");
   });
+
+  it("a sorted cell prints an accessor under an index key as [Getter]", () => {
+    const cell = Object.defineProperty({ a: 1 }, 7, {
+      enumerable: true,
+      get() {
+        throw new Error("the getter was called");
+      },
+    });
+    const printed = '{ "7": [Getter], a: 1 }';
+    expect(inspect.table([{ cell }])).toContain(printed);
+    expect(inspect.table([{ cell }], { sorted: true } as Bun.BunInspectOptions)).toContain(printed);
+    expect(inspect.table([{ cell }], ["cell"], { sorted: true } as Bun.BunInspectOptions)).toContain(printed);
+  });
 });
 
 describe("inspect.table (ansi)", () => {

@@ -1,0 +1,184 @@
+---
+title: Run Bun as a daemon with ProcBoss (Pboss)
+sidebarTitle: ProcBoss (Pboss) with Bun
+mode: center
+---
+
+[ProcBoss](https://docs.procboss.com) is a Bun-native process manager built to run and manage Bun applications using Bun's native APIs.
+
+[pboss](https://github.com/Procboss/pboss) brings process supervision to Bun with automatic restarts, native cluster support, dependency-aware startup, and process monitoring. Run your applications in the background on your VPS or server while ProcBoss manages their lifecycle.
+
+---
+
+You can use ProcBoss with Bun in two ways: directly through the CLI or with a configuration file.
+
+### With the CLI
+
+To start your Bun application as a managed background process, run:
+
+```bash terminal icon="terminal"
+pboss start index.ts --name app
+```
+
+ProcBoss manages the process lifecycle, helping your application recover from unexpected exits.
+
+---
+
+### With a configuration file
+
+Alternatively, create a file named `ecosystem.config.ts` in your project directory and add the following content.
+
+```ts ecosystem.config.ts icon="file-code"
+import type { EcosystemConfig } from "pboss/types";
+
+const config: EcosystemConfig = {
+  apps: [
+    {
+      name: "app",
+      script: "./index.ts",
+    },
+  ],
+};
+
+export default config;
+```
+
+After saving the file, start your application with ProcBoss.
+
+```bash terminal icon="terminal"
+pboss start ecosystem.config.ts
+```
+
+---
+
+### With Bun clusters
+
+Bun provides native APIs for building HTTP servers, while ProcBoss manages the worker processes that run them. Use cluster mode to run multiple instances of your application and take advantage of multiple CPU cores.
+
+Create `server.ts`:
+
+```ts server.ts icon="file-code"
+const workerId = Number(process.env.PBOSS_WORKER_ID ?? 0);
+const port = Number(process.env.PORT ?? 3000);
+
+Bun.serve({
+  port,
+
+  // Let multiple worker processes share the same port.
+  reusePort: true,
+
+  fetch() {
+    return new Response(
+      `Hello from worker ${workerId} on port ${port}`,
+    );
+  },
+});
+
+console.log(`Worker ${workerId} listening on port ${port}`);
+```
+
+Configure ProcBoss to run four instances of the server in cluster mode:
+
+```ts ecosystem.config.ts icon="file-code"
+import type { EcosystemConfig } from "pboss/types";
+
+const config: EcosystemConfig = {
+  apps: [
+    {
+      name: "api",
+      script: "./server.ts",
+      instances: 4,
+      execMode: "cluster",
+      port: 3000,
+    },
+  ],
+};
+
+export default config;
+```
+
+Start the cluster:
+
+```bash terminal icon="terminal"
+pboss start ecosystem.config.ts
+```
+
+All four workers listen on port `3000`. Bun's `reusePort` option allows the operating system to distribute incoming connections across the workers, subject to platform support.
+
+Test the server by sending multiple requests:
+
+```bash terminal icon="terminal"
+for i in {1..10}; do
+  curl -s http://localhost:3000
+  echo
+done
+```
+
+Each response identifies the worker that handled the request. Connection distribution isn't guaranteed to alternate evenly between workers.
+
+---
+
+### With process dependencies
+
+Applications often rely on other processes. For example, an API may need PostgreSQL and Redis to start before it can serve requests, while a background worker depends on the API.
+
+Define these relationships in your configuration:
+
+```ts ecosystem.config.ts icon="file-code"
+import type { EcosystemConfig } from "pboss/types";
+
+const config: EcosystemConfig = {
+  apps: [
+    {
+      name: "postgres",
+      script: "./scripts/start-postgres.sh",
+    },
+    {
+      name: "redis",
+      script: "./scripts/start-redis.sh",
+    },
+    {
+      name: "api",
+      script: "./api.ts",
+      instances: 4,
+      execMode: "cluster",
+      port: 3000,
+      dependsOn: ["postgres", "redis"],
+    },
+    {
+      name: "worker",
+      script: "./worker.ts",
+      dependsOn: ["api"],
+    },
+  ],
+};
+
+export default config;
+```
+
+Start the application stack:
+
+```bash terminal icon="terminal"
+pboss start ecosystem.config.ts
+```
+
+ProcBoss can use the dependency graph to determine startup order, helping ensure that dependent applications start after their prerequisites. The example assumes the database and Redis startup scripts are configured correctly for your environment.
+
+---
+
+### Automatic process status and monitoring
+
+ProcBoss provides process monitoring so you can inspect managed applications without building your own monitoring system.
+
+Use the CLI to check running processes and inspect application output:
+
+```bash terminal icon="terminal"
+pboss status
+pboss logs api
+```
+
+The open-source process manager also supports Prometheus metrics, allowing you to integrate process monitoring with your existing observability tools.
+
+---
+
+Your Bun applications now run under ProcBoss, with Bun-native server APIs, clustered workers sharing a port, dependency-aware startup, and process monitoring—all managed through the open-source CLI.

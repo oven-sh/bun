@@ -99,10 +99,10 @@ impl Frame {
         // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
         // as a corrupt-channel signal and closes, which would surface as a spurious
         // worker crash. Truncate the string in place instead. Leave headroom
-        // so the fixed-size tail of the frame (u32s, short paths, and the
+        // so the fixed-size tail of the frame (u32s and u64s, short paths, and the
         // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
-        const HEADROOM: usize = 4096;
+        const HEADROOM: usize = 8192;
         let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
         let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
         let (keep, marker): (usize, &[u8]) = if s.len() <= room {

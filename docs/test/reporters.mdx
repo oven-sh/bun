@@ -85,7 +85,7 @@ junit = "path/to/junit.xml"  # Output path for JUnit XML report
 
 #### Describe Blocks in JUnit Reports
 
-By default, each `describe` block becomes a `<testsuite>` nested inside its file's `<testsuite>`. A block is one `<testsuite>`, in whatever order its tests end. A block with an empty title, or with no test in the report, has no `<testsuite>`.
+By default, each `describe` block becomes a `<testsuite>` nested inside its file's `<testsuite>`. A block is one `<testsuite>`, in whatever order its tests end. Two blocks with the same name share one `<testsuite>` when nothing is between them in the report, for example the rows of a `describe.each` that have the same title. A block with an empty title, or with no test in the report, has no `<testsuite>`.
 
 Some tools only read the `<testcase>` elements directly inside a file's `<testsuite>`. For those tools, use `--reporter-junit-suites=flat`:
 

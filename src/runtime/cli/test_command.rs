@@ -2303,6 +2303,8 @@ struct DescribeBlocks {
 struct BlockSuite {
     name: Box<[u8]>,
     line: u32,
+    /// Of the run of the file in which the block first reported.
+    started_unix_ms: i64,
     parent: Option<usize>,
     /// 1 for a block at the top level of the file.
     depth: u32,
@@ -2321,7 +2323,7 @@ enum Child {
 
 impl DescribeBlocks {
     /// The suite of the innermost named block around the test. `None` for a case of the file itself.
-    fn suite_of(&mut self, t: &TestCaseReport<'_>) -> Option<usize> {
+    fn suite_of(&mut self, t: &TestCaseReport<'_>, started_unix_ms: i64) -> Option<usize> {
         // Only the flat form includes describe blocks with an empty title, like Vitest.
         let named = |scope: &&ScopeReport<'_>| !scope.name.is_empty();
         let innermost = t.scopes.iter().rfind(named)?;
@@ -2345,15 +2347,16 @@ impl DescribeBlocks {
             first_without = index;
         }
         for scope in t.scopes[first_without..].iter().filter(named) {
-            // As in every release, a block shares the suite of a block with its name that reported just before it:
-            // the rows of a `describe.each` with one title, and the repeats of `--rerun-each`.
+            // As in every release, a block joins the suite before it in its parent when that suite has its name:
+            // the rows of a `describe.each` with one title, and the repeats of `--rerun-each`. So two suites with
+            // one name are never next to each other.
             let before = match self.children_of(suite).last() {
                 Some(&Child::Suite(before)) => Some(before),
                 _ => None,
             };
             let inside = match before {
                 Some(before) if strings::eql(&self.suites[before].name, scope.name) => before,
-                _ => self.add(suite, scope),
+                _ => self.add(suite, scope, started_unix_ms),
             };
             self.by_key.insert(scope.block, inside);
             suite = Some(inside);
@@ -2362,11 +2365,17 @@ impl DescribeBlocks {
         suite
     }
 
-    fn add(&mut self, parent: Option<usize>, scope: &ScopeReport<'_>) -> usize {
+    fn add(
+        &mut self,
+        parent: Option<usize>,
+        scope: &ScopeReport<'_>,
+        started_unix_ms: i64,
+    ) -> usize {
         let added = self.suites.len();
         self.suites.push(BlockSuite {
             name: Box::from(scope.name),
             line: scope.line,
+            started_unix_ms,
             parent,
             depth: parent.map_or(1, |parent| self.suites[parent].depth + 1),
             metrics: Metrics::default(),
@@ -2405,7 +2414,6 @@ impl DescribeBlocks {
         file: &[u8],
         file_metrics: &mut Metrics,
         hostname: &[u8],
-        started_unix_ms: i64,
     ) -> crate::Result<()> {
         if self.suites.is_empty() {
             return Ok(());
@@ -2449,7 +2457,7 @@ impl DescribeBlocks {
                         &suite.metrics,
                         suite.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64,
                         hostname,
-                        started_unix_ms,
+                        suite.started_unix_ms,
                     );
                     out.extend_from_slice(b">\n");
                     open.push((Some(suite), 0));
@@ -2881,7 +2889,6 @@ impl JunitReporter {
             &self.current_file,
             &mut suite.metrics,
             &hostname,
-            self.file_start_unix_ms,
         )?;
 
         let elapsed_ns = file_elapsed_ns.unwrap_or_else(|| {
@@ -2947,7 +2954,7 @@ impl JunitReporter {
             class_name.extend_from_slice(scope.name);
         }
 
-        let suite = self.blocks.suite_of(t);
+        let suite = self.blocks.suite_of(t, self.file_start_unix_ms);
         if suite.is_none() && self.blocks.suites.is_empty() {
             // No block of the file has a suite yet, so this case comes before all of them.
             return CaseWriter {

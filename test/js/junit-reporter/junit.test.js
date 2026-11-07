@@ -1238,27 +1238,34 @@ describe("only block", () => {
 
   // Not concurrent: each test starts its `bun test` runs at once, and four tests at once make a run several times slower.
   describe("a describe block is one <testsuite>", () => {
-    // Each test file says which process loaded it.
-    const sayPid = `require("node:fs").appendFileSync(process.env.PIDS, process.pid + "\\n");\n`;
+    // Each test file says which process loaded it, and when.
+    const sayLoaded = `require("node:fs").appendFileSync(process.env.LOADED, JSON.stringify({ file: import.meta.file, pid: process.pid, at: Date.now() }) + "\\n");\n`;
 
     async function report(files, args, env = bunEnv) {
       const fixtures = { "package.json": "{}" };
-      for (const [name, source] of Object.entries(files)) fixtures[name] = source + sayPid;
+      for (const [name, source] of Object.entries(files)) fixtures[name] = source + sayLoaded;
       using dir = tempDir("junit-blocks", fixtures);
-      const pids = join(String(dir), "pids");
+      const loadedPath = join(String(dir), "loaded");
       await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml", ...args], {
         cwd: String(dir),
-        env: { ...env, PIDS: pids },
+        env: { ...env, LOADED: loadedPath },
         stdout: "ignore",
         stderr: "ignore",
       });
       const exitCode = await proc.exited;
-      const loadedIn = (await file(pids).text()).trim().split("\n").map(Number);
+      const loaded = (await file(loadedPath).text()).trim().split("\n").map(JSON.parse);
+      const raw = await file(join(String(dir), "junit.xml")).text();
+      // Rejects for a report that is not well-formed.
+      await new Promise((resolve, reject) => {
+        xml2js.parseString(raw, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+      });
       return {
-        xml: filterJunitXmlOutput(await file(join(String(dir), "junit.xml")).text()),
+        raw,
+        xml: filterJunitXmlOutput(raw),
         exitCode,
+        loaded,
         // With one test file, `bun test --parallel` loads the file itself and starts no worker.
-        usedWorkers: !loadedIn.includes(proc.pid),
+        usedWorkers: !loaded.some(({ pid }) => pid === proc.pid),
       };
     }
 
@@ -1371,6 +1378,22 @@ describe("third", () => {
   test.concurrent("in third", end("in third"));
 });
 `,
+        // "y" is between the two "x" in the report, although the case before the second "x" is in the first.
+        "adjacent.test.js": `import { describe, test } from "bun:test";
+${turns}
+${endInOrder}
+const end = endInOrder(["x1", "y1", "x2", "again"]);
+describe("x", () => {
+  test.concurrent("x1", end("x1"));
+  test.concurrent("x2", end("x2"));
+});
+describe("y", () => {
+  test.concurrent("y1", end("y1"));
+});
+describe("x", () => {
+  test.concurrent("again", end("again"));
+});
+`,
         "same-name.test.js": `import { describe, test } from "bun:test";
 describe.each([1, 2])("each", row => {
   test("of row " + row, () => {});
@@ -1401,6 +1424,13 @@ helper("second call");
 
       // The flat form has the cases in the order reported.
       expect(outline(flat.xml)).toEqual({
+        "adjacent.test.js": [
+          "suite adjacent.test.js tests=4 failures=0",
+          "  case x > x1",
+          "  case y > y1",
+          "  case x > x2",
+          "  case x > again",
+        ],
         "concurrent.test.js": [
           "suite concurrent.test.js tests=3 failures=0",
           "  case a > a1",
@@ -1447,8 +1477,18 @@ helper("second call");
         ],
       });
       // An error outside of a test stays a case of the file, where it was reported among the file's blocks and cases.
-      // Two blocks with one name share a <testsuite> when one reports just after the other, as before.
+      // Two blocks with one name share a <testsuite> when nothing is between them in the report, as before.
       expect(outline(serial.xml)).toEqual({
+        "adjacent.test.js": [
+          "suite adjacent.test.js tests=4 failures=0",
+          "  suite x line=16 tests=2 failures=0",
+          "    case x1",
+          "    case x2",
+          "  suite y line=20 tests=1 failures=0",
+          "    case y1",
+          "  suite x line=23 tests=1 failures=0",
+          "    case again",
+        ],
         "concurrent.test.js": [
           "suite concurrent.test.js tests=3 failures=0",
           "  suite a line=16 tests=2 failures=0",
@@ -1509,7 +1549,7 @@ helper("second call");
       });
       expect(parallel.xml).toBe(serial.xml);
       expect(totals(serial.xml)).toEqual(totals(flat.xml));
-      expect(totals(flat.xml)).toHaveLength(7);
+      expect(totals(flat.xml)).toHaveLength(8);
       expect([serial.usedWorkers, parallel.usedWorkers]).toEqual([false, true]);
       expect([serial.exitCode, parallel.exitCode, flat.exitCode]).toEqual([1, 1, 1]);
     });
@@ -1551,24 +1591,33 @@ for (const order of ${JSON.stringify(orders)}) {
           order.map(name => `  case ${order.join(" ")} > ${name === "i1" ? "a > inner" : name[0]} > ${name}`),
         ),
       );
-      // Each <testsuite> with the names of those around it. Which block reports first decides the order of two blocks.
+      // Each <testsuite> and <testcase> with the names of the suites around it. Which block reports first decides
+      // the order of two blocks.
       const around = [];
-      const suites = [];
+      const elements = [];
       for (const line of outline(nested.xml)["orders.test.js"].slice(1)) {
-        const [, indent, name, tests] = line.match(/^( *)suite (.*) line=\d+ (tests=\d+) /) ?? [];
-        if (name === undefined) continue;
+        const [, indent, element, name, tests] = line.match(/^( *)(suite|case) (.*?)(?: line=\d+ (tests=\d+) .*)?$/);
         around.length = indent.length / 2 - 1;
-        around.push(name);
-        suites.push(`${around.join(" > ")} ${tests}`);
+        if (element === "suite") around.push(name);
+        elements.push(element === "suite" ? `${around.join(" > ")} ${tests}` : `${around.join(" > ")} has ${name}`);
       }
       const once = orders
         .flatMap(order => {
           const block = order.join(" ");
-          return [`${block} tests=4`, `${block} > a tests=3`, `${block} > a > inner tests=1`, `${block} > b tests=1`];
+          return [
+            `${block} tests=4`,
+            `${block} > a tests=3`,
+            `${block} > a has a1`,
+            `${block} > a has a2`,
+            `${block} > a > inner tests=1`,
+            `${block} > a > inner has i1`,
+            `${block} > b tests=1`,
+            `${block} > b has b1`,
+          ];
         })
         .sort();
       expect(orders).toHaveLength(24);
-      expect(suites.sort()).toEqual(once);
+      expect(elements.sort()).toEqual(once);
       expect([nested.exitCode, flat.exitCode]).toEqual([0, 0]);
     });
 
@@ -1592,6 +1641,18 @@ for (let block = 0; block < 50; block++) {
     test("in block " + block, () => {});
   });
 }
+`,
+        "stamps.test.js": `import { describe, test } from "bun:test";
+describe("first", () => {
+  // The next run starts in a later millisecond than this one was loaded in.
+  test("until the clock moves", () => {
+    const now = Date.now();
+    while (Date.now() === now);
+  });
+});
+describe("second", () => {
+  test("b", () => {});
+});
 `,
         "wrapped.test.js": `import { describe, test } from "bun:test";
 describe("outer", () => {
@@ -1631,6 +1692,17 @@ describe("outer", () => {
           "    case b1",
         ],
         "many.test.js": ["suite many.test.js tests=100 failures=0", ...many, ...many],
+        "stamps.test.js": [
+          "suite stamps.test.js tests=4 failures=0",
+          "  suite first line=2 tests=1 failures=0",
+          "    case until the clock moves",
+          "  suite second line=9 tests=1 failures=0",
+          "    case b",
+          "  suite first line=2 tests=1 failures=0",
+          "    case until the clock moves",
+          "  suite second line=9 tests=1 failures=0",
+          "    case b",
+        ],
         "wrapped.test.js": [
           "suite wrapped.test.js tests=4 failures=0",
           "  suite outer line=2 tests=4 failures=0",
@@ -1645,6 +1717,18 @@ describe("outer", () => {
         ],
       });
       expect(parallel.xml).toBe(serial.xml);
+      // The timestamp of a block is the start of the run in which it reported.
+      const loads = serial.loaded.filter(({ file }) => file === "stamps.test.js").map(({ at }) => at);
+      const stamps = Array.from(
+        serial.raw.matchAll(/<testsuite name="(first|second)" file="stamps\.test\.js"[^>]* timestamp="([^"]*)">/g),
+        ([, name, timestamp]) => [name, loads.findIndex(loaded => Date.parse(timestamp) <= loaded)],
+      );
+      expect(stamps).toEqual([
+        ["first", 0],
+        ["second", 0],
+        ["first", 1],
+        ["second", 1],
+      ]);
       expect([serial.usedWorkers, parallel.usedWorkers]).toEqual([false, true]);
       expect([serial.exitCode, parallel.exitCode]).toEqual([0, 0]);
     });

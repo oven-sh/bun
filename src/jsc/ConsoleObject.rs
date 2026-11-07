@@ -3038,9 +3038,6 @@ pub mod formatter {
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            if key.eq_ascii(b"constructor") {
-                return None;
-            }
             if ctx.formatter.failed {
                 return None;
             }

@@ -947,10 +947,6 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        if key.eq_ascii(b"constructor") {
-            return;
-        }
-
         // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
         let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {

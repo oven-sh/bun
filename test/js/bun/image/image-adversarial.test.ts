@@ -10,7 +10,18 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  emptyProcessMaxRSS,
+  gcTick,
+  isASAN,
+  isDebug,
+  isLinux,
+  rss,
+  runFixtureMaxRSS,
+  tempDir,
+} from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { hash, readPng } from "./jpeg-golden/observe";
@@ -378,24 +389,78 @@ describe("hostile header dimensions", () => {
     expect((await new Bun.Image(small).resize(4, 4).png().bytes())[0]).toBe(0x89);
   });
 
+  function jpegWithDims(w: number, h: number): Buffer {
+    const out = Buffer.from(tinyJpeg); // copy
+    const sof0 = jpegMarkers(out).find(({ marker }) => marker === 0xc0)!.offset;
+    out.writeUInt16BE(h, sof0 + 5);
+    out.writeUInt16BE(w, sof0 + 7);
+    return out;
+  }
+
+  // `metadata()` has a guard of its own. This is the one in front of a decode.
+  test.each([
+    [16, 4],
+    [4, 16],
+  ])("a JPEG of %d x %d is decoded with maxPixels: 64 and not with 63", async (width, height) => {
+    const jpeg = jpegWithDims(width, height);
+    await expect(new Bun.Image(jpeg, { maxPixels: 63 }).png().bytes()).rejects.toMatchObject({
+      code: "ERR_IMAGE_TOO_MANY_PIXELS",
+    });
+    expect(readPng(await new Bun.Image(jpeg, { maxPixels: 64 }).png().bytes())).toMatchObject({ width, height });
+  });
+
   // TurboJPEG counted pixels in an `int`.
-  test.each([2 ** 32, 1e15])(
-    "a JPEG of more than 2^31 - 1 pixels is not decoded with maxPixels: %d",
-    async maxPixels => {
-      const jpeg = Buffer.from(tinyJpeg);
-      const sof0 = jpeg.indexOf(Buffer.from([0xff, 0xc0]));
-      jpeg.writeUInt16BE(46341, sof0 + 5);
-      jpeg.writeUInt16BE(46341, sof0 + 7);
-      expect(await new Bun.Image(jpeg, { maxPixels }).metadata()).toEqual({
-        width: 46341,
-        height: 46341,
-        format: "jpeg",
-      });
+  describe.each([
+    [46341, 46341],
+    [65500, 32787],
+    [32787, 65500],
+  ])("a JPEG of %d x %d, more than 2^31 - 1 pixels", (width, height) => {
+    test.each([2 ** 32, 1e15])("is not decoded with maxPixels: %d", async maxPixels => {
+      const jpeg = jpegWithDims(width, height);
+      expect(await new Bun.Image(jpeg, { maxPixels }).metadata()).toEqual({ width, height, format: "jpeg" });
       await expect(new Bun.Image(jpeg, { maxPixels }).png().bytes()).rejects.toMatchObject({
         code: "ERR_IMAGE_DECODE_FAILED",
       });
-    },
-  );
+    });
+
+    test("is over the default maxPixels before anything else", async () => {
+      await expect(new Bun.Image(jpegWithDims(width, height)).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_TOO_MANY_PIXELS",
+      });
+    });
+  });
+
+  // 647 pixels under that limit: 8.6 GB of RGBA, which a machine may well have, so the child is kept from them.
+  test.skipIf(!isLinux)("a JPEG too large to allocate is out of memory, and not the end of the process", async () => {
+    await using child = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        // A sanitizer reserves terabytes of address space. It has a limit of its own, below.
+        `ulimit -c 0 && ${isASAN ? "" : "ulimit -v 8000000 && "}exec "$0" -e "$1"`,
+        bunExe(),
+        `for (const file of process.env.FILES.split(",")) {
+          const image = new Bun.Image(Buffer.from(file, "base64"), { maxPixels: 2 ** 32 });
+          console.log(await image.png().bytes().then(() => "decoded", error => error.code));
+        }`,
+      ],
+      env: {
+        ...bunEnv,
+        FILES: [jpegWithDims(65500, 32786), jpegWithDims(32786, 65500)].map(file => file.toString("base64")).join(","),
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4096"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    // The sanitizer warns of the allocation.
+    expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
+      stdout: "ERR_OUT_OF_MEMORY\nERR_OUT_OF_MEMORY\n",
+      exitCode: 0,
+      stderr: "",
+    });
+  });
 
   test("WebP VP8 frame header with absurd dims", async () => {
     // RIFF + WEBP + VP8 chunk header + 10-byte VP8 bitstream header where

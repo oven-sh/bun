@@ -32,7 +32,7 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
 
   const WASI_ESUCCESS = 0;
-  const WASI_EPERM = 63;
+  const WASI_ENOTCAPABLE = 76;
   const WASI_RIGHT_FD_READ = BigInt(2);
   const allRights = BigInt.asIntN(64, BigInt("0xffffffffffffffff"));
 
@@ -40,11 +40,65 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   const baseBefore = stdinRights.base;
   const inheritingBefore = stdinRights.inheriting;
 
-  expect(wasi.wasiImport.fd_fdstat_set_rights(0, allRights, allRights)).toBe(WASI_EPERM);
+  expect(wasi.wasiImport.fd_fdstat_set_rights(0, allRights, allRights)).toBe(WASI_ENOTCAPABLE);
   expect(wasi.FD_MAP.get(0).rights).toEqual({ base: baseBefore, inheriting: inheritingBefore });
 
   expect(wasi.wasiImport.fd_fdstat_set_rights(0, WASI_RIGHT_FD_READ, BigInt(0))).toBe(WASI_ESUCCESS);
   expect(wasi.FD_MAP.get(0).rights).toEqual({ base: WASI_RIGHT_FD_READ, inheriting: BigInt(0) });
+});
+
+// Closes the host descriptors that this WASI opened: the preopens, and what path_open added.
+function closeDescriptors(wasi) {
+  for (const fd of wasi.FD_MAP.keys()) if (fd > 2) wasi.wasiImport.fd_close(fd);
+}
+
+it("a hostcall that the rights of the descriptor do not allow returns ENOTCAPABLE", () => {
+  using dir = tempDir("wasi-refusal-errno", {
+    "file.txt": "file data\n",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_ENOTCAPABLE = 76;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const WASI_RIGHT_FD_WRITE = BigInt(64);
+  const WASI_WHENCE_CUR = 1;
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 1536;
+  const iovsPtr = 2048;
+  const countPtr = 3072;
+  const bufPtr = 4096;
+
+  const open = rights => {
+    const len = memory.write("file.txt", pathPtr);
+    expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), 0, fdPtr)).toBe(WASI_ESUCCESS);
+    return view.getUint32(fdPtr, true);
+  };
+  try {
+    const readOnly = open(WASI_RIGHT_FD_READ);
+    const writeOnly = open(WASI_RIGHT_FD_WRITE);
+    view.setUint32(iovsPtr, bufPtr, true);
+    view.setUint32(iovsPtr + 4, 1, true);
+
+    // wasi-libc turns ENOTCAPABLE into the errno of the call: EBADF for write() and read(), ESPIPE for lseek().
+    expect({
+      "fd_write, opened with FD_READ": wasi.wasiImport.fd_write(readOnly, iovsPtr, 1, countPtr),
+      "fd_read, opened with FD_WRITE": wasi.wasiImport.fd_read(writeOnly, iovsPtr, 1, countPtr),
+      "fd_seek, opened with FD_READ": wasi.wasiImport.fd_seek(readOnly, BigInt(0), WASI_WHENCE_CUR, countPtr),
+      "fd_read, opened with FD_READ": wasi.wasiImport.fd_read(readOnly, iovsPtr, 1, countPtr),
+    }).toEqual({
+      "fd_write, opened with FD_READ": WASI_ENOTCAPABLE,
+      "fd_read, opened with FD_WRITE": WASI_ENOTCAPABLE,
+      "fd_seek, opened with FD_READ": WASI_ENOTCAPABLE,
+      "fd_read, opened with FD_READ": WASI_ESUCCESS,
+    });
+  } finally {
+    closeDescriptors(wasi);
+  }
 });
 
 it("random_get fills only the requested window", () => {

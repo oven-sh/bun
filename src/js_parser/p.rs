@@ -5963,8 +5963,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
                 // Instead of doing this at runtime using "fn.call(module.exports)", we
                 // do it at compile time using expression substitution here.
-                // Only the bundler's `__commonJS` wrapper and the runtime's CommonJS
-                // wrapper bind `exports`; transform-only output has no wrapper.
+                // Only the bundler and runtime wrappers bind `exports`; transform-only output has none.
                 let exports_ref = self.exports_ref;
                 self.record_usage(exports_ref);
                 self.deoptimize_common_js_named_exports();

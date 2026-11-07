@@ -127,7 +127,7 @@ diff_one() {
   shift 2
   case "$port" in '('*) ;; *) port="src/react_compiler/$port" ;; esac
   local out
-  out=$(git -C "$tmp" diff --stat=120 --patch "$old" "$new" -- "$upstream" "$@")
+  out=$(git -C "$tmp" diff --no-color --no-ext-diff --stat=120 --patch "$old" "$new" -- "$upstream" "$@")
   if [ -n "$out" ]; then
     echo "── $upstream"
     echo "   port: $port"

@@ -85,7 +85,8 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     // - The repository gives a commit that is not the tip of a ref, as GitHub does. Without protocol version 2, git
     //   does that only when it is allowed to.
     // - A fetch starts `git maintenance` in the background. It can still run when the script removes its clone.
-    // - The script reads the file names that `git grep` prints. A colour in them must not change what it lists.
+    // - The script reads the file names that `git grep` prints, and its diffs are the input of a port. A colour or
+    //   a diff program of the user must not change either.
     gitConfig = `
       [url "${pathToFileURL(upstream).href}"]
         insteadOf = https://github.com/facebook/react.git
@@ -94,9 +95,11 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       [maintenance]
         auto = false
       [color]
-        grep = always
+        ui = always
       [color "grep"]
         filename = red
+      [diff]
+        external = false
     `;
     const git = async (...args: string[]) => {
       await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: upstream, env, stdout: "pipe", stderr: "pipe" });

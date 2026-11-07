@@ -437,8 +437,37 @@ impl LoadTimeReads {
             }
         };
 
+        let exports_refs = c.graph.ast.items_exports_ref();
+        let symbols = &c.graph.symbols;
+        // Calls `each` with the id of a live part and the id of each part that it names a binding of.
+        let for_each_named_part = |each: &mut dyn FnMut(u32, u32)| {
+            // The symbols that part `uses_of` uses.
+            let mut uses: HashMap<bun_ast::Ref, ()> = HashMap::default();
+            let mut uses_of = u32::MAX;
+            for_each_live_part(&mut |file, id, part| {
+                for dependency in part.dependencies.iter() {
+                    let other = dependency.source_index.get() as usize;
+                    // A read of a run-time name (`exports_other.name`) keeps that file and names none of its bindings.
+                    if dependency.part_index == bun_ast::NAMESPACE_EXPORT_PART_INDEX
+                        && other != file
+                    {
+                        if uses_of != id {
+                            uses_of = id;
+                            uses = HashMap::with_capacity(part.symbol_uses.keys().len());
+                            for &used in part.symbol_uses.keys() {
+                                uses.insert(symbols.follow(used), ());
+                            }
+                        }
+                        if !uses.contains(&symbols.follow(exports_refs[other])) {
+                            continue;
+                        }
+                    }
+                    each(id, first_part_id[other] + dependency.part_index);
+                }
+            });
+        };
+
         let mut effects = vec![LoadEffect::Hoisted; parts_len];
-        let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
         for_each_live_part(&mut |file, id, part| {
             // A wrapped file runs when it is called, and a namespace object prints ahead of every file.
             if flags[file].wrap == Wrap::None
@@ -447,23 +476,16 @@ impl LoadTimeReads {
             {
                 effects[id as usize] = LoadEffect::of(part);
             }
-            for dependency in part.dependencies.iter() {
-                let to =
-                    first_part_id[dependency.source_index.get() as usize] + dependency.part_index;
-                dependents_start[to as usize + 2] += 1;
-            }
         });
+        let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
+        for_each_named_part(&mut |_, to| dependents_start[to as usize + 2] += 1);
         for i in 2..dependents_start.len() {
             dependents_start[i] += dependents_start[i - 1];
         }
         let mut dependents: Vec<u32> = vec![0; dependents_start[parts_len + 1] as usize];
-        for_each_live_part(&mut |_, id, part| {
-            for dependency in part.dependencies.iter() {
-                let to =
-                    first_part_id[dependency.source_index.get() as usize] + dependency.part_index;
-                dependents[dependents_start[to as usize + 1] as usize] = id;
-                dependents_start[to as usize + 1] += 1;
-            }
+        for_each_named_part(&mut |id, to| {
+            dependents[dependents_start[to as usize + 1] as usize] = id;
+            dependents_start[to as usize + 1] += 1;
         });
 
         LoadTimeReads {

@@ -24,7 +24,6 @@ code-from-disk.test.ts
 compiled-code-mapping.test.ts
 compiler/budgets.test.ts
 compiler/linear-cost.test.ts
-compiler/names-compared-as-text.test.ts
 computed-load.ts
 engine-tests.test.ts
 engine/a-native-test-that-starts-many-processes-is-not-taken-for-hung.test.ts

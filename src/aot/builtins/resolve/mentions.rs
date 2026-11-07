@@ -971,31 +971,28 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn is_handed_to_nobody(&self, prototype: ExprId) -> bool {
+    fn is_handed_to_what_hands_out_what_lies_under_keys(&self, holder: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        let Parent::Expr(user) = bound.parent_of_expr(self.outermost_assertion_of(prototype))
-        else {
+        let Parent::Expr(user) = bound.parent_of_expr(self.outermost_assertion_of(holder)) else {
             return false;
         };
-        match hir[user].kind {
-            ExprKind::Binary {
-                op: BinOp::In,
-                right,
-                ..
-            } => hir.skip_type_assertions(right) == prototype,
-            ExprKind::Call(call) => {
-                let first = hir.ids(hir[call].args).next();
-                first.map(|first| hir.skip_type_assertions(first)) == Some(prototype)
-                    && self.is_run_by_plain_call(user, BuiltinId::ObjectCreate)
-            }
-            _ => false,
-        }
+        let ExprKind::Call(call) = hir[user].kind else {
+            return false;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        mentioned_id(self.state(callee)).is_some_and(|function| {
+            table::ENTRIES_HANDING_OUT_WHAT_LIES_UNDER_KEYS.contains(&table::canonical_id(function))
+        })
     }
 
     fn takes_method_that_hands_out_global_object_off(&self, holder: ExprId, id: BuiltinId) -> bool {
         match self.classify_use(holder) {
             MentionUse::Inspected | MentionUse::Called(_) | MentionUse::Aliased => false,
-            MentionUse::Exposed if self.is_handed_to_nobody(holder) => false,
+            MentionUse::Exposed
+                if !self.is_handed_to_what_hands_out_what_lies_under_keys(holder) =>
+            {
+                false
+            }
             MentionUse::Holder => {
                 let Parent::Expr(read) = self.input.bound.parent_of_expr(holder) else {
                     return false;

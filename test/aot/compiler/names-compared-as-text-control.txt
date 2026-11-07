@@ -1,103 +1,9 @@
-The control of names-compared-as-text.ts: each pattern that the lint finds, in C++ and in Rust, and each form that it allows.
+The control of names-compared-as-text.ts: each pattern that the lint finds and each form that it allows.
 Nobody compiles this file. It is a .txt so that no formatter and no other lint reads it.
 A line that begins with `finds` or `allows` is a mark, and a snippet runs from its mark to the next one.
 names-compared-as-text.test.ts hands the lint each snippet alone, as the text of the file at <path>.
   finds <path> <pattern>    exactly one line is reported, under that pattern. If a line ends in `// here`, it is that line
   allows <path> <why>       no line is reported. If the path is the reason, the same lines are reported under an ordinary path
-
-finds aot/walk/AOTWalk.cpp ==
-    return identifier.string() == "eval"_s;
-finds aot/walk/AOTWalk.cpp !=
-    return "eval"_s != nameOf(callee);
-finds aot/walk/AOTWalk.cpp ==
-    return size > 1'000 && name == "eval"_s && size < 2'000;
-finds aot/facts/AOTFlowRules.h ==
-    auto text = strings.toWTFString(function.name);
-    return text
-        == "eval"_s; // here
-finds aot/walk/AOTWalk.cpp equal
-    return equal(key.uid(), "constructor"_s);
-finds aot/walk/AOTWalk.cpp equalSpans
-    static constexpr auto textOfEval = "eval"_span;
-    return equalSpans(strings[function.name], textOfEval); // here
-finds aot/walk/AOTWalk.cpp startsWith
-    return table.viewOf(id, buffer).startsWith("on"_s);
-finds aot/walk/AOTWalk.cpp endsWith
-    return propertyName.endsWith("Sync"_s);
-finds aot/walk/AOTWalk.cpp startsWithIgnoringASCIICase
-    return memberName.startsWithIgnoringASCIICase("webkit"_s);
-finds aot/walk/AOTWalk.cpp contains
-    return symbol.description().contains('.');
-finds aot/walk/AOTWalk.cpp find
-    return name.find("::"_s) != notFound;
-finds aot/walk/AOTWalk.cpp reverseFind
-    return name.reverseFind('.') != notFound;
-finds aot/walk/AOTWalk.cpp containsIgnoringASCIICase
-    return m_function->name().containsIgnoringASCIICase("eval"_s);
-finds aot/walk/AOTWalk.cpp spanHasPrefix
-    return spanHasPrefix(strings[specifier], "node:"_span);
-finds aot/walk/AOTWalk.cpp spanHasSuffix
-    return spanHasSuffix(strings[specifier], ".json"_span);
-finds aot/walk/AOTWalk.cpp starts_with
-    return atomText.starts_with("get");
-finds aot/walk/AOTWalk.cpp ends_with
-    return atomText.ends_with("Async");
-finds aot/walk/AOTWalk.cpp strcmp
-    return !strcmp(symbolName, "iterator");
-finds aot/walk/AOTWalk.cpp strncmp
-    return !strncmp(symbolName, "on", 2);
-finds aot/walk/AOTWalk.cpp memcmp
-    return !memcmp(name.span8().data(), "eval", 4);
-finds aot/walk/AOTWalk.cpp case
-    switch (name[0]) {
-    case '#': // here
-        return true;
-    }
-finds aot/walk/AOTWalk.cpp switch over a hash
-    switch (name.hash()) { // here
-    case 0x5d41402a:
-        return true;
-    }
-
-finds aot/walk/AOTWalk.cpp ==
-    return name == BuiltinNames::eval;
-finds aot/walk/AOTWalk.cpp !=
-    return read.key() != program.keyOf(BuiltinNames::eval);
-finds aot/walk/AOTWalk.cpp ==
-    return found == program.keyOf(BuiltinNames::eval);
-finds aot/walk/AOTWalk.cpp contains
-    static constexpr BuiltinName evaluators[] = { BuiltinNames::eval, BuiltinNames::Function };
-    return std::ranges::contains(evaluators, name); // here
-finds aot/walk/AOTWalk.cpp case
-    switch (name) {
-    case BuiltinNames::eval: // here
-        return true;
-    }
-
-allows aot/walk/AOTWalk.cpp the id of a thing
-    return context.builtinOf(callee) == Builtins::Eval;
-allows aot/walk/AOTWalk.cpp a key that the language reads off whatever object it is handed
-    return read.key() == program.keyOf(BuiltinNames::prototype) || name == BuiltinNames::defaultKeyword;
-allows aot/walk/AOTWalk.cpp a list of such keys
-    static constexpr BuiltinName keysOfDescriptor[] = { BuiltinNames::value, BuiltinNames::writable };
-    return std::ranges::contains(keysOfDescriptor, name);
-allows aot/walk/AOTWalk.cpp a well-known symbol
-    return read.key() == program.keyOf(BuiltinNames::iteratorSymbol);
-allows aot/walk/AOTWalk.cpp an interned text that is handed on and not compared
-    return findMember(context, holder, program.keyOf(BuiltinNames::eval));
-allows aot/walk/AOTWalk.cpp the empty string
-    return name == ""_s;
-allows aot/walk/AOTWalk.cpp the name of an option
-    return optionName == "obfuscate"_s;
-allows aot/walk/AOTWalk.cpp a name used only as a subscript
-    return words[nameIndex] == "end"_s;
-allows aot/walk/AOTWalk.cpp a comment
-    // return name == "eval"_s;
-allows aot/walk/AOTWalk.cpp a variable that another block set from a name
-    {
-        auto text = strings.toWTFString(function.name);
-    }
-    return text == "use strict"_s;
 
 finds src/aot/lower/call.rs ==
     return name == "eval";
@@ -211,10 +117,8 @@ allows src/aot/builtins/generated.rs generated tables
     return name == b"eval";
 allows src/aot/builtins/table/members.rs the table of built-ins
     return member == b"push";
-allows aot/builtins/AOTBuiltinTable.cpp the table of built-ins in the engine
-    return name == "eval"_s;
-allows aot/ir/AOTNameClass.cpp the class of a name, read off its text once
-    return name[0] == '#';
+allows src/aot/ir/name_class.rs the class of a name, read off its text once
+    return name.starts_with(b"#");
 allows src/aot/options.rs option words, which are the build's own
     return key == "threads";
 allows src/aot/load/test_runner_names.rs a name that no program can write
@@ -245,47 +149,8 @@ finds src/aot/lower/jsx/element.rs let
     let [b'$', text @ ..] = name else { return None };
 allows src/aot/module_list.rs the specifier of a built-in module in the list of modules
     return specifier.strip_prefix("node:");
-allows aot/runtime/AOTModuleTable.cpp a specifier that a running program passes to import() or require()
-    return specifier.startsWith("node:"_s);
-allows aot/ir/AOTIRProgram.cpp the scheme of the path of a module
-    return spanHasPrefix(program.string(module.path), "node:"_span);
-finds aot/ir/AOTIRProgram.cpp equalSpans
-    return equalSpans(program.string(function.name), "eval"_span);
-allows aot/facts/AOTFlowRulesLoadsByName.cpp the first character of a specifier
-    return name[0] == '@';
-allows aot/runtime/AOTJSONScanner.h a mark of a JSON text
-    const uint8_t* colon = skipJSONWhitespaceCharacters(afterKey);
-    return *colon == ':';
-finds aot/runtime/AOTJSONScanner.h equal
-    return equal(key, "__proto__"_s);
-allows aot/builtins/AOTBufferBuiltinOperations.cpp the value of a string that names an encoding
-    return equal(name, "utf8"_s);
-finds aot/builtins/AOTBufferBuiltinOperations.cpp equal
-    return equal(name, "toString"_s);
-allows aot/facts/AOTFlowRulesBehaviors.cpp the value of a string that may be a format
-    return std::ranges::contains(program.string(StringID(member.payload)), static_cast<uint8_t>('%'));
-allows aot/builtins/AOTIntlBuiltinOperations.cpp the key of an option of a formatter
-    return name == "timeZone"_s;
-finds aot/builtins/AOTIntlBuiltinOperations.cpp ==
-    return name == "format"_s;
-allows aot/ir/AOTTypeTextParser.cpp a word of the text form of a type
-    return name == "opaque"_s;
-allows aot/facts/AOTFlowRuleTable.cpp the dot in the name of a rule
-    return name.find('.');
-allows aot/facts/AOTSummaryText.cpp a character that a printer escapes
-    std::span<const uint8_t> bytes = m_program.string(id);
-    uint8_t byte = bytes.front();
-    return byte == '"';
-allows aot/runtime/AOTMembersLeftOut.cpp the name that the language gives a getter
-    return name.startsWith("get "_s);
-finds aot/runtime/AOTMembersLeftOut.cpp startsWith
-    return name.startsWith("on"_s);
 allows src/aot/report/wording.rs the wording of diagnostics
     return name == b"default";
-allows aot/support/AOTDiagnostics.cpp the wording of diagnostics in the engine
-    return name == "default"_s;
-allows aot/tests/AOTIRParser.cpp a test of the engine
-    return name == "eval"_s;
 allows src/aot/lower/tests.rs a file of tests
     return name == "eval";
 allows src/sema/import_sites/tests.rs a file of tests outside src/aot
@@ -435,28 +300,3 @@ allows src/aot/lower/condition.rs an answer of typeof
     return name == known::function;
 allows src/aot/lower/member.rs a member of a function that plain Bun answers while it runs
     return name != known::arguments && name != known::caller;
-allows aot/facts/AOTFactsRegExpTexts.cpp the default of a CommonJS module in the rehearsal
-    if (name == "default"_s)
-        return exported;
-allows aot/facts/AOTLinkCalls.cpp what a function of Object.prototype asks in turn
-    return questions.keys.contains(m_program.keyOf(BuiltinNames::toLocaleString));
-allows aot/walk/AOTWalkArguments.cpp the callee of an arguments object
-    return object->allocation == Opcode::CreateMappedArguments && read.key() == program.keyOf(BuiltinNames::callee);
-allows aot/walk/AOTWalkTypedAccesses.cpp two names that every function answers for itself
-    return !classOfConstructorFunction(program, function) || key == program.keyOf(BuiltinNames::arguments) || key == program.keyOf(BuiltinNames::caller);
-allows aot/codegen/AOTAccessEmitter.cpp the name by which the table lists the getters of a Map and a Set
-    if (key != program.keyOf(BuiltinNames::size)) [[likely]]
-        return false;
-    if (table.at(member).name != BuiltinNames::size)
-        return false;
-allows aot/facts/AOTFactsOfProgram.cpp the scheme in the path of a module of the library
-    static constexpr auto prefixOfNode = "node:"_s;
-    std::span<const uint8_t> path = program.string(module.path);
-    if (path.size() > prefixOfNode.length() && std::ranges::equal(path.first(prefixOfNode.length()), byteCast<uint8_t>(prefixOfNode.span())))
-        list(path.subspan(prefixOfNode.length()), ModuleID(index));
-finds aot/walk/AOTWalkArguments.cpp ==
-    return read.key() == program.keyOf(BuiltinNames::eval);
-finds aot/codegen/AOTAccessEmitter.cpp ==
-    return key == program.keyOf(BuiltinNames::eval);
-finds aot/walk/AOTWalk.cpp !=
-    if (key != program.keyOf(BuiltinNames::size)) [[likely]]

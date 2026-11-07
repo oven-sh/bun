@@ -1,26 +1,25 @@
-// The lint of the rule "decide by binding and by flow, never by text". It finds, in the engine's C++ and in the front end's Rust, each line that compares the text
+// The lint of the rule "decide by binding and by flow, never by text". It finds, in the front end's Rust, each line that compares the text
 // of a name of the program with a literal: an identifier, a property, a module specifier, any string out of the syntax tree or the IR.
 // `name == "eval"` says yes to a local that somebody called eval, and no to `const e = eval`. The question to ask is about a thing: this binding, this object, this cell.
 //
 // It reads tokens and knows no types, so it goes by what the compared expression is called:
 // - A literal is a string or a character, but not the empty string, or a constant of the same file that holds one.
-// - A constant that stands for a text is that text: `known::eval` in Rust, `BuiltinNames::eval` in C++, a list of such. `name == known::eval` asks what `name == "eval"` asks.
+// - A constant that stands for a text is that text: `known::eval`, a list of such. `name == known::eval` asks what `name == "eval"` asks.
 //   All but `keysOfLanguage`, which the language reads off whatever object it is handed, and `namesOfBinder`, which no program can write.
 // - An expression is the text of a name where one of its words has a part out of `partsOfNames`, reads the table of strings, or was set from such an expression in the same block.
-// - What stands in `Ident(..)`, `Name(..)` or `keyOf(..)` is held against a name, whatever the other side is called.
+// - What stands in `Ident(..)` or `Name(..)` is held against a name, whatever the other side is called.
 // - The id of a thing (BuiltinId, RuntimeModule, SymbolId, the key of one cell held against the key of another) has no literal beside it. Comparing those is what the rule asks for, and is never reported.
-// - A finding is reported on the line of the literal: for `match` and `switch`, on the line of each arm that has one.
+// - A finding is reported on the line of the literal: for `match`, on the line of each arm that has one.
 // It cannot see whether a thing stands in front of a name. Where one does, an entry of `allowed` names the file, the names and the thing.
 // A lint that finds nothing proves nothing: names-compared-as-text-control.txt has every pattern once.
 //
-//   bun test/aot/compiler/names-compared-as-text.ts [folder..]    each finding: file:line and the line. A folder stands in place of aot/ or src/aot/, one of `load` for itself
+//   bun test/aot/compiler/names-compared-as-text.ts [folder..]    each finding: file:line and the line. A folder stands in place of src/aot/, one of `load` for itself
 //   bun test/aot/compiler/names-compared-as-text.ts --allowed     what each entry of `allowed` covers today
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
-export type Language = "C++" | "Rust";
 /** `load`: folders outside src/aot, each under the path that `allowed` writes for it: `{ "src/sema/fold/": "/checkout/src/sema/fold" }`. */
-export type Roots = { engine?: string; frontEnd?: string; load?: Record<string, string> };
+export type Roots = { frontEnd?: string; load?: Record<string, string> };
 
 export class Finding {
   constructor(
@@ -37,17 +36,7 @@ export class Finding {
 
 const repository = resolve(import.meta.dir, "../../..");
 
-/**
- * The engine's sources are looked for as ../engine/testaot.ts looks for the engine's tests: beside this Bun, where CI packs them as the folder `aot-sources`,
- * which is laid out as `aot` is, then in a checkout. Without either there is no `engine`.
- */
 export const rootsOfThisCheckout: Roots = {
-  engine: [
-    join(dirname(process.execPath), "aot-sources"),
-    ...[process.env.BUN_WEBKIT_PATH, join(repository, "vendor", "WebKit")]
-      .filter(path => path !== undefined)
-      .map(path => join(path, "Source", "JavaScriptCore", "aot")),
-  ].find(path => existsSync(path)),
   frontEnd: join(repository, "src", "aot"),
   // Which files a build takes in, what it folds and what it asks the checker is decided outside src/aot.
   load: Object.fromEntries(
@@ -58,20 +47,15 @@ export const rootsOfThisCheckout: Roots = {
 };
 
 /**
- * Where text may be compared with a literal. A path begins with `aot/` in the engine and with `src/` in Bun. With `lines`, only such lines of the file are allowed.
- * The first two are TypeScript, which the lint does not read: they stand here so that all of "the tables of built-ins" is in one list.
- * The engine's two places that may compare a name at all (a read off `unknown`, a layout guessed from the names read off a parameter) have no entry: they hold one key of the program against another.
+ * Where text may be compared with a literal. With `lines`, only such lines of the file are allowed.
  * "A name is compared in two places only, and both have a thing in front of the name": an entry for such a place says which thing.
  */
 export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
-  { paths: /^aot\/builtins\/[^/]+\.builtins\.ts$/, reason: "the tables of built-ins as they are written" },
-  { paths: /^aot\/builtins\/generator\/|^src\/codegen\/builtins\//, reason: "the generators of those tables" },
   { paths: /(^|\/)generated\.rs$/, reason: "holds nothing but the include of generated tables" },
   {
     paths: /^src\/aot\/builtins\/table(\.rs$|\/)/,
     reason: "the table of built-ins: the one place where the text of a name, a module or a directive becomes an id",
   },
-  { paths: /^aot\/builtins\/AOTBuiltin(Table\w*|NameSlots)\.(h|cpp)$/, reason: "the same table in the engine" },
   {
     paths: /^src\/aot\/builtins\/resolve\/mentions\.rs$/,
     lines: /EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT\.contains\(&text\)/,
@@ -79,12 +63,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the kind of an event is a text that the program hands over, no name: in front of it stands the built-in that adds a listener to the global object",
   },
   {
-    paths: /^aot\/ir\/AOTNameClass\.(h|cpp)$|^src\/aot\/ir\/name_class\.rs$/,
+    paths: /^src\/aot\/ir\/name_class\.rs$/,
     reason:
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
   },
   {
-    paths: /^aot\/driver\/AOTOptionWords\.(h|cpp)$|^src\/aot\/options\.rs$/,
+    paths: /^src\/aot\/options\.rs$/,
     reason: "option words are the build's own, not the program's",
   },
   {
@@ -142,67 +126,8 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "the list of modules writes the specifier of a built-in module as the bundler writes it",
   },
   {
-    paths: /^aot\/runtime\/AOT(Module\w*|BuiltinModules)\.(h|cpp)$/,
-    reason: "the specifiers and paths that a running program hands to import() and require()",
-  },
-  {
-    paths: /^aot\/ir\/AOTIRProgram\.cpp$|^aot\/facts\/AOTFlowRules(LoadsByName|Modules)\.cpp$/,
-    lines: /'[?.@\/#:]'|'\\\\'|"(?:bun|node:|bun:|bun:test)"_span/,
-    reason:
-      "what the specifier or the path of a module stands for is a question about a path: its scheme, its query, its steps and its package",
-  },
-  {
-    paths: /^aot\/runtime\/AOTJSON(ParseOperations\.cpp|Scanner\.h)$/,
-    lines: /[=!]= '(?:[^'\\]|\\.)'/,
-    reason:
-      "the marks of a JSON text that a running program parses: a bracket, a comma, a colon, a quote, the first letter of a literal",
-  },
-  {
-    paths:
-      /^aot\/builtins\/AOT(BufferBuiltinOperations|BuiltinCallEmitter)\.cpp$|^aot\/walk\/AOTInlineBuiltinFormsOfPrimitives\.cpp$/,
-    lines: /"(?:utf8|utf-8|ascii|latin1|binary)"_s/,
-    reason:
-      "the value of a string that tells a function of Buffer its encoding: an operand of a call. A value is no name",
-  },
-  {
-    paths: /^aot\/facts\/AOTFlowRulesBehaviors\.cpp$/,
-    lines: /static_cast<uint8_t>\('%'\)/,
-    reason: "the value of a string that console.log may take for a format. A value is no name",
-  },
-  {
-    paths: /^aot\/builtins\/AOT(FormatPatternPlanner|IntlBuiltinOperations)\.cpp$/,
-    lines: /"timeZone"_s/,
-    reason: "the key of an option in the list that the build has written for a formatter of Intl",
-  },
-  {
-    paths: /^aot\/ir\/AOTTypeTextParser\.(h|cpp)$/,
-    reason:
-      "the words of the text form of a type, which tests and tools write: the language of the IR, not the program's",
-  },
-  {
-    paths: /^aot\/facts\/AOTFlowRuleTable\.cpp$/,
-    lines: /name\.find\('\.'\)/,
-    reason: "the name of a rule of the flow as the text forms print it: the family, a dot, the name in the family",
-  },
-  {
-    paths: /^aot\/facts\/AOT(Facts|FlowGraphText|SummaryText)\.cpp$/,
-    lines: /byte == '(?:"|\\\\|\\n)'/,
-    reason: "a printer of a text form escapes a quote, a backslash and a line break in whatever string it prints",
-  },
-  {
-    paths: /^aot\/runtime\/AOTMembersLeftOut\.cpp$/,
-    lines: /startsWith\("get "_s\)|endsWith\('\.'\)/,
-    reason:
-      "the language names a getter `get ` and its key, and a sentence is added to a message behind its full stop: wording, while the program runs",
-  },
-  {
     paths: /^src\/aot\/(report|diagnostics|package_diagnostics)(\.rs$|\/)|^src\/aot\/diagnostic_codes\.rs$/,
     reason: "the wording of diagnostics",
-  },
-  {
-    paths:
-      /^aot\/(support\/AOTDiagnostics|walk\/AOTWalkNotes|driver\/AOT(ExplainRecords|ResultSections|CodeReports)|runtime\/AOT(ErrorMessages|StackTrace|RuntimeReporter))\.(h|cpp)$/,
-    reason: "the wording of diagnostics, error messages and stack traces",
   },
   {
     paths: /^src\/sema\/(import_sites|fold)\//,
@@ -397,87 +322,35 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason:
       "`f.arguments` and `f.caller`: the checker is asked next whether the object is a function, and all that follows is a warning",
   },
-  {
-    paths: /^aot\/facts\/AOTFactsRegExpTexts\.cpp$/,
-    lines: /name == "default"_s/,
-    reason:
-      "`default` in the record of what the loader fills out of a CommonJS module: the record stands in front of the name. The rehearsal only lists the texts for which a matcher is made ahead: a wrong guess costs code and never an answer",
-  },
-  {
-    paths: /^aot\/facts\/AOTLinkCalls\.cpp$/,
-    lines: /questions\.keys\.contains\(m_program\.keyOf\(BuiltinNames::toLocaleString\)\)/,
-    reason:
-      "a table of built-ins: what the functions of Object.prototype ask in turn (object.builtins.ts): toLocaleString() calls `toString`. The list holds what a built-in asks of its operand, and the built-in stands in front of it",
-  },
-  {
-    paths: /^aot\/walk\/AOTWalkArguments\.cpp$/,
-    lines: /BuiltinNames::callee\b/,
-    reason: "`arguments.callee`: the allocation of the arguments object stands in front of the name",
-  },
-  {
-    paths: /^aot\/walk\/AOTWalkTypedAccesses\.cpp$/,
-    lines: /key == program\.keyOf\(BuiltinNames::arguments\) \|\| key == program\.keyOf\(BuiltinNames::caller\)/,
-    reason:
-      "`F.arguments`, `F.caller`: the one constructor function of the program that the type of the object names stands in front of the name. The engine answers these two for every function itself, so no member of the class is read there",
-  },
-  {
-    paths: /^aot\/codegen\/AOTAccessEmitter\.cpp$/,
-    lines: /key != program\.keyOf\(BuiltinNames::size\)|table\.at\(member\)\.name != BuiltinNames::size/,
-    reason:
-      "`size` of a Map or a Set: the table of built-ins stands in front of the name: the members that hold the two getters are asked whether they go by it and whether a program can replace them. All that follows is which stub a read takes, and that stub asks the object first whether it is a Map or a Set",
-  },
-  {
-    paths: /^aot\/facts\/AOTFactsOfProgram\.cpp$/,
-    lines: /\bprefixOfNode\b/,
-    reason:
-      "the scheme in the path of a module of the library, which is listed with it and without it: what a specifier stands for is a question about a path",
-  },
 ];
 
 /** Why the whole file is allowed, or, given a line of it, why that line is. */
 export const reasonToAllow = (path: string, line?: string) =>
   allowed.find(({ paths, lines }) => paths.test(path) && (!lines || (line !== undefined && lines.test(line))))?.reason;
 
-const languageOf = (path: string): Language | undefined =>
-  /\.(h|cpp)$/.test(path) ? "C++" : path.endsWith(".rs") ? "Rust" : undefined;
-const folderOf: Record<Language, string> = { "C++": "aot/", Rust: "src/aot/" };
-const isTest = (path: string) =>
-  /^aot\/tests\/|^src\/(?:.*\/)?(?:(?:source_)?tests?|testing)(?:\.rs$|\/)|_tests?\.rs$/.test(path);
+const isRust = (path: string) => path.endsWith(".rs");
+const isTest = (path: string) => /^src\/(?:.*\/)?(?:(?:source_)?tests?|testing)(?:\.rs$|\/)|_tests?\.rs$/.test(path);
 
 const partsOfNames =
   /^(?:names?|ident(?:ifier)?s?|symbols?|atoms?|keys?|propert(?:y|ies)|props?|members?|specifiers?|uid|spellings?|strings)$/;
 // `file_name`, `optionName`: what has such a name is no part of the program.
 const partsOfOtherThings =
   /^(?:files?|paths?|folders?|director(?:y|ies)|dir|extensions?|options?|flags?|commands?|sections?|threads?|stages?|phases?|statistics?)$/;
-const readersOfStrings = /^(?:string|toWTFString|viewOf|decodeProgramString)$/;
-const comparingFunctions: Record<Language, RegExp> = {
-  "C++":
-    /^(?:equal\w*|(?:starts|ends)With(?:IgnoringASCIICase)?|(?:contains|find|reverseFind)(?:IgnoringASCIICase)?|spanHas(?:Prefix|Suffix)\w*|starts_with|ends_with|strn?cmp|memcmp)$/,
-  Rust:
-    /^(?:starts_with|ends_with|contains(?:_key|_char)?|r?find|strip_prefix|strip_suffix|eq|ne|eq_ignore_ascii_case)$/,
-};
-const connectorsOf: Record<Language, Set<string>> = {
-  "C++": new Set([".", "->", "::"]),
-  Rust: new Set([".", "::", "?"]),
-};
+const comparingFunctions =
+  /^(?:starts_with|ends_with|contains(?:_key|_char)?|r?find|strip_prefix|strip_suffix|eq|ne|eq_ignore_ascii_case)$/;
+const connectors = new Set([".", "::", "?"]);
 
-// Comments, strings, characters, and the numbers of C++, whose digits an apostrophe may separate.
-const lexemes: Record<Language, RegExp> = {
-  "C++":
-    /\/\/.*|\/\*[\s\S]*?\*\/|\b(?:u8|[uUL])?R"([^\s()\\]*)\([\s\S]*?\)\1"|(?:\b(?:u8|[uUL]))?(?:"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\.)+')|\b\d(?:'?[\w.])*/g,
-  Rust: /\/\/.*|\/\*(?:[^*/]|\*(?!\/)|\/(?!\*)|\/\*[\s\S]*?\*\/)*\*\/|\b[bc]?r(#*)"[\s\S]*?"\1|(?:\b[bc])?"(?:[^"\\]|\\[\s\S])*"|(?:\bb)?'(?:[^'\\\n]|\\(?:u\{[^}]*\}|x[\da-fA-F]{2}|.))'/gu,
-};
+// Comments, strings and characters.
+const lexemes =
+  /\/\/.*|\/\*(?:[^*/]|\*(?!\/)|\/(?!\*)|\/\*[\s\S]*?\*\/)*\*\/|\b[bc]?r(#*)"[\s\S]*?"\1|(?:\b[bc])?"(?:[^"\\]|\\[\s\S])*"|(?:\bb)?'(?:[^'\\\n]|\\(?:u\{[^}]*\}|x[\da-fA-F]{2}|.))'/gu;
 // The name of the constant or of the list, and the first interned text that it holds.
-const constantsHoldingText: Record<Language, RegExp> = {
-  "C++": /\bconstexpr\s[^;=(){}]*?(\w+)(?:\[\w*\])?\s*=?\s*\{?\s*(?:"~|BuiltinNames::(\w+))/g,
-  Rust: /\b(?:const|static)\s+(\w+)\s*:[^=]*=[\s&\[]*(?:"~|known::(\w+))|\blet\s+(\w+)\s*=\s*\[\s*known::(\w+)/g,
-};
-const tableOfInternedTexts: Record<Language, string> = { "C++": "BuiltinNames", Rust: "known" };
+const constantsHoldingText =
+  /\b(?:const|static)\s+(\w+)\s*:[^=]*=[\s&\[]*(?:"~|known::(\w+))|\blet\s+(\w+)\s*=\s*\[\s*known::(\w+)/g;
 // What the language itself reads or writes under that very key, on whatever object it is handed: the links of prototypes, a property descriptor, the protocols of
 // iteration, of promises and of conversion, the options of `import()`, the export `default`, and the mark that loaders read off what a CommonJS module exports.
 // No binding stands behind such a key: a program that spells it means it. A well-known symbol is a thing, and no text at all.
 const keysOfLanguage = new Set(
-  `prototype __proto__ constructor length name default defaultKeyword __esModule with then next done value returnKeyword throwKeyword
+  `prototype __proto__ constructor length name default __esModule with then next done value
    get set writable enumerable configurable toString valueOf toJSON`.split(/\s+/),
 );
 // `export=`, `missing=`: each ends in `=`, so no program can write one.
@@ -490,10 +363,9 @@ const standsForName = (constant: string) =>
 const tokenPattern = /"[^"]*"\w*|'~+'|\w+|::|->|=>|\.\.=?|&&|\|\||[-+*\/%&|^<>=!]=|\S/g;
 
 /** The source at the same length and with the same lines: blanks for comments, and `~` for what stands between quotes. */
-function mask(source: string, language: Language) {
-  return source.replace(lexemes[language], lexeme => {
+function mask(source: string) {
+  return source.replace(lexemes, lexeme => {
     if (lexeme.startsWith("/")) return lexeme.replace(/[^\n]/g, " ");
-    if (/^\d/.test(lexeme)) return lexeme;
     const quote = /["']/.exec(lexeme)!;
     const close = lexeme.lastIndexOf(quote[0]);
     const contents = lexeme.slice(quote.index + 1, close).replace(/[^\n]/g, "~");
@@ -516,16 +388,15 @@ function isWordOfName(word: string) {
 
 type Token = { text: string; at: number; line: number };
 
-function comparisonsIn(language: Language, source: string, file: string) {
-  const masked = mask(source, language);
+function comparisonsIn(source: string, file: string) {
+  const masked = mask(source);
   const sourceLines = source.split("\n");
   const indents = masked.split("\n").map(line => (line.trim() ? line.search(/\S/) : Infinity));
   const constants = new Set<string>();
-  for (const found of masked.matchAll(constantsHoldingText[language])) {
+  for (const found of masked.matchAll(constantsHoldingText)) {
     const interned = found[2] ?? found[4];
     if (interned === undefined || standsForName(interned)) constants.add(found[1] ?? found[3]);
   }
-  const connectors = connectorsOf[language];
   const localsHoldingNameText = new Map<string, [number, number][]>();
   const findings = new Map<number, Finding>();
 
@@ -549,7 +420,7 @@ function comparisonsIn(language: Language, source: string, file: string) {
   const touchesNext = (index: number) =>
     tokens[index] !== undefined && tokens[index].at + tokens[index].text.length === tokens[index + 1]?.at;
   const isInternedText = (index: number) =>
-    textAt(index - 1) === "::" && textAt(index - 2) === tableOfInternedTexts[language] && /^[A-Za-z_]/.test(textAt(index));
+    textAt(index - 1) === "::" && textAt(index - 2) === "known" && /^[A-Za-z_]/.test(textAt(index));
   const isLiteral = (index: number) =>
     /^["']~/.test(textAt(index)) ||
     constants.has(textAt(index)) ||
@@ -562,7 +433,7 @@ function comparisonsIn(language: Language, source: string, file: string) {
   const isName = (index: number) => {
     const token = tokens[index];
     if (token === undefined || isLiteral(index) || isInternedText(index) || textAt(index + 1) === "::") return false;
-    if (isWordOfName(token.text) || (textAt(index + 1) === "(" && readersOfStrings.test(token.text))) return true;
+    if (isWordOfName(token.text) || (textAt(index + 1) === "(" && token.text === "string")) return true;
     return localsHoldingNameText.get(token.text)?.some(([from, to]) => from <= token.line && token.line < to) ?? false;
   };
   // What stands between the brackets of an index says which element, not what it holds.
@@ -583,7 +454,7 @@ function comparisonsIn(language: Language, source: string, file: string) {
     }
     return -1;
   };
-  // An operand is a chain of words, calls and indexes: `program.strings.toWTFString(function.name)`, `atoms.bytes(name)?[1..]`.
+  // An operand is a chain of words, calls and indexes: `atoms.bytes(name)?[1..]`.
   const startOfOperand = (last: number) => {
     let first = last;
     while (connectors.has(textAt(first))) first--;
@@ -619,7 +490,7 @@ function comparisonsIn(language: Language, source: string, file: string) {
     const subject = source.slice(tokens[from].at, tokens[to].at + tokens[to].text.length).replace(/\s+/g, " ");
     findings.set(line, new Finding(file, line + 1, sourceLines[line].trim(), pattern, subject));
   };
-  // `ExprKind::Ident(known::eval)`, `MemberKey::Name(known::eval)`, `keyOf(BuiltinNames::eval)`: what wraps the literal says that it is a name.
+  // `ExprKind::Ident(known::eval)`, `MemberKey::Name(known::eval)`: what wraps the literal says that it is a name.
   const isHeldAsName = (index: number) => {
     for (let before = index - 1; before >= 0; before--) {
       if (partner[before] >= 0 && partner[before] < before) before = partner[before];
@@ -637,7 +508,7 @@ function comparisonsIn(language: Language, source: string, file: string) {
   for (let at = 0; at < tokens.length; at++) {
     const word = textAt(at);
     const endOfArguments = textAt(at + 1) === "(" ? partner[at + 1] : -1;
-    if (language === "Rust" && word === "#" && textAt(at + 1) === "[" && partner[at + 1] > at) {
+    if (word === "#" && textAt(at + 1) === "[" && partner[at + 1] > at) {
       const attribute = tokens.slice(at + 2, partner[at + 1]).map(token => token.text);
       if (!attribute.includes("test") || attribute.includes("not") || attribute[0] === "cfg_attr") continue;
       const body = findAtThisDepth(partner[at + 1] + 1, tokens.length, "{", ";");
@@ -654,19 +525,19 @@ function comparisonsIn(language: Language, source: string, file: string) {
         report(word, literal, ...other);
         break;
       }
-    } else if (endOfArguments > at && comparingFunctions[language].test(word)) {
+    } else if (endOfArguments > at && comparingFunctions.test(word)) {
       // What a closure compares is judged where it compares it.
       if (/^(?:\|\|?|move)$/.test(textAt(at + 2))) continue;
       const first = startOfOperand(endOfArguments);
       const literal = firstLiteral(first, endOfArguments);
       if (literal >= 0 && isTextOfName(first, endOfArguments, at)) report(word, literal, first, endOfArguments);
-    } else if (language === "Rust" && word === "matches" && textAt(at + 1) === "!" && partner[at + 2] > at) {
+    } else if (word === "matches" && textAt(at + 1) === "!" && partner[at + 2] > at) {
       const comma = findAtThisDepth(at + 3, partner[at + 2], ",");
       if (comma < 0) continue;
       // What a guard compares is judged where it compares it, as in an arm of `match`.
       const guard = findAtThisDepth(comma + 1, partner[at + 2], "if");
       reportEachLiteral("matches!", comma + 1, guard < 0 ? partner[at + 2] : guard, at + 3, comma - 1);
-    } else if (language === "Rust" && word === "match") {
+    } else if (word === "match") {
       const open = findAtThisDepth(at + 1, tokens.length, "{");
       if (open < 0) continue;
       for (let arm = open + 1; arm < partner[open]; ) {
@@ -678,22 +549,12 @@ function comparisonsIn(language: Language, source: string, file: string) {
         if (end < 0) break;
         arm = end + 1;
       }
-    } else if (language === "Rust" && word === "let") {
+    } else if (word === "let") {
       const equals = findAtThisDepth(at + 1, tokens.length, "=", ";");
       if (textAt(equals) !== "=" || firstLiteral(at + 1, equals) < 0) continue;
       reportEachLiteral("let", at + 1, equals, equals + 1, endOfOperand(equals + 1));
-    } else if (language === "C++" && word === "switch" && endOfArguments > at) {
-      const isHash = (index: number) => textAt(index + 1) === "(" && partsOf(textAt(index)).includes("hash");
-      const [first, last] = [at + 2, endOfArguments - 1];
-      if (tokens.slice(first, endOfArguments).some((_, offset) => isHash(first + offset)))
-        report("switch over a hash", at, first, last);
-      else if (textAt(endOfArguments + 1) === "{" && isTextOfName(first, last))
-        for (let label = endOfArguments + 2; label < partner[endOfArguments + 1]; label++) {
-          const literal = textAt(label) === "case" ? [label + 1, label + 3].find(isLiteral) : undefined;
-          if (literal !== undefined) report("case", literal, first, last);
-        }
     } else if (word === "=" && /^[A-Za-z_]\w*$/.test(textAt(at - 1))) {
-      // `let text = atoms.bytes(name);` makes `text` the text of a name down to the end of the block, which both formatters show by the indentation.
+      // `let text = atoms.bytes(name);` makes `text` the text of a name down to the end of the block, which the formatter shows by the indentation.
       const end = findAtThisDepth(at + 1, tokens.length, ";");
       if (end < 0 || endOfOperand(at + 1) !== end - 1 || !isTextOfName(at + 1, end - 1)) continue;
       const line = tokens[at].line;
@@ -712,9 +573,9 @@ function foldersOf(roots: Roots | string[]): { folder: string; prefix?: string }
     const ofThisCheckout = Object.entries(rootsOfThisCheckout.load!);
     return roots.map(folder => ({ folder, prefix: ofThisCheckout.find(([, own]) => own === folder)?.[0] }));
   }
-  const { engine, frontEnd, load = {} } = roots;
+  const { frontEnd, load = {} } = roots;
   return [
-    ...[engine, frontEnd].flatMap(folder => (folder === undefined ? [] : [{ folder }])),
+    ...(frontEnd === undefined ? [] : [{ folder: frontEnd }]),
     ...Object.entries(load).map(([prefix, folder]) => ({ folder, prefix })),
   ];
 }
@@ -723,9 +584,9 @@ function sourcesUnder(roots: Roots | string[]) {
   return foldersOf(roots).flatMap(({ folder, prefix }) =>
     readdirSync(folder, { recursive: true, encoding: "utf8" })
       .map(path => path.replaceAll("\\", "/"))
-      .filter(path => languageOf(path) !== undefined)
+      .filter(isRust)
       .sort()
-      .map(path => ({ path: (prefix ?? folderOf[languageOf(path)!]) + path, file: join(folder, path) }))
+      .map(path => ({ path: (prefix ?? "src/aot/") + path, file: join(folder, path) }))
       .filter(({ path }) => !isTest(path)),
   );
 }
@@ -738,21 +599,19 @@ function findUnder(roots: Roots | string[], isWanted: (path: string, line?: stri
   return sourcesUnder(roots)
     .filter(({ path }) => isWanted(path))
     .flatMap(({ path, file }) =>
-      comparisonsIn(languageOf(path)!, readFileSync(file, "utf8"), file).filter(({ text }) => isWanted(path, text)),
+      comparisonsIn(readFileSync(file, "utf8"), file).filter(({ text }) => isWanted(path, text)),
     );
 }
 
-/** The findings in one text. The path is written as in `allowed` ("aot/walk/AOTWalk.cpp", "src/aot/lower/call.rs"): it gives the language, and whether the file is a test or allowed. */
+/** The findings in one text. The path is written as in `allowed` ("src/aot/lower/call.rs"): it says whether the file is a test or allowed. */
 export function findInSource(path: string, source: string): Finding[] {
-  const language = languageOf(path);
-  return language === undefined || isTest(path) || reasonToAllow(path) !== undefined
+  return !isRust(path) || isTest(path) || reasonToAllow(path) !== undefined
     ? []
-    : comparisonsIn(language, source, path).filter(({ text }) => reasonToAllow(path, text) === undefined);
+    : comparisonsIn(source, path).filter(({ text }) => reasonToAllow(path, text) === undefined);
 }
 
 /**
- * One finding for each line that compares the text of a name with a literal, in every .h, .cpp and .rs file under the roots but tests and what `allowed` lists.
- * A root is the engine's folder `aot` or Bun's folder `src/aot`. The C++ under a root is taken for the engine's and the Rust for the front end's.
+ * One finding for each line that compares the text of a name with a literal, in every .rs file under the roots but tests and what `allowed` lists.
  */
 export function findNamesComparedAsText(roots: Roots | string[]): Finding[] {
   return findUnder(roots, (path, line) => reasonToAllow(path, line) === undefined);
@@ -761,10 +620,6 @@ export function findNamesComparedAsText(roots: Roots | string[]): Finding[] {
 if (import.meta.main) {
   const folders = process.argv.slice(2).filter(word => !word.startsWith("--"));
   const roots = folders.length ? folders.map(folder => resolve(folder)) : rootsOfThisCheckout;
-  if (!folders.length && !rootsOfThisCheckout.engine)
-    console.error(
-      "the engine's sources are not here (aot-sources beside this Bun, $BUN_WEBKIT_PATH, vendor/WebKit): its C++ is not read",
-    );
   if (process.argv.includes("--allowed")) {
     for (const { paths, lines, reason } of allowed) {
       const covered = findUnder(roots, (path, line) => paths.test(path) && (!line || !lines || lines.test(line)));

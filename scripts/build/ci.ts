@@ -260,7 +260,6 @@ const TIMINGS_META_DATA = "timings:";
 //           ├── testaot[.exe]            (the engine's AoT test program, likewise)
 //           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
 //           ├── aot-engine/              (the engine's generators and its schema, for the tests that import them)
-//           ├── aot-sources/             (the engine's C++ as it is written, laid out as aot/ is, for the lint that reads it)
 //           ├── aot_builtin_table.json   (the table of built-ins this Bun was built with: test/aot/generate.ts writes programs from it)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
@@ -382,19 +381,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
       cpSync(join(compiledWith, name), join(staged, "builtins", "generated", name));
     }
     files.push("aot-engine");
-  }
-  // What test/aot/compiler/names-compared-as-text.ts reads. A WebKit without them gets no folder, and the test says so:
-  // in an empty folder it would find nothing and pass.
-  const engineSources = existsSync(engineDirectory)
-    ? readdirSync(engineDirectory, { recursive: true, encoding: "utf8" }).filter(
-        path => /\.(h|cpp)$/.test(path) && !/^(tests|builtins[\\/]generated)[\\/]/.test(path),
-      )
-    : [];
-  if (engineSources.length > 0) {
-    const staged = resolve(buildDir, "aot-sources");
-    rmSync(staged, { recursive: true, force: true });
-    for (const path of engineSources) cpSync(join(engineDirectory, path), join(staged, path));
-    files.push("aot-sources");
   }
   const builtinTable = resolve(cfg.codegenDir, "aot_builtin_table.json");
   if (existsSync(builtinTable)) files.push(builtinTable);

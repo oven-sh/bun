@@ -1465,6 +1465,23 @@ describe("bundler", () => {
       stdout: "SUCCESS\nSUCCESS",
     },
   });
+  // A key with more than one "*" is not a pattern (Node). esbuild does not resolve this import either.
+  itBundled("packagejson/ExportsKeyWithTwoWildcards", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg1/two/q/*'`,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "./two/*/*": "./src/two/*/*.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/pkg1/src/two/q/q.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/two/q/*". Maybe you need to "bun install"?`],
+    },
+  });
   itBundled("packagejson/ExportsErrorMissingTrailingSlash", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,

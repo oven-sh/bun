@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  nodeExeAtLeast,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -696,6 +708,125 @@ describe("wildcard exports with @ in matched subpath", () => {
     expect(Bun.resolveSync("@my/pkg@1.0.0/sub/index.js", root)).toBe(
       join(root, "node_modules/@my/pkg/dist/sub/index.js"),
     );
+  });
+});
+
+// Node treats an "exports" or "imports" key as a pattern only when the key has exactly one "*":
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L634
+// Each table below is what Node does, and it also runs on Node when Node is installed.
+describe("package.json exports and imports pattern keys", () => {
+  const node = nodeExeAtLeast("18.0.0");
+  // What Bun reports for a specifier that does not resolve.
+  const failure = {
+    resolveSync: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+    require: "MODULE_NOT_FOUND",
+    import: "ERR_MODULE_NOT_FOUND",
+  };
+  const patterns: Record<string, string | null> = {
+    "two/*/*": "./src/two/*/*.js",
+    "sh/*/*": "./src/sh2/*/*.js",
+    "sh/*": "./src/sh1.js",
+    "nul/*/*": null,
+    "nul/*": "./src/nul.js",
+    "ms/*/*/": "./src/ms/*.js",
+  };
+  // Includes the files that only a wrong match reaches, so that a wrong match loads a file.
+  const sources = ["src/two/q/q.js", "src/sh2/b/b.js", "src/sh1.js", "src/nul.js", "src/ms/q.js"];
+
+  // The same keys three times: the exports of the dependency "pat", the "#" imports of the
+  // package "host", and the exports of "host" for a self-reference. Every file exports its path.
+  function makeFixture(specifiers: string[]) {
+    const keys = (prefix: string) => Object.fromEntries(Object.entries(patterns).map(([k, v]) => [prefix + k, v]));
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "host", imports: keys("#"), exports: keys("./") }),
+      "node_modules/pat/package.json": JSON.stringify({ name: "pat", exports: keys("./") }),
+      "probe.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        for (const specifier of ${JSON.stringify(specifiers)}) {
+          const line = [specifier];
+          try { line.push(require(specifier)); } catch (e) { line.push(e.code); }
+          try { line.push((await import(specifier)).default); } catch (e) { line.push(e.code); }
+          console.log(line.join(" "));
+        }
+      `,
+    };
+    for (const source of sources) {
+      files[source] = `module.exports = ${JSON.stringify(source)};`;
+      files[`node_modules/pat/${source}`] = `module.exports = ${JSON.stringify(`node_modules/pat/${source}`)};`;
+    }
+    return tempDir("resolver-pattern-keys", files);
+  }
+
+  // [subpath, the file it loads, or null when it must not resolve]
+  type Row = [subpath: string, file: string | null];
+  const everyRoute = (rows: Row[]): Row[] =>
+    rows.flatMap(([subpath, file]): Row[] => [
+      [`pat/${subpath}`, file && `node_modules/pat/${file}`],
+      [`#${subpath}`, file],
+      [`host/${subpath}`, file],
+    ]);
+
+  const moreThanOneStar = everyRoute([
+    ["two/q/*", null],
+    ["ms/q/*/", null],
+    // The next key in the order of specificity, "./sh/*", matches instead.
+    ["sh/b/*", "src/sh1.js"],
+    // A null target blocks nothing when its key is not a pattern.
+    ["nul/b/*", "src/nul.js"],
+    ["sh/q", "src/sh1.js"],
+  ]);
+
+  describe.each([["a key with more than one '*' is not a pattern", moreThanOneStar]])("%s", (_, rows: Row[]) => {
+    const specifiers = rows.map(([specifier]) => specifier);
+
+    test.concurrent("Bun.resolveSync", () => {
+      using dir = makeFixture(specifiers);
+      const root = String(dir);
+      const resolved = specifiers.map(specifier => {
+        try {
+          return [specifier, Bun.resolveSync(specifier, root)];
+        } catch (e: any) {
+          return [specifier, { name: e.name, code: e.code }];
+        }
+      });
+      expect(resolved).toEqual(
+        rows.map(([specifier, file]) => [specifier, file === null ? failure.resolveSync : join(root, file)]),
+      );
+    });
+
+    test.concurrent("require and import()", async () => {
+      using dir = makeFixture(specifiers);
+      expect(await runWildcardScript(String(dir), "probe.mjs")).toEqual({
+        stdout: rows
+          .map(([specifier, file]) => `${specifier} ${file ?? failure.require} ${file ?? failure.import}`)
+          .join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    (node ? test.concurrent : test.skip)("Node.js loads the same files", async () => {
+      using dir = makeFixture(specifiers);
+      await using proc = Bun.spawn({
+        cmd: [node!, "probe.mjs"],
+        env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Node has its own error codes, so every result that is not a file counts as null.
+      const loaded = stdout
+        .trim()
+        .split("\n")
+        .map(line => line.split(" ").map((field, i) => (i === 0 || field.endsWith(".js") ? field : null)));
+      expect({ loaded, stderr, exitCode }).toEqual({
+        loaded: rows.map(([specifier, file]) => [specifier, file, file]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 

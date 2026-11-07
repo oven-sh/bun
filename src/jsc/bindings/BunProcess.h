@@ -17,6 +17,13 @@ using namespace JSC;
 extern "C" int getRSS(size_t* rss);
 extern "C" int getPeakRSS(size_t* peak);
 
+// Bytes. O(1). Only on the thread that owns the VM.
+struct HeapUsage {
+    size_t total;
+    size_t used;
+};
+HeapUsage heapUsage(JSC::VM&);
+
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
 

@@ -3754,6 +3754,200 @@ if (isBun) {
       expect(fn(mocked) === mocked).toBe(isVitest);
     });
 
+    test.each(flavors)("%s: spyOn() returns the mock that a property holds as it is", (_, isVitest, fn, spyOn) => {
+      for (const [, , make] of flavors) {
+        const held = make(function implementation() {});
+        const mockName = held.getMockName();
+        expect(spyOn({ held }, "held")).toBe(held);
+        expect(held.getMockName()).toBe(mockName);
+      }
+    });
+
+    test("jest: a Proxy trap that jest.spyOn() calls gets a Jest mock", () => {
+      const mockNames = [];
+      const proxy = new Proxy(
+        { method() {} },
+        {
+          defineProperty(target, key, descriptor) {
+            if (jest.isMockFunction(descriptor.value)) mockNames.push(descriptor.value.getMockName());
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        },
+      );
+      jest.spyOn(proxy, "method").mockRestore();
+      expect(mockNames).toEqual(["jest.fn()"]);
+    });
+
+    // Jest 30.5.2 gives the values of `jestMock` for each of these that it can run, and Vitest 5.1.0 those of `viMock`.
+    test("an automock has Jest's mock functions when `jest` asked for it, and Vitest's when `vi` did", async () => {
+      const { bunEnv, bunExe, tempDir } = require("harness");
+      const cjs = `
+        function named() { return "real"; }
+        class K { method() { return "real"; } }
+        module.exports = { named, nameless: (() => function () {})(), K, nested: { inner() { return "real"; } } };
+      `;
+      const esm = `
+        export function named() { return "real"; }
+        export class K { method() { return "real"; } }
+        export const nameless = (() => function () {})();
+        export const nested = { inner() { return "real"; } };
+      `;
+      const copies = (source, extension, names) => Object.fromEntries(names.map(name => [name + extension, source]));
+      using dir = tempDir("mock-flavor-automock", {
+        ...copies(cjs, ".cjs", ["dep", "hoisted", "do", "loaded", "reset", "spied", "by-vi", "do-by-vi"]),
+        ...copies(esm, ".js", ["hoisted", "do", "loaded", "hoisted-by-vi", "loaded-by-vi"]),
+        "behaviour.js": `
+          // Where a Jest mock and a Vitest mock differ.
+          export function behaviour(mocked) {
+            mocked.K.mockClear();
+            const instance = new mocked.K();
+            const state = mocked.named.mock;
+            mocked.named.mockClear();
+            mocked.named.mockReturnValueOnce(1);
+            const waiting = mocked.named.getMockImplementation();
+            mocked.named.mockReset();
+            const returned = mocked.named.withImplementation(() => {}, () => {});
+            const functions = [mocked.named, mocked.nameless, mocked.K, mocked.K.prototype.method, instance.method, mocked.nested.inner];
+            return {
+              "getMockName()": functions.map(mock => mock.getMockName()),
+              "mockName('given').mockName('')": mocked.nested.inner.mockName("given").mockName("").getMockName(),
+              "fn.mock after mockClear()": mocked.named.mock === state ? "the same object" : "a new object",
+              "the result of new": mocked.K.mock.results[0].value === instance ? "the instance" : String(mocked.K.mock.results[0].value),
+              "withImplementation() returns": returned === mocked.named ? "the mock" : String(returned),
+              "getMockImplementation() while a mockReturnValueOnce() waits": typeof waiting,
+            };
+          }
+          export const jestMock = {
+            "getMockName()": Array(6).fill("jest.fn()"),
+            "mockName('given').mockName('')": "given",
+            "fn.mock after mockClear()": "a new object",
+            "the result of new": "undefined",
+            "withImplementation() returns": "undefined",
+            "getMockImplementation() while a mockReturnValueOnce() waits": "undefined",
+          };
+          export const viMock = {
+            "getMockName()": Array(6).fill("vi.fn()"),
+            "mockName('given').mockName('')": "vi.fn()",
+            "fn.mock after mockClear()": "the same object",
+            "the result of new": "the instance",
+            "withImplementation() returns": "the mock",
+            "getMockImplementation() while a mockReturnValueOnce() waits": "function",
+          };
+        `,
+        "jest.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { behaviour, jestMock, viMock } from "./behaviour.js";
+          import * as hoisted from "./hoisted.js";
+          import * as path from "node:path";
+
+          jest.mock("./hoisted.js");
+          jest.mock("./hoisted.cjs");
+          jest.mock("node:path");
+
+          test.each([
+            ["jest.createMockFromModule()", () => jest.createMockFromModule("./dep.cjs")],
+            ["jest.requireMock()", () => jest.requireMock("./dep.cjs")],
+            ["jest.mock(), then import", () => hoisted],
+            ["jest.mock(), then require()", () => require("./hoisted.cjs")],
+            ["jest.doMock(), then import()", () => (jest.doMock("./do.js"), import("./do.js"))],
+            ["jest.doMock(), then require()", () => (jest.doMock("./do.cjs"), require("./do.cjs"))],
+            ["import(), then jest.doMock()", async () => (await import("./loaded.js"), jest.doMock("./loaded.js"), import("./loaded.js"))],
+            ["require(), then jest.doMock()", () => (require("./loaded.cjs"), jest.doMock("./loaded.cjs"), require("./loaded.cjs"))],
+            ["jest.resetModules(), then require()", () => (jest.doMock("./reset.cjs"), require("./reset.cjs"), jest.resetModules(), require("./reset.cjs"))],
+          ])("%s", async (_, load) => {
+            const mocked = await load();
+            expect(behaviour(mocked)).toEqual(jestMock);
+            expect([mocked.named.name, mocked.nameless.name, mocked.K.name]).toEqual(["named", "mockConstructor", "K"]);
+          });
+
+          test("jest.mock() of a builtin", () => {
+            expect(path.join.getMockName()).toBe("jest.fn()");
+          });
+
+          test("jest.doMock(path, { spy: true }): mockReset() still goes back to the original", () => {
+            jest.doMock("./spied.cjs", { spy: true });
+            const spied = require("./spied.cjs");
+            expect([spied.named.getMockName(), spied.named()]).toEqual(["jest.fn()", "real"]);
+            expect(spied.named.mockReturnValue("mocked")()).toBe("mocked");
+            expect(spied.named.mockReset()()).toBe("real");
+          });
+
+          test("of a module that vi mocked: jest.requireMock() returns its mock, jest.createMockFromModule() makes Jest's", () => {
+            vi.doMock("./by-vi.cjs");
+            expect(behaviour(jest.requireMock("./by-vi.cjs"))).toEqual(viMock);
+            expect(behaviour(jest.createMockFromModule("./by-vi.cjs"))).toEqual(jestMock);
+          });
+        `,
+        "vi.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { behaviour, viMock } from "./behaviour.js";
+          import * as hoisted from "./hoisted-by-vi.js";
+          import * as path from "node:path";
+
+          vi.mock("./hoisted-by-vi.js");
+          vi.mock("node:path");
+
+          test.each([
+            ["vi.importMock()", () => vi.importMock("./dep.cjs")],
+            ["vi.mock(), then import", () => hoisted],
+            ["vi.doMock(), then require()", () => (vi.doMock("./do-by-vi.cjs"), require("./do-by-vi.cjs"))],
+            ["import(), then vi.mock()", async () => (await import("./loaded-by-vi.js"), vi.mock("./loaded-by-vi.js"), import("./loaded-by-vi.js"))],
+            ["vi.mockObject()", async () => vi.mockObject({ ...(await import("./dep.cjs")) })],
+          ])("%s", async (_, load) => {
+            const mocked = await load();
+            expect(behaviour(mocked)).toEqual(viMock);
+            // Vitest 5.1.0 names the second one "Mock".
+            expect([mocked.named.name, mocked.nameless.name]).toEqual(["named", ""]);
+          });
+
+          test("vi.mock() of a builtin", () => {
+            expect(path.join.getMockName()).toBe("vi.fn()");
+          });
+        `,
+        "snapshot.test.js": `
+          test("an automock matches the snapshot that Jest wrote for it", () => {
+            const { named, K } = jest.createMockFromModule("./dep.cjs");
+            new K(1);
+            expect({ named, K }).toMatchSnapshot();
+          });
+        `,
+        // Jest 30.5.2 wrote this for the test above.
+        "__snapshots__/snapshot.test.js.snap": [
+          "// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing",
+          "",
+          "exports[`an automock matches the snapshot that Jest wrote for it 1`] = `",
+          "{",
+          '  "K": [MockFunction] {',
+          '    "calls": [',
+          "      [",
+          "        1,",
+          "      ],",
+          "    ],",
+          '    "results": [',
+          "      {",
+          '        "type": "return",',
+          '        "value": undefined,',
+          "      },",
+          "    ],",
+          "  },",
+          '  "named": [MockFunction],',
+          "}",
+          "`;",
+          "",
+        ].join("\n"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 19 pass\n 0 fail\n");
+      expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    });
+
     test.each(flavors)("%s: the return value of withImplementation()", (_, isVitest, fn) => {
       const mocked = fn();
       expect(mocked.withImplementation(() => 1, () => {})).toBe(isVitest ? mocked : undefined); // prettier-ignore

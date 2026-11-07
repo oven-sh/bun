@@ -217,7 +217,8 @@ declare module "bun:test" {
      * Replace the module `id` with the return value of `factory`. The call is hoisted above the file's imports.
      *
      * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
-     * isn't one, it's replaced with a copy of the module where every function is a mock.
+     * isn't one, it's replaced with a copy of the module where every function is a mock like the ones `jest.fn()`
+     * makes.
      */
     function mock(id: string, factory?: ModuleMockFactory): typeof jest;
     /**
@@ -241,7 +242,8 @@ declare module "bun:test" {
      */
     function requireMock<T = any>(id: string): T;
     /**
-     * `require()` the real module `id` and return a copy where every function is a mock.
+     * `require()` the real module `id` and return a copy where every function is a mock like the ones `jest.fn()`
+     * makes.
      */
     function createMockFromModule<T = any>(id: string): Mocked<T>;
     /**
@@ -445,8 +447,8 @@ declare module "bun:test" {
      * Replace a module with the return value of `factory`. The call is hoisted above the file's imports.
      *
      * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
-     * isn't one, it's replaced with a copy of the module where every function is a mock. With `{ spy: true }`, the
-     * functions keep their implementation.
+     * isn't one, it's replaced with a copy of the module where every function is a mock like the ones `vi.fn()`
+     * makes. With `{ spy: true }`, the functions keep their implementation.
      *
      * @example
      * ```ts

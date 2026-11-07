@@ -18,8 +18,16 @@ using namespace WebCore;
 
 class JSMockFunction;
 
-// Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
-JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
+// The API that made a mock function. Where Jest and Vitest disagree, the mock behaves as in the one that made it.
+enum class MockFlavor : uint8_t {
+    // mock() and spyOn() of bun:test. As Jest, except that the mock name is the function's `name`.
+    Bun,
+    Jest,
+    Vitest,
+};
+
+// Automocks a module's exports, for the API that asked. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
+JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, MockFlavor, bool spy, bool leaveOriginalAlone = false);
 
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.

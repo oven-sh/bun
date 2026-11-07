@@ -491,6 +491,8 @@ test("automock", () => {
 
 `vi.importMock(path)`, `jest.requireMock(path)` and `jest.createMockFromModule(path)` return the same kind of mock without mocking the module.
 
+Bun builds the mocked module the same way for `jest` and `vi`. Only its mock functions differ. Through `jest` they are Jest mocks, like the ones `jest.fn()` makes. Through `vi` they are Vitest mocks, like the ones `vi.fn()` makes (see [Vitest Compatibility](#vitest-compatibility)). An export that is already a mock is kept as it is. For a module that is already mocked, `jest.requireMock()` returns its mock as it is, as in Jest.
+
 ### Removing a Mock
 
 | Function                                                   | What it does                                                   |
@@ -734,7 +736,7 @@ Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hoo
 
 ## Vitest Compatibility
 
-Bun provides the `vi` object for tests written for Vitest. Where Vitest and Jest differ, mocks made with `vi.fn()` and `vi.spyOn()` behave as in Vitest:
+Bun provides the `vi` object for tests written for Vitest. Where Vitest and Jest differ, a mock made through `vi` behaves as in Vitest. That applies to `vi.fn()`, `vi.spyOn()`, `vi.mockObject()`, and the mock functions of a module that `vi` mocks without a factory:
 
 - `mockReset()` goes back to the original implementation.
 - `vi.restoreAllMocks()` keeps the recorded calls of the spies it restores.
@@ -754,6 +756,8 @@ test("vitest compatibility", () => {
 ```
 
 `vi.mocked(fn)` returns `fn` typed as a mock. `vi.isMockFunction(fn)` returns whether `fn` is a mock.
+
+A mock keeps the behavior of the API that made it. If a property already holds a mock, `spyOn()`, `jest.spyOn()` and `vi.spyOn()` return that mock as it is.
 
 For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual`, `importMock`, `resetModules` and `hoisted`. `jest` has `mock`, `doMock`, `unmock`, `dontMock`, `requireActual`, `requireMock`, `createMockFromModule` and `resetModules`.
 

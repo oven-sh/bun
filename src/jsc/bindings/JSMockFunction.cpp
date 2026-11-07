@@ -361,6 +361,8 @@ static void putOwnProperty(JSGlobalObject* globalObject, JSObject* object, Prope
     putOwnPropertyStorage(globalObject, object, key, storage, descriptor.attributes() & descriptorAttributes, false);
 }
 
+static JSMockFunction* createMockFunction(JSC::VM&, Zig::GlobalObject*, MockFlavor);
+
 class JSMockFunction final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
@@ -442,14 +444,14 @@ public:
     JSC::WriteBarrier<JSC::JSObject> ownPrototype;
     JSC::WriteBarrier<JSC::JSObject> ownPrototypeParent;
     bool isAutomock { false };
-    bool isVitest { false };
-    // Made through `jest`. With neither flag it comes from bun:test's mock() or spyOn(), and its mock name is its `name`.
-    bool isJest { false };
     bool isSpy { false };
     // `prototype` is still the CustomValue shared by all mocks, which creates the object on first read.
     bool hasLazyPrototype { true };
     // Preloads and their beforeAll() hooks run once for all test files, so the end of a test file leaves it alone.
     bool isMadeByPreload { false };
+
+    MockFlavor flavor() const { return m_flavor; }
+    bool isVitest() const { return m_flavor == MockFlavor::Vitest; }
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
     // The spy is the property's getter or setter, or what its getter returns.
@@ -680,7 +682,7 @@ public:
         m_recorded.invocationCallOrder.clear();
 
         JSObject* state = m_recorded.state.get();
-        if (state && !this->isVitest) {
+        if (state && !this->isVitest()) {
             m_recorded.state.clear();
         } else if (state) {
             // In Vitest `fn.mock` stays the same object across mockClear().
@@ -904,6 +906,9 @@ public:
     }
 
 private:
+    // The flavor is set where the mock is made and never changes.
+    friend JSMockFunction* createMockFunction(JSC::VM&, Zig::GlobalObject*, MockFlavor);
+
     enum class List : uint8_t {
         Called = 1 << 0,
         Configured = 1 << 1,
@@ -1035,6 +1040,7 @@ private:
     JSC::Identifier m_spyIdentifier;
     unsigned m_spyAttributes { 0 };
     uint8_t m_lists { 0 };
+    MockFlavor m_flavor { MockFlavor::Bun };
 };
 
 template<typename Visitor>
@@ -1196,7 +1202,7 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
 void JSMockFunction::restoreAll(Zig::GlobalObject* globalObject)
 {
     // vi.restoreAllMocks() keeps a spy's calls and implementation.
-    forEachIn(globalObject, List::Spies, [globalObject](JSMockFunction* spy) { spy->clearSpy(globalObject, !spy->isVitest); });
+    forEachIn(globalObject, List::Spies, [globalObject](JSMockFunction* spy) { spy->clearSpy(globalObject, !spy->isVitest()); });
 }
 
 void JSMockFunction::clearAll(Zig::GlobalObject* globalObject)
@@ -1229,7 +1235,7 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
                 return;
             }
             auto scope = DECLARE_THROW_SCOPE(vm);
-            spy->clearSpy(globalObject, !spy->isVitest);
+            spy->clearSpy(globalObject, !spy->isVitest());
             // Only this file gets the error. Forget the spy, so later files don't retry it.
             if (scope.exception()) [[unlikely]]
                 spy->didUninstall();
@@ -1483,10 +1489,10 @@ static ALWAYS_INLINE void completeMockResult(JSC::VM& vm, Zig::GlobalObject* glo
     result->putDirectOffset(vm, 1, value);
 }
 
-static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, bool isVitest)
+static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, MockFlavor flavor)
 {
     auto* mock = JSMockFunction::create(vm, globalObject);
-    mock->isVitest = isVitest;
+    mock->m_flavor = flavor;
     if (globalObject->mockModule.preloadMayBeRunning) [[unlikely]]
         mock->isMadeByPreload = JSMock__isInPreload(globalObject);
     return mock;
@@ -1702,8 +1708,7 @@ static void mockInstanceMethods(Zig::GlobalObject* globalObject, JSMockFunction*
         if (inherited != method)
             continue;
 
-        auto* mock = createMockFunction(vm, globalObject, prototypeMock->isVitest);
-        mock->isJest = prototypeMock->isJest;
+        auto* mock = createMockFunction(vm, globalObject, prototypeMock->flavor());
         mock->copyNameAndLength(vm, globalObject, prototypeMock);
         RETURN_IF_EXCEPTION(scope, );
         mock->prototypeMock.set(vm, mock, prototypeMock);
@@ -1802,7 +1807,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
 #if ENABLE(AOT)
     isPlainFunction |= constructor && constructor.isCell() && constructor.asCell()->vm().hasCompiledCode() && JSC::AOT::declaredAs(constructor.asCell()) == JSC::AOT::DeclaredAs::Function;
 #endif
-    if (!fn->isVitest && isPlainFunction)
+    if (!fn->isVitest() && isPlainFunction)
         constructData = {};
     bool constructs = constructData.type != JSC::CallData::Type::None;
     JSValue thisValue = jsUndefined();
@@ -1834,7 +1839,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
     if (!scope.exception()) {
         if (!returnValue.isObject())
             returnValue = thisValue;
-        if (fn->isVitest)
+        if (fn->isVitest())
             resultValue = returnValue;
         if (fn->isAutomock)
             mockInstanceMethods(globalObject, fn, asObject(returnValue));
@@ -1883,7 +1888,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __
     auto* implementation = tryJSDynamicCast<JSMockImplementation*, Unknown>(thisObject->configuration().implementation);
     if (implementation && implementation->isOnce()) {
         // Vitest returns what the next call runs, Jest what stays. Outside Vitest, mockImplementationOnce()'s function has always been returned too.
-        bool isReturnedBeforeItsCall = implementation->kind == Kind::Call || (thisObject->isVitest && implementation->kind != Kind::Nothing);
+        bool isReturnedBeforeItsCall = implementation->kind == Kind::Call || (thisObject->isVitest() && implementation->kind != Kind::Nothing);
         if (!isReturnedBeforeItsCall)
             implementation = tryJSDynamicCast<JSMockImplementation*, Unknown>(thisObject->configuration().fallbackImplmentation);
     }
@@ -2000,19 +2005,25 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globa
     CHECK_IS_MOCK_FUNCTION(thisValue)
 
     auto* jsName = thisObject->jsName();
-    if (thisObject->isJest || thisObject->isVitest) {
-        auto* mockName = thisObject->configuration().mockName.get();
-        if (!mockName && thisObject->isVitest && thisObject->isSpy)
+    JSString* mockName = thisObject->configuration().mockName.get();
+    ASCIILiteral defaultMockName;
+    switch (thisObject->flavor()) {
+    case MockFlavor::Bun:
+        if (!jsName)
+            return JSValue::encode(jsEmptyString(vm));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsName));
+    case MockFlavor::Jest:
+        defaultMockName = "jest.fn()"_s;
+        break;
+    case MockFlavor::Vitest:
+        if (!mockName && thisObject->isSpy)
             mockName = jsName;
-        if (mockName && mockName->length())
-            return JSValue::encode(mockName);
-        return JSValue::encode(jsNontrivialString(vm, thisObject->isVitest ? "vi.fn()"_s : "jest.fn()"_s));
+        defaultMockName = "vi.fn()"_s;
+        break;
     }
-    if (!jsName) {
-        return JSValue::encode(jsEmptyString(vm));
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsName));
+    if (mockName && mockName->length())
+        return JSValue::encode(mockName);
+    return JSValue::encode(jsNontrivialString(vm, defaultMockName));
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -2110,23 +2121,29 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockName, (JSC::JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
+    JSValue given = callframe->argument(0);
+    switch (thisObject->flavor()) {
+    case MockFlavor::Vitest:
+        if (given.isString())
+            thisObject->willConfigure().mockName.set(vm, thisObject, asString(given));
+        break;
     // https://github.com/jestjs/jest/blob/bd1c6db7c15c23788ca3e09c919138e48dd3b28a/packages/jest-mock/src/index.ts#L849-L856
-    if (thisObject->isVitest) {
-        if (callframe->argument(0).isString()) {
-            thisObject->willConfigure().mockName.set(vm, thisObject, asString(callframe->argument(0)));
-        }
-    } else if (callframe->argument(0).toBoolean(globalObject)) {
-        JSString* name = callframe->argument(0).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (thisObject->isJest) {
-            thisObject->willConfigure().mockName.set(vm, thisObject, name);
-        } else {
-            auto nameString = name->value(globalObject);
+    case MockFlavor::Jest:
+    case MockFlavor::Bun:
+        if (given.toBoolean(globalObject)) {
+            JSString* name = given.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            thisObject->setName(nameString);
+            if (thisObject->flavor() == MockFlavor::Jest) {
+                thisObject->willConfigure().mockName.set(vm, thisObject, name);
+            } else {
+                auto nameString = name->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                thisObject->setName(nameString);
+            }
+        } else {
+            RETURN_IF_EXCEPTION(scope, {});
         }
-    } else {
-        RETURN_IF_EXCEPTION(scope, {});
+        break;
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
@@ -2509,7 +2526,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionWithImplementation, __att
     thisObject->setImplementations(globalObject, lastImpl, lastTail, lastFallback);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSC::JSValue::encode(thisObject->isVitest ? JSValue(thisObject) : jsUndefined());
+    return JSC::JSValue::encode(thisObject->isVitest() ? JSValue(thisObject) : jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAutomockedAccessor, (JSC::JSGlobalObject*, JSC::CallFrame*))
@@ -2533,6 +2550,7 @@ enum class AutomockRole : uint8_t {
 
 struct Automocker {
     Zig::GlobalObject* globalObject;
+    MockFlavor flavor;
     bool spy;
     bool leaveOriginalAlone;
     JSC::JSMap* replacements;
@@ -2550,6 +2568,13 @@ struct Automocker {
 __attribute__((minsize)) NEVER_INLINE JSString* objectPrototypeToStringOutOfLine(JSGlobalObject* globalObject, JSValue value)
 {
     return JSC::objectPrototypeToString(globalObject, value);
+}
+
+// Jest names the automock of a function without a name like a bare jest.fn().
+// Out of line: with a second setName() in minsize code, the compiler stops inlining the one in wrapFunction().
+static NEVER_INLINE void nameLikeBareJestFn(Zig::GlobalObject* globalObject, JSMockFunction* mock)
+{
+    mock->setName(globalObject->mockModule.defaultName.getInitializedOnMainThread(globalObject));
 }
 
 AutomockKind Automocker::kindOf(JSValue value)
@@ -2639,10 +2664,12 @@ __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, Autom
         replacement->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
         break;
     case AutomockKind::Function: {
-        auto* mock = createMockFunction(vm, globalObject, true);
+        auto* mock = createMockFunction(vm, globalObject, flavor);
         mock->isAutomock = true;
         mock->copyNameAndLength(vm, globalObject, value);
         RETURN_IF_EXCEPTION(scope, {});
+        if (flavor == MockFlavor::Jest && !mock->jsName()->length())
+            nameLikeBareJestFn(globalObject, mock);
         if (spy) {
             mock->setInitialImplementation(globalObject, value);
             RETURN_IF_EXCEPTION(scope, {});
@@ -2780,12 +2807,12 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
     }
 }
 
-__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool leaveOriginalAlone)
+__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, MockFlavor flavor, bool spy, bool leaveOriginalAlone)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Automocker automocker { globalObject, spy, leaveOriginalAlone, JSC::JSMap::create(vm, globalObject->mapStructure()) };
+    Automocker automocker { globalObject, flavor, spy, leaveOriginalAlone, JSC::JSMap::create(vm, globalObject->mapStructure()) };
     JSValue result = automocker.replacementFor(value, role);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2803,9 +2830,9 @@ __attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject
     return result;
 }
 
-JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, bool spy, bool leaveOriginalAlone)
+JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, MockFlavor flavor, bool spy, bool leaveOriginalAlone)
 {
-    return automock(globalObject, value, AutomockRole::Exports, spy, leaveOriginalAlone);
+    return automock(globalObject, value, AutomockRole::Exports, flavor, spy, leaveOriginalAlone);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -2822,7 +2849,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockObject, (JSC::JSGlobalObject * lexica
         spy = spyValue.toBoolean(globalObject);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(automock(globalObject, callframe->argument(0), AutomockRole::Member, spy, false)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(automock(globalObject, callframe->argument(0), AutomockRole::Member, MockFlavor::Vitest, spy, false)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionIsMockFunction, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))
@@ -2945,7 +2972,7 @@ __attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObjec
     mock->copyStaticProperties(globalObject, asObject(function));
     RETURN_IF_EXCEPTION(scope, );
     scope.release();
-    if (!mock->isVitest) {
+    if (!mock->isVitest()) {
         mock->pushImpl(globalObject, JSMockImplementation::Kind::Call, function);
         return;
     }
@@ -2984,7 +3011,7 @@ enum class SpyAccess : uint8_t {
     Set,
 };
 
-__attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
+__attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, MockFlavor flavor)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3167,7 +3194,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             return {};
         }
 
-        auto* mock = createMockFunction(vm, globalObject, isVitest);
+        auto* mock = createMockFunction(vm, globalObject, flavor);
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
@@ -3253,7 +3280,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         return {};
     }
 
-    auto* mock = createMockFunction(vm, globalObject, isVitest);
+    auto* mock = createMockFunction(vm, globalObject, flavor);
     if (original.isCallable()) {
         wrapFunction(globalObject, mock, original);
     } else if (access == SpyAccess::Get && descriptor.isDataDescriptor()) {
@@ -3289,24 +3316,25 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return spyOn(globalObject, callframe, false);
+    return spyOn(globalObject, callframe, MockFlavor::Bun);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsVitestSpyOn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return spyOn(globalObject, callframe, true);
+    return spyOn(globalObject, callframe, MockFlavor::Vitest);
 }
 
-static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
+static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, MockFlavor flavor)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isVitest = flavor == MockFlavor::Vitest;
 
     if (isVitest && dynamicDowncast<JSMockFunction>(callframe->argument(0)))
         return JSValue::encode(callframe->argument(0));
 
-    JSMockFunction* thisObject = createMockFunction(vm, globalObject, isVitest);
+    JSMockFunction* thisObject = createMockFunction(vm, globalObject, flavor);
     // Vitest names every vi.fn() "Mock", even one that wraps a named function.
     auto& name = isVitest ? globalObject->mockModule.vitestName : globalObject->mockModule.defaultName;
 
@@ -3329,32 +3357,22 @@ static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return mockFn(globalObject, callframe, false);
+    return mockFn(globalObject, callframe, MockFlavor::Bun);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsVitestFn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return mockFn(globalObject, callframe, true);
-}
-
-static JSC::EncodedJSValue madeThroughJest(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue (*make)(JSC::JSGlobalObject*, JSC::CallFrame*, bool), JSC::CallFrame* callframe)
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    JSValue mock = JSValue::decode(make(globalObject, callframe, false));
-    RETURN_IF_EXCEPTION(scope, {});
-    if (auto* made = dynamicDowncast<JSMockFunction>(mock); made && !made->isVitest)
-        made->isJest = true;
-    return JSValue::encode(mock);
+    return mockFn(globalObject, callframe, MockFlavor::Vitest);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsJestFn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return madeThroughJest(globalObject, mockFn, callframe);
+    return mockFn(globalObject, callframe, MockFlavor::Jest);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsJestSpyOn, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return madeThroughJest(globalObject, spyOn, callframe);
+    return spyOn(globalObject, callframe, MockFlavor::Jest);
 }
 
 extern "C" __attribute__((minsize)) void JSMock__putMockFunctionUtilities(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedMockFn, JSC::EncodedJSValue encodedJest, JSC::EncodedJSValue encodedVi)

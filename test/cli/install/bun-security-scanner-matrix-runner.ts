@@ -243,8 +243,9 @@ function expectationsFor(options: SecurityScannerTestOptions): { before: Project
   let installedAfter: string[];
   if (!proceeds) {
     installedAfter = installsScannerFirst ? [...installedBefore, SCANNER_PACKAGE] : installedBefore;
-  } else if (removes && hasExistingNodeModules && linker === "isolated") {
-    // The isolated linker only unlinks a removed package. Its store entry stays behind.
+  } else if (removes && hasExistingNodeModules && linker === "isolated" && !hasLockfile) {
+    // Without a lockfile to diff against, the isolated linker only unlinks a removed package. Its store entry
+    // stays behind.
     installedAfter = installedBefore;
   } else {
     // `remove is-even` without node_modules installs is-even: it is still a dependency of is-odd. This is what

@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { copyFile, exists, mkdir, realpath, rm } from "fs/promises";
+import { copyFile, exists, mkdir, readdir, realpath, rm } from "fs/promises";
 import { bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
 import { dirname, join } from "path";
 import { installEnv, TestRegistry } from "registry";
@@ -550,6 +550,12 @@ test.concurrent("works with the isolated linker", async () => {
   lockfile = await lock(packageDir);
   expect(lockfile).toContain('"no-deps@1.0.0"');
   expect(lockfile).not.toContain('"no-deps@1.1.0"');
+  // Re-linking one-range-dep's no-deps to the kept version removes the store entry of the dropped one.
+  expect((await readdir(join(packageDir, "node_modules", ".bun"))).sort()).toEqual([
+    "no-deps@1.0.0",
+    "node_modules",
+    "one-range-dep@1.0.0",
+  ]);
   await install("--frozen-lockfile");
 
   expect(await nestedNoDeps()).toStrictEqual({ name: "no-deps", version: "1.0.0" });

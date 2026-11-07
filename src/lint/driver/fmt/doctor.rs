@@ -72,13 +72,15 @@ pub(super) fn report(
     let file = configs.config_file_path(&own).map(to_relative);
     let is_oxfmt = configs.is_oxfmt_for(&own);
     let is_svelte_off = configs.turns_svelte_off(&own, cwd);
-    let found = files.found.iter().filter_map(|it| match it {
-        Expanded::File(target) => Some(target),
-        Expanded::Error(_) => None,
-    });
+    let found = || {
+        files.found.iter().filter_map(|it| match it {
+            Expanded::File(target) => Some(target),
+            Expanded::Error(_) => None,
+        })
+    };
 
     let (mut plugins, mut nested) = (Plugins::default(), Vec::new());
-    for target in found {
+    for target in found() {
         let (scope, path) = (&target.scope, &target.path);
         let named = configs.plugin_packages(scope, Some(path));
         let missing = configs.missing_plugins(scope, Some(path)).iter();
@@ -148,6 +150,17 @@ pub(super) fn report(
             } else {
                 (is_oxfmt && matches!(name, b"oxfmt" | b"vite-plus")).then_some(Need::Defaults)
             }
+        },
+        &|stays| {
+            if stays != b"prettier" {
+                return Vec::new();
+            }
+            let before = modules.packages();
+            let scopes = std::iter::once(&*own).chain(found().map(|it| &*it.scope));
+            let mut names = configs.packages_loaded_by_prettier(scopes);
+            let after = modules.packages();
+            names.extend(after.into_iter().filter(|it| !before.contains(it)));
+            names
         },
     );
     let not_installed: Vec<Vec<u8>> = files.not_installed.iter().map(|it| it.to_vec()).collect();

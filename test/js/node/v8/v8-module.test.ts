@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import v8, { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {
@@ -187,5 +187,131 @@ describe("--expose-gc", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("function");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("function names", () => {
+  test("every function and class is named by its key, as in Node.js", () => {
+    const names: Record<string, string> = {};
+    for (const [key, value] of Object.entries(v8)) if (typeof value === "function") names[key] = value.name;
+    // What Node.js v26.3.0 gives for each of them.
+    expect(names).toEqual({
+      cachedDataVersionTag: "cachedDataVersionTag",
+      GCProfiler: "GCProfiler",
+      isStringOneByteRepresentation: "isStringOneByteRepresentation",
+      getHeapSnapshot: "getHeapSnapshot",
+      getHeapStatistics: "getHeapStatistics",
+      getHeapSpaceStatistics: "getHeapSpaceStatistics",
+      getHeapCodeStatistics: "getHeapCodeStatistics",
+      getCppHeapStatistics: "getCppHeapStatistics",
+      setFlagsFromString: "setFlagsFromString",
+      deserialize: "deserialize",
+      takeCoverage: "takeCoverage",
+      stopCoverage: "stopCoverage",
+      serialize: "serialize",
+      writeHeapSnapshot: "writeHeapSnapshot",
+      setHeapSnapshotNearHeapLimit: "setHeapSnapshotNearHeapLimit",
+      Deserializer: "Deserializer",
+      Serializer: "Serializer",
+      DefaultDeserializer: "DefaultDeserializer",
+      DefaultSerializer: "DefaultSerializer",
+    });
+  });
+
+  test("startupSnapshot has a function for each key, with the name and length Node.js gives it", () => {
+    const { addDeserializeCallback, addSerializeCallback, setDeserializeMainFunction } = v8.startupSnapshot;
+    const functions = [addDeserializeCallback, addSerializeCallback, setDeserializeMainFunction];
+    expect(functions.map(fn => ({ name: fn.name, length: fn.length }))).toEqual([
+      { name: "addDeserializeCallback", length: 2 },
+      { name: "addSerializeCallback", length: 2 },
+      { name: "setDeserializeMainFunction", length: 2 },
+    ]);
+    for (const fn of functions) {
+      expect(() => fn(() => {})).toThrow(
+        expect.objectContaining({
+          code: "ERR_NOT_BUILDING_SNAPSHOT",
+          message: "Operation cannot be invoked when not building startup snapshot",
+        }),
+      );
+    }
+  });
+
+  // The frames of builtin modules in a stack, without their positions.
+  function builtinFrames(stack: string) {
+    return stack
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => /^at .* \((?:node|internal):/.test(line))
+      .map(line => line.replace(/:\d+:\d+\)$/, ")"));
+  }
+
+  const throwers: { thrower: string; call: () => unknown; frames: string[] }[] = [
+    {
+      thrower: "a validator",
+      call: () => v8.setFlagsFromString(1 as any),
+      frames: ["at setFlagsFromString (node:v8)"],
+    },
+    {
+      thrower: "a function of startupSnapshot",
+      call: () => v8.startupSnapshot.addSerializeCallback(() => {}),
+      frames: ["at addSerializeCallback (node:v8)"],
+    },
+    {
+      thrower: "a class that is not implemented",
+      call: () => new v8.DefaultSerializer(),
+      frames: ["at new Serializer (node:v8)", "at new DefaultSerializer (node:v8)"],
+    },
+    {
+      thrower: "a class that is not implemented and takes arguments",
+      call: () => new v8.DefaultDeserializer(Buffer.alloc(1)),
+      frames: ["at new Deserializer (node:v8)", "at new DefaultDeserializer (node:v8)"],
+    },
+  ];
+  test.each(throwers)(
+    "an error from $thrower lists the functions of node:v8 and no throw helper",
+    ({ call, frames }) => {
+      function thrown(): Error {
+        try {
+          call();
+        } catch (error) {
+          return error as Error;
+        }
+        throw new Error("The call did not throw");
+      }
+      // A printed error takes its frames from the error, or from the text of `stack` once a program has read it.
+      const fromFrames = Bun.inspect(thrown());
+      const error = thrown();
+      expect(builtinFrames(error.stack!)).toEqual(expect.arrayContaining(frames));
+      const fromStackText = Bun.inspect(error);
+      expect({ fromFrames: builtinFrames(fromFrames), fromStackText: builtinFrames(fromStackText) }).toEqual({
+        fromFrames: frames,
+        fromStackText: frames,
+      });
+    },
+  );
+
+  test("an uncaught error previews the line of the caller and lists the function of node:v8 first", async () => {
+    const script = `const v8 = require("node:v8");
+function caller() {
+  v8.setFlagsFromString(1);
+}
+caller();`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "1 | const v8 = require("node:v8");
+      2 | function caller() {
+      3 |   v8.setFlagsFromString(1);
+               ^
+      TypeError: The "flags" argument must be of type string. Received type number (1)
+       code: "ERR_INVALID_ARG_TYPE"
+          at setFlagsFromString (file:NN:NN)
+          at caller (file:NN:NN)
+            at <cwd>/[eval]:5:1
+
+      Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 });

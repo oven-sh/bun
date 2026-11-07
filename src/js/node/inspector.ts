@@ -3,7 +3,6 @@
 // coverage, Runtime console notifications, forwarded Debugger.* configuration),
 // and open()/url()/close()/waitForDebugger() backed by a Chrome DevTools
 // Protocol WebSocket server with breakpoint pausing.
-const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
 const { SafeSet } = require("internal/primordials");
 const EventEmitter = require("node:events");
@@ -38,7 +37,7 @@ const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeN
 
 let activeInspectorUrl: string | undefined;
 
-function open(port?: number, host?: string, wait?: boolean) {
+function inspectorOpen(port?: number, host?: string, wait?: boolean) {
   if (activeInspectorUrl !== undefined) {
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
@@ -61,7 +60,7 @@ function open(port?: number, host?: string, wait?: boolean) {
   const disposable = {
     __proto__: null,
     [Symbol.dispose]() {
-      close();
+      _debugEnd();
     },
   };
 
@@ -114,7 +113,7 @@ function open(port?: number, host?: string, wait?: boolean) {
   return disposable;
 }
 
-function close() {
+function _debugEnd() {
   if (activeInspectorUrl === undefined) {
     return;
   }
@@ -129,7 +128,7 @@ function url() {
   return activeInspectorUrl;
 }
 
-function waitForDebugger() {
+function inspectorWaitForDebugger() {
   if (activeInspectorUrl === undefined) {
     throw $ERR_INSPECTOR_NOT_ACTIVE();
   }
@@ -759,13 +758,13 @@ const console = {
   },
 };
 
+// The functions have node's names, which are not the export keys:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/inspector.js#L242-L246
 export default {
   console,
-  open,
-  close,
+  open: inspectorOpen,
+  close: _debugEnd,
   url,
-  waitForDebugger,
+  waitForDebugger: inspectorWaitForDebugger,
   Session,
 };
-
-hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);

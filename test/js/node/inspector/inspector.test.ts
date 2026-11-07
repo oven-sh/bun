@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
+import inspectorPromises from "node:inspector/promises";
 
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
@@ -24,6 +25,46 @@ test("inspector.waitForDebugger() throws ERR_INSPECTOR_NOT_ACTIVE when the inspe
   expect(error).toBeDefined();
   expect(error.code).toBe("ERR_INSPECTOR_NOT_ACTIVE");
   expect(error.message).toBe("Inspector is not active");
+});
+
+test("functions and classes have the names Node.js gives them", () => {
+  for (const { open, close, url, waitForDebugger, Session } of [inspector, inspectorPromises]) {
+    expect({
+      open: open.name,
+      close: close.name,
+      url: url.name,
+      waitForDebugger: waitForDebugger.name,
+      Session: Session.name,
+    }).toEqual({
+      // Node.js v26.3.0. The names are those of lib/inspector.js, not the export keys.
+      open: "inspectorOpen",
+      close: "_debugEnd",
+      url: "url",
+      waitForDebugger: "inspectorWaitForDebugger",
+      Session: "Session",
+    });
+  }
+  expect(new inspector.Session().constructor.name).toBe("Session");
+});
+
+test.each([
+  {
+    name: "waitForDebugger",
+    call: () => inspector.waitForDebugger(),
+    frame: /^\s+at inspectorWaitForDebugger \(node:inspector:\d+:\d+\)$/m,
+  },
+  // Node.js checks the port only if it is a uint32.
+  { name: "open", call: () => inspector.open(65536), frame: /^\s+at inspectorOpen \(node:inspector:\d+:\d+\)$/m },
+])("an error printed from inspector.$name() lists that function", ({ call, frame }) => {
+  let error: unknown;
+  try {
+    call();
+  } catch (thrown) {
+    error = thrown;
+  }
+  expect(error).toBeInstanceOf(Error);
+  // A line of the source preview starts with its number, so only a frame matches.
+  expect(Bun.inspect(error)).toMatch(frame);
 });
 
 // inspector.open() starts a WebSocket server speaking the V8 Chrome DevTools

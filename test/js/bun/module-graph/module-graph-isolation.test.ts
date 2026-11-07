@@ -4063,6 +4063,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     bun: "pure",
     // Process-wide on purpose.
     cluster: "host", // forks the whole process
+    diagnostics_channel: "host", // one channel per name for every graph and the host: a subscriber outlives dispose()
     inspector: "host",
     "inspector/promises": "host",
     process: "host",
@@ -4086,7 +4087,6 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
         "buffer",
         "console",
         "constants",
-        "diagnostics_channel",
         "domain",
         "events",
         "module",

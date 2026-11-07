@@ -3875,9 +3875,13 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
       ]);
     });
 
-    test("when its callback returns", async () => {
+    // The runner reads the clock when the callback has returned and its promise jobs have run.
+    test.each([
+      ["when its callback returns", `() => hold(${over})`],
+      ["when the promise jobs of its callback have run", `async () => { await 0; hold(${over}); }`],
+    ])("%s", async (_, callback) => {
       await run({
-        source: `${first} test("t", () => hold(${over}), ${limit});`,
+        source: `${first} test("t", ${callback}, ${limit});`,
         results: ["(pass) first", "(fail) t"],
       });
     });

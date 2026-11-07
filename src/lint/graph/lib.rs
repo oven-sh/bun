@@ -462,7 +462,7 @@ impl<'h> Graph<'h> {
         let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
         let mut named: Vec<Vec<u8>> = Vec::new();
         for project in projects {
-            if !strings::contains_any(project, b"*?[{(!") {
+            if !strings::contains_any(project, b"*?[{(") {
                 named.push(join(cwd, project));
                 continue;
             }

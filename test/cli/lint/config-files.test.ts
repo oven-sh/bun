@@ -959,12 +959,21 @@ test.concurrent.each([
   // It uses the closest tsconfig.json that includes the file. For a file that none of them includes, it tries each one.
   ["a pattern", { project: "packages/*/tsconfig.json" }, { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] }],
   ["a list", { project: ["packages/a", "packages/b"] }, { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] }],
-  // A `!` after a `/` is a character, so this lists no directory, and its `normalizeOptions` returns what it does for
-  // "nothing".
+  // A `!` after a `/` is a character. The package differs for `packages/!*/tsconfig.json` alone, where it lists nothing.
+  [
+    "a pattern with a `!` that matches a directory",
+    { project: "packages/!a*/tsconfig.json" },
+    { "@/x": all, "~base/x": all, "#a/x": all, "#b/x": all, "#bang/x": [] },
+  ],
+  [
+    "a directory whose name starts with `!`",
+    { project: "packages/!a1" },
+    { "@/x": all, "~base/x": all, "#a/x": all, "#b/x": all, "#bang/x": [] },
+  ],
   [
     "a pattern with a `!` that matches nothing",
-    { project: "packages/!a*/tsconfig.json" },
-    { "@/x": [], "~base/x": all, "#a/x": all, "#b/x": all },
+    { project: "packages/!b*/tsconfig.json" },
+    { "@/x": [], "~base/x": all, "#a/x": all, "#b/x": all, "#bang/x": all },
   ],
 ] as [string, unknown, Record<string, string[]>][])(
   "import/resolver: typescript: which tsconfig.json it reads: %s",
@@ -986,10 +995,12 @@ test.concurrent.each([
       "tsconfig.base.json": paths("~base"),
       "packages/a/tsconfig.json": paths("#a"),
       "packages/b/tsconfig.json": paths("#b"),
+      "packages/!a1/tsconfig.json": paths("#bang"),
       "e2e/tsconfig.json": "{}",
       "src/x.ts": "export {};\n",
       "packages/a/src/x.ts": "export {};\n",
       "packages/b/src/x.ts": "export {};\n",
+      "packages/!a1/src/x.ts": "export {};\n",
       ...Object.fromEntries(Object.values(linted).map(it => [it, code])),
     };
     const { problems } = await lint(files, Object.values(linted));

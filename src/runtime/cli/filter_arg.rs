@@ -394,7 +394,7 @@ impl<'a> PackageFilterIterator<'a> {
     /// As in `bun install`, a `!` entry removes a glob match, but never a path that's listed
     /// literally.
     fn is_excluded(&self, package_json_path: &[u8]) -> bool {
-        glob::detect_glob_syntax(&self.patterns[self.pattern_idx])
+        glob::detect_glob_syntax(&self.patterns[self.pattern_idx], glob::SegmentBang::Negates)
             && self
                 .negated
                 .excludes(resolve_path::relative_platform::<platform::Auto, false>(

@@ -230,7 +230,6 @@ type IgnoreFilterFn = fn(&[u8]) -> bool;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SegmentBang {
     /// It negates that segment: `src/!a*/x.ts` lists `x.ts` in each directory of `src` that `a*` does not match.
-    /// `Bun.Glob.scan` has done this since 1.0.14, and build scripts rely on it.
     Negates,
     /// It is a character. For a caller whose patterns have no such negation, or that passes a piece of a pattern.
     Literal,
@@ -2288,8 +2287,7 @@ pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
 }
 
-/// [`SegmentBang::Literal`]: the matcher negates a pattern that starts with `!`, and it gets one component at a time.
-/// An escaped `!` is a character to it on every platform, because the pattern is already cut into components here.
+/// After the cut on purpose: before it, `build_pattern_components` reads the `\` of `\!` as a separator on Windows.
 fn escape_segment_bangs(pattern: &mut Box<[u8]>, components: &mut [Component]) {
     let starts_with_bang = |it: &Component| pattern[it.start as usize] == b'!';
     if components.iter().any(starts_with_bang) {
@@ -2308,9 +2306,7 @@ fn with_escaped_segment_bangs(pattern: &[u8], components: &mut [Component]) -> B
         escaped.extend_from_slice(&pattern[copied..start]);
         component.start = u32::try_from(escaped.len()).expect("int cast");
         component.len = u32::try_from(component.len as usize + bangs).expect("int cast");
-        for _ in 0..bangs {
-            escaped.extend_from_slice(b"\\!");
-        }
+        crate::push_escaped_bangs(&mut escaped, bangs);
         copied = start + bangs;
     }
     escaped.extend_from_slice(&pattern[copied..]);

@@ -51,19 +51,23 @@ pub fn walk_bun_glob(walker: &mut BunGlobWalker) -> Result<bun_sys::Result<()>, 
     walker.walk()
 }
 
-/// `glob` with a `\` before each `!` at its start that negates it, so that [`r#match`] reads them as characters.
-/// For a piece of a pattern that does not start where the pattern starts.
+/// For a piece of a pattern that does not start where the pattern starts: [`r#match`] reads a `!` at its start as a character.
 pub fn literal_head(glob: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let bangs = matcher::negations(glob);
     if bangs == 0 {
         return std::borrow::Cow::Borrowed(glob);
     }
     let mut escaped = Vec::with_capacity(glob.len() + bangs);
-    for _ in 0..bangs {
-        escaped.extend_from_slice(b"\\!");
-    }
+    push_escaped_bangs(&mut escaped, bangs);
     escaped.extend_from_slice(&glob[bangs..]);
     std::borrow::Cow::Owned(escaped)
+}
+
+/// Writes the `!`s that `matcher::negations` counted, each as the character.
+pub(crate) fn push_escaped_bangs(to: &mut Vec<u8>, bangs: usize) {
+    for _ in 0..bangs {
+        to.extend_from_slice(b"\\!");
+    }
 }
 
 /// Returns true if `text` has an unescaped `@(`, `+(` or `!(`.
@@ -87,9 +91,9 @@ pub fn has_extglob_prefix(text: &[u8]) -> bool {
 /// excluding those escaped with backslashes
 /// TODO: this doesn't play nicely with Windows directory separator and
 /// backslashing, should we just require the user to supply posix filepaths?
-pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
+pub fn detect_glob_syntax(potential_pattern: &[u8], segment_bang: SegmentBang) -> bool {
     // Negation only allowed in the beginning of the pattern
-    if !potential_pattern.is_empty() && potential_pattern[0] == b'!' {
+    if segment_bang == SegmentBang::Negates && potential_pattern.first() == Some(&b'!') {
         return true;
     }
 

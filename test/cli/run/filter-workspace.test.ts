@@ -1181,6 +1181,9 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
     { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
     // A path that's listed literally is kept.
     { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
+    // A `!` that starts a path segment of a pattern negates that segment. It is not decided whether that stays.
+    { workspaces: ["packages/!leg*"], members: appAndLib },
+    { workspaces: ["!!packages/*", "!packages/legacy"], members: appAndLib },
   ];
   test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
     "bun run and bun install find the same members for %s",

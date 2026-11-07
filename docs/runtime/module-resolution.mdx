@@ -451,7 +451,9 @@ A pattern starts with one of these:
 - `/` or `**`, relative to the directory Bun runs in
 - An alias from `paths` in `tsconfig.json` or `imports` in `package.json`
 
-Dotfiles, `node_modules` and the file itself aren't matched. Parentheses are literal characters, so write alternatives as `{a,b}`, not `(a|b)` or `@(a|b)`. A `!` that doesn't start the pattern is a literal character too.
+Dotfiles, `node_modules` and the file itself aren't matched. Parentheses are literal characters, so write alternatives as `{a,b}`, not `(a|b)` or `@(a|b)`.
+
+A `!` at the start of a later path segment is a literal character too, as in `vite build`: `./pages/!draft.tsx` matches only a file named `!draft.tsx`. To leave files out, add a pattern that starts with `!` to the array. Vitest and `vite dev` read `./pages/!draft.tsx` as every file of `pages` but `draft.tsx`.
 
 | Option       | Description                                                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |

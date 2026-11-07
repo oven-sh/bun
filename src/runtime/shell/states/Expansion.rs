@@ -361,9 +361,8 @@ impl Expansion {
     /// able to broaden the match. Mirrors `do_brace_expand`'s escaping loop,
     /// but the glob matcher has no general backslash-escape that survives
     /// `build_pattern_components` on every platform, so each byte is wrapped
-    /// in a single-character class (`[c]`), which the matcher provably treats
-    /// as that literal character. A `!` stays bare: the walker is built with
-    /// `SegmentBang::Literal`, and a `(` after it is wrapped.
+    /// in a single-character class (`[c]`), which the matcher provably treats as that
+    /// literal character.
     /// `current_out` itself is not mutated: the no-match error message and the
     /// assignment-position literal fallback keep using the original word.
     fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {

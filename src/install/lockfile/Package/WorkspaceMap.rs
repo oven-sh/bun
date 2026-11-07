@@ -421,7 +421,7 @@ impl WorkspaceMap {
                 continue;
             }
 
-            if glob::detect_glob_syntax(input_path) {
+            if glob::detect_glob_syntax(input_path, glob::SegmentBang::Negates) {
                 if !negated.take(input_path) {
                     workspace_globs.push(Box::<[u8]>::from(input_path));
                 }
@@ -696,7 +696,7 @@ impl WorkspaceMap {
             if matches!(input_path, b"" | b"." | b"./" | b".\\") {
                 continue;
             }
-            if glob::detect_glob_syntax(input_path) {
+            if glob::detect_glob_syntax(input_path, glob::SegmentBang::Negates) {
                 if !negated.take(input_path) {
                     matched = matched || glob_lists(input_path, dir, abs_dir);
                 }

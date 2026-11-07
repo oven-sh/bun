@@ -2122,6 +2122,9 @@ describe.concurrent("--react-compiler", () => {
     ["folders", `reactCompiler = ["./src/"]`, [], "List useTotal Story"],
     ["a pattern", `reactCompiler = ["**/*.jsx"]`, [], "Other"],
     ["exclude alone", `reactCompiler = { exclude = "src" }`, [], "Other"],
+    // A `!` after `./` is a character of the name of a folder, here one that doesn't exist.
+    ["a folder whose name starts with `!`", `reactCompiler = ["./!src"]`, [], ""],
+    ["excluding such a folder", `reactCompiler = { exclude = "./!src" }`, [], everything],
     [
       "include and exclude",
       `reactCompiler = { include = ["src", "other"], exclude = ["**/*.stories.*", "other"] }`,

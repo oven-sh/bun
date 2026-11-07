@@ -752,7 +752,7 @@ pub fn expand_entry_points<T: AsRef<[u8]>>(
 }
 
 fn is_entry_pattern(file_map: Option<&FileMap>, entry: &[u8], absolute_entry: &[u8]) -> bool {
-    detect_glob_syntax(entry)
+    detect_glob_syntax(entry, SegmentBang::Literal)
         && !file_map.is_some_and(|file_map| file_map.contains(entry))
         && !bun_sys::exists(absolute_entry)
 }

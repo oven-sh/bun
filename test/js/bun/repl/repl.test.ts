@@ -838,6 +838,20 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test.each([true, false])("class fields follow useDefineForClassFields: %p of the tsconfig.json", async define => {
+      using dir = tempDir("repl-class-fields", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: define } }),
+      });
+      // A field with no initializer is an own property only when the class defines its fields.
+      const { outputs, stderr, exitCode } = await runRepl(
+        ["class A { x: number }", "Object.hasOwn(new A(), 'x')", ".exit"],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["[class A]", String(define)]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("-e / --eval and -p / --print", () => {

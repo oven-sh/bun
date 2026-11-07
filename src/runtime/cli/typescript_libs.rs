@@ -1,6 +1,6 @@
 //! TypeScript's `lib.*.d.ts` files, which declare `Array`, `Promise` and everything else that is
 //! built in. They are in the executable, like typescript-go's (`internal/bundled`), so they are
-//! always those of the version that the type checker is a port of.
+//! always those of the declared TypeScript baseline, independent of selected checker backports.
 //!
 //! `scripts/update-typescript-libs.ts` writes `typescript_libs.bin`: the number of files as a
 //! `u32`, as many records sorted by name, then the files. Each file is a zstd frame of its own, so

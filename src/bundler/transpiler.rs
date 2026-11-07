@@ -3054,11 +3054,13 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
+        // Nothing resolves these records, so each `url()` prints as written.
+        let mut import_records = Vec::<bun_ast::ImportRecord>::new();
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
             entry.contents(),
             opts,
-            None,
+            Some(&mut import_records),
             bun_ast::Index::source(0u32),
         ) {
             Ok(v) => v,
@@ -3087,7 +3089,9 @@ impl<'a> Transpiler<'a> {
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()
             },
-            None,
+            Some(bun_css::ImportInfo::init_outside_of_bundler(
+                &import_records,
+            )),
             None,
             &symbols,
         ) {

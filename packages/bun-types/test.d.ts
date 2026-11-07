@@ -778,6 +778,12 @@ declare module "bun:test" {
     each<const T>(table: readonly T[]): Describe<[T]>;
     /**
      * Like `each()`, but an array row is passed as one argument instead of being spread.
+     *
+     * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when the
+     * row has no `name`.
+     *
+     * @see https://bun.com/docs/test/writing-tests#vitest-title-format
      */
     for<const T>(table: readonly T[]): Describe<[row: T]>;
     for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
@@ -1194,12 +1200,18 @@ declare module "bun:test" {
      * Like `each()`, but an array row is passed as one argument instead of being spread,
      * and the second argument is the {@link TestContext}.
      *
+     * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when the
+     * row has no `name`.
+     *
      * @example
      * ```ts
      * test.for([[1, 2, 3]])("%i + %i = %i", ([a, b, sum], { expect }) => {
      *   expect(a + b).toBe(sum);
      * });
      * ```
+     *
+     * @see https://bun.com/docs/test/writing-tests#vitest-title-format
      */
     for<const Row>(table: readonly Row[]): TestWithContext<object, [row: Row]>;
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<object, [row: any]>;

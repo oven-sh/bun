@@ -387,9 +387,11 @@ test.for([
 });
 ```
 
+A `test.for` or `describe.for` title follows the [Vitest title format](#vitest-title-format), even when `test` and `describe` come from `"bun:test"`. Some specifiers print differently than in a `test.each` title.
+
 ### Format Specifiers
 
-Use these specifiers to format the test title:
+Use these specifiers in a `test.each` or `describe.each` title:
 
 | Specifier  | Description                         |
 | ---------- | ----------------------------------- |
@@ -435,6 +437,28 @@ test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
   // "fruit #1 is banana"
 });
 ```
+
+#### Vitest Title Format
+
+Bun formats a `test.for` or `describe.for` title the way Vitest does. The main differences from a `test.each` or `describe.each` title:
+
+| In the title                                       | `test.each`, `describe.each`  | `test.for`, `describe.for`                                                    |
+| -------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
+| `%p`                                               | pretty-format                 | not a specifier: it stays `%p` and takes no value                             |
+| `%%`                                               | `%`                           | `%`, a space and the next value                                               |
+| A specifier with no value left                     | left as is                    | `undefined`, or `NaN` for `%d`, `%i` and `%f`                                 |
+| An object or array for `%s`, `%o`, `%O` or `$name` | `{ n: "x" }`, `[ 1, 2 ]`      | `{ n: 'x' }`, cut short at about 40 characters. `%s` prints an array as `1,2` |
+| A string of more than 40 characters for `$name`    | printed in full               | cut to 40 characters, with `…` at the end                                     |
+| `$name`, and the row has no `name` property        | left as is                    | `undefined`                                                                   |
+| `$#`                                               | the test case's index         | left as is. Use `%#`                                                          |
+| `$0`, `$1` with an array row                       | left as is                    | the row's first and second value                                              |
+| A row that is `null` or `undefined`                | one value: `%s` prints `null` | no value: `%s` prints `undefined`                                             |
+
+A value that is cut short shows how many entries it leaves out. With `%o`, an array of the numbers 0 to 29 prints as `[ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(20) ]`.
+
+In a `test.for` title, write a single `%` to print a percent sign, as in `100% of %i`. A `%` that isn't part of a specifier is printed as is.
+
+`test.each` and `describe.each` from `"vitest"` print what the `test.for` column shows. The exception is the last row: for them, a row that is `null` or `undefined` is one value.
 
 ## Fixtures
 
@@ -496,7 +520,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
-| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
+| `test.each` and `describe.each` titles                    | [Bun's format](#format-specifiers)   | [Vitest's format](#vitest-title-format)                              |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
 | `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
 | Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |

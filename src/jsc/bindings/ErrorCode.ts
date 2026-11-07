@@ -15,8 +15,7 @@ type ErrorCodeMapping = Array<
 /** The codes of the rows made with `plain()`. */
 export const plainErrorCodes = new Set<string>();
 
-// Node makes the error of this row in native code, with no NodeError class, so it inherits Error.prototype.toString.
-// test/js/node/errors/error-code-toString-fixture.cjs runs a producer of each marked row in Node and in Bun.
+// The error inherits Error.prototype.toString, as Node's does: test/js/node/errors/error-code-toString-fixture.cjs runs a producer of each marked row.
 function plain(...row: ErrorCodeMapping[number]): ErrorCodeMapping[number] {
   plainErrorCodes.add(row[0]);
   return row;

@@ -922,6 +922,11 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-p keeps the parentheses of an object literal after a pure comment in an arrow body", async () => {
+      const script = "((o, k) => /* @__PURE__ */ ({}).hasOwnProperty.call(o, k))({ a: 1 }, 'a')";
+      expect(await runReplWith(["-p", script])).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    });
+
     test("-e with thrown error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "throw new Error('boom')"]);
       expect(stdout).toBe("");

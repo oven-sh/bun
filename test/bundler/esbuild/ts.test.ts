@@ -787,6 +787,26 @@ describe("bundler", () => {
     treeShaking: true,
     external: ["pkg"],
   });
+  itBundled("ts/ImportEqualsEnumAlias", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Y } from "./enums";
+        console.log(Y.P, Y.R, Y.P ** 2, Y["P"] ** 2);
+      `,
+      "/enums.ts": /* ts */ `
+        enum Z { N = -3 }
+        import X = Z;
+        export enum Y { P = X.N, R }
+      `,
+    },
+    onAfterBundle(api) {
+      // The member read through the alias is a constant, so the importer gets the values.
+      api.expectFile("/out.js").toContain("console.log(-3 /* P */, -2 /* R */, (-3) /* P */ ** 2, (-3) /* P */ ** 2);");
+    },
+    run: {
+      stdout: "-3 -2 9 9",
+    },
+  });
   itBundled("ts/MinifiedBundleES6", {
     files: {
       "/entry.ts": /* ts */ `

@@ -1943,6 +1943,231 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
+    describe("an `import X = A.B` alias of an enum or a namespace of the file", () => {
+      // Runs the output and returns the value of `result`.
+      const run = (code, result) => new Function(`${ts.parsed(code)};\nreturn ${result};`)();
+      const A = "namespace A { export enum Z { Q = 3 } }\n";
+      const counted = { P: 3, R: 4, 3: "P", 4: "R" };
+      // The values are those of tsc.
+      const leftToRunTime = [
+        ["a top-level enum reads an alias of an enum in a namespace", `${A}import X = A.Z; enum Y { P = X.Q, R }`, "Y"],
+        ["a top-level enum reads an alias of a namespace", `${A}import N = A; enum Y { P = N.Z.Q, R }`, "Y"],
+        ["a top-level enum reads an alias of an alias", `${A}import X = A.Z; import W = X; enum Y { P = W.Q, R }`, "Y"],
+        ["an alias of a member", "enum Z { Q = 3 } import X = Z.Q; enum Y { P = X, R }", "Y"],
+        [
+          "`export import` in a namespace, read in its block",
+          "namespace M { export enum Z { Q = 3 } export import X = Z; export enum Y { P = X.Q, R } }",
+          "M.Y",
+        ],
+        [
+          "`export import` in a namespace, read in a sibling block",
+          "namespace M { export enum Z { Q = 3 } export import X = Z; } namespace M { export enum Y { P = X.Q, R } }",
+          "M.Y",
+        ],
+        [
+          "`export import` in a namespace, read by the whole path",
+          "namespace M { export enum Z { Q = 3 } export import X = Z; } namespace N { export enum Y { P = M.X.Q, R } }",
+          "N.Y",
+        ],
+        [
+          "an alias of an `export import` in a namespace",
+          "namespace M { export enum Z { Q = 3 } export import X = Z; } import W = M.X; namespace N { export enum Y { P = W.Q, R } }",
+          "N.Y",
+        ],
+      ];
+
+      it.each([
+        ["a top-level enum", "enum Z { Q = 3 } import X = Z; enum Y { P = X.Q, R }", "Y"],
+        ["a const enum", "const enum Z { Q = 3 } import X = Z; enum Y { P = X.Q, R }", "Y"],
+        [
+          "an enum of its namespace block",
+          "namespace M { export enum Z { Q = 3 } import X = Z; export enum Y { P = X.Q, R } }",
+          "M.Y",
+        ],
+        [
+          "an enum of a sibling namespace block",
+          "namespace M { export enum Z { Q = 3 } } namespace M { import X = Z; export enum Y { P = X.Q, R } }",
+          "M.Y",
+        ],
+        ["an enum, written behind the enum that reads it", "enum Z { Q = 3 } enum Y { P = X.Q, R } import X = Z;", "Y"],
+        ["an enum, read with brackets", "enum Z { Q = 3 } import X = Z; enum Y { P = X['Q'], R }", "Y"],
+        [
+          "an enum, read in a function",
+          "enum Z { Q = 3 } import X = Z; function f() { enum Y { P = X.Q, R } return Y }",
+          "f()",
+        ],
+        [
+          "an enum in a namespace, read in a later namespace",
+          `${A}import X = A.Z; namespace B { export enum Y { P = X.Q, R } }`,
+          "B.Y",
+        ],
+        [
+          "a namespace, read in a later namespace",
+          `${A}import N = A; namespace B { export enum Y { P = N.Z.Q, R } }`,
+          "B.Y",
+        ],
+        [
+          "an alias, read in a later namespace",
+          `${A}import X = A.Z; import W = X; namespace B { export enum Y { P = W.Q, R } }`,
+          "B.Y",
+        ],
+        [
+          "an enum in a namespace, read in a function",
+          `${A}import X = A.Z; function f() { enum Y { P = X.Q, R } return Y }`,
+          "f()",
+        ],
+        ["an enum, read by a const enum", "enum Z { Q = 3 } import X = Z; const enum Y { P = X.Q, R }", "Y"],
+      ])("the next member counts on from a member read through an alias of %s", (_, code, result) => {
+        expect(run(code, result)).toEqual(counted);
+      });
+
+      it.each([
+        [
+          "a merged enum",
+          "enum Z { Q = 3 } enum Z { S = 7 } import X = Z; enum Y { P = X.S, R }",
+          { P: 7, R: 8, 7: "P", 8: "R" },
+        ],
+        [
+          "the inner of two aliases of one name",
+          "enum Z { Q = 3 } enum O { Q = 10 } import X = Z; namespace M { import X = O; export enum Y { P = X.Q, R } } const Y = M.Y;",
+          { P: 10, R: 11, 10: "P", 11: "R" },
+        ],
+        [
+          "the enum that the scope of the alias binds",
+          "enum Z { Q = 3 } namespace M { export enum Z { Q = 9 } import X = Z; export enum Y { P = X.Q, R } } const Y = M.Y;",
+          { P: 9, R: 10, 9: "P", 10: "R" },
+        ],
+        [
+          "an enum, with arithmetic",
+          "enum Z { Q = 3 } import X = Z; enum Y { P = X.Q + 1, R, S = -X.Q, T }",
+          { P: 4, R: 5, S: -3, T: -2, 4: "P", 5: "R", "-3": "S", "-2": "T" },
+        ],
+        [
+          "an enum, in the second block of the reading enum",
+          "enum Z { Q = 3 } import X = Z; enum Y { A = 1 } enum Y { P = X.Q, R }",
+          { A: 1, P: 3, R: 4, 1: "A", 3: "P", 4: "R" },
+        ],
+        [
+          "an enum with a string member, which gets no reverse key",
+          "enum Z { Q = 'a' } import X = Z; enum Y { P = X.Q, R = 1, S }",
+          { P: "a", R: 1, S: 2, 1: "R", 2: "S" },
+        ],
+      ])("a member read through an alias of %s is a constant", (_, code, Y) => {
+        expect(run(code, "Y")).toEqual(Y);
+      });
+
+      it.each(leftToRunTime)("%s: the read stays, as on main", (_, code, result) => {
+        const Y = run(code, result);
+        expect({ P: Y.P, R: Y.R }).toEqual({ P: 3, R: undefined });
+      });
+      it.todo.each(leftToRunTime)("%s: the next member counts on", (_, code, result) => {
+        expect(run(code, result)).toEqual(counted);
+      });
+
+      // tsc prints `var` for an alias statement, so its output does not throw and counts on.
+      const behind = `${A}import W = X; import X = A.Z; namespace B { export enum Y { P = W.Q, R } }`;
+      it("an alias of an alias that is written behind it reads that alias too early, as on main", () => {
+        expect(() => run(behind, "B.Y")).toThrow(ReferenceError);
+      });
+      it.todo("an alias of an alias that is written behind it: the next member counts on", () => {
+        expect(run(behind, "B.Y")).toEqual(counted);
+      });
+
+      it.each([
+        ["a plain const", "enum Z { Q = 3 } const X = Z; enum Y { P = X.Q, R }", "Y", 3],
+        [
+          "a nearer binding with the name of the alias",
+          "enum Z { Q = 3 } import X = Z; function f(X: any) { enum Y { P = X.Q, R } return Y }",
+          "f({ Q: 7 })",
+          7,
+        ],
+        ["an optional chain", "enum Z { Q = 3 } import X = Z; enum Y { P = X?.Q, R }", "Y", 3],
+        ["a member that is no constant", "let n = 3; enum Z { Q = n } import X = Z; enum Y { P = X.Q, R }", "Y", 3],
+      ])("%s is no constant", (_, code, result, P) => {
+        const Y = run(code, result);
+        expect({ P: Y.P, R: Y.R }).toEqual({ P, R: undefined });
+      });
+
+      it("a read outside an enum folds, and the alias statement stays", () => {
+        expect(
+          ts.parsed("enum Z { Q = 3, S = 's' }\nimport X = Z;\nconsole.log(X.Q, X['Q'], X.S, X, X?.Q, typeof X)"),
+        ).toBe(
+          `var Z;
+((Z) => {
+  Z[Z["Q"] = 3] = "Q";
+  Z["S"] = "s";
+})(Z ||= {});
+const X = Z;
+console.log(3 /* Q */, 3 /* Q */, "s" /* S */, X, X?.Q, typeof X)`,
+        );
+      });
+
+      it("a read in a namespace folds through an alias of the module scope", () => {
+        const out = ts.parsed(
+          `${A}import X = A.Z; import N = A;\nnamespace B { export const seen = [X.Q, N.Z.Q, N.Z['Q']] }`,
+        );
+        expect(out.slice(out.indexOf("const X"))).toBe(
+          `const X = A.Z;
+const N = A;
+var B;
+((B) => {
+  B.seen = [3 /* Q */, 3 /* Q */, 3 /* Q */];
+})(B ||= {})`,
+        );
+      });
+
+      it("an exported alias of the module folds and stays exported", () => {
+        expect(ts.parsed("enum Z { Q = 3 }\nexport import X = Z;\nexport const x = X.Q")).toEndWith(
+          "export const X = Z;\nexport const x = 3 /* Q */",
+        );
+      });
+
+      it("a write through the alias and a delete keep the read of the alias", () => {
+        const out = ts.parsed("enum Z { Q = 3 }\nimport X = Z;\n(X as any).Q = 4;\ndelete (X as any).Q;\nX.Q++");
+        expect(out.slice(out.indexOf("const X"))).toBe("const X = Z;\nX.Q = 4;\ndelete X.Q;\nX.Q++");
+      });
+
+      it("an alias of what is no enum or namespace of the file prints as on main", () => {
+        expect(ts.parsed("import X = require('x');\nconsole.log(X.Q)")).toBe(
+          'const X = require("x");\nconsole.log(X.Q)',
+        );
+        expect(ts.parsed("import { Z } from 'z';\nimport X = Z;\nconsole.log(X.Q)")).toBe(
+          'import { Z } from "z";\nconst X = Z;\nconsole.log(X.Q)',
+        );
+        expect(ts.parsed("import X = Baz.Bar;\nconsole.log(X.Q)")).toBe("const X = Baz.Bar;\nconsole.log(X.Q)");
+        expect(ts.parsed("const Z = { Q: 3 };\nimport X = Z;\nconsole.log(X.Q)")).toBe(
+          "const Z = { Q: 3 };\nconst X = Z;\nconsole.log(X.Q)",
+        );
+      });
+
+      it("a negative member read through an alias keeps its sign left of **", () => {
+        const code = "enum Z { N = -3 }\nimport X = Z;\nconst f = (n: number) => X.N ** n;";
+        expect(ts.parsed(code)).toEndWith("const f = (n) => (-3) /* N */ ** n");
+        expect(run(code, "f(2)")).toBe(9);
+      });
+
+      it("the enum counts on when bun runs the file", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            "enum Z { Q = 3 }\nimport X = Z;\nenum Y { P = X.Q, R, S }\nconsole.log(JSON.stringify(Y), X === Z);",
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: '{"3":"P","4":"R","5":"S","P":3,"R":4,"S":5} true\n',
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
     it("re-declaring an import binding that is kept in the output is an error", () => {
       const err = ts.expectParseError;
 

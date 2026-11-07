@@ -226,6 +226,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: name_loc,
             ref_: Ref::NONE,
         };
+        let aliases_before = p.ts_import_equals_aliases;
         let scope_index = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
         p.current_scope_mut().ts_namespace = Some(ts_namespace);
 
@@ -399,6 +400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || opts.is_typescript_declare
         {
             p.pop_and_discard_scope(scope_index);
+            p.ts_import_equals_aliases = aliases_before;
             if opts.scope.is_module() {
                 p.local_type_names.put(name_text, true)?;
             }
@@ -503,7 +505,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut value = target;
         p.lexer.expect(T::TIdentifier)?;
 
-        if name == b"require" && p.lexer.token == T::TOpenParen {
+        let is_require = name == b"require" && p.lexer.token == T::TOpenParen;
+        if is_require {
             // "import ns = require('x')"
             p.lexer.next()?;
             let path_estr = p.lexer.to_e_string()?;
@@ -557,6 +560,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = p
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
+        if !is_require {
+            p.ts_import_equals_aliases = Some(p.arena.alloc(crate::p::TsImportEqualsAlias {
+                alias: ref_,
+                scope: p.current_scope,
+                target: value,
+                is_export: opts.is_export,
+                next: p.ts_import_equals_aliases,
+            }));
+        }
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
         let decls = G::DeclList::init_one(G::Decl {
             binding,

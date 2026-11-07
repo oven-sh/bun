@@ -383,9 +383,9 @@ bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout
     m_selIsScrollTo = false;
 
     // The actionability check runs entirely page-side via callAsyncJavaScript:
-    // — WebKit awaits the returned Promise. One IPC roundtrip regardless of
+    // and WebKit awaits the returned Promise. One IPC roundtrip regardless of
     // how many frames the poll takes. `sel` and `timeout` are passed via the
-    // arguments: NSDictionary, not string-interpolated — the selector can
+    // arguments: NSDictionary, not string-interpolated, so the selector can
     // contain any characters. onSelectorComplete parses "cx,cy".
     auto body = objc::NSString::fromWTF(makeString("return (await "_s, kActionabilityIIFE, "(sel, timeout)).join(',')"_s));
     auto args = objc::NSDictionary::with2(

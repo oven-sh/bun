@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Prevents the use of zero fractions.
 pub struct NoZeroFractions;
 
-const ZERO_FRACTION: Message = Message::new("", "Don't use a zero fraction in the number.");
-const DANGLING_DOT: Message = Message::new("", "Don't use a dangling dot in the number.");
+const ZERO_FRACTION: &Message = &Message::new("", "Don't use a zero fraction in the number.");
+const DANGLING_DOT: &Message = &Message::new("", "Don't use a dangling dot in the number.");
 
 impl Rule for NoZeroFractions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-zero-fractions", Kind::Suggestion).fixable(Fixable::Code);

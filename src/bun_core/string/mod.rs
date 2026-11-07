@@ -260,6 +260,14 @@ impl String {
             }
         }
     }
+    /// [`Self::clone_utf16`] of code units stored at any alignment. A trailing odd byte is dropped.
+    pub fn clone_utf16_bytes(bytes: &[u8]) -> Self {
+        let bytes = &bytes[..bytes.len() & !1];
+        match crate::try_cast_slice(bytes) {
+            Some(units) => Self::clone_utf16(units),
+            None => Self::clone_utf16(&crate::vec_from_bytes(bytes).expect("even length")),
+        }
+    }
     pub fn create_atom(s: &[u8]) -> Self {
         // SAFETY: s.as_ptr()/len describe a valid byte slice.
         unsafe { BunString__createAtom(s.as_ptr(), s.len()) }

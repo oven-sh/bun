@@ -180,7 +180,7 @@ impl ErrorLocation {
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| Box::from(lines.as_slice()[0]));
+            .map(|lines| Box::from(bun_core::strings::trim(lines.as_slice()[0], b"\r\n")));
         Ok(bun_ast::Location {
             file: Box::from(source.path.text),
             namespace: Box::from(source.path.namespace),
@@ -208,10 +208,6 @@ pub enum PrinterErrorKind {
     },
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
-    /// The CSS modules `composes` property cannot be used within nested rules.
-    invalid_composes_nesting,
-    /// The CSS modules `composes` property cannot be used with a simple class selector.
-    invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
     /// Substituting parent selectors for `&` while compiling CSS nesting for
@@ -234,12 +230,6 @@ impl fmt::Display for PrinterErrorKind {
                 bs(*url)
             ),
             Self::fmt_error => f.write_str("Formatting error occurred"),
-            Self::invalid_composes_nesting => {
-                f.write_str("The 'composes' property cannot be used within nested rules")
-            }
-            Self::invalid_composes_selector => {
-                f.write_str("The 'composes' property can only be used with a simple class selector")
-            }
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }
@@ -368,8 +358,6 @@ pub enum SelectorError {
     invalid_pseudo_class_after_pseudo_element,
     /// An invalid pseudo class was encountered after a `-webkit-scrollbar` pseudo element.
     invalid_pseudo_class_after_webkit_scrollbar,
-    /// A `-webkit-scrollbar` state was encountered before a `-webkit-scrollbar` pseudo element.
-    invalid_pseudo_class_before_webkit_scrollbar,
     /// Invalid qualified name in attribute selector.
     invalid_qual_name_in_attr(Token),
     /// The current token is not allowed in this state.
@@ -409,9 +397,6 @@ impl fmt::Display for SelectorError {
             }
             Self::invalid_pseudo_class_after_webkit_scrollbar => {
                 f.write_str("Invalid pseudo-class after -webkit-scrollbar")
-            }
-            Self::invalid_pseudo_class_before_webkit_scrollbar => {
-                f.write_str("-webkit-scrollbar state found before -webkit-scrollbar pseudo-element")
             }
 
             Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", bs(*s)),

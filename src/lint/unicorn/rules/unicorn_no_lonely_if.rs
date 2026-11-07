@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Disallow `if` statements as the only statement in `if` blocks without `else`.
 pub struct NoLonelyIf;
 
-const NO_LONELY_IF: Message = Message::new("", "Unexpected `if` as the only statement in a `if` block without `else`.");
+const NO_LONELY_IF: &Message = &Message::new("", "Unexpected `if` as the only statement in a `if` block without `else`.");
 
 impl Rule for NoLonelyIf {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-lonely-if", Kind::Suggestion);

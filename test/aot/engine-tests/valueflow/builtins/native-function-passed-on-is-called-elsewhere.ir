@@ -1,0 +1,43 @@
+# const native = $newCppFunction(..); function apply(callee) { return callee(handed) } apply(native); apply(own)
+# The function goes where any value goes. Whoever calls it there calls its entry, beside whatever else arrives.
+# The example is a function for Bun's own tests: the table will not come to describe it.
+# LIBRARY: own
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> f2
+# CHECK-NEXT: f1 v4 -> f2
+# CHECK-NEXT: f2 v2 -> NativeFunctionsInternalForTestingCppJsFunction_hasReifiedStatic f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="library" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeNewCppFunctionInternalForTestingCppJsFunction_hasReifiedStatic
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0
+    v3 = NewClosure function=f4
+    v4 = Call v1, -, v3
+    Return
+}
+function f2 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 name="handed" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="own" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

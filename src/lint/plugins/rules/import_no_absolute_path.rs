@@ -9,7 +9,7 @@ pub struct NoAbsolutePath {
     visitor: Visitor,
 }
 
-const NO_ABSOLUTE_PATH: Message = Message::new("", "Do not import modules using an absolute path");
+const NO_ABSOLUTE_PATH: &Message = &Message::new("", "Do not import modules using an absolute path");
 
 impl Rule for NoAbsolutePath {
     const META: Meta = Meta::plugin(Plugin::Import, "no-absolute-path", Kind::Suggestion).fixable(Fixable::Code);

@@ -33,9 +33,8 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 // through that module's safe wrappers; no local extern block needed.
 
 // `SendQueue.owner` is a [`SendQueueOwner`] enum over the two concrete owner
-// types (`Subprocess`, parent side; `ipc_host::IPCInstance`, child side) —
-// both nameable in this crate — stored as a BACKREF cleared before the owner
-// drops.
+// types (`Subprocess`, parent side, stored as a BACKREF; the thread's one
+// `ipc_host::IPCInstance`, child side), cleared before the owner drops.
 
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
@@ -112,6 +111,7 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
+        let messages = core::mem::take(&mut self.messages);
         // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
@@ -121,8 +121,6 @@ impl InternalMsgHolder {
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
         // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
         for strong in messages {
             if let Some(message) = strong.get() {
                 // SAFETY: `this` is still live across re-entry — the IPC
@@ -286,9 +284,7 @@ mod advanced {
         /// messages keep the version-1 wire format.
         SerializedMessageWithBuffers = 4,
     }
-    // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
-    // `Copy + 'static`; the single byte is always an initialized discriminant.
-    unsafe impl bytemuck::NoUninit for IPCMessageType {}
+    bun_core::impl_no_uninit!(IPCMessageType);
 
     impl IPCMessageType {
         fn tag_name(raw: u8) -> &'static str {
@@ -441,10 +437,8 @@ mod advanced {
 mod json {
     use super::*;
 
-    extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
-        // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
-        // kept alive across the `drop(str)` in decode_ipc_message.
-        unsafe { *context = true };
+    extern "C" fn json_ipc_data_string_free_cb(context: &Cell<bool>, _: *mut c_void, _: usize) {
+        context.set(true);
     }
 
     pub(super) fn get_version_packet() -> &'static [u8] {
@@ -508,18 +502,18 @@ mod json {
         }
 
         let is_ascii = strings::is_all_ascii(json_data);
-        let mut was_ascii_string_freed = false;
+        let was_ascii_string_freed = Cell::new(false);
 
         // Use ExternalString to avoid copying data if possible.
         // This is only possible for ascii data, as that fits into latin1
         // otherwise we have to convert it utf-8 into utf16-le.
         let parsed = if is_ascii {
-            // SAFETY: `json_data` outlives `s`, and the check below panics if anything kept a ref past `s`.
+            // SAFETY: `json_data` and the flag outlive `s`, and the check below panics if anything kept a ref past `s`.
             // .dead if `json_data` exceeds max length
             let s = unsafe {
-                BunString::create_external::<*mut bool>(
+                BunString::create_external::<&Cell<bool>>(
                     json_data,
-                    &raw mut was_ascii_string_freed,
+                    &was_ascii_string_freed,
                     json_ipc_data_string_free_cb,
                 )
             };
@@ -534,7 +528,7 @@ mod json {
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
         // drop of `s` — so the freed-flag check must follow it.
-        if is_ascii && !was_ascii_string_freed {
+        if is_ascii && !was_ascii_string_freed.get() {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
             );
@@ -948,7 +942,7 @@ pub(crate) struct SendQueue {
 #[derive(Copy, Clone)]
 pub(crate) enum SendQueueOwner {
     Subprocess(core::ptr::NonNull<crate::api::bun::subprocess::Subprocess<'static>>),
-    Instance(core::ptr::NonNull<crate::ipc_host::IPCInstance>),
+    Instance,
 }
 
 impl SendQueueOwner {
@@ -956,7 +950,7 @@ impl SendQueueOwner {
     pub(crate) fn kind(self) -> SendQueueOwnerKind {
         match self {
             SendQueueOwner::Subprocess(_) => SendQueueOwnerKind::Subprocess,
-            SendQueueOwner::Instance(_) => SendQueueOwnerKind::VirtualMachine,
+            SendQueueOwner::Instance => SendQueueOwnerKind::VirtualMachine,
         }
     }
 
@@ -965,7 +959,7 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance(_) => core::ptr::from_ref(
+            SendQueueOwner::Instance => core::ptr::from_ref(
                 bun_jsc::virtual_machine::VirtualMachine::get()
                     .as_mut()
                     .global(),
@@ -977,8 +971,7 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_close(),
+            SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(),
         }
     }
 
@@ -986,8 +979,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_message(msg, handle),
+            SendQueueOwner::Instance => {
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+            }
         }
     }
 
@@ -999,7 +993,7 @@ impl SendQueueOwner {
                 .get()
                 .try_get()
                 .unwrap_or_default(),
-            SendQueueOwner::Instance(_) => JSValue::ZERO,
+            SendQueueOwner::Instance => JSValue::ZERO,
         }
     }
 }
@@ -1025,10 +1019,6 @@ impl SendQueue {
     #[inline]
     fn owner_ref(&self) -> Option<SendQueueOwner> {
         self.owner.get()
-    }
-
-    pub(crate) fn set_owner(&self, owner: SendQueueOwner) {
-        self.owner.set(Some(owner));
     }
 
     pub(crate) fn detach(&self) {

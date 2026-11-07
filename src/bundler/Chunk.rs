@@ -37,7 +37,7 @@ pub struct ChunkImport {
     pub(crate) import_kind: ImportKind,
 }
 
-// `'a` is the bundler arena. The keys' borrow of it is still erased (see `LinkerGraph::bump`).
+// `'a` is the bundler arena.
 pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
@@ -74,7 +74,7 @@ pub struct Chunk<'a> {
     pub intermediate_output: IntermediateOutput,
     pub(crate) isolated_hash: u64,
 
-    // Set before use. The borrowed enum (`Renamer<'r,'src>`)
+    // Set before use. The borrowed enum (`Renamer<'a>`)
     // borrows from the symbol table and so can't live in this owning struct.
     // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
     pub(crate) renamer: bun_renamer::ChunkRenamer,
@@ -124,22 +124,12 @@ impl Default for Content<'_> {
 // mutability and never requires an aliased `&mut Chunk` /
 // `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
 // `files_with_parts_in_chunk` values are bumped via atomic RMW;
-// the renamer is fully populated before fan-out and treated as
-// read-only by the printer.
-// Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
-// so the per-chunk renamer is reborrowed mutably from each part-range task;
-// the printer never writes through it, but the borrow should become `&'r`.
+// the renamer is fully populated before fan-out, and the printer only reads it.
 unsafe impl Send for Chunk<'_> {}
-// SAFETY: shared `&Chunk` access during the worker fan-out touches only
+// SAFETY: shared `&Chunk` access during the worker fan-out writes only
 // `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
 // `files_with_parts_in_chunk` atomic counters; the remaining fields are
-// frozen before fan-out and read single-threaded after the pool join —
-// **except** `renamer`, which the per-part-range printer reborrows `&mut`
-// from each worker (read-only in practice). See the renamer caveat above:
-// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
-// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
-// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
-// the single-pointer fan-out the workers use.
+// frozen before fan-out.
 unsafe impl Sync for Chunk<'_> {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
@@ -1427,23 +1417,12 @@ impl Layers {
 
     /// Cow::Borrowed constructor.
     ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
-    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
-    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
     /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
-    pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::from(p))
-    }
-
-    /// Drop owned (arena-backed, so no-op) and
-    /// install a fresh owned value.
-    #[inline]
-    pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
-        *self = Layers::Owned(new);
+    pub(crate) fn borrow(p: &Vec<bun_css::LayerName>) -> Self {
+        Layers::Borrowed(bun_ptr::BackRef::new(p))
     }
 
     /// If borrowed, deep-clone into an owned
@@ -1461,7 +1440,7 @@ impl Layers {
 
 impl CssImportOrder<'_> {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
-        // TODO: conditions, condition_import_records
+        // Not an identity: it leaves out the conditions. `css_chunk_key` compares on a hit.
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
         let tag: u8 = match &self.kind {
@@ -1486,8 +1465,6 @@ impl CssImportOrder<'_> {
                 hasher.update(b"\x00");
             }
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
-            // Note: `Index` is a `#[repr(transparent)]` u32 newtype but
-            // doesn't impl `AsBytes`; hash the inner u32.
             CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
             }
@@ -1680,7 +1657,7 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub(crate) fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),

@@ -13,8 +13,8 @@ pub struct PreferPromiseRejectErrors {
     allow_throwing_unknown: bool,
 }
 
-const REJECT_AN_ERROR: Message =
-    Message::new("rejectAnError", "Expected the Promise rejection reason to be an Error.");
+const REJECT_AN_ERROR: &Message =
+    &Message::new("rejectAnError", "Expected the Promise rejection reason to be an Error.");
 
 /// True if tsgolint's `checker.getAccessedPropertyName(callee)` is `reject`. For `a.#reject` it's
 /// `#reject`.

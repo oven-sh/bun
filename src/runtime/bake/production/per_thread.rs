@@ -77,7 +77,7 @@ impl PerThread {
 
     /// After initializing, call `attach`
     pub(crate) fn init(
-        vm: *mut VirtualMachine,
+        vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
         entry_points: EntryPointMap,
         mut bundled_outputs: Vec<OutputFile>,
         module_keys: Vec<BunString>,
@@ -88,9 +88,6 @@ impl PerThread {
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
-        // (non-null, write provenance); outlives PerThread.
-        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,

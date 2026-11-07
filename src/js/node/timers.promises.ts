@@ -8,8 +8,14 @@ const symbolAsyncIterator = Symbol.asyncIterator;
 const setImmediateGlobal = globalThis.setImmediate;
 const setTimeoutGlobal = globalThis.setTimeout;
 const setIntervalGlobal = globalThis.setInterval;
+const clearImmediateGlobal = globalThis.clearImmediate;
+const clearTimeoutGlobal = globalThis.clearTimeout;
+const clearIntervalGlobal = globalThis.clearInterval;
 
-type TimerOptions = import("node:timers").TimerOptions;
+interface TimerOptions {
+  signal?: AbortSignal;
+  ref?: boolean;
+}
 
 interface TimerAsyncIteratorMethods {
   next?: () => unknown;
@@ -66,7 +72,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   if (signal?.aborted) {
     return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
-  let onCancel;
+  let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
     const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
     if (!reference) {
@@ -74,14 +80,14 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearTimeout(timeout);
+        clearTimeoutGlobal(timeout);
         reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
     }
   });
   return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
+    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel!))
     : returnValue;
 }
 
@@ -105,22 +111,22 @@ function setImmediate(value?, options: TimerOptions = {}) {
   if (signal?.aborted) {
     return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
-  let onCancel;
+  let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
-    const immediate = setImmediateGlobal(() => resolve(value));
+    const immediate: NodeJS.Immediate = setImmediateGlobal(() => resolve(value));
     if (!reference) {
       immediate?.unref?.();
     }
     if (signal) {
       onCancel = () => {
-        clearImmediate(immediate);
+        clearImmediateGlobal(immediate);
         reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
     }
   });
   return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
+    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel!))
     : returnValue;
 }
 
@@ -176,11 +182,11 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
     });
   }
 
-  let onCancel, interval;
+  let onCancel: (() => void) | undefined, interval: NodeJS.Timeout | undefined;
 
   try {
     let notYielded = 0;
-    let callback;
+    let callback: (() => void) | undefined;
     interval = setIntervalGlobal(() => {
       notYielded++;
       if (callback) {
@@ -193,7 +199,7 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearInterval(interval);
+        clearIntervalGlobal(interval);
         if (callback) {
           callback();
           callback = undefined;
@@ -227,16 +233,16 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
         });
       },
       return: function () {
-        clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
+        clearIntervalGlobal(interval);
+        signal?.removeEventListener("abort", onCancel!);
         return Promise.$resolve({});
       },
     });
   } catch {
     return asyncIterator({
       next: function () {
-        clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
+        clearIntervalGlobal(interval);
+        signal?.removeEventListener("abort", onCancel!);
       },
     });
   }

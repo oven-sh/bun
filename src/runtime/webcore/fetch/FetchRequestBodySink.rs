@@ -1,4 +1,3 @@
-use bun_collections::ByteVecExt;
 use bun_ptr::BackRef;
 use bun_sys::Error as SysError;
 
@@ -7,46 +6,10 @@ use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
 use crate::webcore::sink::AnyControlledSink;
 use crate::webcore::streams::{
-    SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
+    EncodedChunk, SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
-
-/// One sink chunk in its source encoding; `write_request_data` converts
-/// directly into the locked stream buffer so no intermediate UTF-8 buffer is
-/// allocated.
-#[derive(Clone, Copy)]
-pub(crate) enum RequestBodyChunk<'a> {
-    Bytes(&'a [u8]),
-    Latin1(&'a [u8]),
-    Utf16(&'a [u16]),
-}
-
-impl<'a> RequestBodyChunk<'a> {
-    #[inline]
-    pub(crate) fn utf8_len(&self) -> usize {
-        match *self {
-            Self::Bytes(b) => b.len(),
-            Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
-            Self::Utf16(u) => {
-                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement(u)
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
-        match *self {
-            Self::Bytes(b) => out.extend_from_slice(b),
-            Self::Latin1(b) => {
-                let _ = out.write_latin1(b);
-            }
-            Self::Utf16(u) => {
-                let _ = out.write_utf16(u);
-            }
-        }
-    }
-}
 
 /// JSSink streaming a fetch() request body into the HTTP thread's ThreadSafeStreamBuffer
 /// with chunked framing; one write per drain-ack.
@@ -111,7 +74,7 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(())
     }
 
-    fn write_chunk(&mut self, chunk: RequestBodyChunk<'_>) -> Writable {
+    fn write_chunk(&mut self, chunk: EncodedChunk<'_>) -> Writable {
         if self.ended {
             return Writable::Done;
         }
@@ -149,20 +112,19 @@ impl FetchRequestBodySink {
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
-        self.write_chunk(RequestBodyChunk::Bytes(data.slice()))
+        self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }
 
     pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
-            return self.write_chunk(RequestBodyChunk::Bytes(bytes));
+            return self.write_chunk(EncodedChunk::Bytes(bytes));
         }
-        self.write_chunk(RequestBodyChunk::Latin1(bytes))
+        self.write_chunk(EncodedChunk::Latin1(bytes))
     }
 
-    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        // Caller guarantees u16 alignment / even length; bytemuck checks at runtime.
-        self.write_chunk(RequestBodyChunk::Utf16(bytemuck::cast_slice(data.slice())))
+    pub fn write_utf16(&mut self, text: &[u16]) -> Writable {
+        self.write_chunk(EncodedChunk::Utf16(text))
     }
 
     pub fn flush_from_js(
@@ -172,7 +134,7 @@ impl FetchRequestBodySink {
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
         if self.pending.state == PendingState::Pending {
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
+            return bun_sys::Result::Ok(self.pending.promise(cx));
         }
         if self.done || self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
@@ -184,7 +146,7 @@ impl FetchRequestBodySink {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
             self.pending.result = Writable::Owned(self.pending_bytes);
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
+            return bun_sys::Result::Ok(self.pending.promise(cx));
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             cx.global(),
@@ -260,8 +222,8 @@ impl FetchRequestBodySink {
 
     pub fn memory_cost(&self) -> usize {
         if let Some(task) = self.task.as_ref() {
-            if let Some(buf) = task.stream_buffer_mut() {
-                return buf.lock().size();
+            if let Some(buf) = task.request_body_streaming_buffer.as_deref() {
+                return buf.lock().buffer.size();
             }
         }
         0

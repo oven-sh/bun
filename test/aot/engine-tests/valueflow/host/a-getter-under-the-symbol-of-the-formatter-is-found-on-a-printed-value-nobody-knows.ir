@@ -1,0 +1,37 @@
+# const value = { get [Symbol.for("nodejs.util.inspect.custom")]() { return shown; } }; console.log(new Error("x", { cause: value }).cause)
+# What is printed is an object nobody knows. A getter lies under the symbol that the formatter looks for: what it answers may be called. HostChoosesOperands (h7) goes up.
+# RUN: valueflow-why timeline
+# CHECK: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ErrorOptions" fields=[{key="cause" declared={type=anything}}] ownFieldCount=1
+layout L1 name="Printed"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = NewObject layout=L1
+    v3 = NewClosure function=f1
+    v4 = Builtin builtin=SymbolFor
+    v5 = String string="nodejs.util.inspect.custom"
+    v6 = Call v4, -, v5
+    v7 = ToPropertyKey v6
+    DefineGetter v2, v3, v7
+    v9 = FinishObject v2
+    v10 = Builtin builtin=Error
+    v11 = String string="x"
+    v12 = NewObject -, v9 layout=L0 fields=[0]
+    v13 = FinishObject v12
+    v14 = Construct v10, -, v11, v13
+    v15 = PropGet v14 key="cause"
+    v16 = Call v1, v0, v15
+    Return v16
+}
+function f1 name="getter" module=m0 results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="custom" module=m0 results=[{type=anything}] {
+    v0 = String string="shown"
+    Return v0
+}

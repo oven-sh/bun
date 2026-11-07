@@ -134,6 +134,9 @@ Bun looks credentials up the way npm does. It takes the URL of the registry, wit
 - `:443` on an `https` URL and `:80` on an `http` URL are the same as no port.
 - A credential you set next to the registry URL wins over these lines: `token`, `username` and `password` in `bunfig.toml`, `user:password@` in a URL, and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN`. The one exception is a credential inside a `registry=` line of `.npmrc`, which a matching `//host/` line replaces, as in npm.
 - A tarball on the same origin as its registry gets the registry's credentials. A tarball anywhere else gets a credential only if `.npmrc` has a line for that URL and the URL is `https`. Bun never sends a registry's credentials to another host.
+- A dependency written as a tarball URL follows the tarball rule when your project names the URL. The default registry stands in for its registry. Your project names a URL when the root, a workspace, or a `file:` folder that one of them depends on lists it as a dependency. A URL that is a value in `overrides`, a catalog or `packageExtensions` counts too.
+- A tarball URL that only another package names gets no configured credentials. npm is less strict: it sends them whoever names the URL.
+- Unlike npm, Bun never picks a scoped registry from the name a tarball URL is listed under. A scoped registry's credentials reach a tarball URL only through a `.npmrc` line for that URL, over `https`.
 - `publishConfig.registry` in `package.json` follows the tarball rule: it gets a `.npmrc` line only over `https`, and environment variables are not expanded in it.
 - Bun sends credentials to `http` and `https` URLs only. A registry URL with another scheme, or without one, fails before any request.
 - A credential that contains a newline or a NUL byte is an error, wherever it comes from.

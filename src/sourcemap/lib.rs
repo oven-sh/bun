@@ -352,7 +352,7 @@ impl SourceProviderMap {
     }
 
     pub(crate) fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_provider(self)
+        SourceContentPtr::from_source_provider::<Self>(self)
     }
 }
 
@@ -643,7 +643,7 @@ pub mod SerializedSourceMap {
     /// it lives for the process — modelled as `'static`).
     #[derive(Clone, Copy)]
     pub struct SerializedSourceMap {
-        pub(crate) bytes: &'static [u8],
+        pub bytes: &'static [u8],
     }
 
     impl SerializedSourceMap {
@@ -672,14 +672,13 @@ pub mod SerializedSourceMap {
     }
 
     /// Once loaded, this map stores additional data for keeping track of
-    /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
-    /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
-    pub(crate) struct Loaded {
-        pub(crate) map: SerializedSourceMap,
+    /// source code. Held by `ParsedSourceMap::standalone_module_graph`.
+    pub struct Loaded {
+        pub map: SerializedSourceMap,
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
-        pub(crate) decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
+        pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
     }
 
     impl Loaded {
@@ -1133,7 +1132,7 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> 
 
 fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'static>> {
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
-    let found = bun_core::strings::last_index_of_t(source, needle)?;
+    let found = bun_core::strings::last_index_of_utf16(source, needle)?;
     let start = found + needle.len();
     let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)

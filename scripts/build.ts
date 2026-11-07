@@ -674,7 +674,7 @@ Options:
                                   canary, valgrind, hardened, requireMdwe,
                                   lockEnvironment, guardedPages,
                                   executeOnlyStart, compiledLibrary,
-                                  webkit (prebuilt|local),
+                                  webkit (source|local|prebuilt),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the

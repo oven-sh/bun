@@ -15,7 +15,7 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
-import { machoPostlinkCommand } from "./shims.ts";
+import { machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { toolIdentityFile } from "./tools.ts";
 
 // ---------------------------------------------------------------------------
@@ -643,6 +643,8 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   node.implicitInputs = [
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
+    // Every link rule's command runs it, and JSC's LLInt extractors are linked in the build's first seconds.
+    ...machoPostlinkImplicitInputs(cfg),
     ...(opts.implicitInputs ?? []),
     ...(trimmable ? [...trimScripts(cfg), removableFeaturesJson(cfg), builtinUsesJson(cfg)] : []),
     ...(embedsLibrary ? [embedCompiledLibraryPath] : []),
@@ -700,20 +702,16 @@ export function objectPath(cfg: Config, src: string): string {
   // get mapped to their buildDir-relative location so `codegen/Foo.cpp`
   // stays `codegen/Foo.cpp.o` — no prefix needed since codegen/ doesn't
   // collide with any src/ subdir.
-  let relSrc: string;
-  if (absSrc.startsWith(cfg.buildDir)) {
-    relSrc = relative(cfg.buildDir, absSrc);
-  } else {
-    relSrc = relative(cfg.cwd, absSrc);
-    // --local-deps checkouts may live outside the repo; map them onto the
-    // vendor/<name>/ path the pinned source would have so obj/ stays a tree.
-    for (const [name, dir] of Object.entries(cfg.localDeps)) {
-      if (absSrc.startsWith(dir + sep)) {
-        relSrc = relative(cfg.cwd, resolve(cfg.vendorDir, name, relative(dir, absSrc)));
-        break;
-      }
-    }
-  }
+  // --local-deps checkouts may live outside the repo, and the trees configure
+  // fetches are in the cache (in CI, inside the build dir); map them onto the
+  // vendor/<name>/ path a dep's source has so obj/ stays a tree.
+  const local = Object.entries(cfg.localDeps).find(([, dir]) => absSrc.startsWith(dir + sep));
+  const relSrc =
+    local !== undefined
+      ? relative(cfg.cwd, resolve(cfg.vendorDir, local[0], relative(local[1], absSrc)))
+      : absSrc.startsWith(cfg.buildDir)
+        ? relative(cfg.buildDir, absSrc)
+        : relative(cfg.cwd, absSrc);
   assert(!relSrc.startsWith(".."), `object path for ${absSrc} escapes the build dir (obj/${relSrc})`);
 
   return resolve(cfg.buildDir, "obj", relSrc + cfg.objSuffix);

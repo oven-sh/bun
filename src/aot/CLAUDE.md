@@ -22,14 +22,14 @@ The IR's schema (`aot/ir/schema/*.def` in the engine) is the contract between th
 ## Build
 
 ```sh
-bun bd                                                  # debug build of Bun with the prebuilt engine
+bun bd                                                  # debug build of Bun with the pinned engine
 bun run build:release                                   # release build
 BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local                    # Bun with your engine
 BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local --target=testaot   # the engine's test program alone
 BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local --target=jsc       # the shell
 ```
 
-An engine change reaches Bun's CI through a prebuilt engine: push the WebKit branch, wait for its preview release, then point `scripts/build/deps/webkit.ts` at it.
+An engine change reaches Bun's CI by its commit: push the WebKit branch, then point `scripts/build/deps/webkit.ts` at the commit.
 
 ## The fast loop
 

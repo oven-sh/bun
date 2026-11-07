@@ -237,7 +237,11 @@ function webkitCompileDb(bindingsEntry: Entry): string {
   const prebuilt = baseArgs
     .find(a => a.startsWith("-I") && /webkit-[0-9a-f]+/.test(a) && a.endsWith("/include"))
     ?.slice(2);
-  if (!prebuilt) throw new Error("prebuilt WebKit include dir not found in compile command");
+  if (!prebuilt) {
+    throw new Error(
+      "prebuilt WebKit include dir not found in compile command: configure the build with --webkit=prebuilt",
+    );
+  }
 
   freshDir(wkDir);
   const fwd = join(wkDir, "fwd/JavaScriptCore");

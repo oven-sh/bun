@@ -520,20 +520,14 @@ function getEc2Agent(platform: Platform, ec2Options: Ec2Options): Ec2Agent {
   };
 }
 
-function getBuildAgent(platform: Platform): Ec2Agent {
+function getBuildAgent(): Ec2Agent {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
-  const { os, arch, abi, profile } = platform;
-  // Lanes without C/C++ LTO (see ltoDefault in scripts/build/config.ts) get 32 vCPUs. That was sized when rustc ran a
-  // fat LTO inside cargo beside the C++ compile (~20s lost to the overlap on 16); not re-measured since the link runs
-  // the Rust LTO.
-  const nonLto =
-    profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
-  return getEc2Agent(buildHostPlatform, {
-    // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
-    instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
-  });
+  // 32 vCPUs. The build compiles JSC and ICU as well, some 116 core-minutes of work where linking the prebuilt WebKit
+  // took 43. On 16 that is more than the Rust crate chain leaves room for, and what is left over competes with bun's
+  // link, which took 4:30 in place of 2:05.
+  return getEc2Agent(buildHostPlatform, { instanceType: "r8g.8xlarge" });
 }
 
 function getTestAgent(platform: Platform): Agent {
@@ -650,7 +644,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getBuildAgent(platform),
+    agents: getBuildAgent(),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 60,

@@ -74,7 +74,7 @@ function systemLibs(cfg: Config): string[] {
         libs.push("-latomic");
       }
     }
-    // Linux local WebKit: link system ICU (prebuilt bundles its own).
+    // Linux local WebKit: link system ICU (prebuilt bundles its own, the pinned commit has deps/icu.ts).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
     if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
@@ -212,7 +212,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // Generated headers a dep declares as outputs of its steps (local WebKit's
+  // Generated headers a dep declares as outputs of its steps (WebKit's
   // DerivedSources): order-only, so regenerating one recompiles its includers
   // (depfiles) rather than the PCH and everything behind it.
   const depGeneratedHeaders: string[] = [];
@@ -440,7 +440,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // undefined refs, the rlibs satisfy them (and `main`, via crt1.o) and in
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
-  const shimInputs = emitShims(n, cfg);
+  emitShims(n, cfg);
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
@@ -448,7 +448,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     lazyObjects: depLink.lazy,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
+    implicitInputs: linkImplicitInputs(cfg),
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
@@ -476,9 +476,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
- * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
- * bun. With a tarball that has only the linked programs it is the fetch.
+ * it. On request (`--target=jsc`). `engine-test-programs` is what bun's tests
+ * run, `jsc`, `testaot` and `testFFI`: a default target in CI, which packs them
+ * beside bun. A tarball has `testFFI` linked; with one that has only the linked
+ * programs the target is the fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -512,7 +513,7 @@ function emitJscPrograms(
     objects.push(
       ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
     );
-    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
+    const from = (["WebKit", "icu", "mimalloc"] as const).flatMap(name => deps.get(name) ?? []);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),
@@ -525,7 +526,7 @@ function emitJscPrograms(
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
     // names it on unix; Windows gets the suffix-less alias.
     if (cfg.windows) n.phony(program.name, [exe]);
-    if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
+    if (["jsc", "testaot", "testFFI"].includes(program.name)) testPrograms.push(exe);
   }
   n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
 }
@@ -1138,6 +1139,8 @@ export function validateBunConfig(cfg: Config): void {
   // Keyed by string: these names are the user's.
   const depsByName = new Map<string, Dependency>(allDeps.map(d => [d.name, d]));
   for (const [name, path] of Object.entries(cfg.localDeps)) {
+    // The pinned WebKit and ICU are config.ts's entries, and configure has yet to fetch what their `build` reads.
+    if (cfg.webkit === "source" && (name === "WebKit" || path.startsWith(cfg.cacheDir + sep))) continue;
     const dep = depsByName.get(name);
     assert(dep !== undefined, `--local-deps: unknown dep '${name}'`, {
       hint: `Known deps: ${[...depsByName.keys()].sort().join(", ")}`,

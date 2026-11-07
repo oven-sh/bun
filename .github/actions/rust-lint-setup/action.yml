@@ -75,10 +75,12 @@ runs:
       # `codegen` writes the include!() sources under build/debug/codegen that
       # bun_runtime/bun_jsc/bun_core can't be checked without.
       # Through build.ts, not a bare `ninja`: it runs the ninja the build pins.
+      # `--webkit=prebuilt`: nothing here compiles WebKit, and configure would
+      # fetch its sources and ICU's.
       shell: bash
       env:
         NINJA_TARGETS: ${{ inputs.ninja-targets }}
         BUN_WEBKIT_GENERATORS_ONLY: ${{ inputs.webkit-generators-only }}
       run: |
         bun install --frozen-lockfile
-        bun scripts/build.ts $(printf -- '--target=%s ' $NINJA_TARGETS)
+        bun scripts/build.ts --webkit=prebuilt $(printf -- '--target=%s ' $NINJA_TARGETS)

@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { sharedCacheDir } from "../../../scripts/build/config.ts";
 import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
+import { webkitSourceDir } from "../../../scripts/build/webkit-source.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import {
   featureNamed,
@@ -43,12 +44,22 @@ export interface GuardHeader {
 }
 
 function findGuardHeader(): GuardHeader | undefined {
-  const checkouts = [process.env.BUN_WEBKIT_PATH, join(repositoryRoot, "vendor", "WebKit")];
+  const buildFolder = join(repositoryRoot, "build");
+  const profiles = childrenOf(buildFolder).map(profile => join(buildFolder, profile));
+  const caches = [sharedCacheDir(repositoryRoot), ...profiles.map(profile => join(profile, "cache"))];
+  const checkouts = [
+    process.env.BUN_WEBKIT_PATH,
+    join(repositoryRoot, "vendor", "WebKit"),
+    ...caches.map(cache => webkitSourceDir(cache, WEBKIT_VERSION)),
+  ];
+  // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
+  const written = profiles
+    .map(profile => join(profile, "deps", "WebKit", "JavaScriptCore", "DerivedSources", "aot"))
+    .find(folder => existsSync(join(folder, "AOTBuiltinFeatures.h")));
   for (const checkout of checkouts) {
     if (checkout === undefined) continue;
     const engine = join(checkout, "Source", "JavaScriptCore", "aot");
-    // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
-    const generated = process.env.AOT_BUILTINS_GENERATED ?? join(engine, "builtins", "generated");
+    const generated = process.env.AOT_BUILTINS_GENERATED ?? written ?? join(engine, "builtins", "generated");
     const folders = [join(engine, "runtime"), join(engine, "builtins"), generated, join(engine, "support")];
     const path = join(folders[0]!, "AOTRemovableFeature.h");
     const featureListPath = join(folders[2]!, "AOTBuiltinFeatures.h");
@@ -60,11 +71,6 @@ function findGuardHeader(): GuardHeader | undefined {
       };
     }
   }
-  const buildFolder = join(repositoryRoot, "build");
-  const caches = [
-    sharedCacheDir(repositoryRoot),
-    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "cache")),
-  ];
   const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
   for (const cache of caches) {
     for (const name of childrenOf(cache)) {
@@ -83,7 +89,7 @@ function findGuardHeader(): GuardHeader | undefined {
 export const guardHeader: GuardHeader | undefined = findGuardHeader();
 export const guardHeaderSkipReason: string | undefined =
   guardHeader === undefined
-    ? "there is no AOTRemovableFeature.h: not under $BUN_WEBKIT_PATH, vendor/WebKit or a build's cache of the prebuilt WebKit"
+    ? "there is no AOTRemovableFeature.h: not under $BUN_WEBKIT_PATH, vendor/WebKit or a build's cache"
     : undefined;
 
 function findBuiltinUses(): string | undefined {
@@ -619,11 +625,7 @@ export function writeLinkInputs(
   return { features, builtinUses };
 }
 
-export function linkArguments(
-  inputs: LinkInputs,
-  command: string[],
-  options?: { demangler?: string },
-): string[] {
+export function linkArguments(inputs: LinkInputs, command: string[], options?: { demangler?: string }): string[] {
   return [
     bunExe(),
     linkScript,

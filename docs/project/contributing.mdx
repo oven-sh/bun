@@ -29,7 +29,7 @@ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool n
 ```
 
 ```bash Ubuntu/Debian
-sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
+sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config python3 ruby-full xz-utils
 ```
 
 ```bash Arch
@@ -41,7 +41,7 @@ sudo dnf install clang23 llvm23 lld23 cmake git golang libtool ninja-build pkg-c
 ```
 
 ```bash openSUSE Tumbleweed
-sudo zypper install go cmake ninja automake git icu rustup
+sudo zypper install go cmake ninja automake git icu rustup ruby python3
 ```
 
 </CodeGroup>
@@ -270,7 +270,7 @@ CI runs the test suite with at least one target built with AddressSanitizer.
 
 ## Building WebKit locally + Debug mode of JSC
 
-WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
+Every build compiles JavaScriptCore, from the commit pinned in `scripts/build/deps/webkit.ts`, which the build fetches by itself. JSC's code generators need `ruby`, `python3` and `perl` in your `PATH`. To work on WebKit itself, clone it and build that clone:
 
 ```bash
 # Clone WebKit into ./vendor/WebKit
@@ -284,7 +284,7 @@ bun sync-webkit-source
 bun run build:local
 ```
 
-`bun run build:local` compiles JSC in the same build graph as Bun itself (no separate CMake build), so one command builds both, and on subsequent runs only what a changed WebKit source affects is rebuilt. JSC's code generators need `ruby`, `python3` and `perl` in your `PATH`. To keep the clone somewhere else, or share one between worktrees, set `BUN_WEBKIT_PATH` to it. `bun run build:local --target=jsc` builds the `jsc` shell at `./build/debug-local/jsc`.
+`bun run build:local` compiles JSC in the same build graph as Bun itself (no separate CMake build), so one command builds both, and on subsequent runs only what a changed WebKit source affects is rebuilt. To keep the clone somewhere else, or share one between worktrees, set `BUN_WEBKIT_PATH` to it. `bun run build:local --target=jsc` builds the `jsc` shell at `./build/debug-local/jsc`.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 

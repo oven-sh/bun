@@ -133,6 +133,9 @@ await run(
   isBuildkite ? "node" : "bun",
   [
     "scripts/build.ts",
+    // Half a megabyte of the prebuilt in place of WebKit's and ICU's sources. Not on a developer's machine, where
+    // build/debug is also what `bun bd` builds in.
+    ...(isBuildkite ? ["--webkit=prebuilt"] : []),
     ...["codegen", "clone-zstd", "clone-lolhtml", "clone-rust-argon2"].map(name => `--target=${name}`),
   ],
   { BUN_WEBKIT_GENERATORS_ONLY: "1", ...process.env },

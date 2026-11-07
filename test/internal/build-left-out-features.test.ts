@@ -106,7 +106,7 @@ test("--web-assembly=off takes a WebKit compiled without WebAssembly: a local on
   expect(config({ webAssembly: false }, String(dir)).webAssembly).toBe(false);
   for (const partial of [{}, { hardened: true, lto: false }, { hardened: true, lto: true, aot: false }, { lto: true }])
     expect(() => config({ webkit: "prebuilt", webAssembly: false, ...partial }, String(dir))).toThrow(
-      "webAssembly=false requires hardened=true, lto=true and aot=true, or webkit=local",
+      "webAssembly=false with webkit=prebuilt requires hardened=true, lto=true and aot=true",
     );
 });
 

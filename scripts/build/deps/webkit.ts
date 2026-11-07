@@ -1,26 +1,30 @@
 /**
- * WebKit commit — determines prebuilt download URL + what to checkout
- * for local mode. Override via `--webkit-version=<hash>` to test a branch.
- * From https://github.com/oven-sh/WebKit releases.
+ * WebKit commit — the tree the build fetches and compiles, and the release tag
+ * of the prebuilt tarballs. Override via `--webkit-version=<hash>` to test a
+ * branch: any commit pushed to https://github.com/oven-sh/WebKit.
  */
 export const WEBKIT_VERSION = "4d45755fed4aeef19e95beb90d3d0c884a2812bd";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
  *
- * Two modes via `cfg.webkit`:
+ * Three modes via `cfg.webkit`:
  *
- * **prebuilt** (CI and every profile but the `-local` ones): Download tarball
+ * **source** (CI and every profile but the `-local` ones): WEBKIT_VERSION,
+ *   fetched into the build cache by configure (../webkit-source.ts) and
+ *   compiled in our own ninja graph like every other dep, no cmake ("Direct
+ *   build" below). Generated headers land in the BUILD dir. ICU is compiled
+ *   the same way (icu.ts).
+ *
+ * **local**: the same build of a checkout of yours, at `vendor/WebKit/`, or
+ *   `$BUN_WEBKIT_PATH` if set. User clones manually. Set `BUN_WEBKIT_PATH` to
+ *   share one clone across worktrees.
+ *
+ * **prebuilt** (`--webkit=prebuilt` only): Download tarball
  *   from oven-sh/WebKit releases. Tarball name encodes {os, arch, musl,
  *   debug|lto, asan, assertions} — each is a separate ABI — and coverage and hardened. ASAN MUST match bun's setting:
  *   WTF::Vector layout changes with ASAN (see WTF/Vector.h:682), so mixing →
  *   silent memory corruption.
- *
- * **local**: Source at `vendor/WebKit/`, or `$BUN_WEBKIT_PATH` if set. User
- *   clones manually (clone takes 10+ min — too slow for the build system
- *   to do). Set `BUN_WEBKIT_PATH` to share one clone across worktrees. It is
- *   compiled in our own ninja graph like every other dep, no cmake ("Local
- *   mode: direct build" below). Generated headers land in the BUILD dir.
  */
 
 import { spawnSync } from "node:child_process";
@@ -29,9 +33,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { aotDirectories, findAotSourceListProblems, handwrittenAotFiles } from "../aot-source-lists.ts";
 import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
-import type { Config } from "../config.ts";
+import { linksWithLld, webkitVersionName, type Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
-import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
+import { alpineClangDefaults, computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
@@ -45,6 +49,10 @@ import {
   type Source,
   type SourceGroup,
 } from "../source.ts";
+import { toolIdentityFile } from "../tools.ts";
+import { webkitVersionKey } from "../webkit-source.ts";
+import { migcomPath } from "./bootstrap-cmds.ts";
+import { icuIncludes as builtIcuIncludes } from "./icu.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -76,7 +84,7 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.aot) s += "-aot";
   else if (!hasTwin) {
     throw new BuildError(`There is no prebuilt WebKit${s} without the ahead-of-time compiler`, {
-      hint: "Build with --aot=on, or with a local WebKit checkout (--webkit=local)",
+      hint: "Build with --aot=on, or drop --webkit=prebuilt",
     });
   }
   // config.ts refuses every other combination.
@@ -95,9 +103,7 @@ function prebuiltUrl(cfg: Config): string {
 
 /** Name prefix shared by every prebuilt extraction dir of one WebKit version, across targets and variants. */
 export function prebuiltDirPrefix(version: string): string {
-  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
-  // meaningful sha is at the end, so use the whole thing.
-  return `webkit-${version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16)}`;
+  return `webkit-${webkitVersionKey(version)}`;
 }
 
 /**
@@ -128,7 +134,7 @@ function prebuiltDestDir(cfg: Config): string {
 // Prebuilt lib paths — relative to destDir
 // ───────────────────────────────────────────────────────────────────────────
 
-/** JSC's testFFI executable: the prebuilt tarball ships one in bin/; local mode builds it next to bun on request (`--target=testFFI`, bun.ts). */
+/** JSC's testFFI executable: built next to bun (`--target=testFFI`, bun.ts; CI builds it with bun). The prebuilt tarball ships one in bin/. */
 export function webkitTestFFIPath(cfg: Config): string {
   return cfg.webkit === "prebuilt"
     ? resolve(prebuiltDestDir(cfg), "bin", `testFFI${cfg.exeSuffix}`)
@@ -266,7 +272,7 @@ function prebuiltIcuLibs(cfg: Config): string[] {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Local mode: cmakeconfig.h
+// cmakeconfig.h
 //
 // `cmakeconfig.h` for the direct WebKit build — the ENABLE_/USE_/HAVE_ matrix
 // WebKit's cmake (WebKitFeatures.cmake + Options{Common,JSCOnly}.cmake + the
@@ -522,12 +528,13 @@ function buildOptions(cfg: Config): Array<[name: string, value: number]> {
 }
 
 /**
- * No BUN_WEBKIT_VERSION, which the prebuilt's has: bun keys the bytecode cache
- * on it, and a checkout being edited has no version (ZigGlobalObject.cpp then
- * falls back to the time of the build).
+ * BUN_WEBKIT_VERSION is what bun keys the bytecode cache on. A checkout being
+ * edited has no version (ZigGlobalObject.cpp then falls back to the time of
+ * the build).
  */
 function cmakeConfigHeader(cfg: Config): string {
   const defines = buildOptions(cfg).map(([name, value]) => `#define ${name} ${value}\n`);
+  if (cfg.webkit === "source") defines.push(`#define BUN_WEBKIT_VERSION "${webkitVersionName(cfg.webkitVersion)}"\n`);
   return `#ifndef CMAKECONFIG_H\n#define CMAKECONFIG_H\n\n${defines.join("")}\n#endif /* CMAKECONFIG_H */\n`;
 }
 
@@ -565,7 +572,7 @@ function inspectorFeatureDefines(cfg: Config): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Local mode: direct build
+// Direct build
 //
 // WebKit (bmalloc + WTF + JavaScriptCore, JSCOnly port) built directly in our
 // ninja graph — no cmake.
@@ -748,16 +755,21 @@ function webkitLists(wk: WebKitBuild): WebKitLists {
   return { bmalloc: library(wk.BM), wtf: library(join(wk.WTF, "wtf")), jsc: library(wk.JSC) };
 }
 
-/** `webkitLists` of a checkout that exists and has the AoT compiler. */
+/** `webkitLists` of a tree that exists and has the AoT compiler. */
 function checkoutLists(wk: WebKitBuild): WebKitLists {
-  assert(existsSync(join(wk.JSC, "Sources.txt")), `local WebKit checkout not found at ${wk.W}`, {
-    hint: process.env.BUN_WEBKIT_PATH
-      ? `$BUN_WEBKIT_PATH is set to '${process.env.BUN_WEBKIT_PATH}' but that path does not contain a WebKit checkout`
-      : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
+  const pinned = wk.cfg.webkit === "source";
+  assert(existsSync(join(wk.JSC, "Sources.txt")), `${pinned ? "" : "local "}WebKit checkout not found at ${wk.W}`, {
+    hint: pinned
+      ? "Configure fetches it (webkit-source.ts): run the build through scripts/build.ts"
+      : process.env.BUN_WEBKIT_PATH
+        ? `$BUN_WEBKIT_PATH is set to '${process.env.BUN_WEBKIT_PATH}' but that path does not contain a WebKit checkout`
+        : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
   });
   const lists = webkitLists(wk);
   assert(lists.jsc.values("JavaScriptCore_AOT_SCHEMA_INPUTS").length > 0, "this WebKit checkout has no aot/AOT.cmake", {
-    hint: "Bun needs a checkout whose JavaScriptCore has the AoT compiler: update $BUN_WEBKIT_PATH or vendor/WebKit",
+    hint: pinned
+      ? "Bun needs a WebKit whose JavaScriptCore has the AoT compiler: --webkit-version names one that is too old"
+      : "Bun needs a checkout whose JavaScriptCore has the AoT compiler: update $BUN_WEBKIT_PATH or vendor/WebKit",
   });
   return lists;
 }
@@ -837,7 +849,8 @@ function webkitLocalIncludes(cfg: Config): string[] {
 
 // ─── ICU ───
 //
-// Not built here. Linux uses the system's (headers on the default search
+// The pinned WebKit (`webkit: "source"`) gets the one icu.ts compiles. For a
+// checkout it is not built here. Linux uses the system's (headers on the default search
 // path, -licu* in bun.ts), or the static one $BUN_ICU_ROOT names, such as the
 // include/ and lib/ of a prebuilt WebKit. macOS links the SDK's libicucore, whose
 // headers Apple does not ship: WebKit carries a matching set in Source/WTF/icu,
@@ -854,8 +867,12 @@ export const linuxIcuRoot = (cfg: Config): string | undefined =>
 const staticIcuLibs = (root: string): string[] =>
   ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(lib => join(root, "lib", lib));
 
+/** Its data is a zstd frame an item, which takes a hook to read (icu/udata-decompress-hook.patch). */
+const icuDataIsCompressed = (cfg: Config): boolean => cfg.icu || linuxIcuRoot(cfg) !== undefined;
+
 function icuIncludes(wk: WebKitBuild): string[] {
   const { cfg } = wk;
+  if (cfg.icu) return builtIcuIncludes(cfg);
   if (cfg.darwin) return [join(wk.WTF, "icu")];
   if (cfg.windows) return [join(windowsIcuDir(wk), "include")];
   if (cfg.abi === "android") return [join(androidIcuRoot(), "include")];
@@ -866,6 +883,7 @@ function icuIncludes(wk: WebKitBuild): string[] {
 /** `libs` join bun's link; `outputs` are the ones a step of this graph produces, with ICU's headers as a side effect. */
 function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
   const { cfg } = wk;
+  if (cfg.icu) return { libs: [], outputs: [] };
   if (cfg.abi === "android") {
     return { libs: staticIcuLibs(androidIcuRoot()), outputs: [] };
   }
@@ -1016,6 +1034,7 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
         // musl: optimized for size (-Os wins over the dep-global -O level), as
         // the Alpine builds have always shipped JSC.
         ...(cfg.abi === "musl" && cfg.release ? ["-Os"] : []),
+        ...alpineClangDefaults(cfg),
       ];
   // Release: WebKit's <iostream> ban (an #error stub found before the real
   // header — OptionsJSCOnly.cmake), so no TU drags std::ios_base::Init in.
@@ -1156,7 +1175,10 @@ function wtfGroup(
   const { cfg, WTF, WTF_DS } = wk;
   // macOS: WTF's signal handling (wasm fault trapping, VM traps) speaks Mach
   // exceptions through MIG-generated RPC stubs (PlatformJSCOnly.cmake's APPLE
-  // branch, which also puts the two .c files in WTF_SOURCES).
+  // branch, which also puts the two .c files in WTF_SOURCES). On a Mac that is
+  // Xcode's `mig`. Elsewhere it is the fork's macos-cross/mig around Apple's
+  // migcom built for this machine (bootstrap-cmds.ts), preprocessing with the
+  // target's compiler against the SDK, as Dockerfile.macos does.
   const migOutputs: string[] = [];
   if (cfg.darwin) {
     assert(cfg.osxSysroot !== undefined, "darwin target without a macOS SDK path");
@@ -1167,13 +1189,20 @@ function wtfGroup(
       join(WTF_DS, "mach_excServer.c"),
       join(WTF_DS, "mach_excUser.c"),
     );
+    const driver = join(wk.W, "macos-cross", "mig");
+    const onMac = cfg.host.os === "darwin";
     gen(wk, {
       outputs: migOutputs,
-      inputs: [defs],
+      inputs: onMac ? [defs] : [defs, driver, migcomPath(cfg), toolIdentityFile(cfg, "cc")],
       cwd: WTF_DS,
+      ...(!onMac && {
+        env: {
+          MIGCC: [cfg.cc, `--target=${cfg.crossTarget}`, "-isysroot", cfg.osxSysroot].join(" "),
+          MIGCOM: migcomPath(cfg),
+        },
+      }),
       cmd: [
-        "xcrun",
-        "mig",
+        ...(onMac ? ["xcrun", "mig"] : ["bash", driver]),
         "-header",
         "mach_exc.h",
         "-user",
@@ -1553,11 +1582,14 @@ function standaloneExeLinkFlags(cfg: Config): string[] {
   // as bun's own link (flags.ts has the explanation); with no definition at
   // all they resolve to the absolute-0 default, the hook-absent value a
   // standalone test binary wants.
+  // ELF: nobody debugs the pinned WebKit's programs, and CI packs them.
   return cfg.darwin
     ? bunHooks.map(sym => `-Wl,-U,_${sym}`)
     : cfg.windows
       ? ["advapi32.lib", "shell32.lib", "user32.lib", "/lld-allow-duplicate-weak"]
-      : [];
+      : cfg.webkit === "local"
+        ? []
+        : ["-Wl,--strip-debug"];
 }
 
 // ─── JavaScriptCore: LLInt ───
@@ -1714,11 +1746,11 @@ function unifiedSources(wk: WebKitBuild, listFiles: string[], options: string[])
 }
 
 /**
- * CMake, which builds what ships, takes 16. This graph is for work on the engine, where one source is touched far more
- * often than all are compiled. All of aot/ at 16 jobs, each source alone | 8 | 16 in a bundle: 190 | 124 | 107 s of wall,
- * 2,740 | 1,530 | 1,350 s of CPU. One touched source: 2.5 | 8.4 | 13.1 s.
+ * WebKit's cmake build takes 16, and so does the pinned WebKit, which nobody edits. In a checkout one source is touched
+ * far more often than all are compiled. All of aot/ at 16 jobs, each source alone | 8 | 16 in a bundle: 190 | 124 | 107 s
+ * of wall, 2,740 | 1,530 | 1,350 s of CPU. One touched source: 2.5 | 8.4 | 13.1 s.
  */
-const aotBundleSize = 8;
+const aotBundleSize = (cfg: Config): number => (cfg.webkit === "source" ? 16 : 8);
 
 /** The lists of aot/ that are compiled for size, and the attribute that every function of their bundles takes. */
 const aotListsCompiledForSize = [
@@ -1744,7 +1776,9 @@ interface JSCSources {
  */
 function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
   const listsOf = (framework: string): string[] => lists.paths(`${framework}_UNIFIED_SOURCE_LIST_FILES`);
-  const aotOptions = wk.cfg.unifiedSources ? ["--max-bundle-size", `${aotBundleSize}`] : ["--print-all-sources"];
+  const aotOptions = wk.cfg.unifiedSources
+    ? ["--max-bundle-size", `${aotBundleSize(wk.cfg)}`]
+    : ["--print-all-sources"];
   const aot = wk.cfg.aot
     ? unifiedSources(wk, listsOf("JavaScriptCoreAOT"), aotOptions)
     : lists.paths("JavaScriptCore_AOT_SOURCES_WITHOUT_AOT");
@@ -2036,8 +2070,8 @@ function withZstdDecoder(cfg: Config, program: JSCProgram): JSCProgram {
   };
 }
 
-/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
-function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+/** testaot as `program` says, reading ICU data that is compressed. */
+function readingCompressedIcuData(cfg: Config, program: JSCProgram): JSCProgram {
   return withZstdDecoder(cfg, { ...program, sources: [...program.sources, icuDataHook(cfg, program.name)] });
 }
 
@@ -2049,8 +2083,8 @@ function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
  * compilers, the macro assembler and Yarr; and `testaot`, the tests of the AoT
  * compiler. bun.ts links them, from the same dep objects bun gets, so this only
  * says how: the sources, the flags a JSC-family TU compiles with, and what a
- * standalone JSC executable needs at link. None is a default target:
- * `bun run build:local --target=jsc`.
+ * standalone JSC executable needs at link. None is a default target outside CI:
+ * `bun run build --target=jsc`.
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (prebuiltHasProgramObjects(cfg)) {
@@ -2059,18 +2093,15 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
         name,
         sources: [outOfMemoryHook(cfg, name)],
         cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
-        ldflags: [
-          ...standaloneExeLinkFlags(cfg),
-          ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
-        ],
+        ldflags: [...standaloneExeLinkFlags(cfg), ...(cfg.darwin && name === "jsc" ? ["-ledit"] : [])],
         libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
       };
       // The objects of jsc hold the shell's own hook.
       const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
-      return name === "testaot" && hasCompressedData ? readingPrebuiltIcuData(cfg, program) : program;
+      return name === "testaot" && hasCompressedData ? readingCompressedIcuData(cfg, program) : program;
     });
   }
-  if (cfg.webkit !== "local") return [];
+  if (cfg.webkit === "prebuilt") return [];
   const wk = webkitLayout(cfg);
   const lists = webkitLists(wk).jsc;
   const jsc = jscCompileFlags(wk, webkitFlags(wk), lists);
@@ -2091,6 +2122,13 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     }).cxx,
     ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags],
   });
+  const unoptimizedLto = !cfg.lto
+    ? []
+    : cfg.windows
+      ? ["/opt:lldlto=0", "/opt:lldltocgo=0"]
+      : linksWithLld(cfg)
+        ? ["-Wl,--lto-O0", "-Wl,--lto-CGO0"]
+        : [];
   const testb3 = readdirSync(testb3Dir(wk))
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
     .sort()
@@ -2102,7 +2140,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   );
   // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
   // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
-  if (linuxIcuRoot(cfg) !== undefined) {
+  if (icuDataIsCompressed(cfg)) {
     jscShell = withZstdDecoder(cfg, { ...jscShell, cxxflags: [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1"] });
   }
   const testaot = program(
@@ -2115,13 +2153,14 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   );
   return [
     jscShell,
-    program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
+    // It checks an ABI, so nothing depends on how fast it runs, and its link generates the code of all of JSC.
+    program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], unoptimizedLto),
     program("testb3", [...testb3, ...embedder], []),
     program("testair", ["b3/air/testair.cpp", ...embedder], []),
     program("testmasm", ["assembler/testmasm.cpp", ...embedder], []),
     program("testRegExp", ["testRegExp.cpp", ...embedder], []),
     {
-      ...(linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, testaot) : testaot),
+      ...(icuDataIsCompressed(cfg) ? readingCompressedIcuData(cfg, testaot) : testaot),
       pch: [
         { header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") },
         { header: join(wk.JSC, "aot", "tests", "AOTCompilerTestPrefix.h") },
@@ -2141,7 +2180,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
-  // Local mode compiles against the mimalloc bun links (USE_EXTERNAL_MIMALLOC).
+  // Compiled against the mimalloc bun links (USE_EXTERNAL_MIMALLOC).
   fetchDeps: ["mimalloc"],
 
   source: cfg => {
@@ -2162,8 +2201,8 @@ export const webkit: Dependency = {
       return src;
     }
 
-    // Never fetched: config.ts gives local mode a `localDeps` entry, which
-    // redirects this to the checkout like any `--local-deps` dep.
+    // Never fetched by an edge: config.ts gives both modes a `localDeps` entry,
+    // which redirects this to the tree like any `--local-deps` dep.
     return { kind: "github-archive", repo: "oven-sh/WebKit", commit: cfg.webkitVersion };
   },
 

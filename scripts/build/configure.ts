@@ -29,9 +29,11 @@ import {
   resolveCodegenConfig,
   resolveConfig,
 } from "./config.ts";
+import { bootstrapCmds } from "./deps/bootstrap-cmds.ts";
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
+import { ensureIcuSource } from "./icu-source.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { ensureNinja } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
@@ -49,6 +51,7 @@ import {
   resolveLlvmToolchain,
   writeToolIdentities,
 } from "./tools.ts";
+import { ensureWebKitSource } from "./webkit-source.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -437,6 +440,22 @@ function requirePerl(): void {
   }
 }
 
+/** What fetches WebKit and what its generators are written in (deps/webkit.ts names them bare), before an edge fails on one. */
+function requireWebKitTools(cfg: Config): void {
+  if (cfg.webkit === "prebuilt") return;
+  const tools = [
+    ...(cfg.webkit === "source" ? ["git"] : []),
+    ...["ruby", cfg.host.os === "windows" ? "python" : "python3"],
+    ...(bootstrapCmds.enabled!(cfg) ? ["flex", "bison"] : []),
+  ];
+  const missing = tools.filter(tool => findSystemTool(tool) === undefined);
+  if (missing.length > 0) {
+    throw new BuildError(`${missing.join(", ")} not found in PATH`, {
+      hint: `Compiling WebKit needs ${tools.join(", ")}. Install them, or link a prebuilt WebKit with --webkit=prebuilt`,
+    });
+  }
+}
+
 /** build.ts configuring before it spawns ninja: resolves the ninja to spawn (ninja-release.ts). */
 export function configure(input: ConfigureInput): Promise<ConfigureResult> {
   return generate(input, ensureNinja);
@@ -471,6 +490,14 @@ async function generate<N extends string | undefined>(
   if (isBuildkite) {
     checkImageTools(toolchain);
   }
+
+  requireWebKitTools(cfg);
+  // WebKit's and ICU's sources, which say what the graph compiles. Started here and awaited before the graph is emitted,
+  // so that they download while the steps in between run.
+  const webkitSource = ensureWebKitSource(cfg);
+  const engineSources = Promise.all([webkitSource, ensureIcuSource(cfg, webkitSource)]);
+  // A step in between may throw first; this one's failure is then nobody's to handle.
+  engineSources.catch(() => {});
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
@@ -517,6 +544,9 @@ async function generate<N extends string | undefined>(
   const sources = globAllSources();
   mark("globAllSources");
 
+  await engineSources;
+  mark("ensureWebKitSource");
+
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
@@ -541,7 +571,8 @@ async function generate<N extends string | undefined>(
   // auto-trigger).
   const targets = [output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun"];
   if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-  if (cfg.ci) targets.push("engine-test-programs");
+  // What CI's test steps run beside bun. No step runs what is built for Android or FreeBSD, and each is a link of all of JSC.
+  if (cfg.ci && cfg.abi !== "android" && !cfg.freebsd) targets.push("engine-test-programs");
   n.default(targets);
 
   const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, mark);

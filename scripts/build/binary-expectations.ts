@@ -218,8 +218,8 @@ export function binaryFormat(cfg: Config): BinaryFormat {
  * `_GLOBAL__sub_I_<file>` from one of ours is the thing to catch, in debug
  * builds as much as release.
  *
- * JSC/WTF/bmalloc come from the prebuilt WebKit tarball, so "none" for them is
- * a statement about oven-sh/WebKit's build, not about flags set here. It
+ * With `webkit: "prebuilt"`, "none" for JSC/WTF/bmalloc is a statement about
+ * oven-sh/WebKit's build, not about flags set here. It
  * holds for the release tarball (a linux-x64 bun-profile linked against it has
  * exactly the runtime's eight entries below). If another lane's tarball turns
  * out to carry an initializer, fix it in oven-sh/WebKit; if it has to be
@@ -337,12 +337,12 @@ function forbiddenImports(cfg: Config): string[] {
 }
 
 /**
- * TEMPORARY: exports bun.exe has only because the prebuilt WebKit's bmalloc is
+ * Exports bun.exe has only with `webkit: "prebuilt"`, whose bmalloc is
  * compiled with BEXPORT=__declspec(dllexport) (bmalloc/BExport.h has no
  * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
- * member the link pulls carries `-export:` directives. Remove once
- * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
- * check then holds bun.exe to the Node-API / V8 / libuv / llhttp set alone.
+ * member the link pulls carries `-export:` directives. deps/webkit.ts compiles
+ * it with BEXPORT empty (`-DBEXPORT=`); the export check then holds bun.exe to
+ * the Node-API / V8 / libuv / llhttp set alone.
  *
  * The 23 names, from `llvm-readobj --coff-exports` on a released
  * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
@@ -456,8 +456,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
   // liblog.so is NEEDED exactly when a live __android_log_* reference
   // survives — a system library either way, allowed rather than pinned.
-  // --webkit=local on Linux links the host's ICU (bun.ts systemLibs); the
-  // prebuilt bundles its own statically. A developer-only flavour, never
+  // --webkit=local on Linux links the host's ICU (bun.ts systemLibs); every
+  // other has its own, linked statically. A developer-only flavour, never
   // shipped, so the sonames (libicuuc.so.78 …) are allowed rather than pinned.
   const localWebKitLibs =
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
@@ -587,7 +587,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             // `.drectve -export:` for WTF.dll's sake; statically linked, that
             // directive exports it from bun-debug.exe. Debug builds only.
             ...(cfg.debug ? ["currentStackPointer"] : []),
-            ...PREBUILT_BMALLOC_DLLEXPORTS.exact,
+            ...(cfg.webkit === "prebuilt" ? PREBUILT_BMALLOC_DLLEXPORTS.exact : []),
           ],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
@@ -600,7 +600,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "?*@v8@@*",
             "?*@node@@*",
             "llhttp_*",
-            ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
+            ...(cfg.webkit === "prebuilt" ? PREBUILT_BMALLOC_DLLEXPORTS.patterns : []),
             // The debug WebKit prebuilt's libpas exports its system-heap entry
             // points the same way (`-export:` directives in the archive
             // members); the release prebuilt has none. Debug builds only.

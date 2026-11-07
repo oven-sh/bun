@@ -4,16 +4,15 @@
 //   bun scripts/generate-protocol.ts [path/to/CombinedDomains.json] [--v8]
 //
 // CombinedDomains.json is what JavaScriptCore's build produces from
-// Source/JavaScriptCore/inspector/protocol/*.json. The bun-webkit prebuilt
-// tarball ships it at its top level, so after `bun bd` it can be found in the
-// build cache for the WEBKIT_VERSION pinned in scripts/build/deps/webkit.ts;
-// that is what is used when no path is given. A local WebKit build writes it
-// to <build>/JavaScriptCore/Scripts/CombinedDomains.json.
+// Source/JavaScriptCore/inspector/protocol/*.json. `bun bd` writes it to
+// build/<profile>/deps/WebKit/JavaScriptCore/DerivedSources/CombinedDomains.json,
+// which is what is used when no path is given. A --webkit=prebuilt build has
+// the tarball's copy in the build cache instead; that is the fallback.
 //
 // Pass --v8 to also refresh src/protocol/v8 from the Chrome DevTools protocol
 // repository (requires network access).
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Domain, Property, Protocol } from "../src/protocol/schema";
@@ -172,8 +171,14 @@ function toComment(description?: string): string {
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
-/** The CombinedDomains.json of the prebuilt WebKit pinned by scripts/build/deps/webkit.ts, if it has been downloaded. */
+/** The CombinedDomains.json a build of bun generated (build/debug's first), or the one of the pinned prebuilt WebKit, if it has been downloaded. */
 function findPinnedCombinedDomains(): string | undefined {
+  const buildRoot = path.join(repoRoot, "build");
+  const profiles = existsSync(buildRoot) ? readdirSync(buildRoot).sort() : [];
+  for (const profile of ["debug", ...profiles]) {
+    const derived = path.join(buildRoot, profile, "deps", "WebKit", "JavaScriptCore", "DerivedSources");
+    if (existsSync(path.join(derived, "CombinedDomains.json"))) return path.join(derived, "CombinedDomains.json");
+  }
   const webkitTs = readFileSync(path.join(repoRoot, "scripts", "build", "deps", "webkit.ts"), "utf-8");
   const version = /^export const WEBKIT_VERSION = "([^"]+)";/m.exec(webkitTs)?.[1];
   if (!version) {

@@ -20,7 +20,7 @@ use crate::resolution_real::Tag as ResolutionTag;
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
 use bun_core::strings;
-use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
+use bun_install::{PackageID, PackageNameAndVersionHash, PackageNameHash};
 use bun_io::Write as _;
 use bun_semver::{self as semver, String as SemverString};
 
@@ -329,7 +329,7 @@ pub(crate) fn load(
     lockfile: &mut Lockfile,
     stream: &mut Stream,
     log: &mut Log,
-    manager: Option<&PackageManager>,
+    options: Option<&PackageManagerOptions>,
 ) -> Result<SerializerLoadResult, Error> {
     let mut res = SerializerLoadResult::default();
     let mut header_buf_: [u8; HEADER_BYTES.len()] = [0; HEADER_BYTES.len()];
@@ -372,7 +372,7 @@ pub(crate) fn load(
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
-    lockfile.buffers = buffers::load(stream, log, manager, lockfile.packages.len())?;
+    lockfile.buffers = buffers::load(stream, log, options, lockfile.packages.len())?;
     if stream.read_int_le::<u64>()? != 0 {
         return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
     }

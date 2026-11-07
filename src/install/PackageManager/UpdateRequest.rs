@@ -7,7 +7,7 @@ use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
 use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
-use bun_install::dependency::{self, DependencyExt as _};
+use bun_install::dependency::{self, DependencyExt as _, NpmAliasRegistry};
 use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
 };
@@ -233,7 +233,7 @@ impl UpdateRequest {
                 None,
                 &SlicedString::init(input, value),
                 Some(&mut *log),
-                pm.as_deref_mut(),
+                pm.as_deref_mut().map(|pm| pm as &mut dyn NpmAliasRegistry),
             )
             .filter(|_| dependency::nameless_npm_alias(value).is_none()) else {
                 return Err(unrecognised_format(log, positional, fatal));
@@ -249,7 +249,7 @@ impl UpdateRequest {
                     None,
                     &SlicedString::init(input, input),
                     Some(&mut *log),
-                    pm.as_deref_mut(),
+                    pm.as_deref_mut().map(|pm| pm as &mut dyn NpmAliasRegistry),
                 )
                 .filter(|ver| {
                     matches!(

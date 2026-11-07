@@ -16,6 +16,7 @@ use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::tree;
+use bun_install::migration::Backfill;
 use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
@@ -407,11 +408,9 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
 /// Returns the npm package that `name` refers to in the folder the command was run in, and the
 /// version the lockfile resolved for it. `name` may be an alias of that package.
 fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
-    let mut lockfile = core::mem::take(&mut pm.lockfile);
     let mut log = bun_ast::Log::init();
     let log_level = pm.options.log_level;
-    let loaded = match lockfile.load_from_cwd::<true>(Some(pm), &mut log) {
+    let loaded = match pm.load_lockfile_from_dir(Fd::cwd(), &mut log, Some(Backfill::CachedOnly)) {
         LoadResult::Ok(_) => true,
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
@@ -423,7 +422,6 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
             false
         }
     };
-    pm.lockfile = lockfile;
     if !loaded {
         return None;
     }

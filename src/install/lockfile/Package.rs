@@ -17,6 +17,7 @@ use crate::lockfile_real::{
     Cloner, DependencySlice, Lockfile, PackageIDSlice, PatchedDep, PendingResolution, Stream,
     StringBuilder, TrustedDependenciesSet,
 };
+use crate::package_manager_real::{NpmAliasMap, Options, WorkspacePackageJSONCache};
 use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::versioned_url::VersionedURLType;
 use crate::{
@@ -1007,7 +1008,8 @@ impl Diff {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
         let frozen = pm.options.enable.frozen_lockfile();
-        let keeps_missing_workspaces = lockfile::pruned_workspaces::keeps_missing_workspaces(pm);
+        let keeps_missing_workspaces =
+            lockfile::pruned_workspaces::keeps_missing_workspaces(&pm.options, pm.subcommand);
         macro_rules! from_buf {
             () => {
                 from_lockfile.buffers.string_bytes.as_slice()
@@ -1382,7 +1384,7 @@ impl Diff {
                         };
                     workspace_pkg.parse_with_json(
                         to_lockfile,
-                        pm,
+                        &mut package_json_context!(pm),
                         log,
                         source_ref.get(),
                         json_root,
@@ -1685,7 +1687,7 @@ impl Diff {
         if folder_pkg
             .parse(
                 to_lockfile,
-                pm,
+                &mut package_json_context!(pm),
                 &mut parse_log,
                 &source,
                 &mut (),
@@ -1999,11 +2001,45 @@ impl Diff {
     }
 }
 
+/// What parsing package.json uses of the manager. Only `missing_workspace` can borrow its lockfile.
+pub struct PackageJsonContext<'a> {
+    pub(crate) options: &'a Options,
+    pub(crate) missing_workspace: workspace_map::MissingWorkspace<'a>,
+    pub(crate) workspace_package_json_cache: &'a mut WorkspacePackageJSONCache,
+    pub(crate) known_npm_aliases: &'a mut NpmAliasMap,
+    pub(crate) postinstall_optimizer: &'a mut install::postinstall_optimizer::List,
+    pub(crate) workspace_root_name_hash: &'a mut PackageNameHash,
+    pub(crate) workspace_root_version: &'a mut Box<[u8]>,
+}
+
+/// Borrows `$manager` field by field, without `$manager.lockfile`: the caller has a `&mut` to it.
+macro_rules! package_json_context {
+    ($manager:expr) => {
+        $crate::lockfile_real::package::package_json_context!($manager, None)
+    };
+    ($manager:expr, $loaded:expr) => {
+        $crate::lockfile_real::package::PackageJsonContext {
+            options: &$manager.options,
+            missing_workspace: $crate::lockfile_real::package::workspace_map::MissingWorkspace::new(
+                &$manager.options,
+                $manager.subcommand,
+                $loaded,
+            ),
+            workspace_package_json_cache: &mut $manager.workspace_package_json_cache,
+            known_npm_aliases: &mut $manager.known_npm_aliases,
+            postinstall_optimizer: &mut $manager.postinstall_optimizer,
+            workspace_root_name_hash: &mut $manager.workspace_root_name_hash,
+            workspace_root_version: &mut $manager.workspace_root_version,
+        }
+    };
+}
+pub(crate) use package_json_context;
+
 impl Package<u64> {
     pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
-        pm: &mut PackageManager,
+        context: &mut PackageJsonContext<'_>,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         resolver: &mut R,
@@ -2023,25 +2059,15 @@ impl Package<u64> {
             }
         };
 
-        self.parse_with_json(lockfile, pm, log, source, parsed.root, resolver, features)
-    }
-
-    /// Borrow-splitting bridge for `processDependencyList`, with `Features::NPM`. Borrowck
-    /// rejects passing `manager.lockfile`, `manager`, `manager.log` as three separate args
-    /// overlapping `&mut self`, so split via raw pointer here.
-    pub(crate) fn parse_from_real_manager<R: ResolverContext>(
-        &mut self,
-        manager: &mut crate::package_manager_real::PackageManager,
-        source: &bun_ast::Source,
-        resolver: &mut R,
-    ) -> crate::Result<()> {
-        let log = manager.log_mut();
-        let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
-        // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`. `parse_with_json`
-        // derefs `pm.lockfile` only under `Features::workspaces`, which `NPM` does not set,
-        // and never `pm.log`.
-        let lockfile = unsafe { &mut *lockfile };
-        self.parse(lockfile, manager, log, source, resolver, Features::NPM)
+        self.parse_with_json(
+            lockfile,
+            context,
+            log,
+            source,
+            parsed.root,
+            resolver,
+            features,
+        )
     }
 
     fn parse_dependency(
@@ -2049,7 +2075,7 @@ impl Package<u64> {
         workspace_versions: &mut lockfile::VersionHashMap,
         linked_members: &mut lockfile::LinkedMembers,
         duplicate_checker_map: &mut lockfile::DuplicateCheckerMap,
-        pm: &mut PackageManager,
+        context: &mut PackageJsonContext<'_>,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         group: &DependencyGroup,
@@ -2145,7 +2171,9 @@ impl Package<u64> {
             Some(&mut *log),
             // Only the project's own `npm:` aliases are registered. An alias that another package
             // declares applies to that dependency only.
-            (features.is_main || features.is_workspace).then_some(&mut *pm),
+            (features.is_main || features.is_workspace).then_some(
+                &mut *context.known_npm_aliases as &mut dyn dependency::NpmAliasRegistry,
+            ),
         )
         .unwrap_or_default();
         let mut workspace_range: Option<(semver::query::Group, &[u8])> = None;
@@ -2273,7 +2301,7 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_path) = lockfile::linked_workspace_path(
-                    pm.options.link_workspace_packages,
+                    context.options.link_workspace_packages,
                     workspace_paths,
                     workspace_versions,
                     name_hash,
@@ -2288,7 +2316,7 @@ impl Package<u64> {
                         dependency::version::Tag::Workspace,
                         &path,
                         Some(&mut *log),
-                        Some(&mut *pm),
+                        Some(&mut *context.known_npm_aliases),
                     ) {
                         // Whole-struct move so `Drop` frees the old npm
                         // chain; keep the existing `literal`.
@@ -2305,10 +2333,10 @@ impl Package<u64> {
                     && (features.is_main || features.is_workspace)
                     && tag.is_none()
                     && name_hash != 0
-                    && name_hash == pm.workspace_root_name_hash
+                    && name_hash == *context.workspace_root_name_hash
                 {
                     workspace_path = Some(string_builder.append::<String>(b"."));
-                    version_buf = &pm.workspace_root_version;
+                    version_buf = context.workspace_root_version;
                     let parsed = SemverVersion::parse_utf8(version_buf);
                     workspace_version = (parsed.valid && parsed.wildcard == Wildcard::None)
                         .then(|| parsed.version.min());
@@ -2513,7 +2541,7 @@ impl Package<u64> {
     pub(crate) fn parse_with_json(
         &mut self,
         lockfile: &mut Lockfile,
-        pm: &mut PackageManager,
+        context: &mut PackageJsonContext<'_>,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json: Expr,
@@ -2688,15 +2716,6 @@ impl Package<u64> {
             }
         }
 
-        // Only the `workspaces` group reads this. A parse without it may hold `&mut *pm.lockfile`.
-        let missing_workspace = if pm.options.runtime_auto_install {
-            workspace_map::MissingWorkspace::SkipEmptyToo
-        } else if FEATURES.workspaces && lockfile::pruned_workspaces::keeps_missing_workspaces(pm) {
-            workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
-        } else {
-            workspace_map::MissingWorkspace::Error
-        };
-
         for group in &dependency_groups {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
@@ -2717,13 +2736,13 @@ impl Package<u64> {
                         )
                         .expect("is_array was checked above");
                         total_dependencies_count += workspace_names.process_names_array(
-                            &mut pm.workspace_package_json_cache,
+                            context.workspace_package_json_cache,
                             log,
                             arr,
                             source,
                             dependencies_q.loc,
                             Some(&mut string_builder),
-                            missing_workspace,
+                            context.missing_workspace,
                         )?;
                         break 'brk;
                     }
@@ -2764,13 +2783,13 @@ impl Package<u64> {
                                 )
                                 .expect("is_array was checked above");
                                 total_dependencies_count += workspace_names.process_names_array(
-                                    &mut pm.workspace_package_json_cache,
+                                    context.workspace_package_json_cache,
                                     log,
                                     packages_arr,
                                     source,
                                     packages_loc,
                                     Some(&mut string_builder),
-                                    missing_workspace,
+                                    context.missing_workspace,
                                 )?;
                             }
                             // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
@@ -2885,7 +2904,7 @@ impl Package<u64> {
 
         if FEATURES.is_main {
             lockfile.overrides.parse_count(
-                pm,
+                context.workspace_package_json_cache,
                 log,
                 source,
                 &workspace_names,
@@ -2906,7 +2925,7 @@ impl Package<u64> {
             lockfile.package_extensions.parse(log, source, &json);
 
             install::postinstall_optimizer::PostinstallOptimizer::from_package_json(
-                &mut pm.postinstall_optimizer,
+                context.postinstall_optimizer,
                 &json,
             )?;
         }
@@ -3103,9 +3122,9 @@ impl Package<u64> {
         }
 
         if FEATURES.is_main {
-            pm.workspace_root_name_hash = self.name_hash;
+            *context.workspace_root_name_hash = self.name_hash;
             let version = json.get(b"version").and_then(|v| v.as_utf8(&bump));
-            pm.workspace_root_version = version.unwrap_or_default().into();
+            *context.workspace_root_version = version.unwrap_or_default().into();
         }
 
         for group in &dependency_groups {
@@ -3248,7 +3267,7 @@ impl Package<u64> {
                         &mut lockfile.workspace_versions,
                         &mut lockfile.linked_members,
                         &mut lockfile.scratch.duplicate_checker_map,
-                        pm,
+                        context,
                         log,
                         source,
                         group,
@@ -3294,7 +3313,7 @@ impl Package<u64> {
                             &mut lockfile.workspace_versions,
                             &mut lockfile.linked_members,
                             &mut lockfile.scratch.duplicate_checker_map,
-                            pm,
+                            context,
                             log,
                             source,
                             group,
@@ -3346,7 +3365,7 @@ impl Package<u64> {
                 &mut lockfile.workspace_versions,
                 &mut lockfile.linked_members,
                 &mut lockfile.scratch.duplicate_checker_map,
-                pm,
+                context,
                 log,
                 source,
                 &DependencyGroup::PEER,
@@ -3388,7 +3407,8 @@ impl Package<u64> {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if FEATURES.is_main {
             lockfile.overrides.parse_append(
-                pm,
+                context.workspace_package_json_cache,
+                context.known_npm_aliases,
                 lockfile.buffers.dependencies.as_slice(),
                 self,
                 log,
@@ -3402,7 +3422,7 @@ impl Package<u64> {
             let mut has_workspaces = false;
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 found_any_catalog_or_catalog_object = lockfile.catalogs.parse_append(
-                    pm,
+                    context.known_npm_aliases,
                     log,
                     source,
                     workspaces_expr,
@@ -3416,10 +3436,13 @@ impl Package<u64> {
             // allow "catalog" and "catalogs" in top-level "package.json"
             // so it's easier to guess.
             if !found_any_catalog_or_catalog_object && has_workspaces {
-                let _ =
-                    lockfile
-                        .catalogs
-                        .parse_append(pm, log, source, json, &mut string_builder)?;
+                let _ = lockfile.catalogs.parse_append(
+                    context.known_npm_aliases,
+                    log,
+                    source,
+                    json,
+                    &mut string_builder,
+                )?;
             }
             lockfile.overrides.warn_missing_catalog_entries(
                 &lockfile.catalogs,

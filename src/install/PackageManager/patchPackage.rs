@@ -18,6 +18,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{FileCopier, build_whole_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{self as lockfile, Lockfile, reachable, tree};
+use crate::migration;
 use crate::package_install::{StagingPath, rename_staging_into_place};
 use crate::package_installer::alias_is_safe_install_target;
 use crate::package_manager_real::PackageManager;
@@ -463,10 +464,10 @@ pub fn do_patch_commit(
     manager: &mut PackageManager,
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
-    let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
-    let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
-    let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
+    let load_result =
+        manager.load_lockfile_from_dir(Fd::cwd(), log, Some(migration::Backfill::CachedOnly));
+    let linker = load_result.node_linker(&manager.lockfile, manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
@@ -501,11 +502,11 @@ pub fn do_patch_commit(
         lockfile::LoadResult::Ok(_) => {}
     }
 
+    let lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
     let target = resolve_target(manager, &lockfile, "bun patch --commit");
+    manager.lockfile = lockfile;
     let pkg = target.pkg;
 
-    // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
-    manager.lockfile = lockfile;
     download_if_not_cached(manager, &pkg);
     let name = manager.lockfile.str(&pkg.name).to_vec();
     let patch_key = patch_key_of(&manager.lockfile, &pkg);

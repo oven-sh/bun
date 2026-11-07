@@ -885,8 +885,14 @@ pub(crate) enum Received {
 }
 
 unsafe extern "C" {
+    safe fn Bun__hasRejectedPromises(global: &JSGlobalObject) -> bool;
     safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
     safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
+}
+
+/// Whether a rejected promise still waits for its report: one with no handler is queued, or the report of a batch is under way. Usually neither.
+pub(crate) fn has_unreported_rejections(global: &JSGlobalObject) -> bool {
+    Bun__hasRejectedPromises(global)
 }
 
 /// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected

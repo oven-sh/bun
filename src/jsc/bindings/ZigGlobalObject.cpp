@@ -50,6 +50,7 @@
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include <wtf/BitVector.h>
+#include <wtf/SetForScope.h>
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSIteratorPrototype.h"
 #include "JavaScriptCore/JSObject.h"
@@ -4015,6 +4016,7 @@ void GlobalObject::handleRejectedPromises()
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
         return;
 
+    SetForScope reporting(m_aboutToBeNotifiedRejectedPromises.isReporting(), true);
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
     do {

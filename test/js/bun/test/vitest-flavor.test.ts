@@ -2942,6 +2942,73 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect(bun.exitCode).toBe(1);
   });
 
+  // The test that left it decides, not the test that runs next.
+  test("a rejection left by the callback that settles a test goes to the listeners if that test is vitest's", async () => {
+    const file = (leaves: string, next: string) => `
+      import * as bun from "bun:test";
+      import * as vitest from "vitest";
+      process.on("unhandledRejection", error => console.log("heard", error.message));
+      ${leaves}.test("leaves", async () => {
+        await new Promise(resolve => {
+          setTimeout(() => {
+            Promise.reject(new Error("left"));
+            resolve();
+          });
+        });
+      });
+      ${next}.test("next", () => {});
+    `;
+    const [ofBun, ofVitest] = await Promise.all([
+      runTests({ "a.test.js": file("bun", "vitest") }),
+      runTests({ "a.test.js": file("vitest", "bun") }),
+    ]);
+    expect({ log: ofBun.log, results: ofBun.results, errors: ofBun.errors, exitCode: ofBun.exitCode }).toEqual({
+      log: [],
+      results: ["(fail) leaves", "(pass) next"],
+      errors: ["error: left"],
+      exitCode: 1,
+    });
+    expect({
+      log: ofVitest.log,
+      results: ofVitest.results,
+      errors: ofVitest.errors,
+      exitCode: ofVitest.exitCode,
+    }).toEqual({
+      log: ["heard left"],
+      results: ["(pass) leaves", "(pass) next"],
+      errors: [],
+      exitCode: 0,
+    });
+  });
+
+  // An aroundEach() hook is called like a hook of Vitest in every module. The test that left it still decides.
+  test("a rejection left by the callback that settles a bun:test test inside aroundEach() fails that test", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { aroundEach, test } from "bun:test";
+        process.on("unhandledRejection", error => console.log("heard", error.message));
+        aroundEach(async runTest => {
+          await runTest();
+        });
+        test("leaves", async () => {
+          await new Promise(resolve => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              resolve();
+            });
+          });
+        });
+        test("next", () => {});
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [],
+      results: ["(fail) leaves", "(pass) next"],
+      errors: ["error: left"],
+      exitCode: 1,
+    });
+  });
+
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `

@@ -17,6 +17,7 @@ use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
 use super::execution::TimespecExt as _;
+use super::expect::has_unreported_rejections;
 use super::test_context::{self, Deferred, TestContext};
 use super::test_context_fixtures::TestFixtures;
 use super::test_context_parameter::SharedContextParameter;
@@ -780,6 +781,8 @@ pub(crate) struct BunTest {
     pub(crate) is_reporting_uncaught: bool,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
+    /// True while the loop in `TestCommand::run` waits for this file. That loop queues a `RunTestsTask` for a result that no drain took.
+    pub(crate) in_wait_loop: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
@@ -824,6 +827,7 @@ impl BunTest {
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
             is_loading: true,
+            in_wait_loop: false,
             file_end: None,
             unclaimed: Default::default(),
         }
@@ -1060,6 +1064,7 @@ impl BunTest {
     fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
         self.execution.kill_dangling_processes_on_timeout(global_this);
+        self.execution.timer_fired_at = Timespec::now_force_real_time();
         self.add_result(RefDataValue::Start);
     }
 
@@ -1102,18 +1107,29 @@ impl BunTest {
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         strong.get().pending_phase = phase;
-        // The next microtask drain normally runs this. The task is a fallback for a drain that happens with JS on the stack.
+        // The next microtask drain normally runs this. The task takes it when no drain does: JS is on the stack, or `run_pending_step` declines until the turn is over.
         vm.has_pending_test_step.set(true);
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         vm.enqueue_task(task);
     }
 
-    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task. Returns false if it declines, and the step stays pending.
     #[inline(never)] // --trim cuts the test runner at the call.
-    pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
+    pub(crate) fn run_pending_step(global_this: &JSGlobalObject) -> bool {
         let Some(strong) = clone_active_strong() else {
-            return;
+            return true;
         };
+        // The report of rejected promises charges the entry that is current then, so the runner stays on this one while a promise waits for that report, and then until a task steps. A `RunTestsTask` that is already queued still steps first, because the event loop runs its queued tasks before it reports.
+        if (strong.get().execution.step_was_left || has_unreported_rejections(global_this)) && strong.get().has_due_step() {
+            let execution = &mut strong.get().execution;
+            if !execution.step_was_left {
+                execution.step_was_left = true;
+                execution.step_left_at = Timespec::now_force_real_time();
+            }
+            // The poll of this turn comes before the report. It must not sleep while this step is due.
+            global_this.bun_vm().as_mut().wakeup();
+            return false;
+        }
         let phase = strong.get().pending_phase;
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {
@@ -1122,10 +1138,16 @@ impl BunTest {
             phase,
         })
         .call();
+        true
     }
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
+    }
+
+    /// Whether `run_pending_step` may leave the queued step to a `RunTestsTask`: the loop in `TestCommand::run` queues one for it in every iteration. Not inside `run`, which reads the queue itself and would judge time limits by `timer_fired_at` after a decline.
+    pub(crate) fn has_due_step(&self) -> bool {
+        self.in_wait_loop && !self.in_run_loop && self.result_queue.readable_length() > 0
     }
 
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -1149,7 +1171,10 @@ impl BunTest {
         let _reset = scopeguard::guard(this, |p| {
             // SAFETY: `p` is the same `UnsafeCell`-derived ptr; `this_strong`
             // keeps the allocation alive for the whole function.
-            unsafe { (*p).in_run_loop = false }
+            unsafe {
+                (*p).in_run_loop = false;
+                (*p).execution.step_was_left = false;
+            }
         });
 
         let mut min_timeout = Timespec::EPOCH;

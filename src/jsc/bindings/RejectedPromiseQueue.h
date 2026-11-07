@@ -29,6 +29,9 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
+    // Whether a promise still waits for its report: drainTo() has one to move out, or handleRejectedPromises() is in the middle of a batch.
+    bool hasUnreported() const;
+    bool& isReporting() { return m_isReporting; }
 
 private:
     struct Entry {
@@ -44,6 +47,8 @@ private:
     WTF::Vector<Entry> m_held;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
+    // Set by handleRejectedPromises() for the time of a batch.
+    bool m_isReporting { false };
 };
 
 // Inlined into promiseRejectionTracker, their one caller.
@@ -55,6 +60,17 @@ ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner,
     m_entries.unsafeAppendWithoutCapacityCheck(Entry {});
     m_entries.last().promise.set(vm, owner, promise);
     m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSC::JSValue(rejectionOwner) : JSC::jsNull());
+}
+
+inline bool RejectedPromiseQueue::hasUnreported() const
+{
+    if (m_isReporting)
+        return true;
+    for (const Entry& entry : m_entries) {
+        if (!isHandled(entry))
+            return true;
+    }
+    return false;
 }
 
 ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPromise* promise)

@@ -674,6 +674,21 @@ impl TokenList {
         fallbacks
     }
 
+    /// Whether the list holds a `var()` or an `env()`, at any depth.
+    fn has_substitution(&self) -> bool {
+        self.v.iter().any(|token| match token {
+            TokenOrValue::Var(_) | TokenOrValue::Env(_) => true,
+            TokenOrValue::Function(f) => f.arguments.has_substitution(),
+            TokenOrValue::UnresolvedColor(
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+            ) => alpha.has_substitution(),
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.has_substitution() || dark.has_substitution()
+            }
+            _ => false,
+        })
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 
@@ -1391,6 +1406,19 @@ impl UnparsedProperty {
 
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
         self.property_id == rhs.property_id && self.value.eql(&rhs.value)
+    }
+
+    /// Whether no browser drops this value at parse time. `var()` and `env()` are validated later.
+    #[inline(never)] // Only a later declaration of the same property gets here.
+    pub(crate) fn is_kept_at_parse_time(&self) -> bool {
+        // Every default target reads these. `revert` needs Chrome 84, `revert-layer` Chrome 99.
+        const KEYWORDS: &[&[u8]] = &[b"inherit", b"initial", b"unset"];
+        self.value.has_substitution()
+            || matches!(
+                self.value.v.as_slice(),
+                [TokenOrValue::Token(Token::Ident(ident))]
+                    if strings::eql_any_case_insensitive_ascii(ident, KEYWORDS)
+            )
     }
 }
 

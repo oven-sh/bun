@@ -628,6 +628,29 @@ pub enum Pattern {
     Object(ObjectPattern),
 }
 
+/// Not in upstream: what the visit pass left for the callee of a call or the tag of a template. Upstream prints
+/// the expression that the place holds for both kinds, so a value that is `a.b` prints as a member call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BunCallee {
+    /// A property access, whose object is the `this` of the call, or an import item, which the printer can
+    /// write as a property access. Codegen prints the expression that the place holds.
+    Reference,
+    /// Any other expression. The call has no `this`: codegen prints `(0, a.b)` where the place holds a `Reference`.
+    Value,
+}
+
+impl BunCallee {
+    pub fn of(expr: &bun_ast::Expr) -> BunCallee {
+        if expr.has_value_for_this_in_call()
+            || matches!(expr.data, bun_ast::expr::Data::EImportIdentifier(_))
+        {
+            BunCallee::Reference
+        } else {
+            BunCallee::Value
+        }
+    }
+}
+
 // =============================================================================
 // InstructionValue enum
 // =============================================================================
@@ -689,6 +712,8 @@ pub enum InstructionValue {
     CallExpression {
         callee: Place,
         args: HirVec<PlaceOrSpread>,
+        // Not in upstream.
+        bun_callee: BunCallee,
         loc: Option<SourceLocation>,
     },
     MethodCall {
@@ -802,6 +827,8 @@ pub enum InstructionValue {
     TaggedTemplateExpression {
         tag: Place,
         value: TemplateQuasi,
+        // Not in upstream.
+        bun_callee: BunCallee,
         loc: Option<SourceLocation>,
     },
     TemplateLiteral {

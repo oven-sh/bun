@@ -37,7 +37,7 @@ use crate::hir::reactive::{
     ReactiveValue,
 };
 use crate::hir::{
-    ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
+    ArrayElement, ArrayPattern, BlockId, BunCallee, DeclarationId, FunctionExpressionType, HirVec,
     IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
     LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
     ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
@@ -1910,12 +1910,23 @@ fn codegen_base_instruction_value(
                 }
             }
             match binding.ref_() {
+                // The parser has an identifier for a namespace import, and not an import item as for the others.
+                // `codegen_callee` puts `(0, ...)` around an import item.
+                Some(r) if matches!(binding.kind, NonLocalKind::ImportNamespace { .. }) => {
+                    cx.cg.host.record_usage(r);
+                    Ok(Expr::init_identifier(r, loc))
+                }
                 Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
                 None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
             }
         }
-        InstructionValue::CallExpression { callee, args, .. } => {
-            let callee_expr = codegen_place_to_expression(cx, callee)?;
+        InstructionValue::CallExpression {
+            callee,
+            args,
+            bun_callee,
+            ..
+        } => {
+            let callee_expr = codegen_callee(cx, callee, *bun_callee)?;
             let arguments = codegen_arguments(cx, args)?;
             if let ExprData::EImport(orig) = callee_expr.data {
                 let mut it = arguments.into_iter();
@@ -2211,8 +2222,13 @@ fn codegen_base_instruction_value(
             expr_type,
             ..
         } => codegen_function_expression(cx, name, name_hint, lowered_func, *expr_type, loc),
-        InstructionValue::TaggedTemplateExpression { tag, value, .. } => {
-            let tag_expr = codegen_place_to_expression(cx, tag)?;
+        InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            bun_callee,
+            ..
+        } => {
+            let tag_expr = codegen_callee(cx, tag, *bun_callee)?;
             Ok(Expr::init(
                 E::Template {
                     tag: Some(tag_expr),
@@ -3046,6 +3062,19 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
     }
     let (r, _ident_loc) = convert_identifier(cx, place.identifier)?;
     Ok(Expr::init_identifier(r, convert_loc(place.loc)))
+}
+
+/// Not in upstream: the callee of a call or the tag of a template.
+fn codegen_callee(
+    cx: &mut Context,
+    place: &Place,
+    source: BunCallee,
+) -> Result<Expr, CompilerError> {
+    let expr = codegen_place_to_expression(cx, place)?;
+    if source == BunCallee::Value && BunCallee::of(&expr) == BunCallee::Reference {
+        return Ok(Expr::init(E::Number::new(0.0), expr.loc).join_with_comma(expr));
+    }
+    Ok(expr)
 }
 
 fn convert_identifier(

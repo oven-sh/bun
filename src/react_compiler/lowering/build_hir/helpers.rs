@@ -1391,8 +1391,14 @@ fn lower_optional_call_expression_impl(
     };
 
     enum CalleeInfo {
-        CallExpression { callee: Place },
-        MethodCall { receiver: Place, property: Place },
+        CallExpression {
+            callee: Place,
+            bun_callee: BunCallee,
+        },
+        MethodCall {
+            receiver: Place,
+            property: Place,
+        },
     }
 
     let mut callee_info: Option<CalleeInfo> = None;
@@ -1405,6 +1411,7 @@ fn lower_optional_call_expression_impl(
                 let value_place = lower_value_to_temporary(builder, value)?;
                 callee_info = Some(CalleeInfo::CallExpression {
                     callee: value_place,
+                    bun_callee: BunCallee::Value,
                 });
             }
             (Data::EDot(_) | Data::EIndex(_), Some(_)) => {
@@ -1427,12 +1434,13 @@ fn lower_optional_call_expression_impl(
                 let callee_place = lower_expression_to_temporary(builder, callee)?;
                 callee_info = Some(CalleeInfo::CallExpression {
                     callee: callee_place,
+                    bun_callee: BunCallee::of(callee),
                 });
             }
         }
 
         let test_place = match callee_info.as_ref().unwrap() {
-            CalleeInfo::CallExpression { callee } => callee.clone(),
+            CalleeInfo::CallExpression { callee, .. } => callee.clone(),
             CalleeInfo::MethodCall { property, .. } => property.clone(),
         };
 
@@ -1451,13 +1459,14 @@ fn lower_optional_call_expression_impl(
         let temp = build_temporary_place(builder, loc);
 
         match callee_info.as_ref().unwrap() {
-            CalleeInfo::CallExpression { callee } => {
+            CalleeInfo::CallExpression { callee, bun_callee } => {
                 builder.push(Instruction {
                     id: EvaluationOrder(0),
                     lvalue: temp.clone(),
                     value: InstructionValue::CallExpression {
                         callee: callee.clone(),
                         args,
+                        bun_callee: *bun_callee,
                         loc,
                     },
                     loc,

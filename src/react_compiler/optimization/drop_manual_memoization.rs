@@ -495,6 +495,8 @@ fn get_manual_memoization_replacement(
         InstructionValue::CallExpression {
             callee: fn_place.clone(),
             args: hir_vec![],
+            // Not in upstream: React calls the function of `useMemo` with no `this`.
+            bun_callee: crate::hir::BunCallee::Value,
             loc,
         }
     } else {

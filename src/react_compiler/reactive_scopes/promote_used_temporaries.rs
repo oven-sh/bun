@@ -941,6 +941,14 @@ fn promote_interposed_instruction(
                     // Treat property of method call as constlike so we don't promote it.
                     consts.insert(property.identifier);
                 }
+                // Not in upstream: this one is a member call too, and a name for its callee takes the `this` away.
+                InstructionValue::CallExpression {
+                    callee,
+                    bun_callee: crate::hir::BunCallee::Reference,
+                    ..
+                } => {
+                    consts.insert(callee.identifier);
+                }
                 InstructionValue::PropertyLoad { object, .. }
                 | InstructionValue::ComputedLoad { object, .. } => {
                     if let Some(lvalue) = &instr.lvalue {

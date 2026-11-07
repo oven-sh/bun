@@ -91,7 +91,12 @@ pub(crate) fn lower_expression(
             } else {
                 let callee = lower_expression_to_temporary(builder, &call.target)?;
                 let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
-                Ok(InstructionValue::CallExpression { callee, args, loc })
+                Ok(InstructionValue::CallExpression {
+                    callee,
+                    args,
+                    bun_callee: BunCallee::of(&call.target),
+                    loc,
+                })
             }
         }
         Data::EDot(d) => {
@@ -273,7 +278,12 @@ pub(crate) fn lower_expression(
                     builder, &i.options,
                 )?));
             }
-            Ok(InstructionValue::CallExpression { callee, args, loc })
+            Ok(InstructionValue::CallExpression {
+                callee,
+                args,
+                bun_callee: BunCallee::Value,
+                loc,
+            })
         }
         Data::EThis(_) => {
             builder.record_error(CompilerErrorDetail {
@@ -1265,8 +1275,14 @@ fn lower_template(
                 return Ok(unsupported_node("TaggedTemplateExpression", loc));
             }
         };
+        let bun_callee = BunCallee::of(tag);
         let tag = lower_expression_to_temporary(builder, tag)?;
-        return Ok(InstructionValue::TaggedTemplateExpression { tag, value, loc });
+        return Ok(InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            bun_callee,
+            loc,
+        });
     }
 
     let mut subexprs: HirVec<Place> = AstAlloc::vec_with_capacity(parts.len());

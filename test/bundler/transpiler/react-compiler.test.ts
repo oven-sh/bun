@@ -1420,6 +1420,266 @@ describe("bundler", () => {
     },
   });
 
+  // `(0, api.who)()` calls the value of `api.who`, so `who` gets no `this`. The compiler holds that value in a
+  // temporary, and codegen prints a temporary as the expression that made it. That was `api.who()`, a member
+  // call, for every call of a value that a property access or an import item made. Each component below calls
+  // `who` once, and the build with the compiler prints what the build without it prints.
+  //
+  // The third column is for `--minify-syntax`. There the parser takes the comma in front of an import item out
+  // before the compiler runs, and in the plain build it puts a constant that is read once in the place of its
+  // read (#46818). So these rows call a member, the second three in the plain build only.
+  type CalleeRow = [body: string, printed: string, minified?: { plain: string; compiled: string }];
+  const commaFolded = { plain: "lib", compiled: "lib" };
+  const constSubstituted = { plain: "lib", compiled: "none" };
+  const valueCallees: Record<string, CalleeRow> = {
+    // A comma in the source. Nothing reads its left operand, so DeadCodeElimination removes that.
+    CommaChild: ["return <b>{(0, api.who)()}</b>;", "none"],
+    CommaConst: ["const v = (0, api.who)(); return <b>{v}</b>;", "none"],
+    CommaInArrow: ["return <b>{[n].map(() => (0, api.who)())}</b>;", "none"],
+    CommaOptionalCall: ["return <b>{(0, api.who)?.()}</b>;", "none"],
+    CommaAfterLocal: ["return <b>{(n, api.who)()}</b>;", "none"],
+    CommaAfterMember: ["return <b>{(own.nul, api.who)()}</b>;", "none"],
+    CommaAfterVoid: ["return <b>{(void 0, api.who)()}</b>;", "none"],
+    CommaIndex: ['return <b>{(0, api["who"])()}</b>;', "none"],
+    CommaIndexOfKey: ["return <b>{(0, api[keys.who])()}</b>;", "none"],
+    CommaChain: ["return <b>{(0, box.api.who)()}</b>;", "none"],
+    CommaSpread: ["return <b>{(0, api.who)(...[n])}</b>;", "none"],
+    CommaOfProp: ["return <b>{(0, own.who)()}</b>;", "none"],
+    CommaOfPropInArrow: ["return <b>{[n].map(() => (0, own.who)())}</b>;", "none"],
+    CommaOfPropOptionalCall: ["return <b>{(0, own.who)?.()}</b>;", "none"],
+    // The shape of a call of an import in the CommonJS output of TypeScript and of Babel.
+    CommaOfRequire: ["return <b>{(0, lib_1.who)()}</b>;", "none", commaFolded],
+    CommaOfDefaultImport: ["return <b>{(0, lib.who)()}</b>;", "none"],
+    CommaOfNamedImport: ["return <b>{(0, who)()}</b>;", "none", commaFolded],
+    CommaOfNamespaceImport: ["return <b>{(0, ns.who)()}</b>;", "none", commaFolded],
+    // The visit pass writes each of these as `(0, api.who)()`.
+    FoldedConditional: ["return <b>{(1 ? api.who : null)()}</b>;", "none"],
+    FoldedOr: ["return <b>{(null || api.who)()}</b>;", "none"],
+    FoldedNullish: ["return <b>{(null ?? api.who)()}</b>;", "none"],
+    FoldedAnd: ["return <b>{(true && api.who)()}</b>;", "none"],
+    // A pass of the compiler makes the callee: InlineImmediatelyInvokedFunctionExpressions, DropManualMemoization,
+    // OptimizeForSSR (for the target bun) and ConstantPropagation.
+    InlinedArrow: ["return <b>{(() => api.who)()()}</b>;", "none"],
+    MemoResult: ["return <b>{useMemo(() => api.who, [])()}</b>;", "none"],
+    ReducerInit: ["const [v] = useReducer(() => 0, 0, api.who); return <b>{v}</b>;", "none"],
+    ConstOfImportItem: ["const m = lib_1.who; return <b>{m()}</b>;", "none", constSubstituted],
+    ConstOfNamedImport: ["const m = who; return <b>{m()}</b>;", "none", constSubstituted],
+    ConstOfNamespaceImport: ["const m = ns.who; return <b>{m()}</b>;", "none", constSubstituted],
+    // The left operand stays, and so did the comma.
+    CommaAfterCall: ["return <b>{(log.push(1), api.who)()}</b>;", "none"],
+    LogicalOr: ["return <b>{(api.nul || api.who)()}</b>;", "none"],
+    // A property access in the source is the callee of a member call.
+    Member: ["return <b>{api.who()}</b>;", "api"],
+    MemberOfProp: ["return <b>{own.who()}</b>;", "api"],
+    MemberOptionalCall: ["return <b>{own.who?.()}</b>;", "api"],
+    MemberOfRequire: ["return <b>{lib_1.who()}</b>;", "lib"],
+    MemberOfRequireOptionalCall: ["return <b>{lib_1.who?.()}</b>;", "lib"],
+    MemberOfNamespaceImport: ["return <b>{ns.who()}</b>;", "lib"],
+    ParenthesizedOptionalMember: ["return <b>{(api?.who)()}</b>;", "api"],
+    // The plain build prints this one as `import_lib.who()` (#34733). The compiler leaves an import item that is
+    // called as it is to the printer.
+    DirectOfNamedImport: ["return <b>{who()}</b>;", "lib"],
+  };
+  // OptimizePropsMethodCalls makes a call of a value of a method call on the props object. Its callee stays a
+  // reference: it is printed as written, and a statement in an argument gives it no name.
+  const propsCallees: Record<string, CalleeRow> = {
+    PropsMethod: ["return <b>{props.who()}</b>;", "props"],
+    PropsMethodLogicalArgument: ["return <b>{props.who(props.n && g())}</b>;", "props"],
+    PropsMethodHookArgument: ["return <b>{props.who(useMemo(() => [g()], []))}</b>;", "props"],
+    PropsMethodAssignedArgument: ["let x = 0; return <b>{props.who((x = props.n))}</b>;", "props"],
+    PropsPair: ['return <b>{props.who() + " " + (0, props.who)()}</b>;', "props none"],
+    PropsIndexValue: ["return <b>{(0, props[keys.who])?.()}</b>;", "none"],
+  };
+  for (const target of ["browser", "bun"] as const) {
+    for (const minifySyntax of [false, true]) {
+      for (const reactCompiler of [false, true]) {
+        const printed = ([, value, minified]: CalleeRow) =>
+          minifySyntax && minified ? minified[reactCompiler ? "compiled" : "plain"] : value;
+        const id = [target, ...(minifySyntax ? ["minify-syntax"] : []), reactCompiler ? "compiled" : "plain"];
+        itBundled(`react-compiler/ValueCalleeGetsNoThis-${id.join("-")}`, {
+          files: {
+            "/entry.jsx": /* jsx */ `
+              import { useMemo, useReducer } from "react";
+              import lib, { who } from "./lib.cjs";
+              import * as ns from "./lib.cjs";
+              const lib_1 = require("./lib.cjs");
+
+              const api = {
+                who() {
+                  return this === undefined ? "none" : this === api ? "api" : this === props ? "props" : "other";
+                },
+                nul: null,
+              };
+              const box = { api };
+              const keys = { who: "who" };
+              const log = [];
+              const g = () => 1;
+              const props = { n: 1, own: api, who: api.who };
+
+              ${Object.entries(valueCallees)
+                .map(([name, [body]]) => `function ${name}({ n, own }) { ${body} }`)
+                .join("\n")}
+              function make() {
+                function Nested({ n, own }) { return <b>{(0, api.who)()}</b>; }
+                return Nested;
+              }
+              ${Object.entries(propsCallees)
+                .map(([name, [body]]) => `function ${name}(props) { ${body} }`)
+                .join("\n")}
+
+              for (const Component of [${Object.keys(valueCallees).join(", ")}, make(), ${Object.keys(propsCallees).join(", ")}]) {
+                console.log(Component.name, Component(props));
+              }
+            `,
+            "/lib.cjs": `"use strict"; exports.who = function () { return this === undefined ? "none" : "lib"; };`,
+            "/node_modules/react/index.js": /* js */ `
+              exports.useMemo = callback => callback();
+              exports.useReducer = (reducer, argument, init) => [init ? init(argument) : argument, () => {}];
+            `,
+            "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => String(props.children);`,
+            "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => String(props.children);`,
+            "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+            "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          },
+          reactCompiler,
+          target,
+          minifySyntax,
+          backend: "cli",
+          run: {
+            stdout: [
+              ...Object.entries(valueCallees).map(([name, row]) => `${name} ${printed(row)}`),
+              "Nested none",
+              ...Object.entries(propsCallees).map(([name, row]) => `${name} ${printed(row)}`),
+            ].join("\n"),
+          },
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            // The compiler takes the pattern out of the parameters of each component that it compiles.
+            expect(out.includes("({ n, own })")).toBe(!reactCompiler);
+            // A call of an import is printed as it is written.
+            expect(out).not.toMatch(/\(0, \$?use(Memo|Reducer)\)/);
+          },
+        });
+      }
+    }
+  }
+
+  // The same for the tag of a template. A bundle for the target bun is not parsed again when it runs. A bundle for
+  // a browser is, and the parser of the run time takes the comma in front of a tag out again (#46818).
+  const valueTags: Record<string, CalleeRow> = {
+    ValueTag: ["return <b>{(log.length, api.who)`x`}</b>;", "none"],
+    // `api?.who` in front of a template is a SyntaxError. The comma is what makes this one a program.
+    InlinedArrowTag: ["return <b>{(() => api?.who)()`x`}</b>;", "none"],
+    ConstOfImportItemTag: ["const t = lib_1.who; return <b>{t`x`}</b>;", "none"],
+    MemberTag: ["return <b>{api.who`x`}</b>;", "api"],
+    MemberOfPropTag: ["return <b>{own.who`x`}</b>;", "api"],
+    MemberOfRequireTag: ["return <b>{lib_1.who`x`}</b>;", "lib"],
+  };
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ValueTagGetsNoThis-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          const lib_1 = require("./lib.cjs");
+          const api = { who() { return this === undefined ? "none" : this === api ? "api" : "other"; } };
+          const log = [];
+          ${Object.entries(valueTags)
+            .map(([name, [body]]) => `function ${name}({ n, own }) { ${body} }`)
+            .join("\n")}
+          for (const Component of [${Object.keys(valueTags).join(", ")}]) {
+            console.log(Component.name, Component({ n: 1, own: api }));
+          }
+        `,
+        "/lib.cjs": `"use strict"; exports.who = function () { return this === undefined ? "none" : "lib"; };`,
+        "/node_modules/react/index.js": `module.exports = {};`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => String(props.children);`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => String(props.children);`,
+        "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "bun",
+      backend: "api",
+      run: {
+        stdout: Object.entries(valueTags)
+          .map(([name, [, printed]]) => `${name} ${printed}`)
+          .join("\n"),
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out.includes("({ n, own })")).toBe(!reactCompiler);
+        if (reactCompiler) expect(out).toContain("(0, api?.who)`x`");
+      },
+    });
+  }
+
+  // A namespace import is an identifier for the parser and no import item. A call of one is printed as written.
+  itBundled("react-compiler/NamespaceImportCalleeIsPrintedAsWritten", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as ns from "a-namespace";
+        export function Call({ n, own }) { return <b>{ns(n)}</b>; }
+        export function OptionalCall({ n, own }) { return <b>{ns?.(n)}</b>; }
+        export function Tag({ n, own }) { return <b>{ns\`x\`}</b>; }
+        export function ConstCall({ n, own }) { const m = ns; return <b>{m(n)}</b>; }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["a-namespace", "react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("({ n, own })");
+      expect(out.match(/\(0, ns\)|\bns(\?\.)?[(`]/g)).toEqual(["ns(", "ns?.(", "ns`", "ns("]);
+    },
+  });
+
+  // What is left: a member call whose callee gets a name loses its receiver. Each of these prints the second
+  // column without the compiler and `none` with it, for the target browser. Upstream 1.0.0 does the same.
+  // - `(own?.who)()` is a CallExpression in the HIR, and its callee is a dependency of the scope of the call:
+  //   `const t1 = own?.who; ... t1()`.
+  // - OptimizePropsMethodCalls makes a call of a value of `props[key]()`, and a computed load is no dependency
+  //   path: `const t0 = props[key]; ... t0()`.
+  // - A tag has no receiver in the HIR: `const t1 = own[key]; ... t1\`x\``.
+  const memberCalleesThatGetAName: Record<string, CalleeRow> = {
+    ParenthesizedOptionalMemberOfProp: ["function C({ n, own }) { return <b>{(own?.who)()}</b>; }", "api"],
+    ParenthesizedOptionalIndexOfProp: ['function C({ n, own }) { return <b>{(own?.["who"])()}</b>; }', "api"],
+    PropsMethodOfKey: ["function C(props) { return <b>{props[keys.who]()}</b>; }", "props"],
+    MemberOfKeyTag: ["function C({ n, own }) { return <b>{own[keys.who]`x`}</b>; }", "api"],
+  };
+  itBundled("react-compiler/MemberCalleeThatGetsANameKeepsThis", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const api = {
+          who() {
+            return this === undefined ? "none" : this === api ? "api" : this === props ? "props" : "other";
+          },
+        };
+        const keys = { who: "who" };
+        const props = { n: 1, own: api, who: api.who };
+        ${Object.entries(memberCalleesThatGetAName)
+          .map(([name, [body]]) => body.replace("function C", "function " + name))
+          .join("\n")}
+        for (const Component of [${Object.keys(memberCalleesThatGetAName).join(", ")}]) {
+          console.log(Component.name, Component(props));
+        }
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => String(props.children);`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => String(props.children);`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: Object.entries(memberCalleesThatGetAName)
+        .map(([name, [, printed]]) => `${name} ${printed}`)
+        .join("\n"),
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -5065,6 +5325,51 @@ test("react-compiler compiles branches that have nothing in them", async () => {
 
   expect(stderr).toBe("");
   expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(bodies.length);
+  expect(exitCode).toBe(0);
+});
+
+// The run time compiles a component when it loads the file. See react-compiler/ValueCalleeGetsNoThis above.
+test("react-compiler: a call and a tag of a value get no `this` under `bun test --react-compiler`", async () => {
+  using dir = tempDir("react-compiler-value-callee", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      exports: {
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => props.children, jsx = jsxDEV, jsxs = jsxDEV;`,
+    "src/Who.jsx": `
+      const api = { who() { return this === undefined ? "none" : "api"; } };
+      const log = [];
+      export function Member() { return <b>{api.who()}</b>; }
+      export function Value() { return <b>{(0, api.who)()}</b>; }
+      export function MemberTag() { return <b>{api.who\`x\`}</b>; }
+      export function ValueTag() { return <b>{(log.length, api.who)\`x\`}</b>; }
+    `,
+    "who.test.js": `
+      import { test } from "bun:test";
+      import { Member, Value, MemberTag, ValueTag } from "./src/Who.jsx";
+      test("who", () => {
+        const all = [Member, Value, MemberTag, ValueTag];
+        // Only the output of the compiler reads a memo cache.
+        const compiled = all.map(Component => /\\$\\[\\d+\\]/.test(String(Component)));
+        console.log(JSON.stringify({ compiled, this: all.map(Component => Component()) }));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./who.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain('{"compiled":[true,true,true,true],"this":["api","none","api","none"]}');
+  expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
 

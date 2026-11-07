@@ -275,6 +275,8 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                                     } => InstructionValue::CallExpression {
                                         callee: callee.clone(),
                                         args: hir_vec![PlaceOrSpread::Place(arg.clone())],
+                                        // Not in upstream: React calls `init(initialArg)` with no `this`.
+                                        bun_callee: crate::hir::BunCallee::Value,
                                         loc: *loc,
                                     },
                                 };

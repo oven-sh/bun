@@ -4511,6 +4511,12 @@ static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffe
 
 static Exception exceptionForSerializationFailure(SerializationReturnCode);
 
+// Out of line: its caller also runs after every walk that succeeds, and has to stay small enough to inline.
+static NEVER_INLINE void throwSerializationFailure(JSGlobalObject& lexicalGlobalObject, ThrowScope& scope, SerializationReturnCode code)
+{
+    propagateException(lexicalGlobalObject, scope, exceptionForSerializationFailure(code));
+}
+
 static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlobalObject, SerializationReturnCode code)
 {
     auto& vm = lexicalGlobalObject.vm();
@@ -4524,7 +4530,7 @@ static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlob
         break;
     case SerializationReturnCode::ValidationError:
     case SerializationReturnCode::NeedsTransferError:
-        propagateException(lexicalGlobalObject, scope, exceptionForSerializationFailure(code));
+        throwSerializationFailure(lexicalGlobalObject, scope, code);
         break;
     case SerializationReturnCode::DataCloneError:
         throwDataCloneError(lexicalGlobalObject, scope);

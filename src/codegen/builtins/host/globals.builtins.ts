@@ -19,7 +19,7 @@ import {
   webSocketHandlerCell,
   webSocketsCell,
 } from "./native-cells.ts";
-import { handedOver, mayAnswerWrapperKeptIn } from "./native-code.ts";
+import { cloned, handedOver, heapsReadByClone, mayAnswerWrapperKeptIn, membersReadByClone } from "./native-code.ts";
 
 type Contents = Readonly<Record<string, b.TableType>>;
 type UsesByOperand = Readonly<Record<string, readonly b.UseSpec[]>>;
@@ -251,20 +251,7 @@ const testModule = b.union(b.builtin("bun:test"), b.object);
 const timeline = b.union(b.builtin("performance"), b.instance("Performance"));
 const timelineFeatures: readonly b.FeatureUseSpec[] = ["PerformanceTimeline"];
 
-const heapsReadByClone = [
-  "TypedArrayStorage",
-  "TypedArrayElements",
-  "CollectionStorage",
-  "CollectionEntries",
-  "InternalFields",
-  "ExternalState",
-];
 const heapsWrittenByTransfer = ["TypedArrayStorage", "TypedArrayElements", "ExternalState"];
-const membersReadByClone = ["name", "message", "stack", "cause"];
-const cloned = [
-  b.readsContents(),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", b.named(...membersReadByClone)),
-];
 const transferList = [b.runsTransitively(b.named("transfer"), "Iterate"), b.writesContents()];
 const optionsWithClonedDetail = (...names: readonly string[]) => [
   b.readsContents(),

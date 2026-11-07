@@ -4,3 +4,18 @@ export const handedOver = b.handedOver;
 export const objectHandedOver = handedOver;
 // While an async context is set, native code keeps a callback inside a wrapper of its own, and a getter that answers what is kept hands out the wrapper: an object that no script has made.
 export const mayAnswerWrapperKeptIn = (cell: string) => b.createdIn(b.object, b.nativeCell(cell));
+
+// What structured clone does with a value: structuredClone, postMessage and the serializers of node:v8 and bun:jsc walk it the same way.
+export const heapsReadByClone = [
+  "TypedArrayStorage",
+  "TypedArrayElements",
+  "CollectionStorage",
+  "CollectionEntries",
+  "InternalFields",
+  "ExternalState",
+];
+export const membersReadByClone = ["name", "message", "stack", "cause"];
+export const cloned = [
+  b.readsContents(),
+  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", b.named(...membersReadByClone)),
+];

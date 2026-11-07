@@ -1,6 +1,7 @@
 // The native functions that Bun's own modules make with $newCppFunction, each from the code of the function.
 import * as b from "bun-builtins-table";
 import { framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
+import { cloned, heapsReadByClone } from "./native-code.ts";
 
 const cpp = (file: string, symbol: string): b.BuiltinPath => `native:NewCppFunction:${file}:${symbol}`;
 
@@ -245,6 +246,15 @@ export default b.declarations(
       ],
     },
     writes: externalState,
+    implementation: b.hostCall,
+  }),
+  // v8.serialize() of node:v8. It walks the value as structuredClone does, without a transfer list, and answers the bytes.
+  b.static(cpp("NodeV8.cpp", "jsFunctionNodeV8_serialize"), {
+    ...operandCodeOnly,
+    args: { value: b.any.optional },
+    returns: b.instance("Buffer").fresh,
+    uses: { value: cloned },
+    reads: heapsReadByClone,
     implementation: b.hostCall,
   }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {

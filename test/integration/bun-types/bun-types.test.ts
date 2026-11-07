@@ -974,7 +974,18 @@ describe("@types/bun integration test", () => {
            process.removeListener("memoryPressure", () => {});
            process.on("memoryPressure", level => {
              level satisfies "warning" | "critical";
-           });`,
+           });
+           // @types/node@24 has no \`maxDepth\` for fs.glob, and its three option interfaces share a private base.
+           import * as fs from "node:fs";
+           fs.globSync("**/*.ts", { maxDepth: 1 }) satisfies string[];
+           fs.globSync("**/*.ts", { maxDepth: 1, withFileTypes: true }) satisfies fs.Dirent[];
+           fs.glob("**/*.ts", { maxDepth: 0 }, (err, matches) => {
+             matches satisfies string[];
+           });
+           fs.promises.glob("**/*.ts", { maxDepth: 2, followSymlinks: true }) satisfies NodeJS.AsyncIterator<string>;
+           declare const withFileTypes: boolean;
+           fs.globSync("**/*.ts", { withFileTypes, maxDepth: 1 }) satisfies string[] | fs.Dirent[];
+           ({ maxDepth: 1, followSymlinks: true }) satisfies fs.GlobOptions;`,
       });
       await $`cd ${checkDir} && bun add @types/node@24`.quiet();
       await cp(join(BASE_FIXTURE_DIR, "node_modules", "bun-types"), join(checkDir, "node_modules", "bun-types"), {

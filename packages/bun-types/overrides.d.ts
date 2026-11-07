@@ -345,6 +345,54 @@ declare global {
   }
 }
 
+declare module "node:fs" {
+  // @types/node has no `maxDepth`, and its 22.x and 25.x have no `followSymlinks`. `GlobOptions` serves `fs.GlobOptions`
+  // and a `withFileTypes` that is not a literal. In @types/node 22 to 25 the two other interfaces extend a private
+  // `_GlobOptions<T>` and not `GlobOptions`, so the two options are on all three.
+  interface GlobOptions {
+    /**
+     * When `true`, a `*` or `**` segment also enters a symbolic link to a directory. A segment with no wildcard that
+     * names such a link is followed with or without this option.
+     * @default false
+     */
+    followSymlinks?: boolean | undefined;
+    /**
+     * Maximum depth of a match, counted in path segments below `cwd`. The `cwd` directory has a depth of `0`. A deeper
+     * path is not a match, and a directory at this depth is not read.
+     * @default Infinity
+     */
+    maxDepth?: number | undefined;
+  }
+  interface GlobOptionsWithFileTypes {
+    /**
+     * When `true`, a `*` or `**` segment also enters a symbolic link to a directory. A segment with no wildcard that
+     * names such a link is followed with or without this option.
+     * @default false
+     */
+    followSymlinks?: boolean | undefined;
+    /**
+     * Maximum depth of a match, counted in path segments below `cwd`. The `cwd` directory has a depth of `0`. A deeper
+     * path is not a match, and a directory at this depth is not read.
+     * @default Infinity
+     */
+    maxDepth?: number | undefined;
+  }
+  interface GlobOptionsWithoutFileTypes {
+    /**
+     * When `true`, a `*` or `**` segment also enters a symbolic link to a directory. A segment with no wildcard that
+     * names such a link is followed with or without this option.
+     * @default false
+     */
+    followSymlinks?: boolean | undefined;
+    /**
+     * Maximum depth of a match, counted in path segments below `cwd`. The `cwd` directory has a depth of `0`. A deeper
+     * path is not a match, and a directory at this depth is not read.
+     * @default Infinity
+     */
+    maxDepth?: number | undefined;
+  }
+}
+
 declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }

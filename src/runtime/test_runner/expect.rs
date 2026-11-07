@@ -620,6 +620,12 @@ impl Expect {
         false
     }
 
+    /// Called by C++ to ask about a value without running a matcher
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_isAsymmetricMatcher(value: JSValue) -> bool {
+        Self::is_asymmetric_matcher(value)
+    }
+
     /// Called by C++ when matching with asymmetric matchers
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
@@ -3428,7 +3434,7 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_isAsymmetricMatcher, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
 
 #[cfg(test)]
 mod tests {

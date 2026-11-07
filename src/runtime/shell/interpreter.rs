@@ -2738,6 +2738,11 @@ impl ShellTask {
         }
     }
 
+    /// Pool thread: whether the VM of a JS loop has begun its final wait, in which it releases a completion unrun.
+    pub(crate) fn cancelled(&self) -> bool {
+        matches!(&self.poster, Some(bun_jsc::ConcurrentPoster::Js(ticket)) if ticket.cancelled())
+    }
+
     /// Called from the worker
     /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
     /// concurrent task so the main thread re-enters via

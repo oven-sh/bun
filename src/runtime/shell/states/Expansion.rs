@@ -5,6 +5,7 @@
 //! produces zero or more output strings.
 
 use crate::shell::ast;
+use crate::shell::dispatch_tasks::{ShellGlobErr, ShellGlobJob, ShellGlobJobs, ShellGlobTask};
 use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
@@ -67,6 +68,9 @@ pub enum ExpansionState {
     /// `child_done(_, 1)` to print the message.
     Err(Box<ShellErr>),
 }
+
+// A larger `Expansion` makes `Node` larger, and every node of a script takes a `Node`.
+const _: () = assert!(size_of::<Expansion>() == 168);
 
 #[derive(Default)]
 pub(crate) struct ExpansionOut {
@@ -131,12 +135,9 @@ impl Expansion {
                     return Yield::suspended();
                 }
                 ExpansionState::BraceExpand => {
-                    Self::do_brace_expand(me);
-                    // brace + glob composes: after pushing the literal brace
-                    // variants, glob the original pattern. The normal glob path likewise calls
-                    // `transition_to_glob_state` directly (see below).
-                    if matches!(me.state, ExpansionState::Glob) {
-                        return Self::transition_to_glob_state(interp, this);
+                    // brace + glob composes: each variant that the script wrote a `*` in is globbed on its own.
+                    if let Some(jobs) = Self::do_brace_expand(me) {
+                        return Self::start_glob_task(interp, this, jobs);
                     }
                     continue;
                 }
@@ -263,8 +264,9 @@ impl Expansion {
 
     /// Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
-    /// `expand_simple_no_io`) and push each variant as a separate argv word.
-    fn do_brace_expand(me: &mut Expansion) {
+    /// `expand_simple_no_io`) into one word per variant: to `out`, or as the jobs of a glob task for a word that globs.
+    #[inline(never)] // `next` is the step of every word, and only a word with a brace group comes here.
+    fn do_brace_expand(me: &mut Expansion) -> Option<ShellGlobJobs> {
         use bun_shell_parser::braces;
         // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
@@ -284,13 +286,7 @@ impl Expansion {
             escaped.push(b);
         }
         let brace_str = &escaped[..];
-        let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
-            bun_core::handle_oom(braces::Lexer::tokenize(brace_str))
-        } else {
-            bun_core::handle_oom(
-                braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
-            )
-        };
+        let mut lexer_output = bun_core::handle_oom(braces::Lexer::tokenize(brace_str));
         let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
         // Hard cap before preallocation: `calculate_expanded_amount` saturates
         // to `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
@@ -298,59 +294,115 @@ impl Expansion {
         if count > MAX_BRACE_EXPANSIONS {
             let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
             me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-            return;
+            return None;
         }
         let count = count as usize;
-        let expanded: Vec<Vec<u8>> = if count == 0 {
+        if count == 0 {
             // No `{...}` group formed an expansion (no top-level comma, or
             // unbalanced); emit the word unchanged. `expand` would index
             // `out[0]` of an empty slice here. Keep `current_out` for glob.
-            vec![me.current_out.clone()]
-        } else {
-            let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
-            let arena = bun_alloc::Arena::new();
-            if let Err(e) = braces::expand(
-                &arena,
-                &mut lexer_output.tokens[..],
-                &mut expanded[..],
-                lexer_output.contains_nested,
-            ) {
-                let msg = match e {
-                    braces::ParserError::TooManyBraces => "too many braces in brace expansion",
-                    // The word has more than `u16::MAX` brace tokens.
-                    braces::ParserError::UnexpectedToken => {
-                        "unexpected token while expanding braces"
-                    }
-                    braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
-                };
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
-                return;
-            }
-            drop(arena);
-            expanded
+            return Self::take_glob_job(me);
+        }
+        let expanded = match Self::expand_variants(&mut lexer_output, count) {
+            Ok(expanded) => expanded,
+            Err(e) => return Self::brace_error(me, e),
         };
-
+        if Self::has_glob_syntax(&me.current_out, &me.meta_offsets) {
+            return Self::brace_variant_jobs(me, expanded);
+        }
         // Push each variant as its own word; word boundaries are recorded
         // via `bounds`.
         for s in expanded {
-            if !me.out.buf.is_empty() {
-                me.out.bounds.push(me.out.buf.len() as u32);
-            }
-            me.out.buf.extend_from_slice(&s);
+            Self::push_variant(me, &s);
         }
+        me.current_out.clear();
+        me.state = ExpansionState::Done;
+        None
+    }
 
-        let node = me.node;
-        let atom = node.get();
-        if atom.has_glob_expansion() {
-            // brace + glob composes. Keep
-            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
-            // the glob walker brace-expands and globs it; its matches are
-            // appended after the literal brace variants already pushed above.
-            me.state = ExpansionState::Glob;
-        } else {
-            me.current_out.clear();
-            me.state = ExpansionState::Done;
+    /// The `count` variants of a tokenized word, in brace order.
+    fn expand_variants(
+        lexer_output: &mut bun_shell_parser::braces::LexerOutput,
+        count: usize,
+    ) -> Result<Vec<Vec<u8>>, bun_shell_parser::braces::ParserError> {
+        let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
+        let arena = bun_alloc::Arena::new();
+        bun_shell_parser::braces::expand(
+            &arena,
+            &mut lexer_output.tokens[..],
+            &mut expanded[..],
+            lexer_output.contains_nested,
+        )?;
+        Ok(expanded)
+    }
+
+    fn brace_error(
+        me: &mut Expansion,
+        e: bun_shell_parser::braces::ParserError,
+    ) -> Option<ShellGlobJobs> {
+        use bun_shell_parser::braces;
+        let msg = match e {
+            braces::ParserError::TooManyBraces => "too many braces in brace expansion",
+            // The word has more than `u16::MAX` brace tokens.
+            braces::ParserError::UnexpectedToken => "unexpected token while expanding braces",
+            braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
+        };
+        me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
+        None
+    }
+
+    /// The jobs of a glob task for the variants of the word in `current_out`, each with its own `meta_offsets`.
+    fn brace_variant_jobs(me: &mut Expansion, expanded: Vec<Vec<u8>>) -> Option<ShellGlobJobs> {
+        use bun_shell_parser::braces;
+        // The word is expanded a second time as this mask: a byte of `meta_offsets` as it is, `NOT_META` for the others.
+        const NOT_META: u8 = b'0';
+        let mut mask = vec![NOT_META; me.current_out.len()];
+        for &offset in &me.meta_offsets {
+            if let Some(&byte) = me.current_out.get(offset as usize) {
+                mask[offset as usize] = byte;
+            }
         }
+        let mut mask_output = bun_core::handle_oom(braces::Lexer::tokenize(&mask));
+        // `expand` writes one word for each variant of the mask, so a mask with another count is not expanded.
+        let mask_count = braces::calculate_expanded_amount(&mask_output.tokens[..]) as usize;
+        let masks = if mask_count == expanded.len() {
+            match Self::expand_variants(&mut mask_output, mask_count) {
+                Ok(masks) => masks,
+                Err(e) => return Self::brace_error(me, e),
+            }
+        } else {
+            Vec::new()
+        };
+        let same_shape = masks.len() == expanded.len()
+            && masks
+                .iter()
+                .zip(&expanded)
+                .all(|(mask, word)| mask.len() == word.len());
+        // Fail closed: a mask of another shape would drop a word, or make a byte of a value pattern syntax.
+        if !same_shape {
+            let msg = "brace expansion lost the pattern syntax of a word";
+            me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
+            return None;
+        }
+        // `current_out` keeps the word as the script wrote it, for the message when no variant has a match.
+        let jobs = expanded.into_iter().zip(masks).map(|(word, mask)| {
+            let mut meta_offsets: Vec<u32> = Vec::new();
+            for (i, &m) in mask.iter().enumerate() {
+                if m != NOT_META {
+                    meta_offsets.push(i as u32);
+                }
+            }
+            if Self::has_glob_syntax(&word, &meta_offsets) {
+                ShellGlobJob::Pattern {
+                    word,
+                    meta_offsets,
+                    matches: Vec::new(),
+                }
+            } else {
+                ShellGlobJob::Final(word)
+            }
+        });
+        Some(jobs.collect())
     }
 
     /// Build the pattern handed to the glob walker from `current_out`,
@@ -366,7 +418,7 @@ impl Expansion {
     /// literal character.
     /// `current_out` itself is not mutated: the no-match error message and the
     /// assignment-position literal fallback keep using the original word.
-    fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
+    pub(crate) fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
         let mut pattern: Vec<u8> = Vec::with_capacity(current_out.len());
         let mut next_meta = 0usize;
         for (i, &b) in current_out.iter().enumerate() {
@@ -421,35 +473,42 @@ impl Expansion {
         pattern
     }
 
+    /// Whether the script wrote a `*` in `word`: the glob hint of the atom is for the whole word, not for a field or a variant.
+    fn has_glob_syntax(word: &[u8], meta_offsets: &[u32]) -> bool {
+        meta_offsets
+            .iter()
+            .any(|&offset| word.get(offset as usize) == Some(&b'*'))
+    }
+
+    /// The field in `current_out` as the one job of a glob task, or `None` once it is in `out` for want of a `*` of the script.
+    fn take_glob_job(me: &mut Expansion) -> Option<ShellGlobJobs> {
+        if !Self::has_glob_syntax(&me.current_out, &me.meta_offsets) {
+            Self::push_current_out(me);
+            me.state = ExpansionState::Done;
+            return None;
+        }
+        Some(ShellGlobJobs::from_buf([ShellGlobJob::Pattern {
+            word: core::mem::take(&mut me.current_out),
+            meta_offsets: core::mem::take(&mut me.meta_offsets),
+            matches: Vec::new(),
+        }]))
+    }
+
     /// Kick off an off-thread
     /// glob walk for the assembled pattern in `current_out`.
     fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
-        use crate::shell::dispatch_tasks::ShellGlobTask;
-        let pattern: Vec<u8>;
-        let cwd: Vec<u8>;
-        {
-            let me = interp.as_expansion_mut(this);
-            me.state = ExpansionState::Glob;
-            pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
-            cwd = me.base.shell().cwd().to_vec();
+        match Self::take_glob_job(interp.as_expansion_mut(this)) {
+            Some(jobs) => Self::start_glob_task(interp, this, jobs),
+            None => Yield::Next(this),
         }
-        let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
-            &pattern, &cwd, false, false, false, false, false, None,
-        ) {
-            Ok(Ok(w)) => w,
-            Ok(Err(e)) => {
-                interp.as_expansion_mut(this).state =
-                    ExpansionState::Err(Box::new(ShellErr::new_sys(&e)));
-                return Yield::Next(this);
-            }
-            Err(e) => {
-                interp.as_expansion_mut(this).state = ExpansionState::Err(Box::new(
-                    ShellErr::Custom(e.to_string().into_bytes().into()),
-                ));
-                return Yield::Next(this);
-            }
-        };
-        ShellGlobTask::create_and_schedule(interp, this, walker);
+    }
+
+    /// One task on the work pool for the word, whatever the number of `jobs`; `on_glob_walk_done` takes them back.
+    fn start_glob_task(interp: &Interpreter, this: NodeId, jobs: ShellGlobJobs) -> Yield {
+        let me = interp.as_expansion_mut(this);
+        me.state = ExpansionState::Glob;
+        let cwd = me.base.shell().cwd().to_vec();
+        ShellGlobTask::create_and_schedule(interp, this, jobs, cwd);
         Yield::suspended()
     }
 
@@ -539,6 +598,14 @@ impl Expansion {
         }
         me.out.buf.append(&mut me.current_out);
         me.meta_offsets.clear();
+    }
+
+    /// Adds a result of brace expansion or of a glob to `out`.
+    fn push_variant(me: &mut Expansion, variant: &[u8]) {
+        if !me.out.buf.is_empty() {
+            me.out.bounds.push(me.out.buf.len() as u32);
+        }
+        me.out.buf.extend_from_slice(variant);
     }
 
     /// Newlines→spaces, trim, then split on whitespace runs into separate
@@ -668,64 +735,66 @@ impl Expansion {
     pub(crate) fn on_glob_walk_done(
         interp: &Interpreter,
         this: NodeId,
-        result: Vec<Vec<u8>>,
-        err: Option<crate::shell::dispatch_tasks::ShellGlobErr>,
+        jobs: ShellGlobJobs,
+        err: Option<ShellGlobErr>,
     ) {
-        use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        let walk_err = match err {
-            Some(ShellGlobErr::Syscall(e))
-                if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
-            {
-                log!("Expansion {} glob walk failed: {}", this, e);
-                None
-            }
-            other => other,
-        };
-
-        if result.is_empty() || walk_err.is_some() {
-            // In variable assignments a no-match glob
-            // expands to the literal pattern; otherwise it's an error.
-            let parent = interp.as_expansion(this).base.parent;
-            let in_assign = matches!(interp.node(parent).kind(), StateKind::Assign)
-                || matches!(
-                    interp.node(parent),
-                    Node::Cmd(c) if matches!(
-                        c.state,
-                        crate::shell::states::cmd::CmdState::ExpandingAssigns
-                    )
-                );
+        let no_match = jobs
+            .iter()
+            .all(|job| matches!(job, ShellGlobJob::Pattern { matches, .. } if matches.is_empty()));
+        // The word fails only when it is nothing but patterns with no match: the rule of a word with no brace group.
+        if no_match && !Self::in_assignment(interp, this) {
             let me = interp.as_expansion_mut(this);
-            if in_assign {
-                Self::push_current_out(me);
-                me.state = ExpansionState::Done;
-            } else if let Some(err) = walk_err {
-                let shell_err = match err {
-                    ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
-                    ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
-                };
-                me.state = ExpansionState::Err(Box::new(shell_err));
-            } else {
-                let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-            }
+            let shell_err = match err {
+                Some(ShellGlobErr::Syscall(e)) => ShellErr::new_sys(&e),
+                Some(ShellGlobErr::Unknown(e)) => {
+                    ShellErr::Custom(e.to_string().into_bytes().into())
+                }
+                None => {
+                    // Braces leave the word that they expanded in `current_out`. Any other word is the one job.
+                    let word = match &jobs[..] {
+                        [ShellGlobJob::Pattern { word, .. }] => &word[..],
+                        _ => &me.current_out[..],
+                    };
+                    let msg = format!("no matches found: {}", bstr::BStr::new(word));
+                    ShellErr::Custom(msg.into_bytes().into())
+                }
+            };
+            me.state = ExpansionState::Err(Box::new(shell_err));
             Yield::Next(this).run(interp);
             return;
         }
 
-        {
-            let me = interp.as_expansion_mut(this);
-            // Push each match as its own argv word. The
-            // walker arena owns the strings, so they were `to_vec`'d already.
-            for entry in result {
-                if !me.out.buf.is_empty() {
-                    me.out.bounds.push(me.out.buf.len() as u32);
+        let me = interp.as_expansion_mut(this);
+        for job in jobs {
+            match job {
+                ShellGlobJob::Final(word) => Self::push_variant(me, &word),
+                // A variant with no match, or whose walk failed, stays as the script wrote it, as in bash.
+                ShellGlobJob::Pattern { word, matches, .. } if matches.is_empty() => {
+                    Self::push_variant(me, &word);
                 }
-                me.out.buf.extend_from_slice(&entry);
+                ShellGlobJob::Pattern { matches, .. } => {
+                    for entry in matches {
+                        Self::push_variant(me, &entry);
+                    }
+                }
             }
-            me.state = ExpansionState::Done;
         }
+        me.state = ExpansionState::Done;
         Yield::Next(this).run(interp);
+    }
+
+    /// In variable assignments a no-match glob expands to the literal pattern; otherwise it's an error.
+    fn in_assignment(interp: &Interpreter, this: NodeId) -> bool {
+        let parent = interp.as_expansion(this).base.parent;
+        matches!(interp.node(parent).kind(), StateKind::Assign)
+            || matches!(
+                interp.node(parent),
+                Node::Cmd(c) if matches!(
+                    c.state,
+                    crate::shell::states::cmd::CmdState::ExpandingAssigns
+                )
+            )
     }
 
     /// Take the error out of `state == Err(_)` (called by the parent on

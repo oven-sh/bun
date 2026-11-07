@@ -297,6 +297,36 @@ Use the `$(...)` syntax instead.
 
 ---
 
+## Globs and brace expansion
+
+Bun Shell replaces a word that has a `*` or a `**` with the paths that match it, and a word that has a `{a,b}` group with one word for each item of the group:
+
+```js
+import { $ } from "bun";
+
+await $`ls src/**/*.ts`;
+await $`echo {a,b}.txt`; // a.txt b.txt
+```
+
+A word can have both. Bun Shell expands the braces first, then matches each word that results on its own:
+
+```js
+import { $ } from "bun";
+
+// `ls` gets the .ts files of `src`, then the .tsx files
+await $`ls src/*.{ts,tsx}`;
+```
+
+To pass a pattern to a command as text, put the word in quotes:
+
+```js
+import { $ } from "bun";
+
+await $`prettier --check "src/**/*.{ts,tsx}"`;
+```
+
+---
+
 ## Environment variables
 
 Set environment variables like in bash:

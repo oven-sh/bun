@@ -71,6 +71,9 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
                     && !crate::bun_css::css_modules::is_module_path(sources[imported].path.pretty)
                 {
                     record.path.is_disabled = true;
+                    record
+                        .flags
+                        .insert(ImportRecordFlags::IS_DEV_SERVER_STYLESHEET);
                     continue;
                 }
                 // Make sure the printer gets the resolved path
@@ -90,13 +93,19 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
                 let record = &mut ast.import_records[st.import_record_index as usize];
                 let has_bindings =
                     !st.star_name_loc.is_empty() || st.items.len() > 0 || st.default_name.is_some();
+                let is_stylesheet = record
+                    .flags
+                    .contains(ImportRecordFlags::IS_DEV_SERVER_STYLESHEET);
+                if record.path.is_disabled && !is_stylesheet {
+                    continue;
+                }
 
-                // Nothing to link to (stylesheet, `browser: false` path, deferred barrel import): bind an empty module.
+                // A plain stylesheet or a deferred barrel import has no registry module: bind an empty module.
                 let is_deferred = record.flags.contains(ImportRecordFlags::IS_UNUSED);
-                if record.path.is_disabled || is_deferred {
+                if is_stylesheet || is_deferred {
                     if has_bindings {
                         let mut namespace = E::Object::default();
-                        if !is_deferred {
+                        if is_stylesheet {
                             namespace.put(
                                 bump,
                                 b"default",

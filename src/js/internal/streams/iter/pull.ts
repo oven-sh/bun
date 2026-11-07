@@ -430,9 +430,10 @@ function* withFlushSync(source) {
   yield null;
 }
 
-function* applyStatefulSyncTransform(source, transform: StatefulSyncTransform) {
-  const output = transform(withFlushSync(source));
+function* applyStatefulSyncTransform(source, transform: StatefulSyncTransform, receiver: object) {
+  const output = transform.$call(receiver, withFlushSync(source));
   for (const item of output) {
+    if (item === null) continue;
     const batch: Uint8Array[] = [];
     for (const chunk of flattenTransformYieldSync(item)) {
       batch.push(chunk);
@@ -461,7 +462,7 @@ function* createSyncPipeline(source, transforms) {
         current = applyFusedStatelessSyncTransforms(current, statelessRun);
         statelessRun = [];
       }
-      current = applyStatefulSyncTransform(current, transform.transform);
+      current = applyStatefulSyncTransform(current, transform.transform, transform);
     } else {
       statelessRun.push(transform);
     }
@@ -554,10 +555,12 @@ async function* withFlushAsync(source) {
 async function* applyStatefulAsyncTransform(
   source,
   transform: StatefulAsyncTransform,
+  receiver: object,
   options: { __proto__?: null; signal: AbortSignal },
 ) {
-  const output = transform(withFlushAsync(source), options);
+  const output = transform.$call(receiver, withFlushAsync(source), options);
   for await (const item of output) {
+    if (item === null) continue;
     // Fast path: item is already a Uint8Array[] batch (e.g. compression transforms)
     if (isUint8ArrayBatch(item)) {
       if (item.length > 0) {
@@ -590,9 +593,10 @@ async function* applyStatefulAsyncTransform(
 async function* applyValidatedStatefulAsyncTransform(
   source,
   transform: StatefulAsyncTransform,
+  receiver: object,
   options: { __proto__?: null; signal: AbortSignal },
 ) {
-  const output = transform(source, options) as AsyncIterable<Batch>;
+  const output = transform.$call(receiver, source, options) as AsyncIterable<Batch>;
   for await (const batch of output) {
     if (batch.length > 0) {
       yield batch;
@@ -663,9 +667,9 @@ async function* createAsyncPipeline(source, transforms, signal: AbortSignal | un
       }
       const opts = { __proto__: null, signal: transformSignal };
       if (transform[kValidatedTransform]) {
-        current = applyValidatedStatefulAsyncTransform(current, transform.transform, opts);
+        current = applyValidatedStatefulAsyncTransform(current, transform.transform, transform, opts);
       } else {
-        current = applyStatefulAsyncTransform(current, transform.transform, opts);
+        current = applyStatefulAsyncTransform(current, transform.transform, transform, opts);
       }
     } else {
       statelessRun.push(transform);

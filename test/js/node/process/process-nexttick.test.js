@@ -1324,7 +1324,7 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect(result).toEqual({ stdout: microtasksFirst + "\n", stderr: "", exitCode: 0 });
   });
 
-  // Node runs `eval: true` as CommonJS and a data: URL as an ES module. One process starts the four
+  // Node runs `eval: true` as CommonJS and a data: URL as an ES module. One process starts the six
   // workers, with no other test beside it: a debug build takes seconds to start them.
   it.serial("node:worker_threads entry points", async () => {
     const labelled = label => order(`(order => console.log(${JSON.stringify(label)}, order))`);
@@ -1332,10 +1332,15 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
       {
         "worker.cjs": labelled(".cjs"),
         "worker.mjs": labelled(".mjs"),
+        "worker.js": `require("node:os");` + labelled(".js, require()"),
+        "requires.cjs": `require("./required.cjs");`,
+        "required.cjs": labelled("a module that the .cjs requires"),
         "main.mjs": `
           import { Worker } from "node:worker_threads";
           new Worker("./worker.cjs");
           new Worker("./worker.mjs");
+          new Worker("./worker.js");
+          new Worker("./requires.cjs");
           new Worker(${JSON.stringify(`require("node:os");` + labelled("eval: true"))}, { eval: true });
           new Worker(new URL("data:text/javascript," + encodeURIComponent(${JSON.stringify(labelled("data:"))})));
         `,
@@ -1345,7 +1350,9 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
       lines: [
         `.cjs ${nextTickFirst}`,
+        `.js, require() ${nextTickFirst}`,
         `.mjs ${microtasksFirst}`,
+        `a module that the .cjs requires ${nextTickFirst}`,
         `data: ${microtasksFirst}`,
         `eval: true ${nextTickFirst}`,
       ],

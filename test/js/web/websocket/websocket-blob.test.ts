@@ -144,6 +144,38 @@ test("WebSocket should send empty Blob", async () => {
   await promise;
 });
 
+// A message Blob and the File of a FormData entry get their JS object from the same native code. Only the entry has a name.
+test("WebSocket Blob message has no name", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    websocket: {
+      message(ws, message) {
+        ws.send(message);
+      },
+    },
+    fetch(req, server) {
+      if (server.upgrade(req)) {
+        return undefined;
+      }
+      return new Response("Upgrade failed", { status: 500 });
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+  const ws = new WebSocket(`ws://localhost:${server.port}`);
+  ws.binaryType = "blob" as any;
+  ws.onopen = () => ws.send(new Uint8Array([1, 2, 3]));
+  ws.onmessage = resolve;
+  ws.onerror = reject;
+  ws.onclose = () => reject(new Error("Connection closed without receiving message"));
+
+  const { data } = await promise;
+  ws.onclose = null;
+  ws.close();
+  expect(data).toBeInstanceOf(Blob);
+  expect({ name: data.name, size: data.size }).toEqual({ name: undefined, size: 3 });
+});
+
 test("WebSocket should ping with Blob", async () => {
   await using server = Bun.serve({
     port: 0,

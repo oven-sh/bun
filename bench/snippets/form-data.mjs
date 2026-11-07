@@ -31,4 +31,13 @@ bench("new Response(formData).formData()", async () => {
   await new Response(data).formData();
 });
 
+const files = new FormData();
+for (let i = 0; i < 16; i++) files.append("file", new File(["foo"], "foo.txt"));
+// Held, so that each read returns the same File.
+const held = files.getAll("file");
+
+bench("formData.get(string)", () => data.get("foo"));
+bench("formData.get(file)", () => files.get("file"));
+bench("formData.getAll(file) x16", () => files.getAll("file"));
+
 await run();

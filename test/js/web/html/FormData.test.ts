@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
@@ -82,6 +82,188 @@ describe("FormData", () => {
       expect(form.get("renamed")).toBe(entry);
       expect([entry.name, entry.type, await entry.text()]).toEqual(["other.txt", "text/plain", "a"]);
       expect(file.name).toBe("a.txt");
+    });
+  });
+
+  // https://xhr.spec.whatwg.org/#create-an-entry: a filename that is given names the entry's File, and "" is a filename.
+  describe("an empty filename", () => {
+    class FileSubclass extends File {}
+    const sources: [string, () => Blob][] = [
+      ["a File", () => new File(["abc"], "old.txt", { type: "text/plain" })],
+      ["a File subclass", () => new FileSubclass(["abc"], "old.txt", { type: "text/plain" })],
+      ["a Blob", () => new Blob(["abc"], { type: "text/plain" })],
+      ["a Bun.file()", () => Bun.file(import.meta.path)],
+    ];
+    const emptyFilenames: [string, unknown][] = [
+      ['""', ""],
+      ["[]", []],
+      ['new String("")', new String("")],
+      ['{ toString: () => "" }', { toString: () => "" }],
+    ];
+    const dispositions = async (form: FormData) =>
+      [...(await new Response(form).text()).matchAll(/Content-Disposition: [^\r\n]*/g)].map(match => match[0]);
+
+    describe.each(["append", "set"] as const)("%s()", method => {
+      describe.each(sources)("names the new File of %s", (_, source) => {
+        it.each(emptyFilenames)("for %s", (_, filename) => {
+          const value = source() as File;
+          const ownName = value.name;
+          const form = new FormData();
+          form[method]("key", value, filename as string);
+          const entry = form.get("key") as File;
+          expect(entry).toBeInstanceOf(File);
+          expect(entry).not.toBe(value);
+          expect(form.get("key")).toBe(entry);
+          expect({ entry: entry.name, source: value.name }).toEqual({ entry: "", source: ownName });
+        });
+      });
+    });
+
+    it("is the name on every way to read the entry", async () => {
+      const form = new FormData();
+      form.append("key", new File(["abc"], "old.txt", { type: "text/plain" }), "");
+      const entry = form.get("key") as File;
+      const seen: unknown[] = [];
+      form.forEach(value => seen.push(value));
+      const reads = [
+        ...form.getAll("key"),
+        ...form.values(),
+        ...[...form.entries()].map(([, value]) => value),
+        ...[...form].map(([, value]) => value),
+        ...seen,
+        // @ts-expect-error toJSON is a Bun extension
+        form.toJSON().key,
+      ];
+      expect(reads).toHaveLength(6);
+      expect(reads.every(value => value === entry)).toBe(true);
+      expect([entry.name, entry.type, await entry.text()]).toEqual(["", "text/plain", "abc"]);
+      expect(structuredClone(entry).name).toBe("");
+      expect(Bun.inspect(form)).toMatch(/"key": File \(3 bytes\) \{\s+name: "",/);
+    });
+
+    it("is the filename of the part, also after a read and from a second FormData", async () => {
+      const sent = ['Content-Disposition: form-data; name="key"; filename=""'];
+      const form = new FormData();
+      form.append("key", new File(["abc"], "old.txt"), "");
+      expect(await dispositions(form)).toEqual(sent);
+      const second = new FormData();
+      second.append("key", form.get("key") as File);
+      expect(await dispositions(form)).toEqual(sent);
+      expect(await dispositions(second)).toEqual(sent);
+    });
+
+    it("stays the name of a File that is made again after a collection", () => {
+      const form = new FormData();
+      // What `File.name` answers for each name, read from Files that are not in the FormData.
+      const ownNames = ["", "own.txt", "a\uD800.txt"].map(name => new File(["abc"], name).name);
+      // FormData holds the File of an entry weakly: a read returns the File that was appended until it is collected.
+      // These get an expando and no other reference, so the collection leaves entries whose File is made again.
+      (function fill() {
+        for (let i = 0; i < 32; i++) {
+          ownNames.forEach((name, n) => {
+            form.append(`appended ${n}`, Object.assign(new File(["abc"], name), { appended: true }));
+            form.set(`set ${n} ${i}`, Object.assign(new File(["abc"], name), { appended: true }));
+          });
+        }
+      })();
+      Bun.gc(true);
+
+      const groups = ownNames.flatMap((name, n) => [
+        { name, key: `appended ${n}` },
+        { name, key: `set ${n} ` },
+      ]);
+      const madeAgain = groups.map(group =>
+        [...form]
+          .filter(([key, file]) => key.startsWith(group.key) && !("appended" in (file as File)))
+          .map(([, file]) => (file as File).name),
+      );
+      // If the collection freed no File of a group, the names below check nothing for it.
+      expect(madeAgain.map(names => names.length > 0)).toEqual(groups.map(() => true));
+      expect(madeAgain.map(names => [...new Set(names)])).toEqual(groups.map(group => [group.name]));
+    });
+
+    it("names one File differently for each entry", () => {
+      const file = new File(["abc"], "old.txt");
+      const form = new FormData();
+      form.append("empty", file, "");
+      form.append("other", file, "other.txt");
+      form.append("own", file);
+      form.set("again", form.get("other") as File, "");
+      expect(Object.fromEntries([...form].map(([key, value]) => [key, (value as File).name]))).toEqual({
+        empty: "",
+        other: "other.txt",
+        own: "old.txt",
+        again: "",
+      });
+      expect(form.get("own")).toBe(file);
+    });
+
+    // A browser sends this part for a file input that has no file.
+    it("of a parsed part is the name of its File", async () => {
+      const body =
+        '--x\r\nContent-Disposition: form-data; name="upload"; filename=""\r\n' +
+        "Content-Type: application/octet-stream\r\n\r\n\r\n--x--\r\n";
+      const headers = { "Content-Type": "multipart/form-data; boundary=x" };
+      const upload = (form: FormData) => {
+        const file = form.get("upload") as File;
+        return { isFile: file instanceof File, name: file.name, size: file.size };
+      };
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch: async req => Response.json(upload(await req.formData())),
+      });
+
+      const fromResponse = await new Response(body, { headers }).formData();
+      const empty = { isFile: true, name: "", size: 0 };
+      expect({
+        response: upload(fromResponse),
+        request: upload(await new Request("http://localhost/", { method: "POST", body, headers }).formData()),
+        blob: upload(await new Blob([body], { type: headers["Content-Type"] }).formData()),
+        // @ts-expect-error FormData.from is a Bun extension
+        from: upload(FormData.from(body, "x")),
+        server: await (await fetch(server.url, { method: "POST", body, headers })).json(),
+      }).toEqual({ response: empty, request: empty, blob: empty, from: empty, server: empty });
+      expect(await dispositions(fromResponse)).toEqual(['Content-Disposition: form-data; name="upload"; filename=""']);
+    });
+
+    // https://github.com/oven-sh/bun/issues/39845
+    it("of a File survives a multipart round trip", async () => {
+      const form = new FormData();
+      form.append("f", new File(["content"], ""));
+      const parsed = (await new Response(form).formData()).get("f") as File;
+      expect({ isFile: parsed instanceof File, name: parsed.name, text: await parsed.text() }).toEqual({
+        isFile: true,
+        name: "",
+        text: "content",
+      });
+    });
+  });
+
+  describe("a filename argument", () => {
+    it.each(["append", "set"] as const)("%s() does not convert it when the value is not a Blob", method => {
+      const form = new FormData();
+      const toString = mock(() => "a.txt");
+      // @ts-expect-error
+      expect(() => form[method]("key", "text", { toString })).toThrow(new TypeError("Expected argument to be a Blob."));
+      expect(toString).toHaveBeenCalledTimes(0);
+      expect(form.has("key")).toBe(false);
+    });
+
+    it.each(["append", "set"] as const)("%s() adds no entry when it fails to convert", method => {
+      const form = new FormData();
+      const filename = {
+        toString() {
+          throw new RangeError("no filename");
+        },
+      };
+      // @ts-expect-error
+      expect(() => form[method]("key", new Blob(["abc"]), filename)).toThrow(new RangeError("no filename"));
+      // @ts-expect-error
+      expect(() => form[method]("key", new Blob(["abc"]), Symbol())).toThrow(
+        new TypeError("Cannot convert a Symbol value to a string"),
+      );
+      expect(form.has("key")).toBe(false);
     });
   });
 

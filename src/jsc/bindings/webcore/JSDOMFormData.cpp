@@ -72,7 +72,7 @@ struct JSBlobWrapperConverter {
         if (!readableStream)
             return nullptr;
 
-        return Blob::create(value);
+        return Blob::createEntry(value, nullptr);
     }
 };
 
@@ -284,8 +284,30 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(value)); })));
 }
 
-extern "C" BunString Blob__getFileNameString(void* impl);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(JSC::EncodedJSValue, JSC::JSGlobalObject*, JSC::EncodedJSValue);
+
+// https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#create-an-entry for a Blob value. Returns null after it throws.
+static ALWAYS_INLINE RefPtr<Blob> createFileEntry(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, JSC::JSValue value, JSC::JSValue filenameValue)
+{
+    RefPtr<Blob> blob;
+    if (value.inherits<JSBlob>()) {
+        if (filenameValue.isUndefined()) {
+            blob = Blob::createEntry(value, nullptr);
+            // A File appended without a new filename is stored as is. Anything else becomes a new File.
+            if (blob && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), &lexicalGlobalObject, JSValue::encode(value)))
+                blob->setWrapper(asObject(value));
+        } else {
+            auto filename = convert<IDLUSVString>(lexicalGlobalObject, filenameValue);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            BunString entryFileName = Bun::toString(filename);
+            blob = Blob::createEntry(value, &entryFileName);
+        }
+    }
+
+    if (!blob)
+        throwTypeError(&lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
+    return blob;
+}
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
 {
@@ -298,25 +320,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-
-    RefPtr<Blob> blobValue = nullptr;
-    if (argument1.value().inherits<JSBlob>()) {
-        blobValue = Blob::create(argument1.value());
-    }
-
-    if (!blobValue) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
-    }
-    RETURN_IF_EXCEPTION(throwScope, {});
-
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    auto blobValue = createFileEntry(*lexicalGlobalObject, throwScope, argument1.value(), argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    // A File appended without a new filename is stored as is. Anything else becomes a new File.
-    if (argument2.value().isUndefined() && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(argument1.value())))
-        blobValue->setWrapper(asObject(argument1.value()));
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue)); })));
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
@@ -465,24 +473,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-
-    RefPtr<Blob> blobValue = nullptr;
-    if (argument1.value().inherits<JSBlob>()) {
-        blobValue = Blob::create(argument1.value());
-    }
-
-    if (!blobValue) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
-    }
+    auto blobValue = createFileEntry(*lexicalGlobalObject, throwScope, argument1.value(), argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
-    // A File appended without a new filename is stored as is. Anything else becomes a new File.
-    if (argument2.value().isUndefined() && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(argument1.value())))
-        blobValue->setWrapper(asObject(argument1.value()));
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue)); })));
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)

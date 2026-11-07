@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { basename, join } from "node:path";
 
 // Serializing a FormData body (`new Response(formData)` / `new Request(..., { body: formData })`)
 // goes through Blob::from_dom_form_data, which joins the multipart parts out of
@@ -92,6 +93,62 @@ describe("multipart serialization (new Response(formData))", () => {
     );
   });
 
+  // An entry has one name: `File.name` answers with it and the part sends it.
+  test("sends the name of each entry's File as the filename", async () => {
+    using dir = tempDir("formdata-filename", { "payload.bin": "file-bytes" });
+    const path = join(String(dir), "payload.bin");
+
+    for (const method of ["append", "set"] as const) {
+      // A Blob with no name of its own takes the name of its store when it becomes an entry. So that nothing else
+      // gives these a name first, they are new for each FormData and no name is read before the parts are sent.
+      const sources: Record<string, Blob> = {
+        blob: new Blob(["a"]),
+        file: new File(["a"], "own.txt"),
+        unnamed: new File(["a"], ""),
+        unicode: new File(["a"], "日本語 ☺ café.txt"),
+        onDisk: Bun.file(path),
+        slice: Bun.file(path).slice(1, 4),
+        read: await new Response(Bun.file(path)).blob(),
+      };
+      const form = new FormData();
+      for (const [key, source] of Object.entries(sources)) {
+        form[method](key, source);
+        form[method](`${key}, renamed`, source, "given.txt");
+        form[method](`${key}, empty`, source, "");
+      }
+
+      const text = await new Response(form).text();
+      const sent = Object.fromEntries(
+        [...text.matchAll(/ name="([^"]*)"; filename="([^"]*)"/g)].map(match => [match[1], match[2]]),
+      );
+      const names = Object.fromEntries([...form].map(([key, value]) => [key, (value as File).name ?? ""]));
+      expect(sent).toEqual(names);
+      expect(sent).toMatchObject({
+        blob: "",
+        file: "own.txt",
+        unnamed: "",
+        "file, renamed": "given.txt",
+        "file, empty": "",
+      });
+      expect([sent.onDisk, sent.slice, sent.read].map(filename => basename(filename))).toEqual([
+        "payload.bin",
+        "payload.bin",
+        "payload.bin",
+      ]);
+    }
+  });
+
+  test("sends U+FFFD for a lone surrogate in the name of a File", async () => {
+    for (const method of ["append", "set"] as const) {
+      const form = new FormData();
+      form[method]("key", new File(["a"], "a\uD800.txt"));
+      const text = await new Response(form).text();
+      expect(text.match(/Content-Disposition: [^\r\n]*/g)).toEqual([
+        'Content-Disposition: form-data; name="key"; filename="a\uFFFD.txt"',
+      ]);
+    }
+  });
+
   test("normalizes newlines in a large string value", async () => {
     // 4 KiB runs of ordinary bytes between the newlines exercise the bulk-copy
     // path of the serializer's scan, not just the per-byte rewrites.
@@ -136,7 +193,8 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      ["blob", { file: true, name: undefined as any, type: "", text: "blob-bytes" }],
+      // Bun sends `filename=""` for a Blob that has no name, and a part with an empty filename is a File named "".
+      ["blob", { file: true, name: "", type: "", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
     ]);
   });

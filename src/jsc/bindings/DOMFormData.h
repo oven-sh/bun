@@ -66,13 +66,13 @@ public:
     const Vector<Item>& items() const { return m_items; }
 
     ExceptionOr<void> append(const String& name, const String& value);
-    ExceptionOr<void> append(const String& name, RefPtr<Blob>, const String& filename = {});
+    ExceptionOr<void> append(const String& name, RefPtr<Blob>);
     void remove(const StringView name);
     std::optional<FormDataEntryValue> get(const StringView name);
     Vector<FormDataEntryValue> getAll(const StringView name);
     bool has(const StringView name);
     ExceptionOr<void> set(const String& name, const String& value);
-    ExceptionOr<void> set(const String& name, RefPtr<Blob>, const String& filename = {});
+    ExceptionOr<void> set(const String& name, RefPtr<Blob>);
 
     size_t count() const { return m_items.size(); }
     size_t memoryCost() const;

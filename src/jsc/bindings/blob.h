@@ -18,8 +18,9 @@ enum class BlobBytes : uint8_t {
     NotInMemory = 2,
 };
 
-extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
-extern "C" void* Blob__dupe(void* impl);
+// Both copy a Blob into a File. A non-null `name` names the copy, an empty one too.
+extern "C" void* Blob__dupeFromJSAsFile(JSC::EncodedJSValue value, const BunString* name);
+extern "C" void* Blob__dupeAsFile(void* impl, const BunString* name);
 // Borrows the bytes of the Blob that `value` holds: a Blob, or a `Bun.build()` output. Writes `ptr` and `len` only for `InMemory`. `ptr` is only valid while `value` is alive.
 extern "C" BlobBytes Blob__sharedView(JSC::EncodedJSValue value, const uint8_t** ptr, size_t* len);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
@@ -66,29 +67,20 @@ public:
         return m_impl.get();
     }
 
-    static RefPtr<Blob> create(JSC::JSValue impl)
+    // The File of a FormData entry. Its `BlobImpl` holds the only record of its name. A null `fileName` keeps the name of `value`.
+    static RefPtr<Blob> createEntry(JSC::JSValue value, const BunString* fileName)
     {
-        return createAdopted(Blob__dupeFromJS(JSValue::encode(impl)));
+        return createAdopted(Blob__dupeFromJSAsFile(JSValue::encode(value), fileName));
+    }
+
+    static RefPtr<Blob> createEntry(void* impl, const BunString& fileName)
+    {
+        return createAdopted(Blob__dupeAsFile(impl, &fileName));
     }
 
     static RefPtr<Blob> create(std::span<const uint8_t> bytes, JSC::JSGlobalObject* globalThis)
     {
         return createAdopted(Blob__fromBytes(globalThis, bytes.data(), bytes.size()));
-    }
-
-    static RefPtr<Blob> create(void* ptr)
-    {
-        return createAdopted(Blob__dupe(ptr));
-    }
-
-    String fileName()
-    {
-        return m_fileName;
-    }
-
-    void setFileName(String fileName)
-    {
-        m_fileName = fileName;
     }
 
     // The JS object handed out for this FormData entry, so reads keep returning the same one while script still holds it.
@@ -97,11 +89,13 @@ public:
 
     size_t memoryCost() const;
 
+    // Out of line, so that `deref()` stays small enough to inline where a RefPtr<Blob> is dropped.
+    NEVER_INLINE ~Blob();
+
 private:
-    Blob(void* impl, String fileName = String())
+    explicit Blob(void* impl)
         : m_impl(adoptRef<BlobImpl, RawPtrTraits<BlobImpl>, BlobImplRefDerefTraits>(
               static_cast<BlobImpl*>(impl)))
-        , m_fileName(std::move(fileName))
     {
     }
 
@@ -113,7 +107,6 @@ private:
     }
 
     BlobRefPtr m_impl;
-    String m_fileName;
     JSC::Weak<JSC::JSObject> m_wrapper;
 };
 

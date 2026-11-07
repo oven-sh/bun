@@ -2245,6 +2245,32 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // The compiler has no form for a spread child, so the component stays as written.
+  test("a component with a JSX spread child is not compiled, and gets each member of the list as a child", async () => {
+    const result = await compiled(
+      {
+        "src/SpreadChild.tsx": `
+          export function SpreadChild({ first, rest }) {
+            return <ul>{first}{...rest}</ul>;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { List } from "./src/List";
+          import { SpreadChild } from "./src/SpreadChild";
+          test("which are compiled", () => {
+            const all = { List, SpreadChild };
+            ${printCompiled}
+            expect(SpreadChild({ first: 1, rest: [7, 8] }).props.children).toEqual([1, 7, 8]);
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("List");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

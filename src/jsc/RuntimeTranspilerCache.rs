@@ -86,7 +86,8 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: A spread argument of an unused pure call is printed as `[...x]`. Older entries print
-/// `...x;`, which does not parse.
+/// `...x;`, which does not parse. The React Compiler leaves a function with a JSX spread child as it
+/// is written. Older entries pass the operand of the spread as one child.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

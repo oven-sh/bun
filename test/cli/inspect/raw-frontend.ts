@@ -1,0 +1,233 @@
+import crypto from "node:crypto";
+import net from "node:net";
+
+/**
+ * An inspector frontend on a raw socket, for the WebSocket server and for the
+ * transport that the inspected process dials.
+ *
+ * It can stop reading (`pause()`): its socket then takes one more batch, fills,
+ * and the inspected process cannot write to it. It can read again one chunk at
+ * a time (`readChunk()`). It keeps only the start of a large frame. It answers
+ * a ping, as every WebSocket client does. It shows how the connection ended:
+ * with the server's close frame or without one.
+ */
+export class RawFrontend {
+  /** The `<n>` of each `console.log("#<n> ...")` line that arrived. */
+  readonly lines = new Set<number>();
+  /** The close frame of the server, if it sent one. */
+  closeFrame: { code: number; reason: string } | undefined;
+  ended = false;
+
+  #socket: net.Socket;
+  // WebSocket frames, or the 4-byte length prefix of the socket transport.
+  #webSocket: boolean;
+  #nextId = 1;
+  #responses = new Map<number, { resolve: (message: any) => void; reject: (error: Error) => void }>();
+  #events = new Map<string, number>();
+  #waiters: (() => void)[] = [];
+  // The frame that is arriving: its header bytes, then its payload. Console lines are large
+  // and only their start matters, so an event keeps its first bytes and drops the rest.
+  #header: number[] = [];
+  #opcode = 0;
+  #payloadLeft = -1;
+  #start = Buffer.alloc(512);
+  #startLength = 0;
+  #rest: Buffer[] = [];
+
+  private constructor(socket: net.Socket, webSocket: boolean) {
+    this.#socket = socket;
+    this.#webSocket = webSocket;
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      this.ended = true;
+      const error = new Error(
+        `the connection ended before the response, close frame: ${JSON.stringify(this.closeFrame)}`,
+      );
+      for (const { reject } of this.#responses.values()) reject(error);
+      this.#responses.clear();
+      this.#wake();
+    });
+  }
+
+  /**
+   * Connects to the WebSocket server of `bun --inspect` or `inspector.open()`.
+   * `headers`: more lines for the upgrade request, each ending in "\r\n".
+   */
+  static async connect(url: string | URL, headers = ""): Promise<RawFrontend> {
+    const { hostname, port, pathname, host } = new URL(url);
+    const socket = net.connect(Number(port), hostname);
+    await new Promise<void>((resolve, reject) => socket.once("connect", resolve).once("error", reject));
+    const frontend = new RawFrontend(socket, true);
+    socket.write(
+      `GET ${pathname} HTTP/1.1\r\nHost: ${host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+        `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n${headers}\r\n`,
+    );
+    let head: Buffer | undefined = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      if (head) {
+        head = Buffer.concat([head, chunk]);
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        chunk = head.subarray(end + 4);
+        head = undefined;
+      }
+      frontend.#read(chunk);
+      frontend.#wake();
+    });
+    await frontend.until(() => !head, "the handshake response");
+    return frontend;
+  }
+
+  /** Takes a connection that `bun --inspect=tcp://` or `--inspect=unix:` dialed. */
+  static accept(socket: net.Socket): RawFrontend {
+    const frontend = new RawFrontend(socket, false);
+    socket.on("data", (chunk: Buffer) => {
+      frontend.#read(chunk);
+      frontend.#wake();
+    });
+    return frontend;
+  }
+
+  /** Resolves when `condition()` holds. Rejects if the connection ends first. */
+  async until(condition: () => boolean, what: string): Promise<void> {
+    while (!condition()) {
+      if (this.ended) throw new Error(`the connection ended before ${what}`);
+      await new Promise<void>(resolve => this.#waiters.push(resolve));
+    }
+  }
+
+  /**
+   * Sends a command and resolves with the response. Rejects if the connection ends first.
+   * The response only arrives while reading.
+   */
+  send(method: string, params: object = {}): Promise<any> {
+    if (this.ended) return Promise.reject(new Error(`the connection ended before ${method}`));
+    const id = this.#nextId++;
+    const payload = Buffer.from(JSON.stringify({ id, method, params }));
+    if (this.#webSocket) {
+      this.#writeFrame(1, payload);
+    } else {
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(payload.length);
+      this.#socket.write(Buffer.concat([header, payload]));
+    }
+    return new Promise((resolve, reject) => this.#responses.set(id, { resolve, reject }));
+  }
+
+  /** Writes one WebSocket frame of less than 64 KB. A client masks what it sends. */
+  #writeFrame(opcode: number, payload: Buffer): void {
+    const mask = crypto.randomBytes(4);
+    const first = 0x80 | opcode;
+    const header =
+      payload.length < 126 ? [first, 0x80 | payload.length] : [first, 0xfe, payload.length >> 8, payload.length & 255];
+    this.#socket.write(Buffer.concat([Buffer.from(header), mask, payload.map((byte, i) => byte ^ mask[i & 3])]));
+  }
+
+  /** How many events with this method arrived. */
+  count(method: string): number {
+    return this.#events.get(method) ?? 0;
+  }
+
+  pause(): void {
+    this.#socket.pause();
+  }
+
+  resume(): void {
+    this.#socket.resume();
+  }
+
+  /**
+   * Hands over one chunk, at most 512 KB, and stops again. A paused socket has one chunk in hand
+   * and takes the next one from the kernel afterwards. Rejects if the connection ends first.
+   */
+  readChunk(): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const onData = () => {
+      this.#socket.pause();
+      this.#socket.off("close", onClose);
+      resolve();
+    };
+    const onClose = () => {
+      this.#socket.off("data", onData);
+      reject(new Error(`the connection ended before a chunk, close frame: ${JSON.stringify(this.closeFrame)}`));
+    };
+    if (this.ended) onClose();
+    else this.#socket.once("data", onData).once("close", onClose).resume();
+    return promise;
+  }
+
+  /** Hands over chunks until the socket has taken more bytes from the kernel, and stops again. */
+  async readFromKernel(): Promise<void> {
+    const before = this.#socket.bytesRead;
+    do await this.readChunk();
+    while (this.#socket.bytesRead === before);
+  }
+
+  close(): void {
+    this.#socket.destroy();
+  }
+
+  #wake(): void {
+    for (const waiter of this.#waiters.splice(0)) waiter();
+  }
+
+  #read(chunk: Buffer): void {
+    let offset = 0;
+    while (offset < chunk.length) {
+      if (this.#payloadLeft === -1) {
+        const header = this.#header;
+        header.push(chunk[offset++]);
+        if (this.#webSocket) {
+          // 2 bytes, then a 16-bit or 64-bit length if the 7-bit one says so. The server does not mask.
+          const extended = header.length < 2 ? -1 : (header[1] & 127) === 126 ? 2 : (header[1] & 127) === 127 ? 8 : 0;
+          if (extended === -1 || header.length < 2 + extended) continue;
+          this.#opcode = header[0] & 15;
+          this.#payloadLeft = extended ? header.slice(2).reduce((sum, byte) => sum * 256 + byte, 0) : header[1] & 127;
+        } else {
+          if (header.length < 4) continue;
+          this.#opcode = 1;
+          this.#payloadLeft = header.reduce((sum, byte) => sum * 256 + byte, 0);
+        }
+        this.#startLength = 0;
+        this.#rest = [];
+        this.#header = [];
+      }
+      const piece = chunk.subarray(offset, offset + Math.min(this.#payloadLeft, chunk.length - offset));
+      const toStart = Math.min(this.#start.length - this.#startLength, piece.length);
+      piece.copy(this.#start, this.#startLength, 0, toStart);
+      this.#startLength += toStart;
+      if (toStart < piece.length && !this.#isEvent()) this.#rest.push(piece.subarray(toStart));
+      offset += piece.length;
+      this.#payloadLeft -= piece.length;
+      if (this.#payloadLeft === 0) {
+        this.#payloadLeft = -1;
+        this.#frame(this.#opcode, Buffer.concat([this.#start.subarray(0, this.#startLength), ...this.#rest]));
+      }
+    }
+  }
+
+  #isEvent(): boolean {
+    return this.#start.toString("latin1", 0, 10) === '{"method":';
+  }
+
+  #frame(opcode: number, payload: Buffer): void {
+    if (opcode === 8) {
+      this.closeFrame = { code: payload.readUInt16BE(0), reason: payload.toString("utf8", 2) };
+      return;
+    }
+    if (opcode === 9) this.#writeFrame(10, payload);
+    if (opcode !== 1) return;
+    if (this.#isEvent()) {
+      const start = payload.toString("latin1");
+      const method = start.slice(11, start.indexOf('"', 11));
+      this.#events.set(method, this.count(method) + 1);
+      // Console.messageAdded has the line in "text", Runtime.consoleAPICalled in the first "value".
+      const line = start.match(/"(?:text|value)":"#(\d+) /);
+      if (line) this.lines.add(Number(line[1]));
+      return;
+    }
+    const message = JSON.parse(payload.toString("utf8"));
+    this.#responses.get(message.id)?.resolve(message);
+    this.#responses.delete(message.id);
+  }
+}

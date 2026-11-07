@@ -51,6 +51,10 @@ bun --inspect=localhost:4000 server.ts
 bun --inspect=localhost:4000/prefix server.ts
 ```
 
+### A debugger that stops reading
+
+Bun queues inspector messages for a debugger that reads slowly. If a debugger reads nothing while 128 MB of messages are queued for it, Bun disconnects that debugger with WebSocket close code `1013`. Other debuggers stay attached.
+
 ---
 
 ## Debuggers

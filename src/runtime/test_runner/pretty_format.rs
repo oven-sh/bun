@@ -325,8 +325,10 @@ pub(crate) struct Formatter<'a> {
     same_as_older_bun: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
-    /// The `target` of the event that a failure message prints. It prints as `[Class]`.
+    /// The `target` of the event that a failure message prints. It prints one level deep.
     dispatcher: JSValue,
+    /// A value at a deeper indent is inside the `dispatcher` and prints as `[Class]`.
+    shallow_below: u32,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -362,6 +364,7 @@ impl<'a> Formatter<'a> {
             same_as_older_bun: true,
             output_length: None,
             dispatcher: JSValue::ZERO,
+            shallow_below: u32::MAX,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -2554,14 +2557,24 @@ impl<'a> Formatter<'a> {
                     return Ok(());
                 }
             }
-            if value == self.dispatcher {
-                let _ = writer.write_fmt(format_args!("[{}]", value.get_class_name(global_this)?));
+            if self.indent > self.shallow_below && !matches!(result.tag, Tag::Function | Tag::Class | Tag::Error) {
+                let name = value.get_class_name(global_this)?;
+                let _ = if name.is_empty() { writer.write_all(b"[Object]") } else { writer.write_fmt(format_args!("[{name}]")) };
                 return Ok(());
+            }
+            // `toEqual` compares the object that dispatched an event, and that object can be large.
+            if value == self.dispatcher {
+                let dispatcher = core::mem::take(&mut self.dispatcher);
+                let outer = core::mem::replace(&mut self.shallow_below, self.indent);
+                let printed = self.format::<W, ENABLE_ANSI_COLORS>(result, writer, value, global_this);
+                self.shallow_below = outer;
+                self.dispatcher = dispatcher;
+                return printed;
             }
             // The walk of the Object arm prints what `toEqual` reads of an event.
             if result.tag == Tag::Event {
                 let dispatcher = match value.get(global_this, "target") {
-                    Ok(target) => target.filter(|target| *target != value).unwrap_or(JSValue::ZERO),
+                    Ok(target) => target.filter(|target| *target != value).unwrap_or_default(),
                     Err(JsError::Thrown) if global_this.clear_exception_except_termination() => JSValue::ZERO,
                     Err(error) => return Err(error),
                 };

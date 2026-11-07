@@ -281,6 +281,15 @@ describe("jest-extended", () => {
         }
       }
       expect(7).toEqual(expect.toSatisfy(() => ({ then: true })));
+
+      async function isOdd(n) {
+        return n % 2 === 1;
+      }
+      expect(() => expect(7).toEqual(expect.toSatisfy(isOdd))).toThrow(
+        new TypeError(
+          "The predicate of expect.toSatisfy(), `isOdd`, returned a promise. It has to return its answer synchronously",
+        ),
+      );
     });
   }
 

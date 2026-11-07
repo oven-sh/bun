@@ -1179,6 +1179,19 @@ describe("expect.addEqualityTesters", () => {
     }
   });
 
+  test("the error names a tester that has a name", () => {
+    const sentinel = "vitest-apis-named";
+    function returnsAPromise(a: unknown, b: unknown) {
+      return a === sentinel || b === sentinel ? (Promise.resolve(true) as any) : undefined;
+    }
+    expect.addEqualityTesters([returnsAPromise]);
+    const error = thrownBy(() => expect(sentinel).toEqual("x")) as Error;
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toBe(
+      "An equality tester, `returnsAPromise`, returned a promise. It has to return its answer synchronously",
+    );
+  });
+
   test("this.equals refuses a promise from the testers it is given", () => {
     const messages: string[] = [];
     expect.extend({

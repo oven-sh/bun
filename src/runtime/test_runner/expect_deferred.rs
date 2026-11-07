@@ -574,14 +574,14 @@ impl Answerer {
     ) -> JsResult<JSValue> {
         let answer = function.call(global, this, arguments)?;
         if answer.is_object() {
-            self.refuse_thenable(global, answer)?;
+            self.refuse_thenable(global, answer, function)?;
         }
         Ok(answer)
     }
 
     #[cold]
     #[optimize(size)]
-    fn refuse_thenable(self, global: &JSGlobalObject, answer: JSValue) -> JsResult<()> {
+    fn refuse_thenable(self, global: &JSGlobalObject, answer: JSValue, function: JSValue) -> JsResult<()> {
         let returned = if answer.as_any_promise().is_some() {
             "a promise"
         } else if answer.get(global, "then")?.is_some_and(JSValue::is_callable) {
@@ -596,15 +596,24 @@ impl Answerer {
             Answerer::SatisfyPredicate => "The predicate of expect.toSatisfy()",
             Answerer::Contains => "contains()",
         };
+        // The other three are methods, which `who` names.
+        let name = match self {
+            Answerer::EqualityTester | Answerer::SatisfyPredicate => function.get(global, "name")?,
+            _ => None,
+        };
+        let named = match name.filter(|name| name.is_string() && name.to_boolean()) {
+            Some(name) => format!(", `{}`,", name.to_bun_string(global)?),
+            None => String::new(),
+        };
         Err(global.throw_type_error(format_args!(
-            "{who} returned {returned}. It has to return its answer synchronously"
+            "{who}{named} returned {returned}. It has to return its answer synchronously"
         )))
     }
 
     /// Called by C++ deep equality with an object that `who` returned. Leaves an exception pending if it is refused.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect__refuseThenable(global: &JSGlobalObject, answer: JSValue, who: u8) {
-        if let Err(error) = Self::ALL[usize::from(who)].refuse_thenable(global, answer) {
+        if let Err(error) = Self::ALL[usize::from(who)].refuse_thenable(global, answer, JSValue::UNDEFINED) {
             bun_jsc::host_fn::host_call_error_value(global, error);
         }
     }

@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Bun does NOT vendor the React Compiler — every upstream crate that Bun uses
 # has been ported into src/react_compiler/ (HIR passes byte-for-byte; AST-
-# boundary files re-typed onto bun_ast). This script sparse-fetches the
+# boundary files re-typed onto bun_ast). This script fetches the
 # upstream sources into a temp dir and prints, for each ported file, the diff
 # between the SHA we last ported from (src/react_compiler/UPSTREAM_PORTED) and
 # upstream's current tip. Nothing is written to the repo; the output is the
@@ -47,13 +47,12 @@ fi
 
 ref="${1:-main}"
 
-echo "Fetching facebook/react @ {$old, $ref} (sparse: compiler/crates) ..." >&2
+echo "Fetching facebook/react @ {$old, $ref} ..." >&2
 git -C "$tmp" init -q
 git -C "$tmp" remote add origin https://github.com/facebook/react.git
-git -C "$tmp" sparse-checkout init --cone
-git -C "$tmp" sparse-checkout set compiler/crates
-git -C "$tmp" fetch -q --depth=1 origin "$old" "$ref"
-new=$(git -C "$tmp" rev-parse FETCH_HEAD)
+# $ref gets a ref of its own: FETCH_HEAD lists both commits and resolves to the first one, $old.
+git -C "$tmp" fetch -q --depth=1 origin "$old" "$ref:refs/sync/new"
+new=$(git -C "$tmp" rev-parse --verify 'refs/sync/new^{commit}')
 
 echo "UPSTREAM_PORTED: $old"
 echo "UPSTREAM_HEAD:   $new"
@@ -93,13 +92,25 @@ declare -a boundary=(
   "react_compiler/src/entrypoint/gating.rs:(folded into program.rs)"
   "react_compiler/src/entrypoint/suppression.rs:(detected in js_parser/lexer.rs, consumed in program.rs)"
   react_compiler/src/entrypoint/compile_result.rs:compile_result.rs
+  "react_compiler_hir/src/print.rs:(not ported; debug printer, no caller in Bun)"
+  "react_compiler_diagnostics/src/code_frame.rs:(not ported; no caller in Bun)"
+  "react_compiler_reactive_scopes/src/print_reactive_function.rs:(not ported; debug printer, no caller in Bun)"
 )
 
+# A file listed above that sits in a whole-crate directory is not part of the
+# whole-crate port.
+declare -a boundary_excludes=()
+for pair in "${boundary[@]}"; do
+  boundary_excludes+=(":(exclude)compiler/crates/${pair%%:*}")
+done
+
+# diff_one <upstream path> <port> [<pathspec>...]
 diff_one() {
   local upstream="compiler/crates/$1" port="$2"
+  shift 2
   case "$port" in '('*) ;; *) port="src/react_compiler/$port" ;; esac
   local out
-  out=$(git -C "$tmp" diff --stat=120 --patch "$old" "$new" -- "$upstream")
+  out=$(git -C "$tmp" diff --stat=120 --patch "$old" "$new" -- "$upstream" "$@")
   if [ -n "$out" ]; then
     echo "── $upstream"
     echo "   port: $port"
@@ -111,7 +122,7 @@ diff_one() {
 echo "### whole-crate ports (apply mechanically) ###"
 echo
 for pair in "${pristine[@]}"; do
-  diff_one "${pair%%:*}/src" "${pair##*:}"
+  diff_one "${pair%%:*}/src" "${pair##*:}" "${boundary_excludes[@]}"
 done
 
 echo "### AST-boundary ports (re-port via DESIGN.md type map) ###"
@@ -120,13 +131,19 @@ for pair in "${boundary[@]}"; do
   diff_one "${pair%%:*}" "${pair##*:}"
 done
 
-# Any new file that touches react_compiler_ast outside the known boundary set
-# is a new boundary file that needs a Bun port + an entry above.
+# A file that names react_compiler_ast at $new, did not at $old, and has no
+# entry above is a new boundary file: it needs a Bun port + an entry.
+ast_consumers() {
+  git -C "$tmp" grep --no-color -lw react_compiler_ast "$1" -- 'compiler/crates/*/src/*.rs' \
+    ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" \
+    | sed "s/^$1://" | LC_ALL=C sort
+}
 echo "### new react_compiler_ast consumers (need new Bun port) ###"
-git -C "$tmp" checkout -q "$new"
-git -C "$tmp" grep -l '\breact_compiler_ast\b' -- 'compiler/crates/*/src/*.rs' \
-  | grep -Ev 'react_compiler_ast/|react_compiler_lowering/|react_compiler/src/entrypoint/|reactive_scopes/src/codegen_reactive_function\.rs' \
-  || echo "(none)"
+# git grep exits with 1 when no file matches. Any other failure stops the script.
+ast_consumers "$old" > "$tmp/consumers.old" || [ $? -eq 1 ]
+ast_consumers "$new" > "$tmp/consumers.new" || [ $? -eq 1 ]
+new_consumers=$(LC_ALL=C comm -13 "$tmp/consumers.old" "$tmp/consumers.new")
+echo "${new_consumers:-(none)}"
 echo
 
 echo "When porting is done: echo $new > $ported_file"

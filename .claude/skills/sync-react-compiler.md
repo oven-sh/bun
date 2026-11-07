@@ -31,7 +31,7 @@ the porting reference for the AST-boundary files.
 
 ## Sync procedure
 
-1. **Produce the upstream diff.** The script sparse-fetches facebook/react into
+1. **Produce the upstream diff.** The script fetches facebook/react into
    a temp dir (nothing is written to the repo) and prints, per ported file, the
    diff between `src/react_compiler/UPSTREAM_PORTED` and upstream's tip:
    ```sh
@@ -59,10 +59,11 @@ the porting reference for the AST-boundary files.
    For large diffs, fan out one agent per file with the upstream diff + the Bun
    port + DESIGN.md as context, then adversarially review each port.
 
-4. **Handle new boundary files.** If the third section lists any file, write a
-   fresh Bun port of it under `src/react_compiler/`, add it to both arrays in
-   `scripts/sync-react-compiler.sh`, and add a row to the layout table in
-   `DESIGN.md`.
+4. **Handle new boundary files.** If the third section lists any file, add it
+   to the `boundary` array in `scripts/sync-react-compiler.sh` and run the
+   script again: the AST-boundary section then prints the file. Write a fresh
+   Bun port of it under `src/react_compiler/`, and add a row to the layout
+   table in `DESIGN.md`.
 
 5. **Verify.**
    ```sh

@@ -2363,6 +2363,24 @@ describe.concurrent("the end of a test file", () => {
       expect({ seen, exitCode }, stderr).toEqual({ seen: ["pending: 1", "fired: 1000", "left: 0 1500"], exitCode: 0 });
     });
 
+    test("fake timers from beforeAll() stay on when a global that only a DOM library defines goes away", async () => {
+      const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+        files: {
+          "a.test.ts": `
+            import { afterAll, test } from "bun:test";
+            globalThis.requestAnimationFrame = callback => setTimeout(callback, 16);
+            afterAll(() => void delete globalThis.requestAnimationFrame);
+            test("a", () => {});
+          `,
+          "b.test.ts": sees("b", `console.log("b:", typeof requestAnimationFrame);`),
+        },
+      });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["b module: fake 1970", "b test: fake 1970", "b: undefined", ...inEach(["c"], "fake 1970")],
+        exitCode: 0,
+      });
+    });
+
     // No spy or stub undoes an assignment, so nothing tells the clock what is under its fake now.
     test.each([
       [
@@ -3724,14 +3742,15 @@ describe("a spy or stub under a fake that is undone while the clock is faked", (
   });
 
   test.each([
-    ["a second stub", () => void vi.stubGlobal("setTimeout", () => 1)],
-    ["a spy", () => void jest.spyOn(globalThis, "setTimeout")],
-  ])("a stub under the fake and %s over it", (_, replace) => {
+    ["a second stub", () => void vi.stubGlobal("setTimeout", () => 1), false],
+    ["a spy, which stays", () => void jest.spyOn(globalThis, "setTimeout"), true],
+  ])("a stub under the fake and %s over it", (_, replace, staysOver) => {
     stub();
     vi.useFakeTimers();
     const fake = setTimeout;
     replace();
     vi.unstubAllGlobals();
+    expect(jest.isMockFunction(setTimeout)).toBe(staysOver);
     jest.restoreAllMocks();
     expect({ isTheFake: setTimeout === fake, fires: fires() }).toEqual({ isTheFake: true, fires: true });
     vi.useRealTimers();
@@ -3772,6 +3791,26 @@ describe("a spy or stub under a fake that is undone while the clock is faked", (
     expect(fires()).toBe(true);
     vi.useRealTimers();
     expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("a stub made over an earlier clock's fake leaves the new clock's fake, then the real function", () => {
+    vi.useFakeTimers();
+    stub();
+    vi.useFakeTimers();
+    const fake = setTimeout;
+    vi.unstubAllGlobals();
+    expect({ isTheFake: setTimeout === fake, fires: fires() }).toEqual({ isTheFake: true, fires: true });
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("a stub made over a function that a test assigned over the fake puts that function back", () => {
+    vi.useFakeTimers();
+    const assigned = () => 0;
+    globalThis.setTimeout = assigned as unknown as typeof setTimeout;
+    stub();
+    vi.unstubAllGlobals();
+    expect<unknown>(setTimeout).toBe(assigned);
   });
 
   test("the fake has the attributes of the property that the stub replaced", () => {

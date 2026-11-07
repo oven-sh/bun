@@ -226,3 +226,42 @@ test("test files that are built a few at a time add their counts up", async () =
   const [plain, compiled] = await Promise.all([report(["--parallel=2"]), report(["--aot", "--parallel=2"])]);
   expect(compiled).toEqual(plain);
 });
+
+// https://github.com/oven-sh/bun/issues/15538
+// The project is a package folder of node_modules. The compiler decides which files count their executions by the
+// rule of the coverage gate, so a compiled run lists the files of the project, and no file of a package.
+test("a project in a package folder of node_modules gets the rows of a run without --aot", async () => {
+  using dir = tempDir("test-aot-coverage", {
+    "node_modules/my-pkg": {
+      "cake.ts": `export const bake = () => 5;\n`,
+      "tests/cake.test.ts": `import { expect, test } from "bun:test";
+import { bake } from "../cake.ts";
+import { nested } from "nested";
+import { hoisted } from "hoisted";
+test("bake", () => expect(bake() + nested() + hoisted()).toBe(5));
+`,
+      "node_modules/nested/index.js": `export const nested = () => 0;\n`,
+    },
+    "node_modules/hoisted/index.js": `export const hoisted = () => 0;\n`,
+  });
+  const rows = async (cwd: string, flags: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "--coverage", ...flags],
+      cwd: join(String(dir), cwd),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A row of the table is ` <file> | % Funcs | % Lines | Uncovered Line #s`. A debug build also lists the test file.
+    const rows = [...(stdout + stderr).matchAll(/^ (\S+) +\|(.*)$/gm)]
+      .map(row => [row[1].replaceAll("\\", "/"), ...row[2].split("|").map(cell => cell.trim())])
+      .filter(([file]) => !file.endsWith(".test.ts"));
+    return { cwd, flags, rows, exitCode };
+  };
+  const starts = { "node_modules/my-pkg": "cake.ts", "node_modules/my-pkg/tests": "../cake.ts" };
+  const runs = [[], ["--aot"]].flatMap(flags => Object.entries(starts).map(([cwd, file]) => ({ cwd, flags, file })));
+  expect(await Promise.all(runs.map(({ cwd, flags }) => rows(cwd, flags)))).toEqual(
+    runs.map(({ cwd, flags, file }) => ({ cwd, flags, rows: [[file, "100.00", "100.00", ""]], exitCode: 0 })),
+  );
+});

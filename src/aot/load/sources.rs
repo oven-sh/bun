@@ -7,6 +7,8 @@ use std::sync::{Arc, OnceLock};
 
 use bun_ast::Loader;
 use bun_builtin_sources::{Archive, BundledName, BundledPositions, Manifest, VIRTUAL_ROOT};
+use bun_core::strings::contains;
+use bun_paths::string_paths::NodeModulesScope;
 use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, FnId};
@@ -292,6 +294,12 @@ impl Sources {
 
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].diagnostic_path
+    }
+
+    /// Is `path` a package file to `bun test --coverage`? By the rule of its gate, not by `is_in_node_modules`: the project may be a package folder itself.
+    pub fn is_package_file_to_coverage(&self, path: &[u8]) -> bool {
+        contains(path, b"node_modules")
+            && NodeModulesScope::below_root(&self.project_root).file_is_inside_node_modules(path)
     }
 
     fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {

@@ -140,8 +140,9 @@ export function join(first: string, second: string): string {
       "src/join.ts": `export class Mode {
   accessor #mode: "idle" | "busy" = "idle";
   static accessor #count: number = 0;
+  accessor #echo = <T>(value: T): T => value;
   busy(): boolean {
-    return this.#mode === "busy";
+    return this.#echo(this.#mode) === "busy";
   }
   static next(): number {
     return ++Mode.#count;
@@ -157,6 +158,7 @@ export function join(first: string, second: string): string {
     const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
     expect(typed).toContain('#mode_accessor_storage: "idle" | "busy" = "idle";');
     expect(typed).toContain("static #count_accessor_storage: number = 0;");
+    expect(typed).toContain('#echo_accessor_storage = { "#echo": <T>(value: T): T => value }["#echo"];');
   });
 
   test("a build without it writes what it always did", async () => {

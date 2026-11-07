@@ -262,14 +262,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"_accessor_storage"
     }
 
-    /// `{ "name": value }["name"]`: a property of that name is what names `value`, an anonymous function or class.
+    /// `{ "name": value }["name"]`: a property of that name is what names `value`, an anonymous function or class. Only `value` has a position.
     fn named_by_key(&mut self, value: Expr, name: &'a [u8]) -> Expr {
         let can_be_removed_if_unused = self.expr_can_be_removed_if_unused(&value);
+        let loc = bun_ast::Loc::EMPTY;
         let mut properties = bun_alloc::AstAlloc::vec();
         VecExt::append(
             &mut properties,
             Property {
-                key: Some(self.new_expr(E::EString::init(name), value.loc)),
+                key: Some(self.new_expr(E::EString::init(name), loc)),
                 value: Some(value),
                 ..Default::default()
             },
@@ -280,17 +281,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 ..Default::default()
             },
-            value.loc,
+            loc,
         );
         self.new_expr(
             E::Dot {
                 target,
                 name: name.into(),
-                name_loc: value.loc,
+                name_loc: loc,
                 can_be_removed_if_unused,
                 ..Default::default()
             },
-            value.loc,
+            loc,
         )
     }
 
@@ -328,8 +329,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut flags = prop.flags;
         flags.insert(Flags::Property::IsMethod);
-        let getter = self.accessor_getter(AccessorStorage::Private(storage), key.loc);
-        let setter = self.accessor_setter(AccessorStorage::Private(storage), key.loc);
+        // The source has nothing of the pair but its name, so nothing else of it has a position.
+        let getter = self.accessor_getter(AccessorStorage::Private(storage), bun_ast::Loc::EMPTY);
+        let setter = self.accessor_setter(AccessorStorage::Private(storage), bun_ast::Loc::EMPTY);
         [(PropertyKind::Get, getter), (PropertyKind::Set, setter)].map(|(kind, value)| Property {
             key: Some(key),
             value: Some(value),

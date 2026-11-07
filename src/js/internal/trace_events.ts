@@ -422,10 +422,21 @@ const kTimerSpan = Symbol("traceTimerSpan");
 function installTimerInstrumentation() {
   if (timersInstrumented) return;
   timersInstrumented = true;
-  globalThis.setTimeout = wrapTimerFunction(globalThis.setTimeout, false);
-  globalThis.setInterval = wrapTimerFunction(globalThis.setInterval, true);
-  globalThis.clearTimeout = wrapClearFunction(globalThis.clearTimeout);
-  globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
+  // Builtin modules take their timers from `$natives`, and node:timers exports them. globalThis gets the same wrapper, or one of its own if script has put another function there.
+  const install = (
+    name: "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval",
+    wrap: (original: any) => any,
+  ) => {
+    const native = $natives[name];
+    const onGlobalThis = globalThis[name];
+    const traced = wrap(native);
+    $natives[name] = traced;
+    globalThis[name] = onGlobalThis === native ? traced : wrap(onGlobalThis);
+  };
+  install("setTimeout", original => wrapTimerFunction(original, false));
+  install("setInterval", original => wrapTimerFunction(original, true));
+  install("clearTimeout", wrapClearFunction);
+  install("clearInterval", wrapClearFunction);
 }
 
 /** Whatever function is wrapped so that its calls leave events: the arguments are passed on as they come. */

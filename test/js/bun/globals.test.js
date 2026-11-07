@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 it("ERR_INVALID_THIS", () => {
@@ -413,5 +413,211 @@ describe.concurrent("builtin modules read the native classes and objects, not th
         });
       `),
     ).toEqual({ objects: 1, isKey: false, isPrinted: false, isReceiver: false, receivers: ["URL"] });
+  });
+
+  // One at a time, after the tests above: those take seconds in a debug build when more processes run beside them.
+  describe.serial("and the native timers, atob and btoa", () => {
+    const timers = ["setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate"];
+    const names = [...timers, "atob", "btoa"];
+
+    it("node:timers and node:buffer export them after the globals were replaced", async () => {
+      expect(
+        await run(`
+          const exported = { timers: ${JSON.stringify(timers)}, buffer: ["atob", "btoa"] };
+          const natives = {};
+          for (const name of ${JSON.stringify(names)}) {
+            natives[name] = globalThis[name];
+            globalThis[name] = function replaced() {
+              throw new Error(name + " was read from globalThis");
+            };
+          }
+          const whose = (name, value) =>
+            value === natives[name] ? "native" : value === globalThis[name] ? "replaced" : typeof value;
+          const result = {};
+          for (const [id, names] of Object.entries(exported)) {
+            for (const name of names) result[id + "." + name] = whose(name, require("node:" + id)[name]);
+          }
+          Promise.all([import("node:timers"), import("node:buffer")]).then(([timers, buffer]) => {
+            result["import { setTimeout }"] = whose("setTimeout", timers.setTimeout);
+            result["import { atob }"] = whose("atob", buffer.atob);
+            console.log(JSON.stringify(result));
+          });
+        `),
+      ).toEqual({
+        "timers.setTimeout": "native",
+        "timers.setInterval": "native",
+        "timers.setImmediate": "native",
+        "timers.clearTimeout": "native",
+        "timers.clearInterval": "native",
+        "timers.clearImmediate": "native",
+        "buffer.atob": "native",
+        "buffer.btoa": "native",
+        "import { setTimeout }": "native",
+        "import { atob }": "native",
+      });
+    });
+
+    it.each([
+      ["assigned", "globalThis[name] = function replaced() {}"],
+      ["deleted", "delete globalThis[name]"],
+      [
+        "made getters that throw",
+        `Object.defineProperty(globalThis, name, {
+          get() {
+            getters++;
+            throw new Error(name + " was read from globalThis");
+          },
+          configurable: true,
+        })`,
+      ],
+    ])("also when the globals were %s before anything read them", async (_, replace) => {
+      expect(
+        await run(`
+          const names = ${JSON.stringify(names)};
+          let getters = 0;
+          for (const name of names) ${replace};
+          // Not named \`timers\` and \`buffer\`: with -e those are globals, and declaring them loads the modules before this script runs.
+          const nodeTimers = require("node:timers");
+          const nodeBuffer = require("node:buffer");
+          const fired = [];
+          const interval = nodeTimers.setInterval(() => (fired.push("interval"), nodeTimers.clearInterval(interval)), 1);
+          nodeTimers.clearTimeout(nodeTimers.setTimeout(() => fired.push("cleared timeout"), 1));
+          nodeTimers.clearImmediate(nodeTimers.setImmediate(() => fired.push("cleared immediate")));
+          nodeTimers.setImmediate(() => fired.push("immediate"));
+          nodeTimers.setTimeout(() => fired.push("timeout"), 1);
+          process.on("exit", () =>
+            console.log(
+              JSON.stringify({
+                exported: names.map(name => (nodeTimers[name] ?? nodeBuffer[name])?.name),
+                fired: fired.sort(),
+                base64: [nodeBuffer.btoa("hi"), nodeBuffer.atob("aGk=")],
+                getters,
+              }),
+            ),
+          );
+        `),
+      ).toEqual({ exported: names, fired: ["immediate", "interval", "timeout"], base64: ["aGk=", "hi"], getters: 0 });
+    });
+
+    it("node:timers/promises schedules with them after the globals were replaced", async () => {
+      expect(
+        await run(`
+          const fakes = [];
+          for (const name of ${JSON.stringify(timers)}) globalThis[name] = () => void fakes.push(name);
+          const timersPromises = require("node:timers/promises");
+          const settled = [];
+          const settle = value => void settled.push(value);
+          timersPromises.setTimeout(1, "setTimeout").then(settle);
+          timersPromises.setImmediate("setImmediate").then(settle);
+          timersPromises.scheduler.wait(1).then(() => settle("scheduler.wait"));
+          timersPromises.scheduler.yield().then(() => settle("scheduler.yield"));
+          (async () => {
+            for await (const value of timersPromises.setInterval(1, "setInterval")) return settle(value);
+          })();
+          require("node:util").promisify(require("node:timers").setTimeout)(1, "promisify").then(settle);
+          require("node:timers").promises.setTimeout(1, "timers.promises").then(settle);
+          // A real timer that the abort doesn't clear keeps the process alive for a day.
+          const controller = new AbortController();
+          timersPromises.setTimeout(86_400_000, null, { signal: controller.signal }).catch(error => settle(error.name));
+          controller.abort();
+          process.on("exit", () => console.log(JSON.stringify({ settled: settled.sort(), fakes })));
+        `),
+      ).toEqual({
+        settled: [
+          "AbortError",
+          "promisify",
+          "scheduler.wait",
+          "scheduler.yield",
+          "setImmediate",
+          "setInterval",
+          "setTimeout",
+          "timers.promises",
+        ],
+        fakes: [],
+      });
+    });
+
+    it("each realm exports its own", async () => {
+      expect(
+        await run(`
+          const inRealm = \`(() => {
+            const native = setTimeout;
+            globalThis.setTimeout = () => {};
+            return require("node:timers").setTimeout === native;
+          })()\`;
+          const inMain = eval(inRealm);
+          const worker = new (require("node:worker_threads").Worker)(
+            'require("node:worker_threads").parentPort.postMessage(' + inRealm + ")",
+            { eval: true },
+          );
+          worker.on("message", inWorker => console.log(JSON.stringify({ inMain, inWorker })));
+        `),
+      ).toEqual({ inMain: true, inWorker: true });
+    });
+
+    it.each([
+      ["the modules", "[exported(), globals()]"],
+      ["the globals", "[globals(), exported()].reverse()"],
+    ])("they are the functions on globalThis, with %s read first", async (_, inOrder) => {
+      expect(
+        await run(`
+          const names = ${JSON.stringify(names)};
+          const exported = () => names.map(name => (require("node:timers")[name] ?? require("node:buffer")[name]));
+          const globals = () => names.map(name => globalThis[name]);
+          const [fromModules, fromGlobalThis] = ${inOrder};
+          console.log(
+            JSON.stringify({
+              different: names.filter((name, i) => fromModules[i] !== fromGlobalThis[i]),
+              properties: [...names, "queueMicrotask"].map(name => {
+                const { value, ...attributes } = Object.getOwnPropertyDescriptor(globalThis, name);
+                return [value.name, value.length, ...Object.keys(attributes).filter(key => attributes[key])].join(" ");
+              }),
+              keys: Object.keys(globalThis).filter(key => names.includes(key) || key === "queueMicrotask"),
+            }),
+          );
+        `),
+      ).toEqual({
+        different: [],
+        properties: [...names, "queueMicrotask"].map(name => `${name} 1 writable enumerable configurable`),
+        keys: [...names, "queueMicrotask"].sort(),
+      });
+    });
+
+    it("a static import gets them after a preload replaced the globals", async () => {
+      using dir = tempDir("native-functions-preload", {
+        "preload.js": `
+          globalThis.natives = {};
+          for (const name of ${JSON.stringify(names)}) {
+            natives[name] = globalThis[name];
+            globalThis[name] = function replaced() {
+              throw new Error(name + " was read from globalThis");
+            };
+          }
+        `,
+        "main.mjs": `
+          import { atob, btoa } from "node:buffer";
+          import * as timers from "node:timers";
+          import { setTimeout as sleep } from "node:timers/promises";
+          console.log(
+            JSON.stringify({
+              replaced: Object.keys(natives).filter(name => ({ ...timers, atob, btoa })[name] !== natives[name]),
+              slept: await sleep(1, "slept"),
+            }),
+          );
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./preload.js", "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ replaced: [], slept: "slept" }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });

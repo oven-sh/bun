@@ -2,13 +2,14 @@ const { throwNotImplemented } = require("internal/shared");
 
 var timersPromisesValue;
 
+// Bun's own functions, which script cannot replace. globalThis starts with the same ones, as in Node.
 export default {
-  setTimeout: globalThis.setTimeout,
-  clearTimeout: globalThis.clearTimeout,
-  setInterval: globalThis.setInterval,
-  setImmediate: globalThis.setImmediate,
-  clearInterval: globalThis.clearInterval,
-  clearImmediate: globalThis.clearImmediate,
+  setTimeout: $natives.setTimeout,
+  clearTimeout: $natives.clearTimeout,
+  setInterval: $natives.setInterval,
+  setImmediate: $natives.setImmediate,
+  clearInterval: $natives.clearInterval,
+  clearImmediate: $natives.clearImmediate,
   get promises() {
     return (timersPromisesValue ??= require("node:timers/promises"));
   },
@@ -24,7 +25,7 @@ export default {
   },
   unenroll(timer: NodeJS.Timeout) {
     if ($isCallable(timer?.refresh)) {
-      clearTimeout(timer);
+      $natives.clearTimeout(timer);
       return;
     }
 

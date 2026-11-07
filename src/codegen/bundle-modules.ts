@@ -35,7 +35,7 @@ import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChan
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { assertNoDestructuredGlobalThis, define } from "./replacements";
+import { assertNoDestructuredGlobalThis, assertNoNativeFunctionOfGlobalThis, define } from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -290,6 +290,7 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
   const sourceMap = JSON.parse(fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path + ".map"), "utf8"));
   const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
+  assertNoNativeFunctionOfGlobalThis(written, moduleList[i], moduleList[i].endsWith(".ts") ? "ts" : "js");
   bundledNames.push(...listBundledNamesOfModule(moduleList[i], written, output, sourceMap));
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
@@ -331,6 +332,9 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
 
 for (const [file, texts] of textsOfModules) {
   const readByCompiler = fs.readFileSync(locate(file), "utf8");
+  if (locate(file) !== path.join(BASE, file)) {
+    assertNoNativeFunctionOfGlobalThis(readByCompiler, file, file.endsWith(".ts") ? "ts" : "js");
+  }
   // What holds a part of a module is a second text of that module, which leaves the rest out.
   const whole = findModuleHeldInPart(readByCompiler);
   if (whole !== undefined && !textsOfModules.has(whole))

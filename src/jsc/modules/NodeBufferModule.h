@@ -148,7 +148,6 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGl
 DEFINE_NATIVE_MODULE(NodeBuffer)
 {
     INIT_NATIVE_MODULE(NodeBuffer, 12);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     put(JSC::Identifier::fromString(vm, "Buffer"_s), globalObject->JSBufferConstructor());
 
@@ -183,16 +182,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
 
     put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 
-    JSC::Identifier atobI = JSC::Identifier::fromString(vm, "atob"_s);
-    JSC::JSValue atobV = lexicalGlobalObject->get(globalObject, PropertyName(atobI));
-    RETURN_IF_EXCEPTION(scope, );
-
-    JSC::Identifier btoaI = JSC::Identifier::fromString(vm, "btoa"_s);
-    JSC::JSValue btoaV = lexicalGlobalObject->get(globalObject, PropertyName(btoaI));
-    RETURN_IF_EXCEPTION(scope, );
-
-    put(atobI, atobV);
-    put(btoaI, btoaV);
+    put(JSC::Identifier::fromString(vm, "atob"_s), createAtobFunction(vm, globalObject));
+    put(JSC::Identifier::fromString(vm, "btoa"_s), createBtoaFunction(vm, globalObject));
 
     auto* transcode = JSC::JSFunction::create(vm, globalObject, 3, "transcode"_s, jsBufferTranscode, ImplementationVisibility::Public, NoIntrinsic);
 

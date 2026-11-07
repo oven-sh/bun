@@ -894,7 +894,6 @@ impl FakeTimers {
         options: &Options,
         date_now: f64,
     ) -> JsResult<Vec<AsyncDrive>> {
-        bun_jsc::cpp::Bun__FakeTimers__loadNodeTimers(global)?;
         let replaced = Self::fakes(global, options.faked, date_now.floor())?;
         let drives = Self::uninstall(global, Restore::Always);
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.

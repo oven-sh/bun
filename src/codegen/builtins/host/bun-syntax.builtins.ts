@@ -40,7 +40,7 @@ const privateGlobalFunctions = [
   "webStreamControllerError",
 ];
 
-const privateGlobalValues = ["asyncContext", "processBindingConstants", "requireMap"];
+const privateGlobalValues = ["asyncContext", "natives", "processBindingConstants", "requireMap"];
 
 const prefixedBuiltins = [
   "AbortSignal",

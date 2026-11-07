@@ -1677,6 +1677,24 @@ describe("the functions useFakeTimers() replaces", () => {
     },
   );
 
+  test.concurrent(
+    "node:timers and node:timers/promises are real when the program had replaced setTimeout before useFakeTimers()",
+    async () => {
+      expect(
+        await run([
+          "-e",
+          `const { jest } = Bun.jest();
+         const savedSetTimeout = setTimeout;
+         globalThis.setTimeout = () => console.log("the program's setTimeout was called");
+         jest.useFakeTimers();
+         console.log(require("node:timers").setTimeout === savedSetTimeout);
+         require("node:timers/promises").setTimeout(1, "promises").then(console.log);
+         console.log(jest.getTimerCount());`,
+        ]),
+      ).toEqual({ stdout: "true\n0\npromises\n", stderr: "", exitCode: 0, signalCode: null });
+    },
+  );
+
   test("util.promisify() of a fake function is on the fake clock", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate"] });
     const results: string[] = [];

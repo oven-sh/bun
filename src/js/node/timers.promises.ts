@@ -5,12 +5,13 @@ const { validateBoolean, validateAbortSignal, validateObject, validateNumber } =
 const { resistStopPropagation } = require("internal/shared");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
-const setImmediateGlobal = globalThis.setImmediate;
-const setTimeoutGlobal = globalThis.setTimeout;
-const setIntervalGlobal = globalThis.setInterval;
-const clearImmediateGlobal = globalThis.clearImmediate;
-const clearTimeoutGlobal = globalThis.clearTimeout;
-const clearIntervalGlobal = globalThis.clearInterval;
+// The functions that node:timers exports, which script cannot replace.
+const setImmediateGlobal = $natives.setImmediate;
+const setTimeoutGlobal = $natives.setTimeout;
+const setIntervalGlobal = $natives.setInterval;
+const clearImmediateGlobal = $natives.clearImmediate;
+const clearTimeoutGlobal = $natives.clearTimeout;
+const clearIntervalGlobal = $natives.clearInterval;
 
 interface TimerOptions {
   signal?: AbortSignal;

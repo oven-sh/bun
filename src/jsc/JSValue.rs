@@ -1656,6 +1656,35 @@ impl JSValue {
         })
     }
 
+    /// [`call`](Self::call) in `async_context` (`undefined`: no store), with the caller's context put back after the call.
+    #[inline(always)]
+    #[track_caller]
+    pub fn call_in_async_context(
+        self,
+        global: &JSGlobalObject,
+        async_context: JSValue,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        if self.has_nobody_to_call(global) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // Unlike an `AsyncContextFrame` callee, the context of a disposed `Bun.ModuleGraph` is entered: the caller decides.
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: as in `call`.
+            unsafe {
+                AsyncContextFrame__callInContext(
+                    global,
+                    async_context,
+                    self,
+                    this_value,
+                    args.len(),
+                    args.as_ptr(),
+                )
+            }
+        })
+    }
+
     /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
     /// test file that finished (only `--isolate` retires a realm).
     #[inline]
@@ -2082,6 +2111,14 @@ unsafe extern "C" {
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(
         global: *const JSGlobalObject,
+        function: JSValue,
+        this_value: JSValue,
+        args_len: usize,
+        args_ptr: *const JSValue,
+    ) -> JSValue;
+    fn AsyncContextFrame__callInContext(
+        global: *const JSGlobalObject,
+        async_context: JSValue,
         function: JSValue,
         this_value: JSValue,
         args_len: usize,

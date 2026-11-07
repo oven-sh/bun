@@ -3012,9 +3012,9 @@ __attribute__((cold, minsize)) NEVER_INLINE void JSMockFunction::takeSpyOffOrThr
     bool isInherited = attributes & SpyAttributeInherited;
 
     if (isOpaque) {
-        // What a trap answers isn't read: it may say that it deleted what it kept, so the object is looked at behind its traps below.
+        // What a trap answers isn't read: it may say that it did what it didn't, so the object is looked at behind its traps below.
         if (original && !isInherited)
-            putOwnPropertyStorage(globalObject, target, key, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), true);
+            defineOwnPropertyStorage(globalObject, target, key, original, attributes & descriptorAttributes, false);
         else
             JSCell::deleteProperty(target, globalObject, key);
         RETURN_IF_EXCEPTION(scope, );

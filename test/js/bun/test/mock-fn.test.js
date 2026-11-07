@@ -5154,7 +5154,9 @@ if (isBun) {
           spy(proxy, "method").mockReturnValue("spied");
           expect(proxy.method()).toBe("spied");
           jest.restoreAllMocks();
-          expect(target.method).toBe(Service.prototype.method);
+          expect(Object.getOwnPropertyDescriptor(proxy, "method")).toEqual(
+            Object.getOwnPropertyDescriptor(Service.prototype, "method"),
+          );
         });
       });
 
@@ -5262,25 +5264,30 @@ if (isBun) {
         }
       }
       Service.prototype.count = 1;
+      // A spy keeps no object alive, so each test holds its Proxy until the spy is restored.
       const kinds = [
-        ["a method", "method", proxy => spyOn(proxy, "method")],
-        ["a getter", "value", proxy => spyOn(proxy, "value", "get")],
-        ["a setter", "value", proxy => spyOn(proxy, "value", "set")],
-        ["a method that a getter returns", "handler", proxy => spyOn(proxy, "handler")],
-        ["a value that is no function", "count", proxy => spyOn(proxy, "count")],
+        ["a method", "method", (proxy, spy = spyOn) => spy(proxy, "method")],
+        ["a getter", "value", (proxy, spy = spyOn) => spy(proxy, "value", "get")],
+        ["a setter", "value", (proxy, spy = spyOn) => spy(proxy, "value", "set")],
+        ["a method that a getter returns", "handler", (proxy, spy = spyOn) => spy(proxy, "handler")],
+        ["a value that is no function", "count", (proxy, spy = spyOn) => spy(proxy, "count")],
       ];
+      // toThrow() with an Error reads only its message.
       const cannotRestore = name =>
-        new TypeError(`Cannot restore the \`${name}\` property because the object does not allow it to be changed`);
+        expect.objectContaining({
+          name: "TypeError",
+          message: `Cannot restore the \`${name}\` property because the object does not allow it to be changed`,
+        });
 
       test.each(kinds)("%s: the target gets the inherited property as its own", (_, name, spy) => {
         // `true` is the answer of Vue's readonly(), which deletes nothing.
         for (const answer of [false, true]) {
-          const target = new Service();
           const deleteProperty = jest.fn(() => answer);
-          const mocked = spy(new Proxy(target, { deleteProperty }));
+          const proxy = new Proxy(new Service(), { deleteProperty });
+          const mocked = spy(proxy);
           mocked.mockRestore();
           expect(deleteProperty).toHaveBeenCalledTimes(1);
-          expect(Object.getOwnPropertyDescriptor(target, name)).toEqual(
+          expect(Object.getOwnPropertyDescriptor(proxy, name)).toEqual(
             Object.getOwnPropertyDescriptor(Service.prototype, name),
           );
           // It isn't installed any more, so there is nothing to restore.
@@ -5291,12 +5298,11 @@ if (isBun) {
 
       test("a property that the prototype doesn't let go of comes back configurable", () => {
         const frozen = Object.freeze({ method() {}, get value() {} }); // prettier-ignore
-        const target = Object.create(frozen);
-        const proxy = new Proxy(target, { deleteProperty: () => false });
+        const proxy = new Proxy(Object.create(frozen), { deleteProperty: () => false });
         spyOn(proxy, "method").mockRestore();
         spyOn(proxy, "value", "get").mockRestore();
         const { method, value } = Object.getOwnPropertyDescriptors(frozen);
-        expect(Object.getOwnPropertyDescriptors(target)).toEqual({
+        expect(Object.getOwnPropertyDescriptors(proxy)).toEqual({
           method: { ...method, configurable: true },
           value: { ...value, configurable: true },
         });
@@ -5319,6 +5325,7 @@ if (isBun) {
         expect([storage.method(), storage.value]).toEqual(["spied", "spied"]);
         method.mockRestore();
         getter.mockRestore();
+        expect([storage.method(), storage.value]).toEqual(["original", "original"]);
         expect(Object.getOwnPropertyDescriptor(target, "method")).toEqual(bound.method);
         // The Proxy showed the accessor of the prototype, not the bound copy.
         expect(Object.getOwnPropertyDescriptor(target, "value")).toEqual(
@@ -5326,55 +5333,89 @@ if (isBun) {
         );
       });
 
-      test.each([...kinds, ["a missing property", "missing", proxy => spyOn(proxy, "missing")]])(
-        "%s: a Proxy that takes nothing back keeps the spy, and restoring throws",
-        (_, name, spy) => {
-          const target = new Service();
-          let keeps = false;
-          const proxy = new Proxy(target, {
-            deleteProperty: (target, name) => !keeps && Reflect.deleteProperty(target, name),
-            defineProperty: (target, name, descriptor) => !keeps && Reflect.defineProperty(target, name, descriptor),
-          });
-          const mocked = spy(proxy);
-          const other = new Service();
-          spyOn(other, "method");
-          const installed = Object.getOwnPropertyDescriptor(target, name);
-          keeps = true;
-          try {
-            expect(() => mocked.mockRestore()).toThrow(cannotRestore(name));
-            expect(() => jest.restoreAllMocks()).toThrow(cannotRestore(name));
-            expect(Object.getOwnPropertyDescriptor(target, name)).toEqual(installed);
-            expect(Object.hasOwn(other, "method")).toBe(false);
-          } finally {
-            keeps = false;
-            jest.restoreAllMocks();
-          }
-          expect(Object.hasOwn(target, name)).toBe(false);
-        },
-      );
+      const missing = ["a missing property", "missing", (proxy, spy = spyOn) => spy(proxy, "missing")];
+      describe.each(flavors)("%s", (_, isVitest, fn, spyOfFlavor) => {
+        test.each([...kinds, missing])(
+          "%s: a Proxy that takes nothing back keeps the spy, and restoring throws",
+          (_, name, spy) => {
+            let keeps = false;
+            const proxy = new Proxy(new Service(), {
+              deleteProperty: (target, name) => !keeps && Reflect.deleteProperty(target, name),
+              defineProperty: (target, name, descriptor) => !keeps && Reflect.defineProperty(target, name, descriptor),
+            });
+            const mocked = spy(proxy, spyOfFlavor);
+            const other = new Service();
+            spyOfFlavor(other, "method");
+            const installed = Object.getOwnPropertyDescriptor(proxy, name);
+            keeps = true;
+            try {
+              expect(() => mocked.mockRestore()).toThrow(cannotRestore(name));
+              expect(() => jest.restoreAllMocks()).toThrow(cannotRestore(name));
+              expect(Object.getOwnPropertyDescriptor(proxy, name)).toEqual(installed);
+              expect(Object.hasOwn(other, "method")).toBe(false);
+            } finally {
+              keeps = false;
+              jest.restoreAllMocks();
+            }
+            expect(Object.hasOwn(proxy, name)).toBe(false);
+          },
+        );
+      });
 
       test.each([
         ["a missing property", {}, proxy => spyOn(proxy, "missing")],
         ["a property that only the has trap knows", { has: () => true }, proxy => spyOn(proxy, "missing", "get")],
       ])("%s has nothing that the target could get back", (_, traps, spy) => {
-        const target = new Service();
         let keeps = true;
         const deleteProperty = (target, name) => !keeps && Reflect.deleteProperty(target, name);
-        const mocked = spy(new Proxy(target, { ...traps, deleteProperty }));
+        const proxy = new Proxy(new Service(), { ...traps, deleteProperty });
+        const mocked = spy(proxy);
         try {
           expect(() => mocked.mockRestore()).toThrow(cannotRestore("missing"));
-          expect(Object.hasOwn(target, "missing")).toBe(true);
+          expect(Object.hasOwn(proxy, "missing")).toBe(true);
         } finally {
           keeps = false;
           mocked.mockRestore();
         }
-        expect(Object.hasOwn(target, "missing")).toBe(false);
+        expect(Object.hasOwn(proxy, "missing")).toBe(false);
+      });
+
+      test.each([true, false])("an own method that the defineProperty trap keeps, answering %s", answer => {
+        const original = () => "original";
+        let keeps = false;
+        const proxy = new Proxy(
+          { method: original },
+          { defineProperty: (target, name, descriptor) => (keeps ? answer : Reflect.defineProperty(target, name, descriptor)) }, // prettier-ignore
+        );
+        const mocked = spyOn(proxy, "method");
+        keeps = true;
+        try {
+          expect(() => mocked.mockRestore()).toThrow(cannotRestore("method"));
+          expect(() => jest.restoreAllMocks()).toThrow(cannotRestore("method"));
+          expect(proxy.method).toBe(mocked);
+        } finally {
+          keeps = false;
+          jest.restoreAllMocks();
+        }
+        expect(proxy.method).toBe(original);
+      });
+
+      test("an own method that the defineProperty trap puts back, answering false", () => {
+        const original = () => "original";
+        let answer = true;
+        const proxy = new Proxy(
+          { method: original },
+          { defineProperty: (target, name, descriptor) => Reflect.defineProperty(target, name, descriptor) && answer },
+        );
+        const mocked = spyOn(proxy, "method");
+        answer = false;
+        mocked.mockRestore();
+        expect(proxy.method).toBe(original);
       });
 
       test("a trap that restores the spy itself, and then answers false", () => {
-        const target = new Service();
         let isRestoring = false;
-        const proxy = new Proxy(target, {
+        const proxy = new Proxy(new Service(), {
           deleteProperty(target, name) {
             if (isRestoring) return Reflect.deleteProperty(target, name);
             isRestoring = true;
@@ -5384,22 +5425,22 @@ if (isBun) {
         });
         const mocked = spyOn(proxy, "method");
         mocked.mockRestore();
-        expect(Object.hasOwn(target, "method")).toBe(false);
+        expect(Object.hasOwn(proxy, "method")).toBe(false);
       });
 
       test("a spy that is gone when the trap answers false leaves the target as it is", () => {
-        const target = new Service();
         // Deletes the spy, and returns undefined.
-        const careless = new Proxy(target, { deleteProperty: (target, name) => void Reflect.deleteProperty(target, name) }); // prettier-ignore
+        const careless = new Proxy(new Service(), { deleteProperty: (target, name) => void Reflect.deleteProperty(target, name) }); // prettier-ignore
         spyOn(careless, "method").mockRestore();
-        expect(Object.hasOwn(target, "method")).toBe(false);
+        expect(Object.hasOwn(careless, "method")).toBe(false);
 
         // User code put a property of its own in the place of the spy.
         const replacement = () => "replacement";
-        const mocked = spyOn(new Proxy(target, { deleteProperty: () => false }), "method");
-        target.method = replacement;
+        const refusing = new Proxy(new Service(), { deleteProperty: () => false });
+        const mocked = spyOn(refusing, "method");
+        refusing.method = replacement;
         mocked.mockRestore();
-        expect(target.method).toBe(replacement);
+        expect(refusing.method).toBe(replacement);
       });
     });
 
@@ -5419,8 +5460,9 @@ if (isBun) {
         const lines = stderr.split("\n").filter(line => /^(\w*Error: |\w\.test\.js:$|\((pass|fail)\) )/.test(line));
         return { lines: lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), exitCode };
       };
-      const cannotRestore = key =>
-        `TypeError: Cannot restore the \`${key}\` property because the object does not allow it to be changed`;
+      const message = key =>
+        `Cannot restore the \`${key}\` property because the object does not allow it to be changed`;
+      const reported = key => "TypeError: " + message(key);
 
       test("an object that doesn't delete the spy is restored for the next file", async () => {
         const result = await runTests({
@@ -5461,7 +5503,7 @@ if (isBun) {
               const spy = spyOn(array, 0);
               Object.freeze(array);
               for (const restore of [() => spy.mockRestore(), () => mock.restore()]) {
-                expect(restore).toThrow(new TypeError(${JSON.stringify(cannotRestore("0").slice("TypeError: ".length))}));
+                expect(restore).toThrow(expect.objectContaining({ name: "TypeError", message: ${JSON.stringify(message("0"))} }));
               }
               expect(array[0]).toBe(spy);
             });
@@ -5489,13 +5531,13 @@ if (isBun) {
           lines: [
             "a.test.js:",
             "(pass) a",
-            cannotRestore("0"),
+            reported("0"),
             "b.test.js:",
             "(pass) b",
-            cannotRestore("0"),
+            reported("0"),
             "c.test.js:",
             "(pass) c",
-            cannotRestore("method"),
+            reported("method"),
             "d.test.js:",
             "(pass) d",
           ],

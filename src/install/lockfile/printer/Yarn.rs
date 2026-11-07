@@ -206,7 +206,12 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
 
             // Resolved URL is always quoted
             quoted_buf.clear();
-            url_formatter.write_to(&mut quoted_buf)?;
+            if resolution.tag == bun_install::ResolutionTag::Github {
+                // The migration of yarn.lock builds the tag of the package from this text.
+                version_formatter.write_to(&mut quoted_buf)?;
+            } else {
+                url_formatter.write_to(&mut quoted_buf)?;
+            }
             writeln!(
                 writer,
                 "{}",

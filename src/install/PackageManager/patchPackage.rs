@@ -47,6 +47,12 @@ fn print_resolution_label<'a>(
     label
 }
 
+/// True when `version` is the text that bun.lock has for a GitHub package.
+fn is_lockfile_key_of(resolution: &Resolution, string_buf: &[u8], version: &[u8]) -> bool {
+    resolution.tag == ResolutionTag::Github
+        && resolution.fmt_url(string_buf).to_string().as_bytes() == version
+}
+
 /// Returns the `name@version` key that `patchedDependencies` uses for the package.
 fn patch_key_of(lockfile: &Lockfile, pkg: &Package) -> Vec<u8> {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -1808,6 +1814,7 @@ fn pkg_info_for_name_and_version(
                     .to_string()
                     .as_bytes()
                     != v
+                && !is_lockfile_key_of(resolution, strbuf, v)
             {
                 continue;
             }

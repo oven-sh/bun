@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataValue, ResultQueue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
@@ -118,8 +118,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
-    /// `Execution::judge` found the wait for `pending_matchers` past its deadline.
-    pub(crate) matchers_timed_out: bool,
+    /// A timeout of the group is still to be stepped, or a sibling is past its deadline and the next fire judges it. `step_sequence_one` starts no test until then.
+    pub(crate) verdict_due: bool,
 }
 
 impl ConcurrentGroup {
@@ -132,7 +132,7 @@ impl ConcurrentGroup {
             failure_skip_to: next_index,
             next_sequence_index: 0,
             pending_matchers: 0,
-            matchers_timed_out: false,
+            verdict_due: false,
         }
     }
 
@@ -226,6 +226,12 @@ impl ExecutionSequence {
     fn waits_for_matchers(&mut self) -> bool {
         self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
         self.callback_done
+    }
+
+    /// The entry whose callback has started and has not ended.
+    fn running_entry(&self) -> Option<&ExecutionEntry> {
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        self.active_entry.filter(|_| self.executing).map(|entry| unsafe { entry.as_ref() })
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -484,50 +490,40 @@ impl Execution {
         }
     }
 
-    /// Queues a `TimedOut` for each entry that is past its deadline at `now`, the clock of the file timer's fire. A step acts on them later, behind other callbacks, so no step times out an entry by its own clock.
+    /// Queues a `TimedOut` for each running entry that is past its deadline at `now`, the clock of the file timer's fire. A step acts on it later, behind other callbacks, so no step times out an entry by its own clock.
     pub(crate) fn judge(buntest: &mut BunTest, global_this: &JSGlobalObject, now: &Timespec) -> Judged {
         let this = &mut buntest.execution;
         let group_index = this.group_index;
         let Some(group) = this.groups.get_mut(group_index) else {
-            // No group is active while the file waits in `ExpectDeferred::step_file_end`.
-            buntest.unclaimed.judge_file_end(now);
             return Judged { timed_out: false, next: Timespec::EPOCH };
         };
         let sequences = &this.sequences[group.sequence_start..group.sequence_end];
+        // What this fire adds to the queue is no completion.
+        let queued = buntest.result_queue.readable_length();
         let mut next = Timespec::EPOCH;
         let mut timed_out = false;
         for (sequence_index, sequence) in sequences.iter().enumerate() {
-            let (true, Some(entry)) = (sequence.executing, sequence.active_entry) else {
+            let Some(entry) = sequence.running_entry() else {
                 continue;
             };
-            // SAFETY: arena-owned entry, alive for lifetime of BunTest
-            let running = unsafe { entry.as_ref() };
-            if !running.is_overdue(now) {
-                next = next.min_ignore_epoch(running.timespec);
+            if !entry.is_overdue(now) {
+                next = next.min_ignore_epoch(entry.timespec);
                 continue;
             }
             let entry_data = EntryData {
                 sequence_index,
-                entry: entry.as_ptr() as *const (),
+                entry: core::ptr::from_ref(entry).cast::<()>(),
                 attempt: sequence.attempt,
             };
-            // A queued completion ends the entry first, unless pending matchers keep it open (`waits_for_matchers`).
-            let completion_ends_it = sequence.pending_matchers == 0 || sequence.maybe_skip;
-            let queue = &buntest.result_queue;
-            let is_its_completion = |queued| {
-                matches!(queued, RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry_data)
-            };
-            if completion_ends_it && (0..queue.readable_length()).any(|i| is_its_completion(queue.peek_item(i))) {
+            // Its completion comes first. If pending matchers then keep the entry open (`waits_for_matchers`), a later fire times it out.
+            if has_queued_completion(&buntest.result_queue, queued, group_index, entry_data) {
                 continue;
             }
             let _ = buntest.result_queue.write_item(RefDataValue::TimedOut { group_index, entry_data });
             buntest.bun_test_root.get().mark_timed_out(group_index, entry_data);
             timed_out = true;
         }
-        if group.pending_matchers > 0 && group.remaining_incomplete_entries == 0 {
-            let deadline = matchers_deadline(sequences);
-            group.matchers_timed_out = !deadline.eql(&Timespec::EPOCH) && !deadline.greater(now);
-        }
+        group.verdict_due = timed_out || has_queued_verdict(&buntest.result_queue, group_index);
         // With test.concurrent() the processes of several tests are tracked together, so only a lone test's are killed.
         if timed_out && sequences.len() == 1 {
             Execution::kill_dangling_processes(global_this);
@@ -535,17 +531,20 @@ impl Execution {
         Judged { timed_out, next }
     }
 
-    /// The deadline of a running entry of the active group that `now` is past.
-    fn overdue_deadline(&self, now: &Timespec) -> Option<Timespec> {
-        self.active_group_ref()?
-            .sequences(self)
-            .iter()
-            .filter(|sequence| sequence.executing)
-            .filter_map(|sequence| sequence.active_entry)
-            // SAFETY: arena-owned entry, alive for lifetime of BunTest
-            .map(|entry| unsafe { entry.as_ref() })
-            .find(|entry| entry.is_overdue(now))
-            .map(|entry| entry.timespec)
+    /// The deadline of a running entry of the active group that `now` is past, and that no queued completion ends.
+    fn overdue_deadline(buntest: &BunTest, now: &Timespec) -> Option<Timespec> {
+        let this = &buntest.execution;
+        let queue = &buntest.result_queue;
+        let sequences = this.active_group_ref()?.sequences(this);
+        sequences.iter().enumerate().find_map(|(sequence_index, sequence)| {
+            let entry = sequence.running_entry().filter(|entry| entry.is_overdue(now))?;
+            let entry_data = EntryData {
+                sequence_index,
+                entry: core::ptr::from_ref(entry).cast::<()>(),
+                attempt: sequence.attempt,
+            };
+            (!has_queued_completion(queue, queue.readable_length(), this.group_index, entry_data)).then_some(entry.timespec)
+        })
     }
 
     pub(crate) fn step(
@@ -571,14 +570,24 @@ impl Execution {
                     if let Some(context) = sequence.context.as_ref().map(Strong::get) {
                         TestContext::abort_signal(context, global_this);
                     }
+                    // The fire marked the refs that existed. One of a callback that was on the stack then exists only now.
+                    buntest_strong.bun_test_root.get().mark_timed_out(*group_index, *entry_data);
                     report_around_timeout(buntest_strong, global_this, entry, &data)?;
                     let group_ptr = NonNull::from(group);
                     Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
                     step_sequence(buntest_strong, global_this, group_ptr, entry_data.sequence_index)?;
                 }
-                // No test starts while a sibling is past its deadline: its verdict comes first, from this fire or from the next one.
-                if let Some(timeout) = buntest_strong.get().execution.overdue_deadline(&Timespec::now_force_real_time()) {
+                let buntest = buntest_strong.get();
+                let active = buntest.execution.group_index;
+                if has_queued_verdict(&buntest.result_queue, active) {
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
+                }
+                // A sibling went past its deadline while this one timed out. The timer judges it next, before a test starts.
+                if let Some(timeout) = Execution::overdue_deadline(buntest, &Timespec::now_force_real_time()) {
                     return Ok(StepResult::Waiting { timeout });
+                }
+                if let Some(group) = buntest.execution.active_group() {
+                    group.verdict_due = false;
                 }
                 return step_group(buntest_strong, global_this);
             }
@@ -1123,8 +1132,14 @@ fn step_group(
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
-            if !core::mem::take(&mut group.matchers_timed_out) {
-                let timeout = matchers_deadline(&this.sequences[group.sequence_start..group.sequence_end]);
+            // Any test in the group may have called them, so wait until the latest test deadline.
+            let timeout = this.sequences[group.sequence_start..group.sequence_end]
+                .iter()
+                .filter_map(|sequence| sequence.test_entry)
+                // SAFETY: arena-owned entry
+                .map(|entry| unsafe { entry.as_ref() }.timespec)
+                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
+            if timeout.eql(&Timespec::EPOCH) || timeout.order(&buntest.judged_at).is_gt() {
                 return Ok(StepResult::Waiting { timeout });
             }
             group.pending_matchers = 0;
@@ -1157,14 +1172,18 @@ fn step_group(
     }
 }
 
-/// Any test in the group may have called the group's pending matchers, so they wait until the latest test deadline.
-fn matchers_deadline(sequences: &[ExecutionSequence]) -> Timespec {
-    sequences
-        .iter()
-        .filter_map(|sequence| sequence.test_entry)
-        // SAFETY: arena-owned entry
-        .map(|entry| unsafe { entry.as_ref() }.timespec)
-        .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest })
+/// Whether one of the first `queued` results is the completion of the entry.
+fn has_queued_completion(queue: &ResultQueue, queued: usize, group_index: usize, entry_data: EntryData) -> bool {
+    let is_its_completion = |result| {
+        matches!(result, RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry_data)
+    };
+    (0..queued).any(|i| is_its_completion(queue.peek_item(i)))
+}
+
+/// Whether a `TimedOut` of the group waits for its step.
+fn has_queued_verdict(queue: &ResultQueue, group_index: usize) -> bool {
+    (0..queue.readable_length())
+        .any(|i| matches!(queue.peek_item(i), RefDataValue::TimedOut { group_index: group, .. } if group == group_index))
 }
 
 enum AdvanceStatus {
@@ -1295,6 +1314,12 @@ fn step_sequence_one(
     };
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
+    let has_started = sequence.attempt > 0 || !sequence.started_at.eql(&Timespec::EPOCH);
+    // SAFETY: group points into this.groups; read-only.
+    if !has_started && unsafe { group.as_ref() }.verdict_due {
+        // The hooks of a test that timed out run first, as they can take most of the limit of one that starts now.
+        return Ok(Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH }));
+    }
     sequence.executing = true;
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
     if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {

@@ -765,8 +765,10 @@ pub(crate) struct BunTest {
     /// frame, which never returns; `exit_file()` nulls this before drop.
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
     pub(crate) timer: EventLoopTimer,
-    /// What the last fire of `timer` left for `after_fire` to do.
-    fired: Fired,
+    /// The clock of the last fire of `timer`. What had its deadline before it has timed out.
+    pub(crate) judged_at: Timespec,
+    /// The deadline that the last fire left to arm `timer` for. In the timer's own callback, a fire that came a moment early would repeat at once.
+    arm_after_fire: Timespec,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -822,7 +824,8 @@ impl BunTest {
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
-            fired: Fired::Settled,
+            judged_at: Timespec::EPOCH,
+            arm_after_fire: Timespec::EPOCH,
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
@@ -1060,32 +1063,23 @@ impl BunTest {
         Ok(())
     }
 
-    fn handle_timeout(&mut self, global_this: &JSGlobalObject, in_timer_pass: bool) {
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject, now: &Timespec) {
         let _g = group_begin!();
-        let now = Timespec::now_force_real_time();
-        if in_timer_pass && global_this.vm().is_entered() {
-            self.fired = Fired::UnderJs(now);
-        } else {
-            self.judge(global_this, &now);
+        if now.greater(&self.judged_at) {
+            self.judged_at = *now;
         }
-    }
-
-    fn judge(&mut self, global_this: &JSGlobalObject, now: &Timespec) {
         let judged = Execution::Execution::judge(self, global_this, now);
         // The last verdict steps the group. Without one, `Start` does.
         if !judged.timed_out {
             self.add_result(RefDataValue::Start);
         }
-        self.fired = Fired::Judged { next: judged.next };
+        self.arm_after_fire = judged.next;
     }
 
-    /// Runs before a step, and at a microtask drain under JS, where no step runs.
+    /// Runs before a step, and under JS, where no step runs.
     fn after_fire(&mut self, global_this: &JSGlobalObject) {
-        if let Fired::UnderJs(now) = self.fired {
-            self.judge(global_this, &now);
-        }
-        if let Fired::Judged { next } = self.fired {
-            self.fired = Fired::Settled;
+        if !self.arm_after_fire.eql(&Timespec::EPOCH) {
+            let next = core::mem::replace(&mut self.arm_after_fire, Timespec::EPOCH);
             self.update_min_timeout(global_this, &next);
         }
     }
@@ -1100,15 +1094,22 @@ impl BunTest {
         let _g = group_begin!();
         let this: *mut BunTest = this_strong.as_ptr();
         let global = vm.global();
+        let now = Timespec::now_force_real_time();
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
         unsafe {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
-
+        }
+        if in_timer_pass && global.vm().is_entered() && !vm.is_inside_deferred_task_queue.get() {
+            // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that a fire is the same cut as at the top level.
+            let _ = global.bun_vm().event_loop_mut().drain_microtasks();
+        }
+        // SAFETY: as above.
+        unsafe {
             match (*this).phase {
                 Phase::Collection => {}
-                Phase::Execution => (*this).handle_timeout(global, in_timer_pass),
+                Phase::Execution => (*this).handle_timeout(global, &now),
                 Phase::Done => {}
             }
         }
@@ -1137,16 +1138,12 @@ impl BunTest {
         vm.enqueue_task(task);
     }
 
-    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task. Under JS no step runs, only `after_fire`.
+    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
     #[inline(never)] // --trim cuts the test runner at the call.
-    pub(crate) fn run_pending_step(global_this: &JSGlobalObject, under_js: bool) {
+    pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
         let Some(strong) = clone_active_strong() else {
             return;
         };
-        if under_js {
-            strong.get().after_fire(global_this);
-            return;
-        }
         let phase = strong.get().pending_phase;
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {
@@ -1919,6 +1916,7 @@ impl RunTestsTask {
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         // Never run tests under JS or while the file loads. `TestCommand::run` drains the queue later.
         if this.global_this.vm().is_entered() || strong.get().is_loading {
+            strong.get().after_fire(&this.global_this);
             return Ok(());
         }
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
@@ -1975,16 +1973,6 @@ impl Default for StepResult {
     fn default() -> Self {
         StepResult::Waiting { timeout: Timespec::EPOCH }
     }
-}
-
-#[derive(Copy, Clone)]
-enum Fired {
-    /// The timer is armed again, or nothing waits for it.
-    Settled,
-    /// In a timer pass with JS on the stack, at this clock. Such a pass runs the promise jobs of its timers last, and one of them can still end an entry in time, so the verdict waits for them.
-    UnderJs(Timespec),
-    /// The verdict is in. `next` is the deadline to arm the timer for: in the timer's own callback, a fire that came a moment early would repeat at once.
-    Judged { next: Timespec },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

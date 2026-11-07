@@ -82,8 +82,6 @@ pub(crate) struct Unclaimed {
     of_file: u32,
     /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
-    /// `judge_file_end` found `deadline` passed.
-    timed_out: bool,
 }
 
 impl Unclaimed {
@@ -116,12 +114,6 @@ impl Unclaimed {
         while let Some(None) = self.calls.last() {
             self.calls.pop();
         }
-    }
-
-    /// For `Execution::judge`: whether the wait of `ExpectDeferred::step_file_end` is past its deadline at `now`.
-    pub(crate) fn judge_file_end(&mut self, now: &Timespec) {
-        self.timed_out = self.of_file > 0
-            && self.deadline.is_some_and(|deadline| !deadline.eql(&Timespec::EPOCH) && !deadline.greater(now));
     }
 }
 
@@ -198,15 +190,16 @@ impl RunningEntry {
             .is_some_and(|buntest| self.pending_matchers(&buntest).is_some())
     }
 
-    /// Checks the clock directly, because the runner's timer can't fire before the microtask queue drains.
-    fn has_timed_out(&self) -> bool {
+    /// Whether the runner's timer found the entry past its deadline when it last fired. `by_the_clock` asks the clock instead, which stands in for that timer while the microtask queue drains.
+    fn has_timed_out(&self, by_the_clock: bool) -> bool {
         let Some(buntest) = self.buntest.upgrade() else {
             return false;
         };
+        let now = if by_the_clock { Timespec::now(TimespecMockMode::ForceRealTime) } else { buntest.get().judged_at };
         // SAFETY: as in `pending_matchers`; an entry outlives the sequences that run it.
         let entry = self.sequence(&buntest).and_then(|sequence| unsafe { sequence.as_ref().active_entry });
         // SAFETY: as above.
-        entry.is_some_and(|entry| unsafe { entry.as_ref() }.is_overdue(&Timespec::now(TimespecMockMode::ForceRealTime)))
+        entry.is_some_and(|entry| unsafe { entry.as_ref() }.is_overdue(&now))
     }
 
     fn hold(mut self, global: &JSGlobalObject, deferred: JSValue) -> Self {
@@ -558,6 +551,8 @@ pub(crate) use crate::generated_bindgen::expect_deferred::js_ExpectDeferred as j
 impl ExpectDeferred {
     /// Each replay gets one promise further, so this caps how many promises a single matcher call can wait for.
     const MAX_REPLAYS: u32 = 2_000;
+    /// A call waits for its subject, for the matcher, and for a few promises inside them. One that finds more than these can be a chain without end.
+    const REPLAYS_WITHOUT_CLOCK: u32 = 8;
 
     fn waiting(global: &JSGlobalObject) -> JSValue {
         ExpectDeferred {
@@ -653,8 +648,8 @@ impl ExpectDeferred {
                 let buntest = held.buntest.upgrade();
                 return this.abandon(global, deferred, buntest.as_ref());
             }
-            // A call that keeps finding promises replays without a turn of the event loop, so only the clock can stop it. The runner's timer then times the entry out.
-            if this.replays.get() > 0 && held.has_timed_out() {
+            // The runner is about to time the entry out, and `settle_ended` will then abandon this call. A chain of promises without end never lets the runner's timer fire, so the clock stops it.
+            if held.has_timed_out(this.replays.get() >= Self::REPLAYS_WITHOUT_CLOCK) {
                 return Ok(());
             }
         }
@@ -857,7 +852,7 @@ impl ExpectDeferred {
                 Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_ms))
             }
         });
-        if !core::mem::take(&mut this.unclaimed.timed_out) {
+        if deadline.eql(&Timespec::EPOCH) || deadline.order(&this.judged_at).is_gt() {
             return StepResult::Waiting { timeout: deadline };
         }
         this.unclaimed.of_file = 0;

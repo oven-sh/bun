@@ -3016,8 +3016,7 @@ pub struct RuntimeHooks {
     /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
-    /// With `under_js` none may start, and the runner only decides a timeout that fired under that JS.
-    pub run_pending_test_step: fn(global: &JSGlobalObject, under_js: bool),
+    pub run_pending_test_step: fn(global: &JSGlobalObject),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier

@@ -497,10 +497,6 @@ impl EventLoop {
         let jsc_vm = vm.jsc_vm();
         loop {
             if self.entered_event_loop_count > 1 || jsc_vm.is_entered() {
-                // No test or hook starts under JS. A timeout that fired under it is still decided here, after its promise jobs.
-                if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                    (hooks.run_pending_test_step)(vm.global(), true);
-                }
                 return Ok(());
             }
             vm.has_pending_test_step.set(false);
@@ -509,7 +505,7 @@ impl EventLoop {
             };
             // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
             let entered = core::mem::replace(&mut self.entered_event_loop_count, 0);
-            (hooks.run_pending_test_step)(vm.global(), false);
+            (hooks.run_pending_test_step)(vm.global());
             self.entered_event_loop_count = entered;
             if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
                 return Ok(());

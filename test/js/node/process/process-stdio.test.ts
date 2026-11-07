@@ -639,10 +639,13 @@ describe.concurrent.skipIf(isWindows)(
           },
         },
       });
-      await reported.promise;
-      expect(output.trim()).toBe('{"isTTY":true,"result":0} 1:blocking');
-      expect(await proc.exited).toBe(0);
-      proc.terminal!.close();
+      try {
+        await reported.promise;
+        expect(output.trim()).toBe('{"isTTY":true,"result":0} 1:blocking');
+        expect(await proc.exited).toBe(0);
+      } finally {
+        proc.terminal!.close();
+      }
     });
   },
 );

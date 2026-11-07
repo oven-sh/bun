@@ -519,6 +519,21 @@ impl AstAlloc {
         v
     }
 
+    /// An empty `AstVec` whose first buffer is a block of `arena`, which must outlive the vec.
+    #[inline]
+    pub fn vec_with_capacity_in_arena<T>(cap: usize, arena: &MimallocArena) -> AstVec<T> {
+        if cap == 0 || core::mem::size_of::<T>() == 0 {
+            return Vec::new_in(AstAlloc);
+        }
+        let layout = Layout::array::<T>(cap).unwrap_or_else(|_| crate::out_of_memory());
+        let ptr = arena.alloc_layout(layout).cast::<T>();
+        // SAFETY: `ptr` is a live, unaliased `mi_heap_malloc` block that fits
+        // `cap` elements of `T`. `AstAlloc` never frees (`deallocate` is a
+        // no-op), and its `grow` only needs a mimalloc block head for blocks
+        // above `BUMP_MAX`, which every `MimallocArena` allocation is.
+        unsafe { Vec::from_raw_parts_in(ptr.as_ptr(), 0, cap, AstAlloc) }
+    }
+
     /// Moves the items of `iter` into a fresh AST-heap allocation.
     #[inline]
     pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(iter: I) -> AstVec<T> {

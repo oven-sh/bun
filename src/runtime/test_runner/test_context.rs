@@ -15,7 +15,7 @@ use bun_resolver::fs::FileSystem;
 use super::bun_test::js_fns::Signature;
 use super::bun_test::{
     Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
-    ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
+    ExecutionEntry, Flavor, Only, Phase, RefDataValue, ScopeMode,
 };
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
@@ -149,7 +149,11 @@ impl TestContext {
 
     pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
         let gets_context = matches!(when, Deferred::OnTestFinished | Deferred::OnTestFailed);
-        let entry = buntest.create_vitest_entry(callback, timeout, gets_context);
+        let sequences = &buntest.execution.sequences;
+        let start = buntest.execution.groups.get(self.group_index).map(|group| group.sequence_start);
+        let sequence = start.and_then(|start| sequences.get(start + self.sequence_index));
+        let flavor = Flavor::of(sequence.and_then(|sequence| sequence.test_entry), || None);
+        let entry = buntest.create_vitest_entry(callback, timeout, gets_context, flavor);
         if when == Deferred::Around {
             // SAFETY: just allocated.
             unsafe { (*entry.as_ptr()).around = Some((Around::Each, AroundPhase::TearDown)) };

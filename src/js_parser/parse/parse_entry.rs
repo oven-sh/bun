@@ -1173,9 +1173,6 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // TypeScript emits "export = value;" as a trailing "module.exports = value;".
-            let mut export_equals_parts = BumpVec::<js_ast::Part>::new_in(arena);
-
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (i, stmt) in stmts.iter().enumerate() {
                 let moved_parts = match mock_hoist_order.map(|order| order[i]) {
@@ -1255,18 +1252,12 @@ impl<'a> Parser<'a> {
                         // Advance the shared-slice cursor past this enum's scopes.
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
-                    js_ast::StmtData::SExportEquals(_) => {
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut export_equals_parts, sliced)?;
-                    }
                     _ => {
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
                     }
                 }
             }
-
-            parts.append(&mut export_equals_parts);
         }
 
         visit_tracer.end();

@@ -85,7 +85,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: A top-level class and `export default` stay in place. `export =` is printed last.
+/// Version 52: A top-level class and `export default` stay in place.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

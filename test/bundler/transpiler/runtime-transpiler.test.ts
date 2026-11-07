@@ -368,29 +368,14 @@ describe("a top-level class and `export default` stay where they are written", (
       m => ({ [`${m}.virtual`]: `report(t(() => typeof C));\nclass C {}\n` }),
       throws,
     ],
-  ];
-
-  // TypeScript prints `export =` as the last statement of the module.
-  const exportEquals: Row[] = [
+    // `export =` runs where it is written, as in what tsc prints with `module: preserve`.
     [
-      "module.exports below the statement is the object it was above it",
+      "a class that a TypeScript `export =` above it names",
       m => ({
-        [`${m}.cts`]: `
-          const above = typeof module.exports;
-          export = function handler() {};
-          report([above, typeof module.exports]);
-        `,
+        [`${m}.cjs`]: `report(t(() => typeof require("./${m}-lib.cts")));\n`,
+        [`${m}-lib.cts`]: `export = Foo;\nclass Foo {}\n`,
       }),
-      ["object", "object"],
-    ],
-    [
-      "a class below the statement is the export",
-      m => ({
-        [`${m}.cjs`]: `report([t(() => typeof require("./${m}-a.cts")), t(() => typeof require("./${m}-b.ts"))]);\n`,
-        [`${m}-a.cts`]: `export = Foo;\nclass Foo {}\n`,
-        [`${m}-b.ts`]: `export = Foo;\nclass Foo {}\n`,
-      }),
-      ["function", "function"],
+      throws,
     ],
   ];
 
@@ -440,7 +425,7 @@ describe("a top-level class and `export default` stay where they are written", (
     "function",
   ];
 
-  const rows = [...readsAboveTheStatement, ...exportEquals, ...unaffected, unionType];
+  const rows = [...readsAboveTheStatement, ...unaffected, unionType];
 
   async function runFixture() {
     const files: Record<string, string> = {
@@ -489,12 +474,6 @@ describe("a top-level class and `export default` stay where they are written", (
 
   describe("a read above the statement", () => {
     test.each(readsAboveTheStatement)("%s", async (name, _, expected) => {
-      expect((await (fixture ??= runFixture())).out[name]).toEqual(expected);
-    });
-  });
-
-  describe("TypeScript export =", () => {
-    test.each(exportEquals)("%s", async (name, _, expected) => {
       expect((await (fixture ??= runFixture())).out[name]).toEqual(expected);
     });
   });

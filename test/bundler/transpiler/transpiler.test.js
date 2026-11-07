@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  tempDir,
+} from "harness";
+import vm from "node:vm";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3889,6 +3899,192 @@ console.log(resolve.length)
       expect(parseErrorAt("a;b;(({}) = {}) => {}")).toEqual({
         message: "Unexpected parentheses in binding pattern",
         offset: "a;b;(".length,
+      });
+    });
+
+    describe("parenthesized arrow parameters", () => {
+      const errorsOf = (code, loader = "js") => {
+        try {
+          transpiler.transformSync(code, loader);
+        } catch (er) {
+          return (er instanceof AggregateError ? er.errors : [er]).map(e => ({
+            message: e.message,
+            offset: e.position?.offset,
+          }));
+        }
+        return [];
+      };
+      // The caret marks the place that the one error points at.
+      const rejects = (marked, loader, message = "Unexpected parentheses in binding pattern") => {
+        const offset = marked.indexOf("^");
+        const code = marked.slice(0, offset) + marked.slice(offset + 1);
+        expect({ code, errors: errorsOf(code, loader) }).toEqual({ code, errors: [{ message, offset }] });
+      };
+
+      it("are an error in every kind of parameter list", () => {
+        const lists = [
+          ["js", "var f = (", ") => a"],
+          ["js", "var f = async (", ") => a"],
+          ["ts", "var f = <T>(", ") => a"],
+          ["ts", "var f = async <T>(", ") => a"],
+          ["tsx", "var f = <T,>(", ") => a"],
+        ];
+        const parameters = [
+          "^(a)",
+          "^(a) = 1",
+          "^(a = 1)",
+          "b, ^(a)",
+          "...^(a)",
+          "[^(a)]",
+          "[...^(a)]",
+          "{ x: ^(a) }",
+          "{ ...^(a) }",
+          "[^(a)] = b",
+          "[[^(a)]] = b",
+          "{ x: ^(a) } = b",
+          "[{ x: ^(a) }] = b",
+          "^([a])",
+          "^({ a })",
+          "^([a]) = b",
+          "[^([a])]",
+          "{ x: ^({ a }) }",
+          "...^([a])",
+        ];
+        for (const [loader, open, close] of lists) {
+          for (const parameter of parameters) rejects(open + parameter + close, loader);
+        }
+
+        // Only the first one is reported.
+        rejects("var f = (^(a), (b)) => a");
+        rejects("var f = (^((a))) => a");
+        rejects("var f = (^([a]), ({ b })) => a");
+        // A parameter list in a default value is a list of its own.
+        rejects("var f = (a = (^(b)) => b) => a");
+        rejects("var f = ([a = (^(b)) => b]) => a");
+        // A TypeScript cast or assertion does not hide the parentheses.
+        rejects("var f = (<T>^(a)) => a", "ts");
+        rejects("var f = ([<T>^(a)]) => a", "ts");
+        rejects("var f = ({ x: <T>^(a) }) => a", "ts");
+        rejects("var f = (<T>^([a])) => a", "ts");
+        rejects("var f = (<T[]>^(a)) => a", "ts");
+        rejects("var f = (^(a) as any) => a", "ts");
+
+        // The parser continues after the error.
+        expect(errorsOf("var f = ((a)) => a; var g = ((b)) => b;")).toHaveLength(2);
+
+        // An item that is not a parameter for another reason keeps its one error.
+        expectParseError("var f = ((a).b) => c", "Invalid binding pattern");
+        expectParseError("var f = ((a) => a, (b)) => b", "Invalid binding pattern");
+        expectParseError("var f = (([...a, b])) => a", "Unexpected trailing comma after rest element");
+      });
+
+      it("are valid in a default value, in a computed key, and outside a parameter list", () => {
+        expectPrinted_("var f = (a = (b)) => a", "var f = (a = b) => a");
+        expectPrinted_("var f = (a = ((b), c)) => a", "var f = (a = (b, c)) => a");
+        expectPrinted_("var f = ([a] = (b)) => a", "var f = ([a] = b) => a");
+        expectPrinted_("var f = ([a = (b)]) => a", "var f = ([a = b]) => a");
+        expectPrinted_("var f = ({ a = (b) }) => a", "var f = ({ a = b }) => a");
+        expectPrinted_("var f = ({ [(a)]: b }) => b", "var f = ({ [a]: b }) => b");
+        expectPrinted_("var f = ((a), b)", "var f = (a, b)");
+        expectPrinted_("var f = ((a) => a, b)", "var f = ((a) => a, b)");
+        expectPrinted_("var f = async((a))", "var f = async(a)");
+        expectPrinted_("[(a)] = b", "[a] = b");
+        expectPrinted_("({ a: (b) } = c)", "({ a: b } = c)");
+        expectPrinted_("for ([(a)] of b) c", "for ([a] of b)\n  c");
+        ts.expectPrinted_("var f = (a = (b)): T => a", "var f = (a = b) => a");
+        ts.expectPrinted_("var f = ([a = (b)]): T => a", "var f = ([a = b]) => a");
+        ts.expectPrinted_("var f = ({ [(a)]: b }): T => b", "var f = ({ [a]: b }) => b");
+        ts.expectPrinted_("y = <T>(a)", "y = a");
+        ts.expectPrinted_("y = [<T>(a) => a]", "y = [(a) => a]");
+      });
+
+      it("are accepted only where JavaScriptCore accepts them", () => {
+        // Every list of one and of two of these items, in each place below.
+        const items = (
+          "a | (a) | ((a)) | [a] | [(a)] | ([a]) | { a } | ({ a }) | { a: (b) } | { a: b } | a = 1 | a = (b) | (a) = 1 | " +
+          "(a = 1) | [a] = b | [(a)] = b | ([a]) = b | [a = (b)] | { [(k)]: v } | { a = (b) } | { a: (b) } = c | ...a | " +
+          "...(a) | ...[a] | ...[(a)] | a = (b) => b | a = ((b)) => b | a.b | (a).b | a = [(b)] | [a, (b)] | { a: [(b)] } | " +
+          "[...(a)] | { ...(a) } | { a: (b) = 1 } | [(a) = 1] | (a) => a | [(a) => a] | a + (b) | (a, b)"
+        ).split(" | ");
+        // The second item has other names, so that a duplicate parameter is not the error.
+        const rename = item => item.replace(/\b[abkv]\b/g, name => ({ a: "c", b: "d", k: "m", v: "w" })[name]);
+        const lists = [...items];
+        for (const first of items) for (const second of items) lists.push(first + ", " + rename(second));
+        const places = [
+          list => `x = (${list}) => y;`,
+          list => `x = async (${list}) => y;`,
+          list => `x = (p = (${list}) => y) => p;`,
+          list => `x = ([${list}]) => y;`,
+          list => `x = ([${list}] = z) => y;`,
+          list => `x = (${list});`,
+          list => `x = async(${list});`,
+        ];
+        const accepts = parse => {
+          try {
+            parse();
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        // A debug build is 10 to 100 times slower, so it checks a sample, always the same one.
+        const every = isDebug || isASAN ? 23 : 1;
+        const differ = [];
+        let accepted = 0;
+        let refused = 0;
+        for (const place of places) {
+          for (let i = 0; i < lists.length; i += every) {
+            const code = place(lists[i]);
+            // `vm.Script` gives the text to JavaScriptCore as it is, with no transpiler before it.
+            const engine = accepts(() => new vm.Script(code));
+            if (engine) accepted++;
+            else refused++;
+            if (accepts(() => transpiler.transformSync(code, "js")) !== engine) differ.push(code);
+          }
+        }
+        expect(differ).toEqual([]);
+        expect({ accepted: accepted > 0, refused: refused > 0 }).toEqual({ accepted: true, refused: true });
+      });
+
+      it("make the list an expression before a TypeScript `:`", () => {
+        ts.expectPrinted_("switch (x) { case ((a)): T => c; }", "switch (x) {\n  case a:\n}");
+        ts.expectPrinted_("switch (x) { case ([(a)]): T => c; }", "switch (x) {\n  case [a]:\n}");
+        ts.expectPrinted_("switch (x) { case (([a])): T => c; }", "switch (x) {\n  case [a]:\n}");
+        ts.expectPrinted_("switch (x) { case (<T>(a)): b => c; }", "switch (x) {\n  case a:\n}");
+        ts.expectPrinted_("switch (x) { case (<T>([a])): b => c; }", "switch (x) {\n  case [a]:\n}");
+        ts.expectPrinted_("y = x ? ((a)) : b => c", "y = x ? a : (b) => c");
+        ts.expectPrinted_("y = x ? (([a])) : b => c", "y = x ? [a] : (b) => c");
+        ts.expectPrinted_("y = x ? z ? ((a)) : T => c : d", "y = x ? z ? a : (T) => c : d");
+        ts.expectPrinted_("y = x ? (p) : R => ((a)) : T => c", "y = x ? (p) => a : (T) => c");
+        // The first ":" ends the case, so "d:" is a statement label.
+        ts.expectPrinted_(
+          "switch (x) { case y ? ((a)) : b => c : d: e; }",
+          "switch (x) {\n  case (y ? a : (b) => c):\n    d:\n      e;\n}",
+        );
+        // The list is not converted to parameters, so a call to "async" keeps its spread argument.
+        ts.expectPrinted_("y = x ? async((b), ...c) : d", "y = x ? async(b, ...c) : d");
+        ts.expectPrinted_("switch (x) { case async((b), ...c): d => e; }", "switch (x) {\n  case async(b, ...c):\n}");
+        ts.expectPrinted_(
+          "switch (x) { case async(([b]), ...c): d => e; }",
+          "switch (x) {\n  case async([b], ...c):\n}",
+        );
+        // The same holds where an arrow function cannot stand.
+        ts.expectPrinted_("y = x ? 1 + <T>((a)) : 2", "y = x ? 1 + a : 2");
+        ts.expectPrinted_("y = x ? 1 + async((a)) : 2", "y = x ? 1 + async(a) : 2");
+        ts.expectPrinted_("y = x ? -<T>((a + b) / 2) : 0", "y = x ? -((a + b) / 2) : 0");
+        ts.expectPrinted_("switch (x) { case 1 + <T>((a)): break; }", "switch (x) {\n  case 1 + a:\n    break;\n}");
+        ts.expectParseError("y = 1 + <T>((a)) => a", "Unexpected =>");
+        // So these are errors, as in tsc.
+        ts.expectParseError("var f = ((a)): T => a", 'Expected ";" but found ":"');
+        ts.expectParseError("var f = (([a])): T => a", 'Expected ";" but found ":"');
+        ts.expectParseError("y = x ? ((a)) : b => c : d", 'Expected ";" but found ":"');
+        ts.expectParseError("y = x ? (([a])) : b => c : d", 'Expected ";" but found ":"');
+        // A rest item in a list that is an expression is an error at the "...".
+        rejects("var f = (^...(a)): T => a", "ts", 'Unexpected "..."');
+        rejects("var f = ((a), ^...b): T => a", "ts", 'Unexpected "..."');
+        rejects("y = x ? (a, ^...(b)) : T => d : e", "ts", 'Unexpected "..."');
+        rejects("switch (x) { case ((a), ^...r): T => c; }", "ts", 'Unexpected "..."');
+        rejects("y = (a, ^...b)", "js", 'Unexpected "..."');
       });
     });
 

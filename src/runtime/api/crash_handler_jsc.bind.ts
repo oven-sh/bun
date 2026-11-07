@@ -13,6 +13,7 @@ export const FeatureData = b.dictionary({
 export const crashHandler = b.namespace({
   getMachOImageZeroOffset: { returns: b.f64.optional, length: 1 },
   getFeatureData: { returns: FeatureData, length: 1 },
+  isAnalyticsEnabled: { returns: b.bool },
   segfault: { length: 1 },
   segfaultHoldingThreadSuspendLock: { length: 1 },
   segfaultInDll: { length: 1 },

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
@@ -656,6 +656,39 @@ console.log("About manifest:", aboutHtml);
       ]);
     });
   });
+
+  // The server and the page both import logo.png. The bundler copies it once for each of them, to one
+  // path with the same bytes: that is one output file, whatever the asset naming.
+  for (const [name, assetNaming] of [
+    ["", undefined],
+    ["-without-hash", "[name].[ext]"],
+  ] as const) {
+    itBundled(`html-import/asset-shared-with-the-server${name}`, {
+      outdir: "out/",
+      files: {
+        "/server.js": `
+import html from "./index.html";
+import logo from "./logo.png" with { type: "file" };
+
+console.log(JSON.stringify({ logo, files: html.files.filter(file => file.loader === "file").map(file => file.path) }));
+`,
+        "/index.html": `<!DOCTYPE html><html><body><img src="./logo.png"></body></html>`,
+        "/logo.png": `the logo`,
+      },
+      entryPoints: ["/server.js"],
+      target: "bun",
+      assetNaming,
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).filter(file => file.startsWith("logo"))).toHaveLength(1);
+      },
+      run: {
+        validate({ stdout }) {
+          const { logo, files } = JSON.parse(stdout);
+          expect(files).toEqual([logo]);
+        },
+      },
+    });
+  }
 
   // Test that import with {type: 'file'} still works as a file import
   itBundled("html-import/with-type-file-attribute", {

@@ -15,7 +15,7 @@ use crate::diagnostics::SourceLocation;
 
 use crate::hir::{
     AliasingEffect, BlockId, EvaluationOrder, InstructionValue, LogicalOperator, ParamPattern,
-    Place, ScopeId,
+    Place, ReturnVariant, ScopeId,
 };
 
 // =============================================================================
@@ -157,6 +157,7 @@ pub enum ReactiveTerminal {
     },
     Return {
         value: Place,
+        return_variant: ReturnVariant,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,
     },

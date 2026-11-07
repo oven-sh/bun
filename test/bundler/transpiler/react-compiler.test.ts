@@ -4634,3 +4634,611 @@ describe("bundler", () => {
     },
   });
 });
+
+// Three passes kept one copy of their work per basic block or per nesting
+// level of a value, so memory grew with the square of the size of a component
+// that has no loop at all. The fixpoint in InferMutationAliasingEffects kept
+// the incoming state of every block. Codegen cloned the instructions of a
+// sequence expression at each level of a `||` chain. The post-dominator graph
+// rebuilt a hash index for each block it took out of a map. A chain of 400
+// terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
+test("react-compiler memory does not grow with the square of the size of a component", async () => {
+  // A debug build is 20 times slower, and its larger frames leave the stack for
+  // a chain of 94: a longer one is not compiled.
+  const small = isDebug || isASAN;
+  // A chain is nested as deeply as it is long, and one that the stack does not hold is not compiled.
+  const terms = small ? 90 : 250;
+  const elements = small ? 120 : 300;
+  using dir = tempDir("react-compiler-memory", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "chain.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Array.from({ length: terms }, (_, i) => `(p.a === ${i})`).join(" || ")} || "f";
+        return <div>{v}{s}</div>;
+      }
+    `,
+    "pattern.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+        return <div>{e0 + e${elements - 1}}{s}</div>;
+      }
+    `,
+  });
+
+  const peakMB = async (entry: string) => {
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
+      cwd: String(dir),
+    });
+    expect(stderr).toBe("");
+    // The component compiled, or there is no component.
+    expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+    expect(exitCode).toBe(0);
+    return maxRSS / 1024 / 1024;
+  };
+
+  const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
+  // Above the empty build, without the fixes: 110 MB and 125 MB for the small
+  // inputs, 1050 MB for the large pattern, and 940 MB for a chain of 400 terms,
+  // which is 370 MB for 250.
+  expect(chain - empty).toBeLessThan(small ? 70 : 120);
+  expect(pattern - empty).toBeLessThan(small ? 70 : 300);
+});
+
+// Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
+// EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
+// Not where the empty build takes 330 MB, which is more than either pattern does.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler memory does not grow with the square of the defaults in a pattern",
+  async () => {
+    const pattern = (elements: number) => `
+    import { useState } from "react";
+    export default function App(p) {
+      const [s] = useState(0);
+      const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+      return <div>{e0 + e${elements - 1}}{s}</div>;
+    }
+  `;
+    using dir = tempDir("react-compiler-defaults", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "whole.jsx": pattern(1000),
+      // The peak of a process is never below that of the one that spawned it, and this one is small.
+      "measure.js": `
+      const peak = entry =>
+        Bun.spawnSync({
+          cmd: [process.execPath, "build", "--react-compiler", "--target=browser", "--external=*", entry],
+          stdout: "ignore",
+          stderr: "inherit",
+        }).resourceUsage.maxRSS;
+      console.log(JSON.stringify(["empty.jsx", "whole.jsx"].map(peak)));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "measure.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [empty, whole] = JSON.parse(stdout);
+    // 9 times. Else what is measured is not the pattern.
+    expect(whole).toBeGreaterThan(empty * 2);
+    // 131 MB, and 499 MB without the fix. The ratio of two sizes tells the two apart by 1.4 times only.
+    expect(whole - empty).toBeLessThan(300 * 1024 * 1024);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
+// from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
+// Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
+test("react-compiler ends on a component whose types are made of each other", async () => {
+  using dir = tempDir("react-compiler-types", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a, b, c, d, e;
+        while (props.x) {
+          switch (c?.p) {
+            case 0: {
+              while (props.y) {
+                switch (f0) {
+                  default: {
+                    try {} catch (err) {}
+                    for (const x3 of 0) {
+                      e = (props.x && (props.x ?? d)) || {};
+                    }
+                    ({ p: a = e, q: c } = props.o);
+                  }
+                  case 0: {
+                    if (fprops.x) {
+                      d = props.y && (fprops.x ? a : f0);
+                    }
+                  }
+                  case 1: {}
+                }
+                while (f(props.x ? null : a) < props.x) {
+                  if (0 === 0) {
+                    ({ p: e = b, q: a } = props.o);
+                    d = d;
+                  }
+                }
+              }
+            }
+            case 1: {}
+            default: {}
+          }
+        }
+        a = {};
+        return <div>{a}{b}{c}{d}{e}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component");
+  expect(exitCode).toBe(0);
+});
+
+// ValidateNoRefAccessInRender gives a function the type of what it returns. The port
+// copied all that is nested in a type at each level of each join, so n functions that
+// return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.
+test("react-compiler does not end the process on a try in which nothing but a read that nobody uses can throw", async () => {
+  using dir = tempDir("react-compiler-try", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a = props.a;
+        try {
+          props.d.m;
+        } catch (err) {
+          a = props.x;
+        }
+        return <div>{a}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component(props)");
+  expect(exitCode).toBe(0);
+});
+
+test("react-compiler time does not grow with the cube of a chain of functions", async () => {
+  // The CPU time of a process on Windows (GetProcessTimes) is a count of 1/64 s ticks, whatever the resolution of
+  // timers is. In a release build one component of n functions takes a tick or two.
+  const components = isWindows && !isDebug ? 8 : 1;
+  const component = (name: string, n: number) => `
+    export function ${name}() {
+      const [s] = useState(0);
+      const f0 = () => s;
+      ${Array.from({ length: n }, (_, i) => `const f${i + 1} = () => f${i};`).join("\n")}
+      return <div onClick={f${n}} />;
+    }
+  `;
+  const source = (n: number) => `
+    import { useState } from "react";
+    ${Array.from({ length: components }, (_, i) => component("App" + i, n)).join("\n")}
+  `;
+  const n = isDebug || isASAN ? 80 : 200;
+  using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
+
+  const cpuTime = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    return Number(proc.resourceUsage()!.cpuTime.total);
+  };
+
+  // A debug build: 2 to 2.6, and 5.5 without the fix. A release build: 2.9 to 4.2, which is a square's, and 14.5 to 16.6.
+  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
+});
+
+// ValidateExhaustiveDependencies gives each phi the dependencies of its
+// operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a
+// phi held one copy of a dependency for each path that reaches it. Each `if`
+// below merges `v` twice, which doubled the list: 20 of them took 300 MB, 22
+// took 1 GB and 24 took 4 GB.
+test("react-compiler keeps one copy of each dependency of a phi", async () => {
+  // A debug build takes 7 seconds for 20 and 25 seconds for 22.
+  const statements = isDebug || isASAN ? 20 : 22;
+  using dir = tempDir("react-compiler-phi-dependencies", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "ladder.jsx": `
+      export default function App(p) {
+        let v = "init";
+        ${Array.from({ length: statements }, (_, i) => `if (p.a${i}) { log(${i}); } else if (p.b${i}) { v = "s${i}"; }`).join("\n")}
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  const build = async (entry: string) => {
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      cwd: String(dir),
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: maxRSS / 1024 / 1024 };
+  };
+
+  const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);
+  expect(ladder.memoized).toBe(true);
+  // Above the empty build: 300 MB to 1 GB without the fix, under 20 MB with it.
+  expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
+});
+
+// validate_locals_not_reassigned_after_render (src/react_compiler/validation)
+// records the locals a component's closures capture while walking the
+// component body, and reports a nested function that assigns to one of them,
+// with a different diagnostic when that function, or one it is nested in, is
+// async. `error` is the headline of the diagnostic, or null when the component
+// compiles.
+//
+// In a normal build a reported component is silently left uncompiled, and the
+// aliasing validator independently reports the same components, so the
+// diagnostic text is the only place this validator's decision is observable.
+// That needs the fixture pragma support, which turns compiler diagnostics into
+// build errors and is compiled out of release builds (see
+// react-compiler-fixtures.test.ts).
+const localReassignmentCases = {
+  InComponentBody: {
+    error: null,
+    source: /* jsx */ `
+      export function Comp({ items }) {
+        let count = 0;
+        count = items.length;
+        const onClick = () => console.log(count);
+        return <button onClick={onClick}>{count}</button>;
+      }
+    `,
+  },
+  InSyncCallback: {
+    error: "React Compiler: Error: Cannot reassign variable after render completes",
+    source: /* jsx */ `
+      import { useEffect } from "react";
+      export function Comp({ items }) {
+        let count = 0;
+        useEffect(() => {
+          count = items.length;
+        });
+        return <div>{count}</div>;
+      }
+    `,
+  },
+  InAsyncCallback: {
+    error: "React Compiler: Error: Cannot reassign variable in async function",
+    source: /* jsx */ `
+      export function Comp({ load }) {
+        let data = null;
+        const onClick = async () => {
+          data = await load();
+        };
+        return <button onClick={onClick}>{data}</button>;
+      }
+    `,
+  },
+  InSyncCallbackInsideAsyncCallback: {
+    error: "React Compiler: Error: Cannot reassign variable in async function",
+    source: /* jsx */ `
+      export function Comp({ load }) {
+        let data = null;
+        const onClick = async () => {
+          const store = value => {
+            data = value;
+          };
+          store(await load());
+        };
+        return <button onClick={onClick}>{data}</button>;
+      }
+    `,
+  },
+};
+
+test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function reassigned a local", async () => {
+  using dir = tempDir(
+    "react-compiler-reassign",
+    Object.fromEntries(Object.entries(localReassignmentCases).map(([name, { source }]) => [`${name}.jsx`, source])),
+  );
+
+  const results: Record<string, { error: string | null; memoized: boolean }> = {};
+  for (const name of Object.keys(localReassignmentCases)) {
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), `${name}.jsx`)],
+      target: "browser",
+      external: ["*"],
+      reactCompiler: true,
+      // @ts-expect-error test-only option, not in bun-types
+      reactCompilerParseTestPragmas: true,
+      throw: false,
+    });
+    const errors = result.logs.filter(log => log.level === "error");
+    results[name] = {
+      error: errors.length === 0 ? null : errors.map(log => String(log.message).split(".")[0]).join("\n"),
+      memoized: result.success && /\b_c\(\d+\)/.test(await result.outputs[0].text()),
+    };
+  }
+
+  expect(results).toEqual(
+    Object.fromEntries(
+      Object.entries(localReassignmentCases).map(([name, { error }]) => [name, { error, memoized: error === null }]),
+    ),
+  );
+});
+
+// RenameVariables reaches a nested function expression through its
+// `visit_value` override. The shared walker for a function body recursed into
+// it a second time, so a function at depth d was walked 2^d times: depth 25
+// took 5 seconds and depth 30 did not finish.
+test("react-compiler compile time is not exponential in the function nesting depth", async () => {
+  const depth = 40;
+  const open = "(() => ";
+  const close = ")()";
+  using dir = tempDir("react-compiler-nesting", {
+    "entry.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Buffer.alloc(open.length * depth, open)}p.a + s${Buffer.alloc(close.length * depth, close)};
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // The outermost call is inlined. The other arrows stay, in one memoized scope.
+  expect(stdout).toContain("p.a + s");
+  expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
+});
+
+// Upstream sorts them with `<` of JavaScript, by UTF-16 code units: U+20000 begins with 0xD840, which is
+// before U+FF21. In UTF-8 it begins with 0xF0, which is after 0xEF.
+test("react-compiler sorts the dependencies and the declarations of a scope as JavaScript compares strings", async () => {
+  const [outside, inside] = ["\u{20000}", "\uFF21"];
+  expect(outside < inside).toBe(true);
+  using dir = tempDir("react-compiler-utf16-order", {
+    "entry.jsx": `
+      export function Component(props) {
+        const ${inside} = [];
+        const ${outside} = [];
+        ${inside}.push(${outside});
+        ${outside}.push(props.x);
+        // Keeps the scope of the two arrays and that of the element apart.
+        useThing();
+        return <div a={${inside}} b={${outside}} />;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // However the printer writes the names.
+  const out = stdout.replace(/\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})/g, (_, long, short) =>
+    String.fromCodePoint(parseInt(long ?? short, 16)),
+  );
+  const name = `(${outside}|${inside})`;
+  expect({
+    dependencies: out.match(new RegExp(String.raw`\$\[\d+\] !== ${name} \|\| \$\[\d+\] !== ${name}`, "u"))?.slice(1),
+    declarations: out.match(new RegExp(String.raw`\$\[\d+\] = ${name}[;,]\s*\$\[\d+\] = ${name};`, "u"))?.slice(1),
+  }).toEqual({
+    dependencies: [outside, inside],
+    declarations: [outside, inside],
+  });
+  expect(exitCode).toBe(0);
+});
+
+// EnterSSA counts down the predecessors of a block that are not visited yet, once for each
+// successor that a terminal names, from the size of a set. Branches that have nothing in them
+// still have a block each, so no terminal names a block twice.
+test("react-compiler compiles branches that have nothing in them", async () => {
+  const bodies = [
+    "if (p.a) {} else {}",
+    "if (p.a);",
+    "switch (p.a) {}",
+    "switch (p.a) { case 1: case 2: default: }",
+    "switch (p.a) { case 1: case 2: }",
+    "for (const x of p.l);",
+    "try {} catch (e) {}",
+    "l: if (p.a) break l; else break l;",
+  ];
+  using dir = tempDir("react-compiler-empty-branches", {
+    "entry.jsx": bodies.map((body, i) => `export function C${i}(p) { ${body} return <div>{p.b}</div>; }`).join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(bodies.length);
+  expect(exitCode).toBe(0);
+});
+
+// The parser has a stack check. The lowering, which takes more of the stack for a
+// level of the source than the parser does, had none: `bun build --react-compiler`
+// died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800
+// `if` statements or elements of JSX, and on a sum of 16,000 operands. With a check
+// in the lowering alone, 800 `switch` statements still overflowed in a later pass.
+// So every pass that calls itself along the nesting asks the stack.
+describe("react-compiler does not overflow the stack on a component that is nested deeply", () => {
+  const nest = (n: number, open: (i: number) => string, inner: string, close: string) =>
+    Array.from({ length: n }, (_, i) => open(i)).join("") + inner + close.repeat(n);
+  const component = (body: string, result = "<div>{s}</div>") => `
+    import { useEffect, useMemo, useState } from "react";
+    export default function App(props) {
+      const [s, setS] = useState(0);
+      ${body}
+      return ${result};
+    }
+  `;
+  // How large a frame is depends on the build. Each depth is less than the parser and
+  // the printer have the stack for in that build. A debug build has the stack for fewer
+  // than 256 levels, so there each is more than the lowering has the stack for.
+  const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
+    isDebug ? debug : isASAN ? releaseWithASAN : release;
+  const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
+  const within = ["if statements with blocks, not deep", "JSX, not deep", "methods, not deep"];
+  const shapes: [name: string, depth: number, source: (n: number) => string][] = [
+    [within[0], depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
+    [
+      within[1],
+      depthOf(10, 10, 200),
+      n =>
+        component(
+          "",
+          nest(n, () => "<div><a />", "{s}", "</div>"),
+        ),
+    ],
+    [within[2], depthOf(10, 10, 200), n => component(`const x = props.a${".m(s)".repeat(n)};`, "<div>{x}</div>")],
+    ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
+    [
+      "called arrow functions",
+      depthOf(120, 400, 600),
+      n => component(`const x = ${nest(n, () => "(() => ", "s", ")()")};`),
+    ],
+    ["useMemo", depthOf(120, 400, 600), n => component(`const x = ${nest(n, () => "useMemo(() => ", "s", ", [s])")};`)],
+    ["arrow functions", depthOf(180, 600, 1000), n => component(`const f = ${nest(n, i => `(a${i}) => `, "s", "")};`)],
+    ["function declarations", depthOf(100, 500, 1000), n => component(nest(n, i => `function f${i}() {`, "s;", "}"))],
+    ["if", depthOf(70, 600, 1600), n => component(nest(n, () => "if (props.a) {", "s;", "}"))],
+    ["try", depthOf(90, 600, 1600), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    ["switch", depthOf(90, 600, 1600), n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}"))],
+    ["labels", depthOf(90, 600, 1600), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["try, half as deep", depthOf(45, 300, 800), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    [
+      "switch, half as deep",
+      depthOf(45, 300, 800),
+      n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}")),
+    ],
+    ["labels, half as deep", depthOf(45, 300, 800), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["calls", depthOf(280, 600, 1600), n => component(`const x = ${nest(n, () => "f(", "s", ")")};`)],
+    [
+      "conditional expressions",
+      depthOf(220, 600, 1600),
+      n => component(`const x = ${nest(n, () => "props.a ? s : ", "s", "")};`),
+    ],
+    [
+      "JSX",
+      depthOf(120, 600, 1600),
+      n =>
+        component(
+          "",
+          nest(n, () => "<a>", "{s}", "</a>"),
+        ),
+    ],
+    ["a sum", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" + ")};`)],
+    ["a chain of ||", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" || ")};`)],
+    ["an optional chain", depthOf(200, 400, 1000), n => component(`const x = props${Array(n).fill("?.b").join("")};`)],
+    // Each array is changed after all that were made after it, so its scope has theirs in it.
+    [
+      flat[0],
+      depthOf(60, 300, 1000),
+      n =>
+        component(
+          Array.from({ length: n }, (_, i) => `const a${i} = [];`).join("") +
+            Array.from({ length: n }, (_, i) => `a${n - 1 - i}.push(s);`).join(""),
+          "<div>{a0}</div>",
+        ),
+    ],
+    // Blocks in a row, which three walks of the control flow graph and the renaming for SSA
+    // followed one call deep each. A variable named `fbt` ends the compilation after the lowering, and
+    // one that is read before its declaration ends it in SSA, so what a case costs does not depend on the stack.
+    [
+      "assignments in a try",
+      depthOf(4000, 8000, 16000),
+      n => component(`const fbt = s; let x; try { ${Array(n).fill("x = <a />;").join("")} } catch (e) {}`),
+    ],
+    [
+      "if statements in a row",
+      depthOf(5000, 10000, 30000),
+      n => component(`const fbt = s; ${Array(n).fill("if (s) {}").join("")}`),
+    ],
+    [
+      "a read after if statements in a row",
+      depthOf(2000, 5000, 10000),
+      n => component(`${Array(n).fill("if (props.a) {}").join("")} props.f(x); let x = 0;`),
+    ],
+    // Values in a row, each the one before, which PruneNonEscapingScopes followed one call deep each. That pass
+    // is a late one. One declaration for all: the lowering looks through a block once for each of its declarations.
+    // Not in a release build, which overflowed from 16,000: so many take 11 G instructions.
+    [
+      flat[1],
+      depthOf(2600, 5000, 0),
+      n =>
+        component(
+          `let [${Array.from({ length: n + 1 }, (_, i) => `v${i}`).join(",")}] = props.l;` +
+            Array.from({ length: n }, (_, i) => `v${i + 1} = v${i};`).join(""),
+          `<div>{v${n}}</div>`,
+        ),
+    ],
+  ];
+
+  test.concurrent.each(shapes.filter(([, depth]) => depth > 0))("%s", async (name, depth, source) => {
+    using dir = tempDir("react-compiler-depth", { "entry.jsx": source(depth) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "--outfile=out.js", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = await Bun.file(join(String(dir), "out.js")).text();
+    expect(out).toContain("useState(0)");
+    // Whether the others are compiled depends on how much of the stack is left.
+    if (within.includes(name)) expect(out).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -3435,8 +3435,8 @@ console.log(<div {...obj} key="after" />);`),
         ["async function* f() { return undefined; }", "async function* f() {\n  return undefined;\n}"],
         ["async function* f() { return void 0; }", "async function* f() {\n  return undefined;\n}"],
         ["const f = async function* () { return undefined; }", "const f = async function* () {\n  return undefined;\n}"],
-        ["class C { async *f() { return undefined; } }", "class C {\n  async *f() {\n    return undefined;\n  }\n}"],
-        ["const o = { async *f() { return undefined; } }", "const o = { async *f() {\n  return undefined;\n} }"],
+        ["class C { async *f() { return undefined; } }", "class C {\n  async* f() {\n    return undefined;\n  }\n}"],
+        ["const o = { async *f() { return undefined; } }", "const o = { async* f() {\n  return undefined;\n} }"],
       ];
       for (const [code, out] of keeps) {
         expectPrinted_(code, out);

@@ -170,6 +170,35 @@ describe("bundler", async () => {
     },
   });
 
+  {
+    // A string of a JSON file that has an escape is decoded. If its bytes are not UTF-8, a lead byte without its tail
+    // becomes U+FFFD, and a byte that starts no sequence becomes its code point.
+    const file: Record<string, string> = {};
+    const read: Record<string, string> = {};
+    // The parser finds the next escape by a branch, by a word of 8 bytes, and by a vector. The bytes are behind each.
+    for (const distance of [0, 1, 3, 4, 7, 11, 12, 19, 35, 67, 131, 300]) {
+      const text = Buffer.alloc(distance, "a").toString();
+      file["d" + distance] = "\\n" + text + "\xE9z \x80\xA0 \xE2\x82A\\t";
+      read["d" + distance] = "\n" + text + "\uFFFDz \x80\xA0 \uFFFD\x82A\t";
+    }
+    // The text of this string is longer than its bytes in the file: U+FFFD has three bytes.
+    const repeated = (text: string) => Buffer.alloc(400 * Buffer.byteLength(text), text).toString();
+    file.long = "\\n" + repeated("caf\xE9 au lait \xA9 ");
+    read.long = "\n" + repeated("caf\uFFFD au lait \xA9 ");
+    const entries = Object.entries(file).map(([key, value]) => `"${key}":"${value}"`);
+    itBundled("bun/loader-json-escaped-string-not-utf8", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+    import json from "./a.json";
+    process.stdout.write(JSON.stringify(json));
+  `,
+        "/a.json": Buffer.from(`{${entries.join(",")}}`, "latin1"),
+      },
+      run: { stdout: JSON.stringify(read) },
+    });
+  }
+
   itBundled("bun/loader-json-proto-key-is-own-property", {
     target: "bun",
     files: {

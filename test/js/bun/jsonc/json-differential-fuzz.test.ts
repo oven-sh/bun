@@ -52,7 +52,7 @@ function genStringToken(rng: Rng): string {
   let body = "";
   const chunks = rng.int(7);
   for (let i = 0; i < chunks; i++) {
-    switch (rng.int(8)) {
+    switch (rng.int(9)) {
       case 0:
       case 1:
       case 2: {
@@ -74,6 +74,11 @@ function genStringToken(rng: Rng): string {
         break;
       case 7:
         body += rng.pick(["", "__proto__", "constructor", "0", "1e3", "true", "null", "//", "/*", "*/"]);
+        break;
+      case 8:
+        // Text between two escapes that is longer than the 4, 8 and 16 to 64 bytes the parser reads in one step.
+        const text = rng.pick(["a", "~", "é", "日", "🚀"]);
+        body += Buffer.alloc(rng.range(7, 150) * Buffer.byteLength(text), text).toString();
         break;
     }
   }

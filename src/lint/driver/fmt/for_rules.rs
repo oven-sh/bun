@@ -264,7 +264,7 @@ impl<'e> ForRules<'e> {
             Language::Supported => {}
             // `parser: inferredParser ?? 'babel'`
             Language::Unknown if is_prettier => {}
-            Language::Unknown | Language::Other => return Err(Reason::Language),
+            Language::Unknown | Language::Plugin | Language::Other => return Err(Reason::Language),
         }
         let mut resolved = configs.options_for(&scope, path).map_err(unreadable)?;
         if !allows_unsupported && resolved.has_unsupported_option {

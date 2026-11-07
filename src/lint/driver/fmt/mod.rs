@@ -1066,6 +1066,8 @@ enum Done {
     Deferred,
     /// A message to print. The exit code is 2.
     Failed(Vec<u8>),
+    /// A message to print, and the run stops. The exit code is 1.
+    Stopped(Vec<u8>),
     /// Also exits with 2.
     NotFormatted(Failure),
 }
@@ -1085,23 +1087,29 @@ struct Run<'r> {
 
 /// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
-    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
+    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin, whatever the file is named.
     match configs.parser_for(scope, path) {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
+        Some(parser) if Kind::from_parser(&parser).is_none() => {
+            match configs.lists_unknown_plugins(scope, Some(path)) {
+                true => Language::Plugin,
+                false => Language::Other,
+            }
+        }
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
         }
+        // As in Prettier's `inferParser`, a listed plugin's ending wins over a name Prettier knows (`a.go.html`).
+        None if configs.is_formatted_by_plugin(scope, path) => Language::Plugin,
         None => match files::language_of(path) {
             Language::Unknown
                 if path.ends_with(b".svelte") && configs.formats_svelte(scope, Some(path)) =>
             {
                 Language::Supported
             }
-            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1333,18 +1341,13 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.config_ignores(&scope));
-        let is_plugin_language = configs.is_formatted_by_plugin(&scope, &path);
-        let not_installed = match language == Language::Other && is_plugin_language {
+        let not_installed = match language == Language::Plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
             false => Vec::new(),
         };
-        if language == Language::Other
-            && !is_ignored
-            && is_plugin_language
-            && not_installed.is_empty()
-        {
+        if language == Language::Plugin && !is_ignored && not_installed.is_empty() {
             let config = configs.config_file_path(&scope);
-            return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
+            return self.format_stdin_with_prettier(configs, (Some(&path), config), (name, &text));
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1360,7 +1363,7 @@ impl Run<'_> {
         }
         // Same as for a file. A caller that gets the text back with exit code 0 would assume it's formatted.
         let allows = self.options.allow_unsupported;
-        if language == Language::Other {
+        if matches!(language, Language::Plugin | Language::Other) {
             self.report_unsupported(&mut [(extension_or_name(&path), 1)], &not_installed);
             if allows && !is_read_only {
                 self.out.stdout = text;
@@ -1442,7 +1445,7 @@ impl Run<'_> {
             let not_installed = self.not_installed(configs, &scope, None);
             if not_installed.is_empty() {
                 let config = configs.config_file_path(&scope);
-                return self.format_stdin_with_prettier((None, config), (b"stdin", &text));
+                return self.format_stdin_with_prettier(configs, (None, config), (b"stdin", &text));
             }
             self.report_unsupported(&mut [(&parser, 1)], &not_installed);
             if self.options.allow_unsupported && !is_read_only {
@@ -1490,24 +1493,22 @@ impl Run<'_> {
     /// Formats standard input in a plugin's language. See `prettier.rs`. `display_name` is its name in error messages.
     fn format_stdin_with_prettier(
         mut self,
+        configs: &Configs,
         (path, config): (Option<&[u8]>, Option<&[u8]>),
         (display_name, text): (&[u8], &[u8]),
     ) -> Outcome {
         let is_read_only = self.options.check || self.options.list_different;
         let size = (1, text.len() as u64);
         let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
-        match bridge.format(path, config, text) {
+        let overrides = path.map_or_else(Vec::new, |path| configs.bunfig_overrides_for(path));
+        match bridge.format((path, &overrides), config, text) {
             // Prettier's `listDifferent` prints the `error.message` of what `check` throws and does nothing else.
             Err(Unformatted::Message(message)) if is_read_only => {
                 self.error(&message);
                 self.out.exit_code = 0;
             }
-            // For a `ConfigError`, such as a parser that no plugin provides, Prettier's `handleError` prints only
-            // `error.message`.
-            Err(Unformatted::Thrown(why)) if why.starts_with(b"ConfigError: ") => {
-                let message = &why[b"ConfigError: ".len()..];
-                let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
-                self.error(&message[..end]);
+            Err(ref why) if let Some(message) = prettier::config_error(why) => {
+                self.error(message);
                 self.out.exit_code = 1;
             }
             Err(why) => self.error(&[display_name, b": ", &prettier::describe(why)].concat()),
@@ -1715,17 +1716,16 @@ impl Run<'_> {
                     }
                 }
                 Language::Supported => work.push((index, target)),
-                Language::Other
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
-                        && [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                            .all(&mut has_package) =>
+                Language::Plugin
+                    if [&b"prettier"[..]]
+                        .into_iter()
+                        .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
+                        .all(&mut has_package) =>
                 {
                     handed_over.push((index, target));
                 }
-                Language::Other => {
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
+                language @ (Language::Plugin | Language::Other) => {
+                    if language == Language::Plugin {
                         for package in [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
@@ -1914,21 +1914,25 @@ impl Run<'_> {
                 let began = Instant::now();
                 let display_name = paths::relative(cwd, &target.path);
                 let config = configs.config_file_path(&target.scope);
+                let overrides = configs.bunfig_overrides_for(&target.path);
                 let file = (&target.path[..], &display_name[..]);
                 let writes = !is_read_only && !is_partly_staged(target);
-                let formatted = bridge.format_file(file, config, writes, only.as_ref());
+                let formatted =
+                    bridge.format_file(file, (config, &overrides), writes, only.as_ref());
                 results.lock()[index] = Some(match formatted {
                     Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
-                    Err(error) => Done::Failed(error),
+                    Err(prettier::Problem::Failed(error)) => Done::Failed(error),
+                    Err(prettier::Problem::Stops(error)) => Done::Stopped(error),
                 });
             });
         }
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
-        let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
+        // The first error that Prettier stops at. It's printed last, once the files written before it are staged.
+        let mut stopped = None;
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
         let mut warnings = warnings.into_iter().peekable();
@@ -1954,6 +1958,24 @@ impl Run<'_> {
                 }
             }
         }
+        let paths_with = |wanted: fn(&Done) -> bool| -> Vec<Vec<u8>> {
+            (expanded.iter().zip(&results))
+                .filter_map(|(it, done)| match (it, done) {
+                    (Expanded::File(target), Some(done)) if wanted(done) => {
+                        Some(target.path.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let written_paths = match !is_read_only && only.is_some() {
+            true => paths_with(|it| matches!(it, Done::Different(_))),
+            false => Vec::new(),
+        };
+        let mut partly_staged = match only.is_some() {
+            true => paths_with(|it| matches!(it, Done::PartlyStaged)),
+            false => Vec::new(),
+        };
         for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
@@ -1982,11 +2004,12 @@ impl Run<'_> {
                     failed += 1;
                     self.report(&display_name, &failure);
                 }
-                // Prettier stops at this error.
+                // Prettier stops at this error. The other files were written already, so they're still listed.
+                Some(Done::Stopped(error)) => {
+                    stopped.get_or_insert(error);
+                }
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
-                    self.error(&error);
-                    self.out.exit_code = 1;
-                    return self.out;
+                    stopped.get_or_insert(error);
                 }
                 Some(Done::Failed(error)) => {
                     failed += 1;
@@ -1997,15 +2020,9 @@ impl Run<'_> {
                     let text = unknown_class_order_error(&display_name);
                     self.error(&[&text[..], b" It was not formatted."].concat());
                 }
-                Some(Done::PartlyStaged) => {
-                    failed += 1;
-                    partly_staged.push(target.path.clone());
-                }
+                Some(Done::PartlyStaged) => failed += 1,
                 Some(Done::Different(took)) => {
                     different += 1;
-                    if !is_read_only && only.is_some() {
-                        written_paths.push(target.path.clone());
-                    }
                     match (is_oxfmt, options.check) {
                         (true, true) => self.log_with_time(&display_name, took),
                         // oxfmt doesn't list the files it writes.
@@ -2026,13 +2043,22 @@ impl Run<'_> {
                 }
             }
         }
+        let mut is_staged = true;
         if let Some(only) = &only {
             if !partly_staged.is_empty() {
                 self.error(&only.partly_staged_error(&mut partly_staged, "formatted"));
             }
             if let Err(Fatal(error)) = only.stage(&written_paths) {
                 self.error(&error);
+                is_staged = false;
             }
+        }
+        if let Some(error) = stopped {
+            self.error(&error);
+            if is_staged {
+                self.out.exit_code = 1;
+            }
+            return self.out;
         }
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
@@ -2304,7 +2330,15 @@ impl Run<'_> {
         }
         let from_flag = options.format.iter().rfind(|it| it.0 == b"parser");
         let is_unknown = |it: &&(&[u8], Vec<u8>)| Kind::from_parser(&it.1).is_none();
-        if let Some((_, parser)) = from_flag.filter(is_unknown).filter(|_| !is_unnamed) {
+        // A parser that Prettier doesn't have can be a plugin's. Then `language_of` decides for each file.
+        let from_plugin = || {
+            (configs.for_directory(&environment.cwd))
+                .is_ok_and(|own| configs.lists_unknown_plugins(&own, None))
+        };
+        if let Some((_, parser)) = from_flag.filter(is_unknown)
+            && !is_unnamed
+            && !from_plugin()
+        {
             return self.fail(&cannot_resolve_parser(parser));
         }
         // Prettier parses everything in the directory with that parser: lock files, dotfiles, LICENSE. We only do that

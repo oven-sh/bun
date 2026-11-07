@@ -318,6 +318,30 @@ Still needed:   prettier, prettier-plugin-astro, prettier-plugin-packagejson, pr
     expect(exitCode).toBe(0);
   });
 
+  test("a Hugo project: the layouts that an override gives to prettier-plugin-go-template go to Prettier", async () => {
+    const plugin = "prettier-plugin-go-template";
+    const overrides = [{ files: ["*.html"], options: { parser: "go-template" } }];
+    const { stdout, exitCode } = await doctor({
+      ...installed("prettier"),
+      ...installed(plugin),
+      "package.json": dependencies("prettier", plugin),
+      ".prettierrc": JSON.stringify({ plugins: [plugin], overrides }),
+      "assets/a.js": ugly,
+      "layouts/list.html": '{{ define "main" }}<p>a</p>{{ end }}\n',
+      "layouts/partials/b.gotmpl": "<p>b</p>\n",
+    });
+    expect(stdout).toBe(`Using .prettierrc (Prettier config)
+
+    3 files are formatted natively
+    2 files go to your installed Prettier: 1 *.gotmpl, 1 *.html
+
+Plugins that use your installed Prettier: ${plugin}
+
+Still needed:   prettier, ${plugin} (some files go to them)
+`);
+    expect(exitCode).toBe(0);
+  });
+
   test("lists unsupported plugins and plugins that aren't installed", async () => {
     const project = {
       ...installed("prettier"),

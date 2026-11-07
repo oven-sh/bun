@@ -149,7 +149,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     }
     const frames = [...stack.matchAll(/positions\.js:(\d+):(\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
     expect(frames).toEqual([
-      [6, 37],
+      [6, 28],
       [4, 15],
       [7, 6],
     ]);
@@ -164,8 +164,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
           .at(-1);
       }
     };
-    expect(offsetFrames("throw new Error('first line')")).toEqual([11, 21]);
-    expect(offsetFrames("\nthrow new Error('second line')")).toEqual([12, 16]);
+    expect(offsetFrames("throw new Error('first line')")).toEqual([11, 12]);
+    expect(offsetFrames("\nthrow new Error('second line')")).toEqual([12, 7]);
   });
 
   test("an error from a class field initializer is reported where the constructor starts (c76c52f5b1)", () => {
@@ -205,7 +205,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     // That is not worth its cost to a short source, which is read if it is asked.
     const short = (0, eval)("(function () {\n  return new Error().stack;\n})");
     expect(sourceHasLineStarts(short)).toBe(false);
-    expect(short()).toContain(":2:19");
+    expect(short()).toContain(":2:10");
     expect(sourceHasLineStarts(short)).toBe(true);
     // The builtins of the engine share one text, which is never parsed as a whole and needs no table.
     expect(sourceHasLineStarts(Array.prototype.map)).toBe(false);
@@ -229,7 +229,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
       if (length >= probe.length && (i % 3 === 1 || i % 64 <= 1 || i % 64 === 63 || i % 5 === 1)) {
         const before = random(length - probe.length + 1);
         text += fill(before, " ") + probe + fill(length - probe.length - before, " ") + end;
-        marks.push(`("p${i}")`);
+        marks.push(`new Error("p${i}")`);
       } else text += (length >= 4 ? "/*" + fill(length - 4, "c") + "*/" : fill(length, " ")) + end;
     }
     text += "probes";

@@ -24,6 +24,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ErrorStackFrame.h"
 #include "ObjectBindings.h"
 #include "headers-handwritten.h"
 
@@ -358,7 +359,13 @@ WTF::String formatStackTrace(
         }
 #endif
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        if (frame.codeBlock() && frame.hasBytecodeIndex()) {
+            auto position = Bun::getAdjustedLineColumnForBytecode(frame.codeBlock(), frame.bytecodeIndex());
+            originalLineColumns[i] = { static_cast<unsigned>(position.line().oneBasedInt()), static_cast<unsigned>(position.column().oneBasedInt()) };
+            if (auto overrideLine = frame.codeBlock()->ownerExecutable()->overrideLineNumber(vm))
+                originalLineColumns[i].line = *overrideLine;
+        } else
+            originalLineColumns[i] = frame.computeLineAndColumn();
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {
@@ -396,8 +403,8 @@ WTF::String formatStackTrace(
         WTF::String functionName = Zig::functionName(vm, frame, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
-        OrdinalNumber displayLine = {};
-        OrdinalNumber displayColumn = {};
+        OrdinalNumber displayLine = OrdinalNumber::beforeFirst();
+        OrdinalNumber displayColumn = OrdinalNumber::beforeFirst();
         WTF::String sourceURLForFrame = sourceURLs[i];
 
         if (frame.hasLineAndColumnInfo()) {
@@ -459,11 +466,14 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (frame.hasLineAndColumnInfo()) {
+            if (displayLine != OrdinalNumber::beforeFirst()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-                sb.append(':');
-                sb.append(displayColumn.oneBasedInt());
+
+                if (displayColumn != OrdinalNumber::beforeFirst()) {
+                    sb.append(':');
+                    sb.append(displayColumn.oneBasedInt());
+                }
             }
         }
 

@@ -14,9 +14,7 @@ pub(crate) enum Kind {
     /// then, only when the worker runs with `--reporter`, the structured
     /// result (`runner::encode_test_case`): u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
-    /// u32 scope_line, u32 scope_run, u64 scope_address}, u32 has_failure,
-    /// u32 earlier_failures, then for each earlier failure and for the last
-    /// one if has_failure: str name, str message, str body, u32 uncaught
+    /// u32 scope_line, u32 scope_run, u64 scope_address}, u32 has_failure, u32 earlier_failures, (earlier_failures + has_failure) × {str name, str message, str body, u32 uncaught}
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
     /// files, shuffled, unhandled; u64 elapsed_ns; 4 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,

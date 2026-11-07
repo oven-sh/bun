@@ -2133,9 +2133,7 @@ pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
     }
 }
 
-/// Names one `describe` block of one run of a test file. Its name and line do
-/// not: the rows of a `describe.each` and the calls of a function that calls
-/// `describe` have the same.
+/// Names one `describe` block of one run of a test file. Its name and line do not: the rows of a `describe.each` share them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct BlockKey {
     /// `BunTestRoot::file_generation`. Each `--rerun-each` repeat builds its blocks again, and can get the addresses of the repeat before.
@@ -2152,7 +2150,6 @@ impl BlockKey {
         }
     }
 
-    /// What a `--parallel` worker sends on its `TestDone` frame.
     pub(crate) fn to_wire(self) -> (u32, u64) {
         (self.run, self.address)
     }
@@ -2284,10 +2281,7 @@ impl Metrics {
     }
 }
 
-/// The `describe` blocks of the file whose `<testsuite>` is open. A block's
-/// `<testsuite>` is written when the file ends, because the cases of one block
-/// don't arrive together: concurrent tests of two blocks end in any order, and
-/// an error outside of a test is a case of the file.
+/// The `describe` blocks of the open file, written when it ends because the cases of one block don't arrive together.
 #[derive(Default)]
 struct DescribeBlocks {
     suites: Vec<BlockSuite>,
@@ -2324,7 +2318,6 @@ enum Child {
 impl DescribeBlocks {
     /// The suite of the innermost named block around the test. `None` for a case of the file itself.
     fn suite_of(&mut self, t: &TestCaseReport<'_>, started_unix_ms: i64) -> Option<usize> {
-        // Only the flat form includes describe blocks with an empty title, like Vitest.
         let named = |scope: &&ScopeReport<'_>| !scope.name.is_empty();
         let innermost = t.scopes.iter().rfind(named)?;
         if let Some((block, suite)) = self.last
@@ -2347,9 +2340,7 @@ impl DescribeBlocks {
             first_without = index;
         }
         for scope in t.scopes[first_without..].iter().filter(named) {
-            // As in every release, a block joins the suite before it in its parent when that suite has its name:
-            // the rows of a `describe.each` with one title, and the repeats of `--rerun-each`. So two suites with
-            // one name are never next to each other.
+            // As in every release, a block joins its parent's last suite when that suite has its name, like the rows of a `describe.each`.
             let before = match self.children_of(suite).last() {
                 Some(&Child::Suite(before)) => Some(before),
                 _ => None,
@@ -2405,8 +2396,7 @@ impl DescribeBlocks {
         }
     }
 
-    /// Writes the `<testsuite>` of each block around what it holds, adds the
-    /// counts of the blocks to those of the file, and forgets the file.
+    /// Writes each block's `<testsuite>` around what it holds, adds the blocks' counts to the file's, and forgets the file.
     #[optimize(size)]
     fn write(
         &mut self,
@@ -2811,7 +2801,6 @@ impl JunitReporter {
         hostname: &[u8],
         started_unix_ms: i64,
     ) {
-        // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
         let _ = write!(
             out,
             "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\" timestamp=\"",
@@ -2919,8 +2908,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    /// Writes the `<testcase>` into the suite of `t.file`. In the nested form
-    /// a test inside a named `describe` block goes into the suite of that block.
+    /// Writes the `<testcase>` into the suite of `t.file`, or in the nested form into that of its innermost named `describe` block.
     #[optimize(size)]
     pub(crate) fn record_test_case(&mut self, t: &TestCaseReport<'_>) -> crate::Result<()> {
         if self.file_suite.is_none() || !strings::eql(&self.current_file, t.file) {

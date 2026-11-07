@@ -427,7 +427,6 @@ extern "C" ssize_t posix_spawn_bun(
             }
             default: {
                 __builtin_unreachable();
-                break;
             }
             }
         }

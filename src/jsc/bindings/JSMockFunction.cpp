@@ -1352,7 +1352,7 @@ static JSArray* layersForLanding(Zig::GlobalObject* globalObject, JSObject* obje
     }
     auto* spy = liveSpyOn(content, object, key);
 
-    // The one on the property first: an owner over an uninstalled fake is off the property.
+    // An owner whose record is over an uninstalled fake is off the property, and so is that record.
     JSArray* candidates[] = {
         fake && JSValue::decode(fakeLayers) ? uncheckedDowncast<JSArray>(JSValue::decode(fakeLayers)) : nullptr,
         stub && stub.inherits<JSArray>() ? uncheckedDowncast<JSArray>(stub) : nullptr,
@@ -1560,6 +1560,17 @@ extern "C" JSC::EncodedJSValue JSMock__layersOfFake(Zig::GlobalObject* globalObj
     }
     *encodedBase = JSValue::encode(base);
     return JSValue::encode(layers ? JSValue(layers) : JSValue());
+}
+
+// What useRealTimers() would leave on the property, as useFakeTimers() would read it there.
+extern "C" JSC::EncodedJSValue JSMock__valueUnderFake(JSC::EncodedJSValue layers, JSC::EncodedJSValue fake)
+{
+    PropertyLayers record(uncheckedDowncast<JSArray>(JSValue::decode(layers)));
+    size_t index = record.find(PropertyLayers::Kind::Fake, JSValue::decode(fake));
+    SlotContent under = index == notFound ? record.base : record.under(index);
+    if (auto* spy = PropertyLayers::spyOf(under))
+        return JSValue::encode(spy);
+    return JSValue::encode(under.storage && !under.storage.inherits<GetterSetter>() ? under.storage : jsUndefined());
 }
 
 extern "C" void JSMock__removeFakeFromLayers(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue layers, JSC::EncodedJSValue fake, bool isUseRealTimers)

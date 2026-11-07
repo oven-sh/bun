@@ -1312,6 +1312,16 @@ describe.each([
     expect([Date.now, performance.now]).toEqual(builtins);
   });
 
+  test("a spy is back after a second useFakeTimers() too", () => {
+    api.spyOn(Date, "now").mockReturnValue(1000);
+    api.spyOn(performance, "now").mockReturnValue(7);
+    api.useFakeTimers({ now: 50_000 });
+    api.useFakeTimers({ now: 60_000 });
+    expect([Date.now(), performance.now()]).toEqual([60_000, 0]);
+    api.useRealTimers();
+    expect([Date.now(), performance.now()]).toEqual([1000, 7]);
+  });
+
   test("without any, both properties are left as they are", () => {
     api.useFakeTimers();
     expect(descriptors()).toEqual(untouched);

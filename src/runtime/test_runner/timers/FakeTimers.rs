@@ -29,6 +29,7 @@ unsafe extern "C" {
         was_layered: bool,
         base: &mut JSValue,
     ) -> JSValue;
+    safe fn JSMock__valueUnderFake(layers: JSValue, fake: JSValue) -> JSValue;
     safe fn JSMock__removeFakeFromLayers(
         global: &JSGlobalObject,
         owner: JSValue,
@@ -1030,7 +1031,10 @@ impl FakeTimers {
                 StrongOptional::create(replaced.layers.get().unwrap_or(JSValue::ZERO), global)
             });
             let original = match replaced_now {
-                Some(replaced) => replaced.original.get(),
+                Some(replaced) => match replaced.layers.get() {
+                    Some(layers) => JSMock__valueUnderFake(layers, replaced.fake.get()),
+                    None => replaced.original.get(),
+                },
                 None => {
                     let installed = api.owner(global).get(global, api.property())?;
                     let installed = installed.unwrap_or(JSValue::UNDEFINED);

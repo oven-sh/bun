@@ -1,7 +1,7 @@
-// One producer for each row of src/jsc/bindings/ErrorCode.ts whose error Node throws from native code. Such an error is a plain
-// error with a `code`: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L143-L167
-// Prints one line for what each producer throws. Node v26.3.0 prints the same lines:
-//   node --no-addons --experimental-vm-modules --no-warnings error-code-toString-fixture.cjs
+// One producer for each row that src/jsc/bindings/ErrorCode.ts makes with plain(): Node throws the error of such a row with the
+// toString() that every error inherits, not with the `name [code]: message` one of its NodeError classes.
+// Prints one line for what each producer throws. Node prints the same lines as Bun:
+//   node --no-addons --unhandled-rejections=throw --experimental-vm-modules --no-warnings error-code-toString-fixture.cjs
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const tls = require("node:tls");
@@ -44,7 +44,9 @@ const producers = {
   ERR_CRYPTO_INVALID_AUTH_TAG: () =>
     crypto.createDecipheriv("aes-256-gcm", Buffer.alloc(32), Buffer.alloc(12)).setAuthTag(Buffer.alloc(1)),
   ERR_CRYPTO_INVALID_CURVE: () => crypto.createECDH("nope"),
+  ERR_CRYPTO_INVALID_DIGEST: () => crypto.createHmac("nope", "key"),
   ERR_CRYPTO_INVALID_IV: () => crypto.createCipheriv("aes-256-cbc", Buffer.alloc(32), Buffer.alloc(3)),
+  ERR_CRYPTO_INVALID_JWK: () => crypto.createPublicKey({ key: { kty: "RSA" }, format: "jwk" }),
   ERR_CRYPTO_INVALID_KEYLEN: () => crypto.createCipheriv("aes-256-gcm", Buffer.alloc(3), Buffer.alloc(12)),
   ERR_CRYPTO_INVALID_KEYPAIR: () => {
     const ours = crypto.createECDH("prime256v1");
@@ -69,11 +71,23 @@ const producers = {
   ERR_INVALID_OBJECT_DEFINE_PROPERTY: () => Object.defineProperty(process.env, "ACCESSOR", { get() {} }),
   ERR_LOAD_SQLITE_EXTENSION: () =>
     new DatabaseSync(":memory:", { allowExtension: true }).loadExtension("/nonexistent/extension"),
+  // An encrypted key in DER. For one in PEM, OpenSSL 3 reports an error of its own.
+  ERR_MISSING_PASSPHRASE: () => {
+    const { privateKey } = crypto.generateKeyPairSync("ed25519");
+    const key = privateKey.export({ type: "pkcs8", format: "der", cipher: "aes-256-cbc", passphrase: "secret" });
+    crypto.createPrivateKey({ key, format: "der", type: "pkcs8" });
+  },
   ERR_OSSL_EVP_INVALID_DIGEST: () => crypto.publicEncrypt({ key: rsaPublicKey, oaepHash: "nope" }, Buffer.from("data")),
   ERR_SCRIPT_EXECUTION_TIMEOUT: () => new vm.Script("while (true) {}").runInThisContext({ timeout: 5 }),
   ERR_SQLITE_ERROR: () => new DatabaseSync(":memory:").exec("nope"),
   ERR_SSL_NO_CIPHER_MATCH: () => tls.createServer({ ciphers: "nope" }),
   ERR_TLS_INVALID_PROTOCOL_METHOD: () => tls.createSecureContext({ secureProtocol: "nope" }),
+  // With --unhandled-rejections=throw and no unhandledRejection listener, the rejection becomes an uncaught exception.
+  ERR_UNHANDLED_REJECTION: () =>
+    new Promise((_, reject) => {
+      process.once("uncaughtException", reject);
+      Promise.reject(1);
+    }),
   ERR_VM_MODULE_CACHED_DATA_REJECTED: () => new vm.SourceTextModule("1", { cachedData: Buffer.alloc(16) }),
   // This parameter is a flag.
   ERR_ZLIB_INITIALIZATION_FAILED: () =>

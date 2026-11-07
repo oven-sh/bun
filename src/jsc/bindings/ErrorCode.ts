@@ -15,9 +15,7 @@ type ErrorCodeMapping = Array<
 /** The codes of the rows made with `plain()`. */
 export const plainErrorCodes = new Set<string>();
 
-// A row for an error that inherits Error.prototype.toString in Node: one of a class without a toString(), or one that native code throws.
-// Node defines `name [code]: message` on the NodeError classes of makeNodeErrorWithCode: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L462-L464
-// A code without the ERR_ prefix is none of theirs and needs no mark.
+// A row whose error inherits Error.prototype.toString when Node throws it. test/js/node/errors/error-code-toString-fixture.cjs has a producer for each marked row, and runs in Node and in Bun.
 function plain(...row: ErrorCodeMapping[number]): ErrorCodeMapping[number] {
   plainErrorCodes.add(row[0]);
   return row;
@@ -52,9 +50,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_CRYPTO_INCOMPATIBLE_KEY", Error],
   plain("ERR_CRYPTO_INVALID_AUTH_TAG", TypeError),
   plain("ERR_CRYPTO_INVALID_CURVE", TypeError),
-  ["ERR_CRYPTO_INVALID_DIGEST", TypeError],
+  plain("ERR_CRYPTO_INVALID_DIGEST", TypeError),
   plain("ERR_CRYPTO_INVALID_IV", TypeError),
-  ["ERR_CRYPTO_INVALID_JWK", TypeError],
+  plain("ERR_CRYPTO_INVALID_JWK", TypeError),
   ["ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE", TypeError],
   plain("ERR_CRYPTO_INVALID_KEYLEN", RangeError),
   plain("ERR_CRYPTO_INVALID_KEYPAIR", RangeError),
@@ -164,7 +162,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MEMORY_ALLOCATION_FAILED", RangeError],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error],
   ["ERR_MISSING_ARGS", TypeError],
-  ["ERR_MISSING_PASSPHRASE", TypeError],
+  plain("ERR_MISSING_PASSPHRASE", TypeError),
   ["ERR_MODULE_LINK_MISMATCH", TypeError],
   ["ERR_MODULE_NOT_FOUND", Error],
   ["ERR_MULTIPLE_CALLBACK", Error],
@@ -238,7 +236,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_NULL_VALUES", TypeError],
   ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
-  plain("ERR_STREAM_RELEASE_LOCK", Error, "AbortError"),
+  ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_STREAM_UNABLE_TO_PIPE", Error],
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
   ["ERR_STREAM_WRAP", Error],

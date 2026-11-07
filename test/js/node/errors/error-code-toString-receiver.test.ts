@@ -1,6 +1,5 @@
-import { privateGlobalFunctions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast } from "harness";
 import { EventEmitter, once } from "node:events";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -130,18 +129,11 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       const signal = AbortSignal.abort();
       expectAbortError(await rejection(readFile(import.meta.path, { signal })), signal.reason);
     });
-
-    // The table has a second row named AbortError. No module makes it yet.
-    test("with the code ERR_STREAM_RELEASE_LOCK", () => {
-      const err: any = privateGlobalFunctions["makeErrorWithCode ERR_STREAM_RELEASE_LOCK"]("");
-      expect({ name: err.name, code: err.code }).toEqual({ name: "AbortError", code: "ERR_STREAM_RELEASE_LOCK" });
-      expectInheritedToString(err);
-    });
   });
 
   // llhttp's error is a plain Error that gets a `code`.
   test("the HPE_* error of an http clientError", async () => {
-    const { promise, resolve } = Promise.withResolvers<any>();
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
     await using server = createServer(() => {});
     server.on("clientError", (err, socket) => {
       socket.destroy();
@@ -151,16 +143,21 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
     const { port } = server.address() as AddressInfo;
 
     const socket = connect(port, "127.0.0.1", () => socket.write("BOGUS\r\n\r\n"));
-    socket.on("error", () => {});
-    const err = await promise;
-    socket.destroy();
-
-    expect({ name: err.name, code: err.code, string: String(err) }).toEqual({
-      name: "Error",
-      code: "HPE_INVALID_METHOD",
-      string: "Error: Parse Error: Invalid method encountered",
-    });
-    expectInheritedToString(err);
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error("the connection closed and the server emitted no clientError")));
+    // Without a reader the socket does not see the server close the connection.
+    socket.resume();
+    try {
+      const err = await promise;
+      expect({ name: err.name, code: err.code, string: String(err) }).toEqual({
+        name: "Error",
+        code: "HPE_INVALID_METHOD",
+        string: "Error: Parse Error: Invalid method encountered",
+      });
+      expectInheritedToString(err);
+    } finally {
+      socket.destroy();
+    }
   });
 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/promises.js#L46-L58
@@ -204,22 +201,20 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
   });
 
-  // Such an error is a plain error that gets a `code`: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L143-L167
-  test.concurrent("the errors that Node throws from native code", async () => {
-    // --no-addons is for ERR_DLOPEN_DISABLED.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--no-addons", join(import.meta.dir, "error-code-toString-fixture.cjs")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Node itself says which rows ErrorCode.ts may make with plain(): a producer of each runs there too.
+  // Most are errors from native code, which is a plain error that gets a `code`: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L143-L167
+  describe("the rows made with plain()", () => {
+    const fixture = join(import.meta.dir, "error-code-toString-fixture.cjs");
+    // --no-addons is for ERR_DLOPEN_DISABLED, --unhandled-rejections=throw for ERR_UNHANDLED_REJECTION.
+    const flags = ["--no-addons", "--unhandled-rejections=throw"];
     const expected = [
       ["ERR_CLOSED_MESSAGE_PORT", "Error"],
       ["ERR_CONSTRUCT_CALL_INVALID", "TypeError"],
       ["ERR_CRYPTO_INVALID_AUTH_TAG", "TypeError"],
       ["ERR_CRYPTO_INVALID_CURVE", "TypeError"],
+      ["ERR_CRYPTO_INVALID_DIGEST", "TypeError"],
       ["ERR_CRYPTO_INVALID_IV", "TypeError"],
+      ["ERR_CRYPTO_INVALID_JWK", "TypeError"],
       ["ERR_CRYPTO_INVALID_KEYLEN", "RangeError"],
       ["ERR_CRYPTO_INVALID_KEYPAIR", "RangeError"],
       ["ERR_CRYPTO_INVALID_KEYTYPE", "RangeError"],
@@ -232,19 +227,37 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       ["ERR_DLOPEN_DISABLED", "Error"],
       ["ERR_INVALID_OBJECT_DEFINE_PROPERTY", "TypeError"],
       ["ERR_LOAD_SQLITE_EXTENSION", "Error"],
+      ["ERR_MISSING_PASSPHRASE", "TypeError"],
       ["ERR_OSSL_EVP_INVALID_DIGEST", "Error"],
       ["ERR_SCRIPT_EXECUTION_TIMEOUT", "Error"],
       ["ERR_SQLITE_ERROR", "Error"],
       ["ERR_SSL_NO_CIPHER_MATCH", "Error"],
       ["ERR_TLS_INVALID_PROTOCOL_METHOD", "TypeError"],
+      ["ERR_UNHANDLED_REJECTION", "UnhandledPromiseRejection"],
       ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
       ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
     ].map(([code, name]) => JSON.stringify({ code, name, string: "name: message", inheritsToString: true }));
-    expect({ lines: stdout.trimEnd().split(/\r?\n/), stderr, exitCode }).toEqual({
-      lines: expected,
-      stderr: "",
-      exitCode: 0,
-    });
+
+    // The producers were held against v26.3.0, v26.12.1 and v26.13.0. An older Node refuses some of their inputs in another way.
+    for (const [name, runtime, runtimeFlags] of [
+      ["bun", bunExe(), flags],
+      ["node", nodeExeAtLeast("26.3.0"), [...flags, "--experimental-vm-modules", "--no-warnings"]],
+    ] as const) {
+      test.skipIf(!runtime)(`inherit Error.prototype.toString (${name})`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [runtime!, ...runtimeFlags, fixture],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ lines: stdout.trimEnd().split(/\r?\n/), stderr, exitCode }).toEqual({
+          lines: expected,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    }
   });
 
   test("a NodeError keeps `name [code]: message`", () => {

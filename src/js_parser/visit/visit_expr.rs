@@ -1963,8 +1963,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        let import_meta_glob = (p.has_import_meta && p.is_import_meta_glob_call(&e_))
-            .then(|| p.read_import_meta_glob_call(&e_, expr.loc));
+        let import_meta_glob = if p.has_import_meta && p.is_import_meta_glob_call(&e_) {
+            p.read_import_meta_glob_call(&mut e_, expr.loc)
+        } else {
+            None
+        };
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -2011,7 +2014,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice()
                         == b"eval"
                 {
-                    e_.is_direct_eval = true;
+                    e_.direct = E::DirectCall::Eval;
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that

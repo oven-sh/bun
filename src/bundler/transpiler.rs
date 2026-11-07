@@ -2211,6 +2211,7 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
+        never_transpiled_again: bool,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2268,6 +2269,7 @@ impl<'a> Transpiler<'a> {
                 source,
                 source_map_context,
                 runtime_transpiler_cache,
+                never_transpiled_again,
             ),
 
             js_printer::Format::EsmAscii => {
@@ -2285,6 +2287,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
+                        never_transpiled_again,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
@@ -2297,6 +2300,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
+                        never_transpiled_again,
                     )
                 }
             }
@@ -2318,6 +2322,7 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        never_transpiled_again: bool,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2331,6 +2336,7 @@ impl<'a> Transpiler<'a> {
             runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
+            never_transpiled_again,
             ..Default::default()
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
@@ -2362,6 +2368,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
+        never_transpiled_again: bool,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2373,6 +2380,7 @@ impl<'a> Transpiler<'a> {
             exports_kind,
             runtime_transpiler_cache,
             module_info,
+            never_transpiled_again,
         )
     }
 
@@ -2390,6 +2398,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
+        never_transpiled_again: bool,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2420,6 +2429,7 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
+            never_transpiled_again,
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
@@ -2459,6 +2469,7 @@ impl<'a> Transpiler<'a> {
             None,
             None,
             None,
+            false,
         )
     }
 
@@ -2493,6 +2504,7 @@ impl<'a> Transpiler<'a> {
                 Some(handler),
                 result.runtime_transpiler_cache,
                 module_info,
+                true,
             );
         }
         self.print_with_source_map_maybe::<true>(
@@ -2504,6 +2516,7 @@ impl<'a> Transpiler<'a> {
             Some(handler),
             result.runtime_transpiler_cache,
             module_info,
+            true,
         )
     }
 

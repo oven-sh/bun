@@ -959,15 +959,6 @@ fn throwing_function(arena: &Arena, type_error: js_ast::Ref, message: &[u8], loc
     arrow_of(arena, &[], Stmt::alloc(S::Throw { value }, loc))
 }
 
-fn is_import_meta_glob(expr: Expr) -> bool {
-    matches!(
-        expr.data,
-        ExprData::EDot(dot) if dot.optional_chain.is_none()
-            && dot.name == b"glob"
-            && matches!(dot.target.data, ExprData::EImportMeta(_))
-    )
-}
-
 /// Lets `Object.keys(import.meta.glob(...))` skip the imports. `call.target` must already be visited.
 pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) -> bool {
     let ExprData::EDot(dot) = call.target.data else {
@@ -1035,29 +1026,33 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// Must run before `call` is visited, because afterwards `import.meta["glob"]()` looks the same.
     pub(crate) fn is_import_meta_glob_call(&self, call: &E::Call) -> bool {
-        self.options.import_meta_glob.is_some()
+        call.optional_chain.is_none()
+            && call.target.is_import_meta_glob()
             && self.import_meta_glob_use != ImportMetaGlobUse::Assigned
             && !self.is_revisit_for_substitution
             && !self.is_control_flow_dead
-            && call.optional_chain.is_none()
-            && is_import_meta_glob(call.target)
-            && !LEFT_AS_WRITTEN.get()
     }
 
+    /// Marks `call`, because the printer writes any other call of this shape so that no later transpile replaces
+    /// it. Returns the arguments if this parse replaces calls.
     /// Must run before `call` is visited, since `bun run` and `bun build` fold and inline different things into literals.
     #[cold]
     pub(crate) fn read_import_meta_glob_call(
         &mut self,
-        call: &E::Call,
+        call: &mut E::Call,
         loc: Loc,
-    ) -> &'a Result<Literals<'a>, Invalid<'a>> {
+    ) -> Option<&'a Result<Literals<'a>, Invalid<'a>>> {
+        call.direct = E::DirectCall::ImportMetaGlob;
+        if self.options.import_meta_glob.is_none() || LEFT_AS_WRITTEN.get() {
+            return None;
+        }
         let arguments = Arguments {
             log: self.log(),
             source: self.source,
             arena: self.arena,
         }
         .read(call, loc);
-        self.arena.alloc(arguments)
+        Some(self.arena.alloc(arguments))
     }
 
     fn import_meta_glob_throws(&mut self, message: &[u8], loc: Loc) -> Expr {
@@ -1085,7 +1080,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return;
         };
         // A define may have replaced the target.
-        if !is_import_meta_glob(call.target) {
+        if !call.target.is_import_meta_glob() {
             return;
         }
         let loc = e.loc;

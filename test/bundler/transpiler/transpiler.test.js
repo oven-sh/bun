@@ -4120,6 +4120,61 @@ console.log(resolve.length)
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
   });
 
+  // Bun replaces a direct `import.meta.glob()` call in every file it transpiles, its own output included. A transform
+  // replaces nothing, so it prints a call as a direct one only if the source has it as one.
+  it("import.meta.glob() is printed as a direct call only where the source has one", () => {
+    const minifySyntax = { minify: { syntax: true } };
+    const rows = [
+      // Direct, whatever the arguments are.
+      [`import.meta.glob("./a/*.js");`, `import.meta.glob("./a/*.js");`],
+      [`import.meta.glob(pattern);`, `import.meta.glob(pattern);`],
+      [
+        `import.meta.glob<T>(["./a/*.js"] as const, { eager: true });`,
+        `import.meta.glob(["./a/*.js"], { eager: true });`,
+      ],
+      [
+        `function f(x) { const a = import.meta.glob("./a/*.js"); x = a ? 1 : 0; return x; }`,
+        `function f(x) {\n  x = import.meta.glob("./a/*.js") ? 1 : 0;\n  return x;\n}`,
+        minifySyntax,
+      ],
+      [
+        `f(import.meta.glob("./a/*.js"), import.meta["glob"]("./b/*.js"));`,
+        `f(import.meta.glob("./a/*.js"), (0, import.meta).glob("./b/*.js"));`,
+      ],
+      // Not direct in the source.
+      [`import.meta["glob"]("./a/*.js");`, `(0, import.meta).glob("./a/*.js");`],
+      [`(0, import.meta).glob("./a/*.js");`, `(0, import.meta).glob("./a/*.js");`, minifySyntax],
+      [
+        `function f(x) { const meta = import.meta; x = meta.glob("./a/*.js"); return x; }`,
+        `function f(x) {\n  x = (0, import.meta).glob("./a/*.js");\n  return x;\n}`,
+        minifySyntax,
+      ],
+      // Direct, but the file assigns its own function.
+      [
+        `import.meta.glob = f;\nimport.meta.glob("./a/*.js");`,
+        `import.meta.glob = f;\n(0, import.meta).glob("./a/*.js");`,
+      ],
+      // Wherever the call is.
+      [`new (import.meta["glob"]("./a/*.js"))();`, `new ((0, import.meta).glob("./a/*.js"));`],
+      ['import.meta["glob"]("./a/*.js")`x`;', '(0, import.meta).glob("./a/*.js")`x`;'],
+      [`import.meta["glob"]("./a/*.js").x = 1;`, `(0, import.meta).glob("./a/*.js").x = 1;`],
+      [`import.meta["glob"](import.meta.url);`, `(0, import.meta).glob(import.meta.url);`],
+      [
+        `function f(){return import.meta["glob"]("./a/*.js")}`,
+        `function f(){return(0,import.meta).glob("./a/*.js")}`,
+        { minify: { whitespace: true } },
+      ],
+      // Bun never replaces these.
+      [`import.meta.glob?.("./a/*.js");`, `import.meta.glob?.("./a/*.js");`],
+      [`import.meta?.glob("./a/*.js");`, `import.meta?.glob("./a/*.js");`],
+      [`new import.meta.glob("./a/*.js");`, `new import.meta.glob("./a/*.js");`],
+    ];
+    for (const [code, printed, options] of rows) {
+      const output = new Bun.Transpiler({ loader: "ts", ...options }).transformSync(code).trim();
+      expect([code, output]).toEqual([code, printed]);
+    }
+  });
+
   it("useDefineForConst TypeScript class initialization", () => {
     var { expectPrinted_ } = ts;
     expectPrinted_(

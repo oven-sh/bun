@@ -1380,6 +1380,11 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// No transpile reads this output: the module loader or an executable runs it, or `bun pm diff`
+    /// shows it. Any other output is a file that Bun can transpile later, so it gets no call that
+    /// reads as a direct `import.meta.glob()` call unless the parser marked that call.
+    pub never_transpiled_again: bool,
 }
 
 impl<'a> Options<'a> {
@@ -1431,6 +1436,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            never_transpiled_again: false,
         }
     }
 }
@@ -1647,7 +1653,8 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        pub(crate) call_target: Option<ExprData>,
+        /// The call whose callee is printed next, or was printed last.
+        pub(crate) call: Option<js_ast::StoreRef<E::Call>>,
         pub(crate) writer: W,
 
         pub(crate) renamer: rename::Renamer<'a>,
@@ -3260,6 +3267,18 @@ pub(crate) mod __gated_printer {
                     self.print(b"new.target");
                 }
                 ExprData::EImportMeta(_) => {
+                    // Bun replaces a direct `import.meta.glob()` call in every file it transpiles, so
+                    // only a call that the parser marked may read as one.
+                    let wrap = !self.options.never_transpiled_again
+                        && self.call.is_some_and(|call| {
+                            call.direct != E::DirectCall::ImportMetaGlob
+                                && call.optional_chain.is_none()
+                                && call.target.is_import_meta_glob()
+                                && matches!(call.target.data, ExprData::EDot(callee) if callee.target.loc == expr.loc)
+                        });
+                    if wrap {
+                        self.print_whitespacer(ws!(b"(0, "));
+                    }
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
                     if self.options.module_type == bundle_opts::Format::InternalBakeDev {
@@ -3283,6 +3302,9 @@ pub(crate) mod __gated_printer {
                         debug_assert!(self.options.module_type == bundle_opts::Format::Cjs);
 
                         self.print_symbol(self.options.import_meta_ref);
+                    }
+                    if wrap {
+                        self.print(b")");
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
@@ -3491,9 +3513,9 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data);
+                    self.call = Some(*e);
 
-                    let is_unbound_eval = !e.is_direct_eval
+                    let is_unbound_eval = e.direct != E::DirectCall::Eval
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
@@ -4292,9 +4314,9 @@ pub(crate) mod __gated_printer {
                                 let mut wrap = false;
                                 did_print = true;
 
-                                if let Some(target) = &self.call_target {
+                                if let Some(call) = &self.call {
                                     wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
+                                        && matches!(call.target.data, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
                                 }
 
                                 if wrap {
@@ -4329,9 +4351,9 @@ pub(crate) mod __gated_printer {
                         if !did_print {
                             did_print = true;
 
-                            let wrap = if let Some(target) = &self.call_target {
+                            let wrap = if let Some(call) = &self.call {
                                 e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                    && matches!(call.target.data, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
                             } else {
                                 false
                             };
@@ -7016,7 +7038,7 @@ pub(crate) mod __gated_printer {
                 prev_op_end: -1,
                 prev_num_end: -1,
                 prev_reg_exp_end: -1,
-                call_target: None,
+                call: None,
                 writer,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,

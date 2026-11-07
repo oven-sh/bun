@@ -258,7 +258,7 @@ pub struct Call {
     pub target: ExprNodeIndex,
     pub args: ExprNodeList,
     pub optional_chain: Option<OptionalChain>,
-    pub is_direct_eval: bool,
+    pub direct: DirectCall,
     pub close_paren_loc: crate::Loc,
 
     /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
@@ -280,12 +280,25 @@ impl Default for Call {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
             optional_chain: None,
-            is_direct_eval: false,
+            direct: DirectCall::No,
             close_paren_loc: crate::Loc::EMPTY,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
         }
     }
+}
+/// What the parser found a call to be before it visited it. The visit pass can build a call that
+/// looks the same, and the printer writes that one so that it doesn't read as this one.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum DirectCall {
+    #[default]
+    No,
+    /// `eval(...)`, which can reach the variables around it.
+    Eval,
+    /// `import.meta.glob(...)` in a file that doesn't assign `import.meta.glob`. Bun replaces this
+    /// call when it runs or bundles the file.
+    ImportMetaGlob,
 }
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

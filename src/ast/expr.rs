@@ -65,6 +65,16 @@ impl Expr {
         }
     }
 
+    /// The callee of the `import.meta.glob()` calls that Bun replaces when it transpiles a file.
+    pub fn is_import_meta_glob(&self) -> bool {
+        matches!(
+            self.data,
+            Data::EDot(dot) if dot.optional_chain.is_none()
+                && dot.name == b"glob"
+                && matches!(dot.target.data, Data::EImportMeta(_))
+        )
+    }
+
     pub fn can_be_const_value(&self) -> bool {
         self.data.can_be_const_value()
     }
@@ -1396,6 +1406,7 @@ const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::
 // Heap-payload shrinks unlocked by the 12-byte StoreSlice<T>:
 const _: () = assert!(core::mem::size_of::<crate::G::FnBody>() == 16);
 const _: () = assert!(core::mem::size_of::<E::Arrow>() <= 32);
+const _: () = assert!(core::mem::size_of::<E::Call>() <= 48);
 const _: () = assert!(core::mem::size_of::<crate::S::Block>() == 16);
 
 // Field-style accessors (`data.e_string()`, `data.e_object()`). The match arms
@@ -1864,7 +1875,7 @@ impl Data {
                         .args
                         .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     optional_chain: el.optional_chain,
-                    is_direct_eval: el.is_direct_eval,
+                    direct: el.direct,
                     close_paren_loc: el.close_paren_loc,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     was_jsx_element: el.was_jsx_element,

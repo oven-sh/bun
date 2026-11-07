@@ -390,6 +390,7 @@ fn print_js<'a>(
         import_meta_ref: ast.import_meta_ref,
         source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
         mangled_props: None,
+        never_transpiled_again: true,
         ..Default::default()
     };
     bun_js_printer::print_ast::<_, false, true>(

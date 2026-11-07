@@ -1,7 +1,8 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { cases, tree, type Entry } from "../js/bun/resolve/import-meta-glob-cases";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 // Nothing exists above the bundle's root, and the bundler can't resolve a path with a query, so skip those cases.
 const files = Object.fromEntries(
@@ -269,6 +270,183 @@ describe("bundler", () => {
     },
     target: "bun",
     run: { stdout: "own ./modules/*.ts" },
+  });
+
+  // Bun replaces a direct call in every file it transpiles. That includes a bundle it runs (only a bundle for Bun
+  // starts with `// @bun`) and a bundle it bundles again. So a call that `bun build` did not replace must not be
+  // printed as a direct call. Each file prints what its calls give.
+  const printing = (setup: string, calls: Record<string, string>) => ({
+    source: `${setup}
+      const print = call => { try { const value = call(); return value && typeof value === "object" ? Object.keys(value).join() : String(value); } catch (error) { return error.name; } };
+      console.log(JSON.stringify([${Object.keys(calls).map(call => `print(() => ${call})`)}]));`,
+    printed: JSON.stringify(Object.values(calls)),
+  });
+  const notDirect = {
+    'import.meta["glob"]("./pages/*.js")': "TypeError",
+    'import.meta[`glob`]("./pages/*.js")': "TypeError",
+    '(true ? import.meta : 0).glob("./pages/*.js")': "TypeError",
+    '(null ?? import.meta).glob("./pages/*.js")': "TypeError",
+    '(0, import.meta).glob("./pages/*.js")': "TypeError",
+    'import.meta[key]("./pages/*.js")': "TypeError",
+    "inlined()": "TypeError",
+    "substituted()": "TypeError",
+  };
+  const notDirectSetup = `
+    const key = "glob";
+    function inlined(x) { let k = "glob"; x = import.meta[k]("./pages/*.js"); return x; }
+    function substituted(x) { const meta = import.meta; x = meta.glob("./pages/*.js"); return x; }`;
+  const kept = {
+    // The assignment that makes Bun keep the calls of a file is not in the output.
+    "/dead.js": printing(
+      `if (false) import.meta.glob = 0;
+       globalThis.unreached = () => import.meta.glob("./effects/*.js", { eager: true });`,
+      {
+        'import.meta.glob("./pages/*.js")': "TypeError",
+        'import.meta.glob("./pages/*.js").x': "TypeError",
+        'new (import.meta.glob("./pages/*.js"))()': "TypeError",
+        'import.meta.glob("./pages/*.js")`x`': "TypeError",
+        "typeof import.meta.glob": "undefined",
+        "globalThis.effects": "undefined",
+      },
+    ),
+    "/shaken.js": printing(`function install() { import.meta.glob = 0; }`, {
+      'import.meta.glob("./pages/*.js")': "TypeError",
+    }),
+    // Nothing is assigned, and no call is direct until the visit pass folds or inlines something.
+    "/not-direct.js": printing(notDirectSetup, { ...notDirect, "typeof import.meta.glob": "undefined" }),
+    // The assignment is in the output, so the function of the file is called.
+    "/assigned.js": printing(
+      `import.meta.glob = function (...args) { return JSON.stringify([this === import.meta, ...args]); };`,
+      { 'import.meta.glob("./pages/*.js", { eager: true })': '[true,"./pages/*.js",{"eager":true}]' },
+    ),
+  };
+  const keptFiles = Object.keys(kept);
+  const keptSources = Object.fromEntries(Object.entries(kept).map(([file, { source }]) => [file, source]));
+  const nextToTheOutput = {
+    "/out/pages/next-to-the-output.js": "",
+    "/out/effects/next-to-the-output.js": `globalThis.effects = "imported";`,
+  };
+
+  const writers: Record<string, Partial<BundlerTestInput>> = {
+    bun: { target: "bun" },
+    node: { target: "node" },
+    browser: { target: "browser" },
+    cjs: { target: "node", format: "cjs" },
+    minify: { target: "node", minifySyntax: true, minifyWhitespace: true },
+  };
+  for (const [writer, options] of Object.entries(writers)) {
+    const read = {
+      file: "/out/read.mjs",
+      stdout: Object.values(kept)
+        .map(({ printed }) => printed)
+        .join("\n"),
+    };
+    itBundled(`import-meta-glob/BunDoesNotReplaceACallThatTheBundleKept/${writer}`, {
+      files: keptSources,
+      entryPoints: keptFiles,
+      outdir: "/out",
+      ...options,
+      runtimeFiles: {
+        ...nextToTheOutput,
+        "/out/read.mjs": keptFiles.map(file => `await import(".${file}");`).join("\n"),
+      },
+      async onAfterBundle(api) {
+        for (const file of keptFiles) api.expectFile("/out" + file).not.toContain("import.meta.glob(");
+        const again = await Bun.build({
+          entrypoints: keptFiles.map(file => api.outdir + file),
+          target: "bun",
+          minify: true,
+        });
+        for (const output of again.outputs) {
+          const text = await output.text();
+          expect(text).not.toContain("import.meta.glob(");
+          expect(text).not.toContain("next-to-the-output");
+        }
+      },
+      // Node has no `import.meta.glob`, so it shows what a call gives when nothing replaces it.
+      run: writer === "node" ? [read, { ...read, runtime: "node" }] : read,
+    });
+  }
+
+  // `bun build --no-bundle` replaces nothing. It prints a direct call as it is written, for the transpile that reads
+  // its output, and any other call so that it stays a call.
+  itBundled("import-meta-glob/NoBundleKeepsTheCallsOfAFileThatAssignsToIt", {
+    files: { "/dead.js": kept["/dead.js"].source },
+    bundling: false,
+    outdir: "/out",
+    runtimeFiles: nextToTheOutput,
+    run: { file: "/out/dead.js", stdout: kept["/dead.js"].printed },
+  });
+  for (const minifySyntax of [false, true]) {
+    const entry = printing(
+      `${notDirectSetup}
+       function direct(x) { const a = import.meta.glob("./pages/*.js"); x = a ? 1 : 0; return x; }
+       function directInABranch(x) { const a = x.length; x = a ? import.meta.glob("./pages/*.js") : 0; return x; }`,
+      {
+        'import.meta.glob("./pages/*.js")': "./pages/next-to-the-output.js",
+        "direct()": "1",
+        'directInABranch("x")': "./pages/next-to-the-output.js",
+        ...notDirect,
+      },
+    );
+    itBundled(`import-meta-glob/NoBundleLeavesOnlyADirectCallForTheRun${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: { "/entry.js": entry.source },
+      bundling: false,
+      outdir: "/out",
+      minifySyntax,
+      runtimeFiles: nextToTheOutput,
+      run: { file: "/out/entry.js", stdout: entry.printed },
+    });
+  }
+
+  // `bun build --dts` also writes the bundle with its types kept, and `--aot` reads that file as it reads a source
+  // file. The harness has no option for `--dts`, so this builds once more with it.
+  itBundled("import-meta-glob/TheBundleWithItsTypesKeepsTheCallToo", {
+    entryPoints: ["/entry.ts"],
+    files: {
+      "/tsconfig.json": `{ "compilerOptions": { "strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "esnext", "types": [] } }`,
+      "/package.json": `{ "name": "pages", "version": "1.0.0" }`,
+      "/entry.ts": `
+        declare global { interface ImportMeta { glob: (pattern: string) => Record<string, unknown> } }
+        import.meta.glob = pattern => ({ own: pattern });
+        export const pages = import.meta.glob("./pages/*.ts");`,
+    },
+    outdir: "/out",
+    async onAfterBundle(api) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "typed", "--dts"],
+        cwd: api.root,
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      api.expectFile("/typed/entry.aot.ts").toContain("const pages = ");
+      api.expectFile("/typed/entry.aot.ts").not.toContain("import.meta.glob(");
+    },
+  });
+
+  // No transpile reads what the module loader prints or what an executable holds. So both print the call as they
+  // always did, and the error of a call that finds no function still names `import.meta.glob`.
+  const callsNoFunction = `try { import.meta["glob"]("./pages/*.js"); } catch (error) { console.log(error.message); }`;
+  test("import-meta-glob/TheModuleLoaderPrintsAKeptCallAsBefore", async () => {
+    using dir = tempDir("import-meta-glob", { "entry.js": callsNoFunction });
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stdout).toStartWith("import.meta.glob is not a function");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+  itBundled("import-meta-glob/AnExecutablePrintsAKeptCallAsBefore", {
+    files: { "/entry.js": callsNoFunction },
+    compile: true,
+    run: { stdout: /^import\.meta\.glob is not a function/ },
   });
 
   itBundled("import-meta-glob/NotCalled", {

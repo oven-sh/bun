@@ -1971,6 +1971,11 @@ pub(crate) enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
 }
+impl Default for StepResult {
+    fn default() -> Self {
+        StepResult::Waiting { timeout: Timespec::EPOCH }
+    }
+}
 
 #[derive(Copy, Clone)]
 enum Fired {
@@ -1980,11 +1985,6 @@ enum Fired {
     UnderJs(Timespec),
     /// The verdict is in. `next` is the deadline to arm the timer for: in the timer's own callback, a fire that came a moment early would repeat at once.
     Judged { next: Timespec },
-}
-impl Default for StepResult {
-    fn default() -> Self {
-        StepResult::Waiting { timeout: Timespec::EPOCH }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

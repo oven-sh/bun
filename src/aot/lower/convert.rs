@@ -6,7 +6,7 @@ mod int32_flows;
 mod members;
 mod patterns;
 
-use bun_sema::hir::{ExprId, ExprKind, PatId, TypeNodeId};
+use bun_sema::hir::{ExprId, ExprKind, TypeNodeId};
 use rustc_hash::FxHashMap;
 
 use self::edges::Construct;
@@ -184,20 +184,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
     ) -> ValueId {
         match self.file.position_of_int32_read(read) {
-            Some(position) => self.convert_read(value, position, Construct::Flow),
-            None => value,
-        }
-    }
-
-    pub(in crate::lower) fn state_int32_of_binding(
-        &mut self,
-        pattern: PatId,
-        value: ValueId,
-    ) -> ValueId {
-        if !super::positions::has_int32_promise(self.file) {
-            return value;
-        }
-        match self.file.position_of_int32_binding(pattern) {
             Some(position) => self.convert_read(value, position, Construct::Flow),
             None => value,
         }

@@ -16,7 +16,8 @@ use bun_collections::StringHashMap;
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::ChunkRenamer;
 use crate::chunk::Content;
-use crate::{Chunk, LinkerContext};
+use crate::linker_context::post_process_js_chunk::tail_copies;
+use crate::{Chunk, IndexInt, LinkerContext};
 use std::io::Write as _;
 
 /// The bindings in a deterministic order: chunk by chunk, each chunk's
@@ -29,6 +30,62 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
         }
     }
     refs
+}
+
+/// Entry points whose tail declares a copy in a chunk that does not hold the entry point's file.
+fn tail_copy_entry_points(c: &LinkerContext, chunks: &[Chunk]) -> Vec<IndexInt> {
+    let mut entry_points = Vec::new();
+    for chunk in chunks {
+        if !chunk.entry_point.is_entry_point() || !matches!(chunk.content, Content::Javascript(_)) {
+            continue;
+        }
+        let entry_point = chunk.entry_point.source_index();
+        if !chunk.files_with_parts_in_chunk.contains(&entry_point)
+            && tail_copies(c, entry_point).any(|(_, declared)| declared)
+        {
+            entry_points.push(entry_point);
+        }
+    }
+    entry_points
+}
+
+/// Names the copies as the chunk's renamer would: it has no row for a file of another chunk.
+fn name_tail_copies(
+    c: &mut LinkerContext,
+    entry_point: IndexInt,
+    used: &StringHashMap<u32>,
+    buf: &mut Vec<u8>,
+) -> Result<(), crate::Error> {
+    // A copy stays in its chunk: only that chunk's other copies add to the names it avoids.
+    let mut taken = StringHashMap::<u32>::default();
+    let mut names: Vec<(Ref, &'static [u8])> = Vec::new();
+    for (copy, declared) in tail_copies(c, entry_point) {
+        let original = c
+            .graph
+            .symbols
+            .get_const(copy)
+            .unwrap()
+            .original_name
+            .slice();
+        let base = bun_core::MutableString::ensure_valid_identifier(original)?;
+        let mut name: &[u8] = &base;
+        let mut tries: u32 = 1;
+        while used.contains_key(name) || taken.contains_key(name) {
+            tries += 1;
+            buf.clear();
+            buf.extend_from_slice(&base);
+            write!(buf, "{tries}").expect("Vec<u8> write");
+            name = buf.as_slice();
+        }
+        taken.put(name, 1)?;
+        if declared {
+            names.push((copy, intern(c, name)));
+        }
+    }
+    for (copy, name) in names {
+        c.cross_chunk_names.insert(copy, name);
+    }
+    Ok(())
 }
 
 /// Names no chunk may use for a cross-chunk binding: keywords and the like,
@@ -77,7 +134,8 @@ pub(crate) fn assign_unminified(
     chunks: &[Chunk],
 ) -> Result<(), crate::Error> {
     let refs = cross_chunk_refs(chunks);
-    if refs.is_empty() {
+    let tails = tail_copy_entry_points(c, chunks);
+    if refs.is_empty() && tails.is_empty() {
         return Ok(());
     }
     let mut used = reserved_names(c, chunks)?;
@@ -117,6 +175,9 @@ pub(crate) fn assign_unminified(
         if !followed.eql(ref_) {
             c.cross_chunk_names.insert(followed, name);
         }
+    }
+    for entry_point in tails {
+        name_tail_copies(c, entry_point, &used, &mut buf)?;
     }
     Ok(())
 }

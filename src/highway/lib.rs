@@ -1157,17 +1157,16 @@ pub struct ParseMappingsState {
     pub src_idx: i32,
     pub name_idx: i32,
     pub needs_sort: i32,
-    pub has_names: i32,
     pub fast_blocks: i32,
     pub slow_blocks: i32,
 }
 
-// The C++ kernel indexes this struct as `int32_t state[10]` via the kSt*
+// The C++ kernel indexes this struct as `int32_t state[9]` via the kSt*
 // constants, and `highway_sourcemap.cpp` static_asserts each offsetof against
 // its kSt* index. This pins the size from the Rust side so adding a field
 // here without updating the C++ enum fails the build.
 const _: () =
-    assert!(core::mem::size_of::<ParseMappingsState>() == 10 * core::mem::size_of::<i32>());
+    assert!(core::mem::size_of::<ParseMappingsState>() == 9 * core::mem::size_of::<i32>());
 
 /// Count of `,` and `;` bytes in `bytes`. `count + 1` is an upper bound on
 /// the number of segments (and therefore the number of output rows) for a
@@ -1338,7 +1337,7 @@ pub unsafe fn parse_mappings(
     }
 
     // SAFETY: caller contract covers the output pointers; `bytes` is a
-    // valid readable range; `state` is a `#[repr(C)]` struct of 10
+    // valid readable range; `state` is a `#[repr(C)]` struct of 9
     // contiguous i32s matching the kernel's `kSt*` indices; `err_at` is a
     // valid write target. The kernel writes at most `out.cap` rows and
     // never reads past `bytes.len()`.

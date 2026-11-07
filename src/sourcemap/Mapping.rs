@@ -461,18 +461,13 @@ pub fn parse(
     let mut source_index: i32 = 0;
     let mut needs_sort = false;
     let mut remain = bytes;
-    let mut has_names = false;
 
     if bytes.len() >= SIMD_THRESHOLD
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP::get()
             .unwrap_or(false)
     {
         match parse_simd(bytes, &mut mapping, sources_count, options) {
-            SimdResult::Done {
-                resume_at,
-                state,
-                has_names: simd_has_names,
-            } => {
+            SimdResult::Done { resume_at, state } => {
                 generated.lines = Ordinal::from_zero_based(state.gen_line);
                 generated.columns = Ordinal::from_zero_based(state.gen_col);
                 original.lines = Ordinal::from_zero_based(state.orig_line);
@@ -480,7 +475,6 @@ pub fn parse(
                 source_index = state.src_idx;
                 name_index = state.name_idx;
                 needs_sort = state.needs_sort != 0;
-                has_names = simd_has_names;
                 remain = &bytes[resume_at..];
                 scoped_log!(
                     SourceMap,
@@ -640,74 +634,71 @@ pub fn parse(
         original.columns = Ordinal::from_zero_based(original_column);
         remain = &remain[original_column_delta.start..];
 
-        if remain.len() > 0 {
-            match remain[0] {
-                b',' => {
-                    // 4 column, but there's more on this line.
-                    remain = &remain[1..];
-                }
-                // 4 column, and there's no more on this line.
-                b';' => {}
+        // Only a fifth field gives a segment a name, as in Node.js (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map.js#L304-L308). The running index is not the name of a later four-field segment.
+        let name: Option<i32> = match remain.first() {
+            // Node.js v26.3.0 reads past the end here and gives this segment names[nameIndex] (https://github.com/nodejs/node/issues/63795). ECMA-426 gives it no name.
+            None => None,
+            // 4 column, but there's more on this line.
+            Some(b',') => {
+                remain = &remain[1..];
+                None
+            }
+            // 4 column, and there's no more on this line.
+            Some(b';') => None,
 
-                // 5th column: the name
-                _ => {
-                    // Read the name index
-                    let name_index_delta = decode_vlq(remain, 0);
-                    if name_index_delta.start == 0 {
+            // 5th column: the name
+            Some(_) => {
+                // Read the name index
+                let name_index_delta = decode_vlq(remain, 0);
+                if name_index_delta.start == 0 {
+                    return Err(ParseFail {
+                        err: crate::Error::InvalidNameIndexDelta,
+                        loc: Loc {
+                            start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
+                        },
+                    });
+                }
+                remain = &remain[name_index_delta.start..];
+
+                let name = if options.allow_names {
+                    name_index = name_index.wrapping_add(name_index_delta.value);
+                    if matches!(mapping.r#impl, ListValue::WithoutNames(_))
+                        && mapping.ensure_with_names().is_err()
+                    {
                         return Err(ParseFail {
-                            err: crate::Error::InvalidNameIndexDelta,
+                            err: crate::Error::Alloc(bun_alloc::AllocError),
                             loc: Loc {
                                 start: i32::try_from(bytes.len() - remain.len())
                                     .unwrap_or(i32::MAX),
                             },
                         });
                     }
-                    remain = &remain[name_index_delta.start..];
+                    Some(name_index)
+                } else {
+                    None
+                };
 
-                    if options.allow_names {
-                        name_index = name_index.wrapping_add(name_index_delta.value);
-                        if !has_names {
-                            if mapping.ensure_with_names().is_err() {
-                                return Err(ParseFail {
-                                    err: crate::Error::Alloc(bun_alloc::AllocError),
-                                    loc: Loc {
-                                        start: i32::try_from(bytes.len() - remain.len())
-                                            .unwrap_or(i32::MAX),
-                                    },
-                                });
-                            }
+                if remain.len() > 0 {
+                    match remain[0] {
+                        // There's more on this line.
+                        b',' => {
+                            remain = &remain[1..];
                         }
-                        has_names = true;
-                    }
-
-                    if remain.len() > 0 {
-                        match remain[0] {
-                            // There's more on this line.
-                            b',' => {
-                                remain = &remain[1..];
-                            }
-                            // That's the end of the line.
-                            b';' => {}
-                            _ => {}
-                        }
+                        // That's the end of the line.
+                        b';' => {}
+                        _ => {}
                     }
                 }
+                name
             }
-        }
+        };
         // `catch |err| bun.handleOom(err)` → panic on OOM; do not silently drop the mapping.
         mapping
             .append(&Mapping {
                 generated,
                 original,
                 source_index,
-                // Rows before any 5-field segment surface as name_index -1.
-                // Without the SIMD pre-pass this happens implicitly: the
-                // list is WithoutNames so append discards this field, and
-                // find()/ensure_with_names() later fill it with -1 via
-                // to_named(). The SIMD pre-pass promotes to WithNames up
-                // front when allow_names is true, so this loop's rows must
-                // carry -1 explicitly until the first 5-field segment.
-                name_index: if has_names { name_index } else { -1 },
+                name_index: name.unwrap_or(-1),
             })
             .expect("OOM");
     }
@@ -725,7 +716,6 @@ enum SimdResult {
     Done {
         resume_at: usize,
         state: bun_highway::ParseMappingsState,
-        has_names: bool,
     },
     OutOfMemory,
 }
@@ -766,8 +756,7 @@ fn parse_simd(
     // 24 bytes/row instead of 20 even when the input turns out to have no
     // 5-field segments; in exchange there is no mid-stream copy-on-
     // promotion and no name-index scratch buffer. Rows before the first
-    // 5-field segment still get name_index == -1 (the kernel writes -1
-    // until has_names flips), matching scalar's `to_named()` behaviour.
+    // 5-field segment still get name_index == -1, matching scalar's `to_named()` behaviour.
     if options.allow_names {
         if mapping.ensure_with_names().is_err() {
             return SimdResult::OutOfMemory;
@@ -872,6 +861,5 @@ fn parse_simd(
     SimdResult::Done {
         resume_at: err_at,
         state,
-        has_names: options.allow_names && state.has_names != 0,
     }
 }

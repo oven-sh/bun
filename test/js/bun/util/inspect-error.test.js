@@ -623,6 +623,42 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
   });
 });
 
+// The code frame caps a source line at 1024 bytes. The cut has to land on a
+// character boundary, or the frame writes a partial UTF-8 sequence to stderr.
+describe.concurrent("code frame clamps a long source line on a character boundary", () => {
+  const cjk = Buffer.alloc(3000, "中文字").toString();
+  const emoji = Buffer.alloc(4000, "😀").toString();
+  // `const s = "` is 11 bytes, so 337 of the 3-byte or 253 of the 4-byte characters fit in 1024.
+  const cjkCut = 'const s = "' + Buffer.alloc(337 * 3, "中文字").toString();
+  const emojiCut = 'const s = "' + Buffer.alloc(253 * 4, "😀").toString();
+  const ascii = n => Buffer.alloc(n, "a").toString();
+  const thrown = (filler, separator) => `const s = "${filler}"${separator}throw new Error("boom");`;
+  // An error with no stack frames takes its line from `lineText`. The hidden
+  // source URL then leaves it without a position, which prints the `- |` form.
+  const noPosition = lineText =>
+    `Error.stackTraceLimit = 0; const e = new Error("boom"); e.sourceURL = "bun:wrap"; e.line = 1; e.lineText = ${JSON.stringify(lineText)}; console.error(e);`;
+
+  test.each([
+    ["cjk (3-byte), on the line that throws", thrown(cjk, "; "), "1 | " + cjkCut, 1],
+    ["emoji (4-byte), on the line that throws", thrown(emoji, "; "), "1 | " + emojiCut, 1],
+    ["cjk (3-byte), on the line above the one that throws", thrown(cjk, ";\n"), "1 | " + cjkCut, 1],
+    ["cjk (3-byte), on a frame with no position", noPosition(`const s = "${cjk}";`), "- | " + cjkCut, 0],
+    ["a line of exactly 1024 bytes stays whole", noPosition(ascii(1021) + "中"), "- | " + ascii(1021) + "中", 0],
+    ["a line of 1025 bytes loses its last character", noPosition(ascii(1022) + "中"), "- | " + ascii(1022), 0],
+  ])("%s", async (_label, script, expected, expectedExitCode) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+    const frameLine = stderr.subarray(0, stderr.indexOf(0x0a));
+    expect(new TextDecoder("utf-8", { fatal: true }).decode(frameLine)).toBe(expected);
+    expect(exitCode).toBe(expectedExitCode);
+  });
+});
+
 describe("an error with a circular reference to itself", () => {
   // Drops the source preview, stack frames, blank lines and the version line.
   function rendered(text) {

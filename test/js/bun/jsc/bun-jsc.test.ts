@@ -1,3 +1,4 @@
+import { jscInternals } from "bun:internal-for-testing";
 import {
   callerSourceOrigin,
   // @ts-expect-error deprecated alias
@@ -937,6 +938,56 @@ describe("JsRef::Weak liveness", () => {
     expect(stillLive).toBeLessThan(dropped.length / 2);
     expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
     expect(kept.keep).toBe(true);
+  });
+});
+
+describe("source positions", () => {
+  // JavaScriptCore finds the position of a call site in the function's expression info, which it decodes from the
+  // start of a chapter. A chapter is 256 words, so a function of many call sites has many.
+  const count = 400;
+  const kinds = {
+    "function": {
+      pause: "",
+      errorOf: (f: Function, i: number) => f(i),
+      statsOf: (f: Function) => f(-1, jscInternals.expressionInfoStats),
+    },
+    "function*": {
+      pause: "yield;",
+      errorOf: (f: Function, i: number) => {
+        const iterator = f(i);
+        iterator.next();
+        return iterator.next().value;
+      },
+      statsOf: (f: Function) => f(-1, jscInternals.expressionInfoStats).next().value,
+    },
+    "async function": {
+      pause: "await 0;",
+      errorOf: (f: Function, i: number) => f(i),
+      statsOf: (f: Function) => f(-1, jscInternals.expressionInfoStats),
+    },
+  };
+
+  it.each(Object.keys(kinds) as (keyof typeof kinds)[])("of every call site of a large %s", async head => {
+    const { pause, errorOf, statsOf } = kinds[head];
+    // Case i is on line i + 4. Case -1 returns the stats of the expression info of the code that it is in.
+    const lines = [`(${head} sites(i, stats) {`, "switch (i) {", "case -1: return stats();"];
+    for (let i = 0; i < count; i++) lines.push(`case ${i}: ${pause} return new Error("e");`);
+    lines.push("}", "})");
+    const f = (0, eval)(lines.join("\n"));
+
+    // The frame of the function is the first one.
+    const linesOfErrors: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const error: Error = await errorOf(f, i);
+      linesOfErrors.push(Number(/:(\d+):\d+\)?$/.exec(error.stack!.split("\n")[1])![1]));
+    }
+    expect(linesOfErrors).toEqual(Array.from({ length: count }, (_, i) => i + 4));
+
+    // A chapter ends with the entry that takes it to 256 words: no lookup decodes more than that.
+    const { words, chapters } = await statsOf(f);
+    expect(chapters).toBeGreaterThan(0);
+    expect(chapters).toBeLessThanOrEqual(Math.floor(words / 256));
+    expect(chapters).toBeGreaterThanOrEqual(Math.floor(words / 264));
   });
 });
 

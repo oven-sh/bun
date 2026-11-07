@@ -12,7 +12,7 @@
 //   the control    a store and the call that reads what it stored change places too, and the comparison must report it
 import { expect } from "bun:test";
 import { tempDir } from "harness";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "../engine/testaot";
 import { afterAll } from "../harness/default-timeout";
@@ -152,12 +152,15 @@ run();
 describe("compile/aot/independent-statements-change-places", () => {
   const folder = String(tempDir("aot-statements-change-places", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
-  let numberOfWires = 0;
+  let numberOfTexts = 0;
 
+  // Under a sanitizer the cases of a file run beside one another (../supported.ts): each text lies in a folder of its own, or one case builds what another has just written.
   async function tablesOf(text: string) {
-    writeFileSync(join(folder, "entry.js"), text);
-    const wire = join(folder, `program-${++numberOfWires}.ir`);
-    await build({ folder, entry: "./entry.js" }, [withProgramOutput(wire)]);
+    const own = join(folder, String(++numberOfTexts));
+    mkdirSync(own);
+    writeFileSync(join(own, "entry.js"), text);
+    const wire = join(own, "program.ir");
+    await build({ folder: own, entry: "./entry.js" }, [withProgramOutput(wire)]);
     const readings: string[] = [];
     for (const reading of [[], ["held"]]) {
       const { lines, exitCode } = await run(
@@ -182,7 +185,7 @@ describe("compile/aot/independent-statements-change-places", () => {
           .join("\n"),
       );
     }
-    rmSync(wire);
+    rmSync(own, { recursive: true, force: true });
     return readings;
   }
 

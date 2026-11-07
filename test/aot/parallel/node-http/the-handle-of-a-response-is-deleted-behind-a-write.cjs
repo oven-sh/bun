@@ -76,14 +76,20 @@ function play(way, deed) {
       let asked = 0;
       let answered = 0;
       const read = () => JSON.stringify(wire.replace(/Date: [^\r]*\r\n/, ""));
-      // No clock says that no more will come. A request goes out by one write, so all of it has come once the listener is entered. What the server still does from there is work of
-      // this process alone, and takes the same turns of the loop however busy the machine is. Then the client ends its half of the connection, the server closes, and whatever was
-      // written comes in front of the close.
+      // A request goes out by one write, so all of it has come once the listener is entered. What the server still does from there is work of this process alone, and takes the same
+      // turns of the loop however busy the machine is. What it has written by then is in the hands of the kernel, and a kernel that carries the packets of the loopback on a thread of
+      // its own (macOS) may bring a whole answer later than any number of turns. This connection is asked again behind a whole answer, so the client must not end its half in front of
+      // one: it waits a quarter of a second for it, and looks a few turns behind each timer, where a process that was stopped meanwhile finds what has come. Then the client ends its
+      // half of the connection, the server closes, and whatever was written comes in front of the close.
       const ask = () => {
         const mine = ++asked;
         wire = "";
         entered = async () => {
           for (let i = 0; i < 16; i++) await new Promise(setImmediate);
+          for (let wait = 0; wait < 25 && answered < mine && !client.destroyed; wait++) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            for (let i = 0; i < 4; i++) await new Promise(setImmediate);
+          }
           if (answered < mine && !client.destroyed) client.end();
         };
         client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");

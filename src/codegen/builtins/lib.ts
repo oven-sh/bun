@@ -196,6 +196,7 @@ export const {
   whenOperandOfCallOn,
   whenOperandStartsWith,
   whenProgramStores,
+  whenPropertyOfOperandStartsWith,
   whenTestsReplaceBuiltins,
   withoutEntryColumns,
   wordOfCell,

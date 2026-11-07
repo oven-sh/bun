@@ -5,7 +5,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { run as runTestaot, whyNoTestaot } from "./engine/testaot";
+import { run as runTestaot } from "./engine/testaot";
+import { without } from "./harness/capabilities";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -14,7 +15,7 @@ const program = join(
   "parallel/slots-held-for-fields-laid-by-data-descriptors/two-layouts-share-the-place-and-one-takes-every-value.js",
 );
 
-test.skipIf(whyNoTestaot !== undefined)(
+test.skipIf(!!without("testaot"))(
   "a row that is filled once by a definition keeps what it is held to beside a row that takes every value",
   async () => {
     using dir = tempDir("aot-a-row-filled-once-by-a-definition", {});

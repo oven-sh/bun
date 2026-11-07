@@ -8,8 +8,14 @@
 # a thousand elements: Int32 2,209 > 10,210 instructions, Int16 4,220 > 11,220, plain Bun 8,070 and 4,592. Where the kind found in front holds no floats, or the type lists none, the read is neither settled nor marked.
 # Four turns of a load-and-add and a store: eight operations.
 # f1 = go
-# RUN: loops f1:Body mechanisms=all
-# CHECK: loop: operations 8, patches 0
+# REQUIRES(TURNS): x86_64
+# RUN(TURNS): loops f1:Body mechanisms=all
+# TURNS: loop: operations 8, patches 0
+# arm64 has no operation that loads and adds or stores what it reckons: the same four turns are sixteen operations there, as those of three more kinds are on both machines: five loops of sixteen.
+# REQUIRES(ARM): arm64
+# RUN(ARM): loops f1:Body mechanisms=all
+# ARM-COUNT-5: loop: operations 16, patches 0
+# ARM-NOT: loop: operations 16, patches 0
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: -2147483648 0 -32768 -128 255 1.5 NaN 1
 # ANSWERS-NEXT: exited with 0

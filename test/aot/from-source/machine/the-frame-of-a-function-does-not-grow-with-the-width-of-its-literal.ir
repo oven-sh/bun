@@ -11,13 +11,21 @@
 # No more computed values of a literal wait for its birth than registers hold; the next opens the cell, and from there each value is stored as it is computed. So the frame is the same at nine,
 # at sixteen and at sixty-four names. It used to be a word a name: 640 bytes at sixty-four, and a recursion of 12,000 overflowed that plain Bun runs.
 # f1 = copyNine, f2 = copySixteen, f3 = copySixtyFour
-# RUN: frame f1 f2 f3 mechanisms=all
-# CHECK: unit f1:Body
-# CHECK: size = [[frame]]
-# CHECK: unit f2:Body
-# CHECK: size = [[frame]]
-# CHECK: unit f3:Body
-# CHECK: size = [[frame]]
+# REQUIRES(FRAMES): x86_64
+# RUN(FRAMES): frame f1 f2 f3 mechanisms=all
+# FRAMES: unit f1:Body
+# FRAMES: size = [[frame]]
+# FRAMES: unit f2:Body
+# FRAMES: size = [[frame]]
+# FRAMES: unit f3:Body
+# FRAMES: size = [[frame]]
+# arm64 has more registers: the nine values of the first wait in them, and its frame is the smaller for it. From sixteen names on the frame is the same.
+# REQUIRES(ARM): arm64
+# RUN(ARM): frame f2 f3 mechanisms=all
+# ARM: unit f2:Body
+# ARM: size = [[frame]]
+# ARM: unit f3:Body
+# ARM: size = [[frame]]
 # RUN(BIRTH): walk f1 mechanisms=none
 # BIRTH: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5, 6, 7]
 # BIRTH: key="f8"

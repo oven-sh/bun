@@ -18,8 +18,12 @@
 # NUMBER: int|whole @Double) isInLoop=true isLoopHead=true:
 # RUN(TURNS): emit f1 mechanisms=all
 # TURNS-LABEL: unit f1:Body
-# TURNS-COUNT-10: = BitAnd(
-# TURNS-NOT: = BitAnd(
+# `i & 7` stands at two places of the text: nine of the one, among them the eight turns laid out, and one of the other. arm64 has one more BitAnd, at the entry, which is none of them.
+# TURNS-COUNT-9: = BitAnd({{*}}origin = 107)
+# TURNS-NOT: = BitAnd({{*}}origin = 107)
+# RUN(OTHER): emit f1 mechanisms=all
+# OTHER-COUNT-1: = BitAnd({{*}}origin = 75)
+# OTHER-NOT: = BitAnd({{*}}origin = 75)
 # RUN(STORES): emit f1 mechanisms=all
 # STORES-LABEL: unit f1:Body
 # STORES-COUNT-4: = Store(

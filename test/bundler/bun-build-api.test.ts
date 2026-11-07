@@ -339,7 +339,7 @@ describe("Bun.build", () => {
       const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
       for (let i = 0; i < 32; i++) {
         files[`m${i}.js`] =
-          `export function f${i}(a, b) { for (let j = 0; j < b; j++) a += j ^ ${i}; return { a, b }; }\n`;
+          `const useNumber = n => n;\nexport function f${i}(a, b) { for (let j = 0; j < b; j++) a += useNumber(j) ^ ${i}; return { a, b }; }\n`;
         files["entry.js"] += `export * from "./m${i}.js";\n`;
       }
       files["worker-teardown-fixture.ts"] = /* ts */ `

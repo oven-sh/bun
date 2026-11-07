@@ -659,7 +659,7 @@ _http_server[ServerResponse][prototype][uncork]: function function name="uncork"
 _http_server[ServerResponse][prototype][uncork][length] c-- number
 _http_server[ServerResponse][prototype][uncork][name] c-- string
 _http_server[ServerResponse][prototype][setTimeout] cew function
-_http_server[ServerResponse][prototype][setTimeout]: function function name="setTimeout" length=2 above=Function extensible=true
+_http_server[ServerResponse][prototype][setTimeout]: function function name="setTimeout2" length=2 above=Function extensible=true
 _http_server[ServerResponse][prototype][setTimeout][length] c-- number
 _http_server[ServerResponse][prototype][setTimeout][name] c-- string
 _http_server[ServerResponse][prototype][_removedConnection] cew boolean

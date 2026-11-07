@@ -50,6 +50,7 @@
 //   // Todo: <what>: <why>             it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
 //                                      It stands for the one difference that <what> names, and the program fails by any other:
 //                                        it grows                  how it or its build grows is over its bound. What it prints is held as ever
+//                                                                  Whether a build's mark is met is said only where instructions are counted: elsewhere half of its bound is not asked
 //                                        "collected" | "KEPT"      it prints one of the two words where its reference prints the other. Everything else that the two print, and how they end, is held as ever
 //                                        only frames (..)          see above
 //                                      A line that says none of the three fails the program, on whatever platform the line is for.
@@ -60,6 +61,7 @@
 //                                      for a program whose reference, `bun <file>`, answers now one way, now the other there. It is built and run all the same,
 //                                      and its line says in which lines the two differed in this run
 //                                      Nothing anywhere else. There is no such line for every platform
+//   // Skip under ASAN: <why>          the same where Bun is built with the address sanitizer
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
 //                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
@@ -94,6 +96,8 @@
 //                                      build holds at its peak may rise by 200 bytes for each byte that the program grows by (the dearest takes 70), and 32 MB.
 //                                      The peak is the largest resident set that the kernel counted for the build. It holds what is mapped from files too, which is the same
 //                                      at all three sizes. What a watcher sees in looks 50 ms apart differs from one run to the next by more than the 32 MB leave room for.
+//   // Room of the peak: 62 MB: <why>  in place of the 32 MB, for a writer whose short lines each copy much code in line: its peak rises in line with its size and by more than its
+//                                      text says. The why names the cause and the numbers that were read.
 //                                      WHERE INSTRUCTIONS ARE COUNTED what the build takes must grow as the size does: (t3 - t2) / (t2 - t1) is at most 1.5 times (s3 - s2) / (s2 - s1).
 //                                      That is under --instructions, and without it wherever Linux lets this process open a counter of its own (in CI: Alpine on x64, as for build-scaling).
 //                                      Only a count says that: a build has a long start of its own, and by the clock what lies between two builds drowns in it
@@ -152,7 +156,7 @@ type Program = {
   counts: Bound[];
   boundsNotRead: string[];
   /** What `// Sizes:` and `// Passes:` say. */
-  growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number };
+  growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number; roomOfPeakMB?: number };
   growthNotRead?: string;
   output?: string;
   buildErrors?: string;
@@ -750,7 +754,9 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     return say({ ...notWhatItsMarkStandsFor(failsOtherwise), ...goalsNotMetOf(program.file) });
   }
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
-    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && program.growth)) {
+    // Of how a build grows only the peak is judged where nothing is counted: a mark may stand for the instructions, and a run that has not counted them has not seen it met.
+    const isHalfJudged = program.growth?.of === "the build" && !countsInstructions && !opensCounterOfItsOwn();
+    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && program.growth) || isHalfJudged) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}`, ...goalsNotMetOf(program.file) });
     }
@@ -888,7 +894,7 @@ function read(file: string): Program {
       (isASAN ? lines("Todo under ASAN")[0] : undefined) ??
       lines(`Todo on ${process.platform} ${process.arch}`)[0] ??
       lines("Todo")[0],
-    skip: lines(`Skip on ${process.platform} ${process.arch}`)[0],
+    skip: (isASAN ? lines("Skip under ASAN")[0] : undefined) ?? lines(`Skip on ${process.platform} ${process.arch}`)[0],
     marksNotRead: Array.from(
       head.matchAll(/^\/\/ Todo(?: on \w+ \w+| under ASAN| under a check)?:[ \t]+(.*)$/gm),
       ([line, said]) => (readMark(said.trim()) ? [] : [line]),
@@ -905,6 +911,7 @@ function read(file: string): Program {
           passes,
           of: growsWithProgram ? "the build" : "the run",
           power: saidOfGrowth[2][0].endsWith("a square") ? 2 : 1,
+          roomOfPeakMB: Number.parseInt(lines("Room of the peak")[0] ?? "") || undefined,
         }
       : undefined,
     growthNotRead:
@@ -1089,7 +1096,7 @@ async function measureGrowthOfBuild(
   env: Record<string, string | undefined>,
   command: (entry: string, outfile: string) => string[],
 ): Promise<{ growth?: number; measured?: string; message?: string; output?: Output }> {
-  const { sizes, passes, power } = growth!;
+  const { sizes, passes, power, roomOfPeakMB: room = roomOfPeakMB } = growth!;
   const counted = `${executable}.instructions`;
   const taken: number[] = [];
   const peaks: number[] = [];
@@ -1147,7 +1154,7 @@ async function measureGrowthOfBuild(
     }
   }
   const said = `at the sizes ${sizes.join(" | ")}, ${passes} copies`;
-  const mayHold = peaks[0] + roomOfPeakMB + (bytesOfPeakForAByteOfProgram * (bytes[2] - bytes[0])) / 2 ** 20;
+  const mayHold = peaks[0] + room + (bytesOfPeakForAByteOfProgram * (bytes[2] - bytes[0])) / 2 ** 20;
   if (peaks[2] > mayHold)
     return {
       message: `what the build holds at its peak grows faster than its program: ${peaks.join(" | ")} MB ${said}, and at most ${Math.round(mayHold)} MB at the last`,

@@ -461,6 +461,7 @@ function readableAddChunkPushByteMode(stream: $Node.Readable, state: ReadableSta
 function readableAddChunkPushObjectMode(stream: $Node.Readable, state: ReadableState, chunk, encoding): boolean {
   if (IS_COMPILED_AHEAD_OF_TIME && chunk !== null && internals.isPlainReadableState!(state)) {
     const flags = state[kState];
+    const bufferedLength = state.length;
     if (
       (flags &
         (Flag.Ended |
@@ -472,7 +473,7 @@ function readableAddChunkPushObjectMode(stream: $Node.Readable, state: ReadableS
           Flag.Flowing |
           Flag.DataListening)) ===
         (Flag.Flowing | Flag.DataListening) &&
-      state.length === 0
+      bufferedLength === 0
     ) {
       state.awaitDrainWriters = null;
       state[kState] = (flags & ~Flag.Reading) | Flag.DataEmitted;

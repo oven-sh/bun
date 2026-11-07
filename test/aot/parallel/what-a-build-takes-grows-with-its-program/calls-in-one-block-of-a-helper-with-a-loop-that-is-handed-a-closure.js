@@ -3,6 +3,9 @@
 // Sizes: 100 400 1000
 // Passes: 1
 // Grows: the build, linear
+// Room of the peak: 62 MB: each line of 37 bytes copies a helper with a loop in line, and each read of that loop is built in two arms: 56 KB of peak a call where it was 33,
+//   in line from 100 to 4,000 calls (83 91 103 134 196 313 MB). The back end holds 343 bytes a machine operation where it held 275, and a call makes 146 of them where it made 91.
+//   The most that was read: 81 | 94 | 135 MB (Ubuntu 25.04, aarch64), 89 | 101 | 143 MB (x64), and a tenth above.
 const size = Number(process.env.SIZE ?? 2),
   copies = Number(process.env.PASSES ?? 1);
 const out = [];

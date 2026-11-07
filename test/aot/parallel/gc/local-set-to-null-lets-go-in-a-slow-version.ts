@@ -34,7 +34,8 @@ function parameter(tag: Tag, x: Thing | null): boolean {
 }
 const real = new Tag(), liar = unseen({ n: 1, m: 2 });
 for (let turn = 0; turn < 30; turn++) { local(real); parameter(real, make()); }
-const referenceWavers = process.platform === "win32" && process.arch === "x64";
+// On Windows arm64 plain Bun printed "a local: KEPT | collected" where the executable printed "collected | collected": it is the reference that kept the object, as on x64: what the collector reads in native frames there is not steady.
+const referenceWavers = process.platform === "win32";
 const said = (gone: boolean): string => (referenceWavers ? "left out" : gone ? "collected" : "KEPT");
 console.log("a local:", said(local(real)), "|", said(local(liar)));
 console.log("a parameter:", parameter(real, make()) ? "collected" : "KEPT", "|", parameter(liar, make()) ? "collected" : "KEPT");

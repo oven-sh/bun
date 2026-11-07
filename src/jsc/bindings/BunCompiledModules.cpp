@@ -2300,6 +2300,11 @@ void didCreateRequire(VM&, CallFrame*, JSObject*) {}
 void didCreateRequireOfCompiledModule(JSObject*) {}
 void willResolveImport(Zig::GlobalObject*, const String&, JSValue) {}
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
+bool willUnmockCompiledFile(Zig::GlobalObject*, const String&, bool, bool) { return false; }
+void didUnmockCompiledFile(Zig::GlobalObject*, const String&, bool, bool) {}
+bool didSetCompiledFileAside(Zig::GlobalObject*, const String&) { return false; }
+bool isOriginalKeptOfCompiledFile(Zig::GlobalObject*, const String&) { return false; }
+void willMockFileLoadedAnew(Zig::GlobalObject*, const String&, JSValue) {}
 void willResetModules(Zig::GlobalObject*, ASCIILiteral, bool) {}
 Vector<String> bringBackFilesOfPreloads(Zig::GlobalObject*) { return {}; }
 bool requireCacheListsCompiledFiles() { return false; }

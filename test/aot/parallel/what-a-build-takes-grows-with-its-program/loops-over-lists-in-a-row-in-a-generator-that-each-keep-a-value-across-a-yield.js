@@ -4,6 +4,8 @@
 // Sizes: 25 100 400
 // Passes: 4
 // Grows: the build, linear
+// Room of the peak: 65 MB: the peak rises in line with the size, by what the back end holds for one large unit: 343 bytes a machine operation where it held 275: 94 | 105 | 155 MB where it
+//   was 98 | 101 | 139 MB. The most that was read: 103 | 124 | 180 MB (Ubuntu 25.04, aarch64), and a tenth above.
 const size = Number(process.env.SIZE ?? 2),
   copies = Number(process.env.PASSES ?? 1);
 const out = [];

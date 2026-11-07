@@ -2301,6 +2301,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | None => None,
         };
         let was_computed = state.is_some_and(TypeState::was_computed);
+        if in_progress.subjects.depth > 1 && self.c.is_half_of_stack_in_use() {
+            in_progress.remaining_types = 0;
+        }
         if in_progress.remaining_types == 0 {
             if let Some(found) = assumed {
                 if !in_progress.is_computing_again {

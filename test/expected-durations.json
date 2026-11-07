@@ -249,10 +249,6 @@
     "default": 60000,
     "asan": 240000
   },
-  "aot/parallel-test-runs/what-the-own-key-of-a-file-holds-behind-the-end-of-its-mock/a-package-and-the-earlier-mock-is-not-of-vitests-kind/a.test.cjs": {
-    "default": 60000,
-    "asan": 240000
-  },
   "aot/a-build-holds-little-of-the-room-that-a-store-makes.test.ts": {
     "default": 60000,
     "asan": 240000

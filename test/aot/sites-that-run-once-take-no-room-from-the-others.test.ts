@@ -17,7 +17,7 @@ const program = [
   ),
   `const all = [${Array.from({ length: sites }, (_, i) => "f" + i).join(",")}];`,
   `let sum = 0; for (const f of all) sum = (sum + f(held.rows)) % 1000003;`,
-  `const records = JSON.parse("[" + Array.from({ length: 100 }, (_, i) => '{"price":' + i + ',"count":' + (i % 7) + "}").join() + "]");`,
+  `const records = JSON.parse("[" + Array.from({ length: 100 }, (_, i) => '{"s' + (i % 5) + '":0,"price":' + i + ',"count":' + (i % 7) + "}").join() + "]");`,
   `function total(rows) { let s = 0; for (const r of rows) s += r.price * r.count; return s; }`,
   `for (let t = 0; t < 200; t++) sum = (sum + total(records)) % 1000003;`,
   `console.log(sum);`,

@@ -2296,6 +2296,17 @@ impl Data {
             Data::EArray(array) => array.was_originally_macro,
             Data::EObject(object) => object.was_originally_macro,
 
+            // `{ "#x": value }["#x"]`, which the lowering of an `accessor #x` builds to name `value`. It alone marks such a read as removable.
+            Data::EDot(read) if read.can_be_removed_if_unused => match &read.target.data {
+                Data::EObject(object) => match object.properties.slice() {
+                    [property] => property
+                        .value
+                        .is_some_and(|value| value.data.can_be_moved()),
+                    _ => false,
+                },
+                _ => false,
+            },
+
             // TODO: experiment with allowing some e_binary, e_unary, e_if as movable
             _ => false,
         }

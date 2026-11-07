@@ -1266,7 +1266,12 @@ fn lower_template(
             }
         };
         let tag = lower_expression_to_temporary(builder, tag)?;
-        return Ok(InstructionValue::TaggedTemplateExpression { tag, value, loc });
+        return Ok(InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            head_loc: tmpl.head_loc,
+            loc,
+        });
     }
 
     let mut subexprs: HirVec<Place> = AstAlloc::vec_with_capacity(parts.len());

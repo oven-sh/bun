@@ -827,27 +827,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
+        // No frame is reported in what is made up here. Without a position it gets no mapping, so a frame behind it is looked up as behind the template that was written.
+        let made_up = bun_ast::Loc::EMPTY;
         let count = template.parts().len() + 1;
         let mut raw = bun_alloc::ArenaVec::<Expr>::with_capacity_in(count, self.arena);
         let mut args = bun_alloc::ArenaVec::<Expr>::with_capacity_in(count, self.arena);
-        raw.push(self.new_expr(E::String::init(head.slice()), expr.loc));
-        args.push(expr);
+        raw.push(self.new_expr(E::String::init(head.slice()), made_up));
+        args.push(Expr {
+            loc: made_up,
+            data: expr.data,
+        });
         for part in template.parts_mut() {
             if let E::TemplateContents::Raw(tail) = &part.tail {
-                raw.push(Expr::init(E::String::init(tail.slice()), part.tail_loc));
+                raw.push(Expr::init(E::String::init(tail.slice()), made_up));
             }
             args.push(part.value);
-            part.value = Expr::init(E::Number::new(0.0), part.value.loc);
+            part.value = Expr::init(E::Number::new(0.0), made_up);
         }
         let raw = self.new_expr(
             E::Array {
                 items: ExprNodeList::from_bump_vec(raw),
                 ..Default::default()
             },
-            expr.loc,
+            made_up,
         );
         template.tag =
-            Some(self.call_runtime(expr.loc, b"__rawTemplate", ExprNodeList::init_one(raw)));
+            Some(self.call_runtime(made_up, b"__rawTemplate", ExprNodeList::init_one(raw)));
+        // The call stands where the tagged template starts, as any node does: a call around it looks for its own `(` from there. The template keeps in `head_loc` the backquote that JSC reports the call of a tag at, and the printer maps the `(` of this call there.
         Some(self.new_expr(
             E::Call {
                 target: tag,

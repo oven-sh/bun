@@ -68,7 +68,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 mapped = match node.default.some() {
                     Some(default) => self.file.last_mapped_position(default),
                     None => {
-                        let last = self.file.last_mapped_pattern_position(node.pat);
+                        let last = self
+                            .file
+                            .last_mapped_pattern_position(node.pat, Some(mapped));
                         last.unwrap_or(mapped)
                     }
                 };

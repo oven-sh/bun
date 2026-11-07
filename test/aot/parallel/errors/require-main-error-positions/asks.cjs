@@ -42,6 +42,14 @@ console.log(at(() =>
 console.log(at(() => require.main?.exports));
 // prettier-ignore
 console.log(at(() => (require.main).exports));
+// prettier-ignore
+console.log(at(() => (require.main
+)
+  (1)));
+// prettier-ignore
+console.log(at(() => (holder.main
+)
+  (1)));
 function shadowed(require) {
   return at(() => require.main.exports);
 }

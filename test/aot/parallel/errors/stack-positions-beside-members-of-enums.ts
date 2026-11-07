@@ -50,3 +50,28 @@ show("w", () => { `${Level.High}${Symbol() as any}`; });
 show("x", () => { Level.High + (Symbol() as any); });
 show("y", () => { (Symbol() as any) + Level.High; });
 show("z", () => { const { x } = nothing[Level.High]; });
+// prettier-ignore
+show("o, with the parenthesis and the arguments on lines of their own", () => {
+  (Level.High as any
+  )
+    (1);
+});
+show("o, through a constant that is used once", () => {
+  const once = Level.High as any;
+  once();
+});
+// prettier-ignore
+show("an element by a member in a list, below a bracket that ends a line", () => {
+  pass(nothing)[
+    [Level.Name][0]];
+});
+// prettier-ignore
+show("an element by a member in a list, behind a bracket that starts a line", () => {
+  pass(nothing)
+    [[Level.Name][0]];
+});
+// prettier-ignore
+show("a store to an element by a member, behind a bracket that starts a line", () => {
+  pass({ name: null } as any)[Level.Name]
+    [Level.Name] += 1;
+});

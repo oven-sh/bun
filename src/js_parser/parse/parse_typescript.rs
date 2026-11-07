@@ -140,6 +140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 index,
                                 optional_chain: None,
                                 is_import_property_use: false,
+                                bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                             },
                             loc,
                         );

@@ -1,0 +1,249 @@
+# The rows of the probe whose frame is on another line as Bun prints them than as they are written, under what keeps them there and what fixes it. A row is a statement of source-positions-probe-templates.txt and one layout of it, with ` / ` for a line break.
+
+# A `.` on a line of its own. The tree keeps no place for the `.` of a member: the printer looks for it on the line of the name behind it and no further. The parser recording where it reads that `.` fixes these.
+use(c.a().b().a()); :: use / ( / c / . / a / ( / ) / . / b / ( / ) / . / a / ( / ) / ) / ;
+use(c.a().n.x); :: use / ( / c / . / a / ( / ) / . / n / . / x / ) / ;
+use(c.a().g.x); :: use / ( / c / . / a / ( / ) / . / g / . / x / ) / ;
+use(c.a().u.x.y); :: use / ( / c / . / a / ( / ) / . / u / . / x / . / y / ) / ;
+c.n.x = 1; :: c / . / n / . / x / = / 1 / ;
+c.a().s = 1; :: c / . / a / ( / ) / . / s / = / 1 / ;
+c.a().n.x = c.a(); :: c / . / a / ( / ) / . / n / . / x / = / c / . / a / ( / ) / ;
+c.n.x += 1; :: c / . / n / . / x / += / 1 / ;
+c.n.x ||= 1; :: c / . / n / . / x / ||= / 1 / ;
+++c.n.x; :: ++ / c / . / n / . / x / ;
+use(c?.n.x); :: use / ( / c / ?. / n / . / x / ) / ;
+use(c.a()?.n.x); :: use / ( / c / . / a / ( / ) / ?. / n / . / x / ) / ;
+use(c?.[kn].x); :: use / ( / c / ?. / [ / kn / ] / . / x / ) / ;
+use(c.a?.().n.x); :: use / ( / c / . / a / ?. / ( / ) / . / n / . / x / ) / ;
+use(null.x); :: use / ( / null / . / x / ) / ;
+use(this.x); :: use / ( / this / . / x / ) / ;
+use(new.target.x); :: use / ( / new / . / target / . / x / ) / ;
+use(arguments.nothing.x); :: use / ( / arguments / . / nothing / . / x / ) / ;
+use(c.n.x()); :: use / ( / c / . / n / . / x / ( / ) / ) / ;
+const v = c.a(); v.n.x; :: const / v / = / c / . / a / ( / ) / ; / v / . / n / . / x / ;
+use(new Error("m").nothing.x); :: use / ( / new / Error / ( / "m" / ) / . / nothing / . / x / ) / ;
+class Q extends c.n.x {} :: class / Q / extends / c / . / n / . / x / { / }
+class Q { [c.n.x]() {} } :: class / Q / { / [ / c / . / n / . / x / ] / ( / ) / { / } / }
+use(`a${c.n.x}b`); :: use / ( / `a${ / c / . / n / . / x / }b` / ) / ;
+use(c.notfn instanceof c.n.x); :: use / ( / c / . / notfn / instanceof / c / . / n / . / x / ) / ;
+use(thrower ? 1 : 2, c.n.x); :: use / ( / thrower / ? / 1 / : / 2 / , / c / . / n / . / x / ) / ;
+use(c.n.x ? 1 : 2); :: use / ( / c / . / n / . / x / ? / 1 / : / 2 / ) / ;
+use(1 ? c.n.x : 2); :: use / ( / 1 / ? / c / . / n / . / x / : / 2 / ) / ;
+use(0 ? 1 : c.n.x); :: use / ( / 0 / ? / 1 / : / c / . / n / . / x / ) / ;
+use(c.u || c.n.x); :: use / ( / c / . / u / || / c / . / n / . / x / ) / ;
+use(c && c.n.x); :: use / ( / c / && / c / . / n / . / x / ) / ;
+use(c.n ?? c.n.x); :: use / ( / c / . / n / ?? / c / . / n / . / x / ) / ;
+use((c, c.n.x)); :: use / ( / ( / c / , / c / . / n / . / x / ) / ) / ;
+use(!c.n.x); :: use / ( / ! / c / . / n / . / x / ) / ;
+use(typeof c.n.x); :: use / ( / typeof / c / . / n / . / x / ) / ;
+use(void c.n.x); :: use / ( / void / c / . / n / . / x / ) / ;
+use(...c.n.x); :: use / ( / ... / c / . / n / . / x / ) / ;
+use({ a: 1, ...c.n.x }); :: use / ( / { / a / : / 1 / , / ... / c / . / n / . / x / } / ) / ;
+const { q = c.n.x } = c; :: const / { / q / = / c / . / n / . / x / } / = / c / ;
+if (c.n.x) use(); :: if / ( / c / . / n / . / x / ) / use / ( / ) / ;
+if (c) c.n.x; else use(); :: if / ( / c / ) / c / . / n / . / x / ; / else / use / ( / ) / ;
+if (!c) use(); else c.n.x; :: if / ( / ! / c / ) / use / ( / ) / ; / else / c / . / n / . / x / ;
+while (c.n.x) use(); :: while / ( / c / . / n / . / x / ) / use / ( / ) / ;
+do { use(); } while (c.n.x); :: do / { / use / ( / ) / ; / } / while / ( / c / . / n / . / x / ) / ;
+for (let i = c.n.x; ;) use(); :: for / ( / let / i / = / c / . / n / . / x / ; / ; / ) / use / ( / ) / ;
+for (let i = 0; c.n.x;) use(); :: for / ( / let / i / = / 0 / ; / c / . / n / . / x / ; / ) / use / ( / ) / ;
+for (let i = 0; i < 1; c.n.x) use(); :: for / ( / let / i / = / 0 / ; / i / < / 1 / ; / c / . / n / . / x / ) / use / ( / ) / ;
+for (const q of c.n.x) use(q); :: for / ( / const / q / of / c / . / n / . / x / ) / use / ( / q / ) / ;
+for (const q in c.n.x) use(q); :: for / ( / const / q / in / c / . / n / . / x / ) / use / ( / q / ) / ;
+switch (c.n.x) { default: use(); } :: switch / ( / c / . / n / . / x / ) / { / default / : / use / ( / ) / ; / }
+switch (1) { case c.n.x: use(); } :: switch / ( / 1 / ) / { / case / c / . / n / . / x / : / use / ( / ) / ; / }
+switch (1) { case 1: c.n.x; } :: switch / ( / 1 / ) / { / case / 1 / : / c / . / n / . / x / ; / }
+label: { c.n.x; } :: label / : / { / c / . / n / . / x / ; / }
+{ c.n.x; } :: { / c / . / n / . / x / ; / }
+var q = c.n.x; :: var / q / = / c / . / n / . / x / ;
+let q = c.n.x, w = 1; :: let / q / = / c / . / n / . / x / , / w / = / 1 / ;
+let q = 1, w = c.n.x; :: let / q / = / 1 / , / w / = / c / . / n / . / x / ;
+const q = [c.n.x]; :: const / q / = / [ / c / . / n / . / x / ] / ;
+const q = { a: c.n.x }; :: const / q / = / { / a / : / c / . / n / . / x / } / ;
+use(c.n.x); function q() {} :: use / ( / c / . / n / . / x / ) / ; / function / q / ( / ) / { / }
+
+# The end of a callee, or the `?.` of a call, on a line above the `(`. The tree keeps no place for either: the printer looks on the line of the first argument, or of the `)`, and no further. The parser recording where the token in front of the `(` ends fixes these.
+use(c[kn]()); :: use / ( / c / [ / kn / ] / ( / ) / ) / ;
+use(c.a()[kn]()); :: use / ( / c / . / a / ( / ) / [ / kn / ] / ( / ) / ) / ;
+use(c.boom?.()); :: use / ( / c / . / boom / ?. / ( / ) / ) / ;
+(() => { boom(); })(); :: (()=> / { / boom / ( / ) / ; / } / ) / ( / ) / ;
+(() => { use(); boom(); use(); })(); :: (()=> / { / use / ( / ) / ; / boom / ( / ) / ; / use / ( / ) / ; / } / ) / ( / ) / ;
+(function () { boom(); })(); :: ( / function / ( / ) / { / boom / ( / ) / ; / } / ) / ( / ) / ;
+(function () { use(); boom(); })(1, 2); :: ( / function / ( / ) / { / use / ( / ) / ; / boom / ( / ) / ; / } / ) / ( / 1 / , / 2 / ) / ;
+!function () { boom(); }(); :: ! / function / ( / ) / { / boom / ( / ) / ; / } / ( / ) / ;
+use(function () { boom(); }()); :: use / ( / function / ( / ) / { / boom / ( / ) / ; / } / ( / ) / ) / ;
+(() => boom())(); :: (()=> / boom / ( / ) / ) / ( / ) / ;
+(0, c.boom)(); :: ( / 0 / , / c / . / boom / ) / ( / ) / ;
+(c.n || boom)(); :: ( / c / . / n / || / boom / ) / ( / ) / ;
+(c.n ?? c.boom)(1); :: ( / c / . / n / ?? / c / . / boom / ) / ( / 1 / ) / ;
+(function (a = nowhere) {})(); :: ( / function / ( / a / = / nowhere / ) / { / } / ) / ( / ) / ;
+(function ({ a }) {})(null); :: ( / function / ( / { / a / } / ) / { / } / ) / ( / null / ) / ;
+(function ([a]) {})(1); :: ( / function / ( / [ / a / ] / ) / { / } / ) / ( / 1 / ) / ;
+((a = c.n.x) => a)(); :: ((a=c.n.x)=> / a / ) / ( / ) / ;
+(({ a }) => a)(c.n); :: (({a})=> / a / ) / ( / c / . / n / ) / ;
+
+# A name in quotes behind a `[` that starts a line. The name is printed behind a `.`, and the tree keeps no place for the `[` of such a member. The tree keeping that `[` fixes these.
+use(c["a"]()["n"]["x"]); :: use(c["a"]()["n" / ]["x"]);
+use(c["a"]()["n"]["x"]); :: use(c["a"]()["n"] / ["x"]);
+use(c["a"]()["n"]["x"]); :: use / ( / c / [ / "a" / ] / ( / ) / [ / "n" / ] / [ / "x" / ] / ) / ;
+
+# `new` without arguments. Nothing to fix: the printer drops the `()`, and the frame is at the `new`, where node has it. As written it is where the callee ends.
+use(new c.nothing()); :: use(new / c.nothing());
+use(new c.nothing()); :: use(new c / .nothing());
+use(new c.nothing()); :: use(new c. / nothing());
+use(new c.nothing()); :: use / ( / new / c / . / nothing / ( / ) / ) / ;
+use(new c.n()); :: use(new / c.n());
+use(new c.n()); :: use(new c / .n());
+use(new c.n()); :: use(new c. / n());
+use(new c.n()); :: use / ( / new / c / . / n / ( / ) / ) / ;
+new (class { constructor() { boom(); } })(); :: new / (class{constructor(){boom();}})();
+new (class { constructor() { boom(); } })(); :: new( / class{constructor(){boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class / {constructor(){boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class{ / constructor(){boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor / (){boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor( / ){boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor() / {boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){ / boom();}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){boom / ();}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){boom( / );}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){boom() / ;}})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){boom(); / }})();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){boom();} / })();
+new (class { constructor() { boom(); } })(); :: new(class{constructor(){boom();}} / )();
+new (class { constructor() { boom(); } })(); :: new / ( / class / { / constructor / ( / ) / { / boom / ( / ) / ; / } / } / ) / ( / ) / ;
+new (class { x = boom(); })(); :: new / (class{x=boom();})();
+new (class { x = boom(); })(); :: new( / class{x=boom();})();
+new (class { x = boom(); })(); :: new(class / {x=boom();})();
+new (class { x = boom(); })(); :: new(class{ / x=boom();})();
+new (class { x = boom(); })(); :: new(class{x / =boom();})();
+new (class { x = boom(); })(); :: new(class{x= / boom();})();
+new (class { x = boom(); })(); :: new(class{x=boom / ();})();
+new (class { x = boom(); })(); :: new(class{x=boom( / );})();
+new (class { x = boom(); })(); :: new(class{x=boom() / ;})();
+new (class { x = boom(); })(); :: new(class{x=boom(); / })();
+new (class { x = boom(); })(); :: new(class{x=boom();} / )();
+new (class { x = boom(); })(); :: new / ( / class / { / x / = / boom / ( / ) / ; / } / ) / ( / ) / ;
+new (class extends Base { constructor() { super(nowhere); } })(); :: new / (class extends Base{constructor(){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new( / class extends Base{constructor(){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class / extends Base{constructor(){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends / Base{constructor(){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base / {constructor(){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{ / constructor(){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor / (){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor( / ){super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor() / {super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){ / super(nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super / (nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super( / nowhere);}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super(nowhere / );}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super(nowhere) / ;}})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super(nowhere); / }})();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super(nowhere);} / })();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new(class extends Base{constructor(){super(nowhere);}} / )();
+new (class extends Base { constructor() { super(nowhere); } })(); :: new / ( / class / extends / Base / { / constructor / ( / ) / { / super / ( / nowhere / ) / ; / } / } / ) / ( / ) / ;
+new (class extends Base { constructor() { super(); boom(); } })(); :: new / (class extends Base{constructor(){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new( / class extends Base{constructor(){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class / extends Base{constructor(){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends / Base{constructor(){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base / {constructor(){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{ / constructor(){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor / (){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor( / ){super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor() / {super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){ / super();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super / ();boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super( / );boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super() / ;boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super(); / boom();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super();boom / ();}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super();boom( / );}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super();boom() / ;}})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super();boom(); / }})();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super();boom();} / })();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new(class extends Base{constructor(){super();boom();}} / )();
+new (class extends Base { constructor() { super(); boom(); } })(); :: new / ( / class / extends / Base / { / constructor / ( / ) / { / super / ( / ) / ; / boom / ( / ) / ; / } / } / ) / ( / ) / ;
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new / (class extends Base{constructor(){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new( / class extends Base{constructor(){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class / extends Base{constructor(){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends / Base{constructor(){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base / {constructor(){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{ / constructor(){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor / (){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor( / ){this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor() / {this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){ / this.x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this / .x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this. / x=1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x / =1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x= / 1;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1 / ;super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1; / super();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1;super / ();}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1;super( / );}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1;super() / ;}})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1;super(); / }})();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1;super();} / })();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new(class extends Base{constructor(){this.x=1;super();}} / )();
+new (class extends Base { constructor() { this.x = 1; super(); } })(); :: new / ( / class / extends / Base / { / constructor / ( / ) / { / this / . / x / = / 1 / ; / super / ( / ) / ; / } / } / ) / ( / ) / ;
+
+# A name in front of a `)` that starts a line. A name that is not declared, or not yet, is reported where it ends, which is where that `)` is printed and mapped. The engine reporting a name where it starts fixes these.
+use(nowhere); :: use(nowhere / );
+use(nowhere); :: use / ( / nowhere / ) / ;
+use(1 + nowhere); :: use(1+nowhere / );
+use(1 + nowhere); :: use / ( / 1 / + / nowhere / ) / ;
+use(-nowhere); :: use(-nowhere / );
+use(-nowhere); :: use / ( / - / nowhere / ) / ;
+use(c.n ?? nowhere); :: use(c.n??nowhere / );
+use(c.n ?? nowhere); :: use / ( / c / . / n / ?? / nowhere / ) / ;
+use(c.n || nowhere); :: use(c.n||nowhere / );
+use(c.n || nowhere); :: use / ( / c / . / n / || / nowhere / ) / ;
+use((1, nowhere)); :: use((1,nowhere / ));
+use((1, nowhere)); :: use((1,nowhere) / );
+use((1, nowhere)); :: use / ( / ( / 1 / , / nowhere / ) / ) / ;
+use(tdz); let tdz = 1; :: use(tdz / );let tdz=1;
+use(tdz); let tdz = 1; :: use / ( / tdz / ) / ; / let / tdz / = / 1 / ;
+use(c.id(nowhere)); :: use(c.id(nowhere / ));
+use(c.id(nowhere)); :: use / ( / c / . / id / ( / nowhere / ) / ) / ;
+use(new Base(nowhere)); :: use(new Base(nowhere / ));
+use(new Base(nowhere)); :: use / ( / new / Base / ( / nowhere / ) / ) / ;
+const v = 1; use(v, nowhere); :: const v=1;use(v,nowhere / );
+const v = 1; use(v, nowhere); :: const / v / = / 1 / ; / use / ( / v / , / nowhere / ) / ;
+use(new nowhere()); :: use(new nowhere / ());
+use(new nowhere()); :: use(new nowhere( / ));
+use(new nowhere()); :: use(new nowhere() / );
+use(new nowhere()); :: use / ( / new / nowhere / ( / ) / ) / ;
+
+# A `.` behind a name. It has no mapping: a name that is not declared is reported where that `.` is printed. The same change of the engine fixes these.
+const v = c.n; use(v.x); :: const v=c.n;use(v / .x);
+const v = c.n; use(v.x); :: const / v / = / c / . / n / ; / use / ( / v / . / x / ) / ;
+use({ ...c.g }); :: use({...c / .g});
+use({ ...c.g }); :: use / ( / { / ... / c / . / g / } / ) / ;
+const { q } = c.n; :: const{q}=c / .n;
+const { q } = c.n; :: const / { / q / } / = / c / . / n / ;
+
+# A spread. It is reported behind its `...`, where what it spreads is printed. The same change of the engine fixes these.
+use(...1); :: use(... / 1);
+use(...1); :: use / ( / ... / 1 / ) / ;
+use(1, ...1); :: use(1,... / 1);
+use(1, ...1); :: use / ( / 1 / , / ... / 1 / ) / ;
+use([...1]); :: use([... / 1]);
+use([...1]); :: use / ( / [ / ... / 1 / ] / ) / ;
+use([1, ...1, 2]); :: use([1,... / 1,2]);
+use([1, ...1, 2]); :: use / ( / [ / 1 / , / ... / 1 / , / 2 / ] / ) / ;
+use(new Base(...1)); :: use(new Base(... / 1));
+use(new Base(...1)); :: use / ( / new / Base / ( / ... / 1 / ) / ) / ;
+
+# The `of` of a loop. It has no mapping: an `--aot` executable cannot quote the head of a loop from a frame at its `of`. A mapping, with a change of that executable's engine, fixes these.
+for (const q of 1) use(q); :: for(const q / of 1)use(q);
+for (const q of 1) use(q); :: for / ( / const / q / of / 1 / ) / use / ( / q / ) / ;
+for (const { q } of [null]) use(q); :: for(const{q / }of[null])use(q);
+for (const { q } of [null]) use(q); :: for(const{q} / of[null])use(q);
+for (const { q } of [null]) use(q); :: for / ( / const / { / q / } / of / [ / null / ] / ) / use / ( / q / ) / ;
+
+# `new` with arguments, behind a `)` that starts a line. It is reported where its callee ends, and the printer writes that callee without its parentheses. A mapping of the end of the callee of a `new` fixes these.
+use(new (c.a().Boom)(1)); :: use(new(c.a().Boom / )(1));
+use(new (c.a().Boom)(1)); :: use / ( / new / ( / c / . / a / ( / ) / . / Boom / ) / ( / 1 / ) / ) / ;
+
+# `delete` of an element whose `]` starts a line. It is reported behind the `]`, where nothing is mapped. A mapping behind the `]` fixes these.
+delete c[kn][kx]; :: delete c[kn][kx / ];
+delete c[kn][kx]; :: delete / c / [ / kn / ] / [ / kx / ] / ;

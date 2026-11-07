@@ -980,6 +980,7 @@ impl<'a> Converter<'a, '_> {
                     index: self.expr(index)?,
                     optional_chain: Self::chain(chain),
                     is_import_property_use: false,
+                    bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                 },
                 loc,
             ),
@@ -1124,6 +1125,7 @@ impl<'a> Converter<'a, '_> {
                     index: JsExpr::init(E::PrivateIdentifier { ref_ }, name_loc),
                     optional_chain,
                     is_import_property_use: false,
+                    bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                 },
                 loc,
             ));
@@ -1165,6 +1167,7 @@ impl<'a> Converter<'a, '_> {
             tag,
             parts: leak(parts),
             head: contents(0),
+            head_loc: Loc::EMPTY,
         })
     }
 

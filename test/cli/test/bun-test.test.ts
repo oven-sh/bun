@@ -2263,6 +2263,173 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // A tag is called at its backquote: the compiler's output keeps where that was written, also in a file with CRLF.
+  test("a tagged template in a compiled function is reported at its backquote", async () => {
+    const tagged = [
+      "const holder = { nothing: undefined, make() {} };",
+      "export function Call(props) {",
+      "  const made = holder.make(",
+      "    props.x",
+      "  )",
+      "    `plain",
+      "    text`;",
+      "  return <div>{made}</div>;",
+      "}",
+      "export function Member(props) {",
+      "  const made = holder",
+      "    .nothing",
+      "    `more",
+      "    text`;",
+      "  return <div>{made}</div>;",
+      "}",
+    ];
+    const result = await compiled(
+      {
+        "src/TaggedLF.jsx": tagged.join("\n"),
+        "src/TaggedCRLF.jsx": tagged.join("\r\n"),
+        "compiled.test.tsx": `
+          import { test } from "bun:test";
+          import * as TaggedCRLF from "./src/TaggedCRLF";
+          import * as TaggedLF from "./src/TaggedLF";
+          test("where the tags are called", () => {
+            const frames = [];
+            for (const [file, all] of Object.entries({ TaggedLF, TaggedCRLF })) {
+              for (const name of Object.keys(all).filter(name => /\\$\\[\\d+\\]/.test(String(all[name])))) {
+                try {
+                  all[name]({ x: 1 });
+                } catch (error) {
+                  const frame = error.stack.split("\\n").find(line => line.includes(file + ".jsx"));
+                  frames.push(file + " " + name + " " + /:(\\d+:\\d+)\\)?$/.exec(frame)?.[1]);
+                }
+              }
+            }
+            console.log("compiled: " + frames.join(", "));
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe(
+      "TaggedLF Call 6:5, TaggedLF Member 13:5, TaggedCRLF Call 6:5, TaggedCRLF Member 13:5",
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
+  // A choice between two values has no position in the compiler's output. A callee that stands in front of its call is what a constant held: that call is reported at the constant's name.
+  test("a call in a compiled function is reported in its callee, or at the constant that held the callee", async () => {
+    const result = await compiled(
+      {
+        "src/useCallee.js": [
+          `import { useState } from "react";`,
+          "export function useChoice(props) {",
+          "  const [state] = useState(2);",
+          "  (props.disabled",
+          "    ? props.onDisabledClick",
+          "    : props.onClick)(",
+          "      state",
+          "  );",
+          "  return state;",
+          "}",
+          "export function useFallback(props) {",
+          "  const [state] = useState(2);",
+          "  (props.nothing",
+          "    || props.onClick)(state);",
+          "  return state;",
+          "}",
+          "export function useOnce(props) {",
+          "  const [state] = useState(2);",
+          "  const made = props.make(",
+          "    state,",
+          "  );",
+          "  made(1);",
+          "  return state;",
+          "}",
+        ].join("\n"),
+        "compiled.test.tsx": `
+          import { test } from "bun:test";
+          import * as all from "./src/useCallee";
+          test("where the callees are called", () => {
+            const onClick = () => { throw new Error("thrown"); };
+            const props = { nothing: undefined, onClick, make: () => onClick };
+            const frames = [];
+            for (const name of ["useChoice", "useFallback", "useOnce"]) {
+              try {
+                all[name](props);
+              } catch (error) {
+                const frame = error.stack.split("\\n").find(line => line.includes("useCallee.js"));
+                frames.push(name + " " + /:(\\d+:\\d+)\\)?$/.exec(frame)?.[1]);
+              }
+            }
+            console.log("compiled: " + frames.join(", "));
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("useChoice 6:7, useFallback 14:8, useOnce 22:3");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // In the compiler's output the name of a member of a choice stands where the choice starts: the `[` or the `?.(` in front of that is of the key or of the call that holds the member.
+  test("what is read from a choice in a compiled function is reported in the choice", async () => {
+    const result = await compiled(
+      {
+        "src/useMember.js": [
+          `import { useState } from "react";`,
+          "const holder = { table: {}, id(value) { return value; } };",
+          "export function useKey(props) {",
+          "  const made = holder.table[(props.nothing",
+          "    || props.none).x];",
+          "  return [made, useState(1)];",
+          "}",
+          "export function useOptionalCall(props) {",
+          "  const made = holder.id?.((props.nothing",
+          "    || props.none).x);",
+          "  return [made, useState(1)];",
+          "}",
+          "export function useOptionalKey(props) {",
+          "  const made = holder?.[(props.disabled",
+          "    ? props.nothing",
+          "    : props.none).x];",
+          "  return [made, useState(1)];",
+          "}",
+          "export function useNumberKey(props) {",
+          "  const made = holder.table[(props.nothing",
+          "    || props.none)[0]];",
+          "  return [made, useState(1)];",
+          "}",
+          "export function useCall(props) {",
+          "  const made = holder.table[(props.nothing",
+          "    || props.none)()];",
+          "  return [made, useState(1)];",
+          "}",
+        ].join("\n"),
+        "compiled.test.tsx": `
+          import { test } from "bun:test";
+          import * as all from "./src/useMember";
+          test("where the choices are read", () => {
+            const props = { disabled: false, nothing: undefined, none: null };
+            const frames = [];
+            for (const name of ["useKey", "useOptionalCall", "useOptionalKey", "useNumberKey", "useCall"]) {
+              try {
+                all[name](props);
+              } catch (error) {
+                const frame = error.stack.split("\\n").find(line => line.includes("useMember.js"));
+                frames.push(name + " " + /:(\\d+:\\d+)\\)?$/.exec(frame)?.[1]);
+              }
+            }
+            console.log("compiled: " + frames.join(", "));
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe(
+      "useKey 5:8, useOptionalCall 10:8, useOptionalKey 16:7, useNumberKey 21:8, useCall 26:8",
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each([
     `reactCompiler = 1`,
     `reactCompiler = [1]`,

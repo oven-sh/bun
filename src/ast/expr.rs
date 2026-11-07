@@ -1889,6 +1889,7 @@ impl Data {
                     index: el.index.deep_clone_no_detach(bump, stack_check)?,
                     optional_chain: el.optional_chain,
                     is_import_property_use: el.is_import_property_use,
+                    bracket_offset: el.bracket_offset,
                 });
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
@@ -1957,6 +1958,7 @@ impl Data {
                     // `TemplateContents` is POD-shaped; `shallow_clone` is the
                     // safe field-wise copy.
                     head: el.head.shallow_clone(),
+                    head_loc: el.head_loc,
                 });
                 Ok(Data::ETemplate(StoreRef::from_bump(item)))
             }

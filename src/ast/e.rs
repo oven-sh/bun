@@ -339,6 +339,33 @@ pub struct Index {
     pub optional_chain: Option<OptionalChain>,
     /// See `Dot::is_import_property_use`.
     pub is_import_property_use: bool,
+    /// How far the `[` stands behind the `loc` of the expression, or `BRACKET_NOT_KNOWN`. The visitor moves the key and the target, never that `loc`. Read it with `bracket_loc`.
+    pub bracket_offset: u16,
+}
+// The offset fits in existing trailing padding.
+const _: () = assert!(core::mem::size_of::<Index>() == 36);
+impl Index {
+    /// The `bracket_offset` of an expression that no parser read, or whose `[` stands too far behind its start for the field.
+    pub const BRACKET_NOT_KNOWN: u16 = 0;
+
+    /// The `bracket_offset` of an expression at `loc` whose `[` the parser read at `bracket`.
+    #[inline]
+    pub fn bracket_offset_of(loc: crate::Loc, bracket: crate::Loc) -> u16 {
+        let offset = bracket.start.checked_sub(loc.start);
+        let offset = offset.and_then(|offset| u16::try_from(offset).ok());
+        offset.unwrap_or(Self::BRACKET_NOT_KNOWN)
+    }
+
+    /// Where the `[` of this expression is written, for the `loc` that the expression stands at. None where that is not known.
+    #[inline]
+    pub fn bracket_loc(&self, loc: crate::Loc) -> Option<crate::Loc> {
+        if self.bracket_offset == Self::BRACKET_NOT_KNOWN || loc.is_empty() {
+            return None;
+        }
+        Some(crate::Loc {
+            start: loc.start.saturating_add(i32::from(self.bracket_offset)),
+        })
+    }
 }
 
 pub struct Arrow {
@@ -2021,6 +2048,8 @@ pub struct Template {
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
     pub parts: crate::StoreSlice<TemplatePart>,
     pub head: TemplateContents,
+    /// Where the opening backquote stands in the source. `Loc::EMPTY` for a template that was not written.
+    pub head_loc: crate::Loc,
 }
 
 impl Template {
@@ -2243,6 +2272,7 @@ impl Template {
                         .expect("infallible: variant checked")
                         .shallow_clone(),
                 ),
+                head_loc: self.head_loc,
             },
             loc,
         )

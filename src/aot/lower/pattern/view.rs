@@ -68,12 +68,19 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn last_mapped_element_position(&self, element: &PatternElement) -> Option<u32> {
+    // `in_front`: the last token in front of the element that the source map knows.
+    pub(super) fn last_mapped_element_position(
+        &self,
+        element: &PatternElement,
+        in_front: u32,
+    ) -> Option<u32> {
         if let Some(default) = element.default.some() {
             return Some(self.last_mapped_position(default));
         }
         match element.target {
-            PatternNode::Binding(pattern) => self.last_mapped_pattern_position(pattern),
+            PatternNode::Binding(pattern) => {
+                self.last_mapped_pattern_position(pattern, Some(in_front))
+            }
             PatternNode::Assignment(target) => match self.node_shape(element.target) {
                 NodeShape::Hole => None,
                 _ => Some(self.last_mapped_position(target)),

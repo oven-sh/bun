@@ -25,7 +25,7 @@ use bun_threading::Guarded;
 use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree, Rewrites};
-pub(super) use self::alignment::{Rewrite, find_written_literal};
+pub(super) use self::alignment::{PrintedBracket, Rewrite, find_written_literal, parsed_position};
 use self::first_recorded_position::{
     Variables, find_first_recorded_position, find_first_recorded_position_of_class,
 };
@@ -192,8 +192,10 @@ impl RuntimeTranspiler<'_> {
             statements.insert(statement.loc);
         }
         let parts = tree.parts.iter().map(|part| part.stmts.slice());
+        // The parser gives `import.meta` a name only in a CommonJS module, and the printer then writes that name.
+        let import_meta_name = Some(tree.import_meta_ref).filter(|name| name.is_valid());
         let (first_recorded_positions, first_recorded_positions_of_functions) =
-            walker.find_first_recorded_positions(parts);
+            walker.find_first_recorded_positions(request.text, import_meta_name, parts);
         let quoted_functions = std::mem::take(&mut walker.quoted_functions);
         let declarations_printed_without_name = request.parsed.map_or_else(Vec::new, |parsed| {
             walker.find_declarations_printed_without_name(parsed.hir)
@@ -358,6 +360,16 @@ impl TranspiledFile {
     /// Each `a[key]` that is printed `a.name`.
     pub(super) fn keys_printed_as_names(&self) -> &[ExprId] {
         &self.rewrites.keys_printed_as_names
+    }
+
+    /// Where the tree has the `[` of a member that it prints with its key in brackets. `None`: the member was not held against such a node of the tree.
+    pub(super) fn find_printed_bracket(&self, member: ExprId) -> Option<PrintedBracket> {
+        self.rewrites.brackets.get(&member).copied()
+    }
+
+    /// Where the node stands that is printed for the first argument of a call, if the parser puts that operand elsewhere.
+    pub(super) fn find_moved_operand(&self, operand: ExprId) -> Option<u32> {
+        self.rewrites.moved_operands.get(&operand).copied()
     }
 
     pub(super) fn has_statement_at(&self, position: u32) -> bool {
@@ -657,6 +669,8 @@ impl<'a> Walker<'a> {
     /// After `walk`. Those of the classes, then those of the functions.
     fn find_first_recorded_positions<'s>(
         &self,
+        text: &[u8],
+        import_meta_name: Option<Ref>,
         parts: impl Iterator<Item = &'s [Stmt]>,
     ) -> (Vec<(u32, u32)>, Vec<(u32, [Option<u32>; 2])>) {
         if self.classes_without_parent.is_empty() && self.functions.is_empty() {
@@ -665,14 +679,28 @@ impl<'a> Walker<'a> {
         let variables = &Variables::of_file(self.symbols, parts);
         let joined = &self.joined_declarators;
         let find = |class: &G::Class| {
-            let position =
-                find_first_recorded_position_of_class(self.symbols, joined, variables, class)?;
+            let position = find_first_recorded_position_of_class(
+                text,
+                import_meta_name,
+                self.symbols,
+                joined,
+                variables,
+                class,
+            )?;
             Some((u32::try_from(class.class_keyword.loc.start).ok()?, position))
         };
         // The tree does not say which of the two a function is.
         let find_in_function = |function: &G::Fn| {
             let positions = [true, false].map(|is_strict| {
-                find_first_recorded_position(self.symbols, joined, variables, function, is_strict)
+                find_first_recorded_position(
+                    text,
+                    import_meta_name,
+                    self.symbols,
+                    joined,
+                    variables,
+                    function,
+                    is_strict,
+                )
             });
             let parameters = u32::try_from(function.open_parens_loc.start).ok()?;
             (positions != [None, None]).then_some((parameters, positions))

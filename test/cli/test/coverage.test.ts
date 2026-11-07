@@ -896,6 +896,94 @@ test("ran", () => {
   expect(exitCode).toBe(0);
 });
 
+// A line has code where the source map has a mapping on it, and the printer maps a token that a stack frame is reported at where it starts a line. So the backquote of a tag and the `[` of a list pattern give their lines code. The `})(` above its arguments is not looked for, and a tag whose text is not ASCII is printed as a call whose texts have no position: those lines have none.
+test("a token that a stack frame is reported at gives the line that it starts code", async () => {
+  // Before each line is how often it ran, or `-` where it has no code.
+  const subject = [
+    " 1|const holder = {",
+    " 1|  list: [1],",
+    " 2|  self() {",
+    " 2|    return this;",
+    " -|  },",
+    " 2|  tag(strings) {",
+    " 2|    return strings.raw.length;",
+    " -|  },",
+    " 1|};",
+    " 1|export function chain() {",
+    " 1|  return holder",
+    " 1|    .self()",
+    " 1|    .self()",
+    " 1|    .list;",
+    " -|}",
+    " 1|export function calledWithArgumentsBelow() {",
+    " 1|  return (() => {",
+    " 1|    return 1;",
+    " -|  })(",
+    " 1|    2,",
+    " 1|    3,",
+    " 1|  );",
+    " -|}",
+    " 1|export function calledWithoutArguments() {",
+    " 1|  return (() => {",
+    " 1|    return 1;",
+    " 1|  })();",
+    " -|}",
+    " 1|export function tagged() {",
+    " 1|  return holder.tag",
+    " 1|    `text`;",
+    " -|}",
+    " 1|export function pattern(",
+    " 1|  first,",
+    " 1|  [",
+    " 1|    second,",
+    " 1|    third,",
+    " -|  ],",
+    " -|  {",
+    " 1|    fourth,",
+    " 1|    ...rest",
+    " -|  },",
+    " -|) {",
+    " 1|  return first + second + third + fourth + Object.keys(rest).length;",
+    " -|}",
+    " 1|export function notAscii() {",
+    " 1|  return holder.tag`head é ${",
+    " 1|    1",
+    " -|  } mid ${",
+    " 1|    2",
+    " -|  } tail`;",
+    " -|}",
+  ];
+  using dir = tempDir("cov-frame-tokens", {
+    "subject.js": subject.map(line => line.slice(3)).join("\n") + "\n",
+    "subject.test.js": `
+import { expect, test } from "bun:test";
+import * as subject from "./subject.js";
+
+test("ran", () => {
+  const { chain, calledWithArgumentsBelow, calledWithoutArguments, tagged, pattern, notAscii } = subject;
+  const values = [chain(), calledWithArgumentsBelow(), calledWithoutArguments(), tagged(), pattern(1, [2, 3], { fourth: 4 }), notAscii()];
+  expect(values).toEqual([[1], 1, 1, 1, 10, 3]);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.js"));
+  expect(record?.match(/^DA:.*$/gm)).toEqual(
+    subject.flatMap((line, index) => (line.startsWith(" -") ? [] : [`DA:${index + 1},${Number(line.slice(0, 2))}`])),
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
 describe("a file loaded more than once counts every load", () => {
   const esm = `export function covered(n: number): number {
   if (n > 5) {

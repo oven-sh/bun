@@ -5,6 +5,8 @@
 // runtime says `e` was thrown, which has to be the first "text" of the file. Neither position is written down anywhere:
 // the test looks for the call in the text. A call in tail position has no caller to report, so `at()` is never returned.
 // `ran()` only counts its calls, for the initializer of a field: JSC keeps the function it is in out of stack traces.
+// `caught(e, "text", 1)` is about the frame of the file that called the first one. `fails` throws in another file.
+// `caught(e, "text", "other")` has the frame at the first "other" where Bun minifies syntax, as it does to what it runs.
 
 export type Case = {
   /** Functions that ran / functions in the file. */
@@ -1047,6 +1049,361 @@ export const cases: Record<string, Case> = {
  1|try { null!.ofNull; } catch (e) { caught(e, "null!"); }
 `,
   },
+  // An expression on several lines is printed on one. A frame is on the line of the token that the engine has it at.
+  "line-breaks.ts": {
+    functions: "9/9",
+    lines: `
+ 2|const empty: any = { missing: null, self() { return this; }, nothing() {} };
+ 1|const callers: any = [null, fails.call];
+ 1|const registry = new Map([["five", 5]]);
+ 1|enum Key { Id = "id" }
+ 1|try {
+ 1|  empty
+ 1|    .self()
+ 1|    .nothing()
+ 1|    .first;
+ 1|} catch (e) {
+ 1|  caught(e, ".first");
+ -|}
+ 1|try {
+ 1|  empty
+ 1|    .missing
+ 1|    [0];
+ 1|} catch (e) {
+ 1|  caught(e, "[0]");
+ -|}
+ -|// The only element of a list is printed in place of the list. The frame is in front of a \`[\` that ends the line above such a key, and at one that starts a line.
+ 1|try {
+ 1|  registry.get("six")[
+ 1|    [callers][0]
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, ")[");
+ -|}
+ 1|try {
+ 1|  registry.get("seven")
+ 1|    [[callers][0]];
+ 1|} catch (e) {
+ 1|  caught(e, "[[callers][0]]");
+ -|}
+ -|// A key that holds a name is printed behind a \`.\` where the program runs or is minified. The \`[\` of such a key has no mapping: the frame is where the object ends. Elsewhere it is at the \`[\` that starts a line. The name is mapped where the key starts, and has fewer than four letters: only a longer word is looked up in a map.
+ 1|try {
+ 1|  registry.get("eight") /* a member */
+ 1|    [Key.Id];
+ 1|} catch (e) {
+ 1|  caught(e, "[Key.Id]", ") /* a member */");
+ -|}
+ 1|try {
+ 1|  registry.get("nine") /* a name */
+ 1|    ['k'];
+ 1|} catch (e) {
+ 1|  caught(e, "['k']", ") /* a name */");
+ -|}
+ 1|try {
+ 1|  empty
+ 1|    .missing
+ 1|    .stored = 1;
+ 1|} catch (e) {
+ 1|  caught(e, ".stored");
+ -|}
+ 1|try {
+ 1|  fails
+ 1|    .self()
+ 1|    .value;
+ 1|} catch (e) {
+ 1|  caught(e, ".value");
+ -|}
+ 1|try {
+ 1|  fails
+ 1|    .self()
+ 1|    ?.value;
+ 1|} catch (e) {
+ 1|  caught(e, "?.value");
+ -|}
+ 1|try {
+ 1|  notDeclaredEither
+ 1|    .member;
+ 1|} catch (e) {
+ 1|  caught(e, "notDeclaredEither");
+ -|}
+ 1|try {
+ 1|  fails
+ 1|    .self()
+ 1|    .call();
+ 1|} catch (e) {
+ 1|  caught(e, "call()");
+ -|}
+ 1|try {
+ 1|  fails.make(
+ 1|    1,
+ 1|  )(23);
+ 1|} catch (e) {
+ 1|  caught(e, ")(23)");
+ -|}
+ 1|try {
+ 1|  (() => {
+ 1|    fails.call();
+ 1|  })(45);
+ 1|} catch (e) {
+ 1|  caught(e, "(45)", 1);
+ -|}
+ -|// What a constant that is read once holds is printed in place of its name. The call is on the line of the name.
+ 1|try {
+ 1|  const once = () => {
+ 1|    fails.call();
+ -|  };
+ 1|  once(67);
+ 1|} catch (e) {
+ 1|  caught(e, "once(67)", 1);
+ -|}
+ 1|try {
+ 1|  const made = fails.make(1);
+ 1|  const r = made(2);
+ 1|} catch (e) {
+ 1|  caught(e, "made(2)");
+ -|}
+ 1|try {
+ 1|  const handler: any = registry.get("five");
+ 1|  const out = handler(1);
+ 1|} catch (e) {
+ 1|  caught(e, "handler(1)");
+ -|}
+ 1|try {
+ 1|  fails.call
+ 1|    ?.(89);
+ 1|} catch (e) {
+ 1|  caught(e, "(89)");
+ -|}
+ -|// Behind a callee that is never null no ?. is printed where the program runs or is minified. The call is where the ?. ends.
+ 1|try {
+ 1|  [fails.call]
+ 1|    ?.(31);
+ 1|} catch (e) {
+ 1|  caught(e, "(31)");
+ -|}
+ 1|try {
+ 1|  (function () {
+ 1|    fails.call();
+ -|  })
+ 1|    ?.(32);
+ 1|} catch (e) {
+ 1|  caught(e, "(32)", 1);
+ -|}
+ 1|try {
+ 1|  (empty.missing, typeof empty)
+ 1|    ?.(33);
+ 1|} catch (e) {
+ 1|  caught(e, "(33)");
+ -|}
+ 1|try {
+ 1|  fails.tag
+ 1|    \`tagged\`;
+ 1|} catch (e) {
+ 1|  caught(e, "\`tagged\`");
+ -|}
+ 1|try {
+ 1|  fails.tag
+ 1|    \`a head
+ -|    on two lines\`;
+ 1|} catch (e) {
+ 1|  caught(e, "\`a head");
+ -|}
+ -|// Except for a browser, a tag whose text is not ASCII is printed as a call. The frame is at the backquote that starts a line.
+ 1|try {
+ 1|  fails.tag
+ 1|    \`not ASCII: é\`;
+ 1|} catch (e) {
+ 1|  caught(e, "\`not ASCII: é\`");
+ -|}
+ 1|try {
+ 1|  fails.make()
+ 1|    \`é\`;
+ 1|} catch (e) {
+ 1|  caught(e, "\`é\`");
+ -|}
+ 1|try {
+ 1|  const
+ 1|    [first] = 1 as any;
+ 1|} catch (e) {
+ 1|  caught(e, "[first]");
+ -|}
+ 1|async function later() {
+ 1|  try {
+ 1|    (await empty.missing)
+ 1|      .awaited;
+ 1|  } catch (e) {
+ 1|    caught(e, ".awaited");
+ -|  }
+ -|}
+ 1|later();
+ 1|function* steps() {
+ 1|  try {
+ 1|    (yield 1)
+ 1|      .yielded;
+ 1|  } catch (e) {
+ 1|    caught(e, ".yielded");
+ -|  }
+ -|}
+ 1|for (const step of steps()) void step;
+ 1|try {
+ 1|  empty.missing
+ -|    // the dot is below.
+ 1|    .below;
+ 1|} catch (e) {
+ 1|  caught(e, ".below");
+ -|}
+ -|// A token is looked for on the line of what stands behind it, and no further. A comment on a line between the two can end like the token: no frame is on the line of a comment.
+ 1|try {
+ 1|  fails.make(5) /* a function */
+ -|  // that is called (too)
+ 1|  (6);
+ 1|} catch (e) {
+ 1|  caught(e, ") /* a function */");
+ -|}
+ 1|try {
+ 1|  callers[1]
+ -|  // the one at [1]
+ 1|  (7);
+ 1|} catch (e) {
+ 1|  caught(e, "1]");
+ -|}
+ 1|try {
+ 1|  (() => {
+ 1|    return fails.call;
+ 1|  })() /* gives one */
+ -|  // (which is called)
+ 1|  (8);
+ 1|} catch (e) {
+ 1|  caught(e, ") /* gives one */");
+ -|}
+ 1|try {
+ 1|  (0, fails.call)
+ -|  // a group (in parentheses)
+ 1|  (9);
+ 1|} catch (e) {
+ 1|  caught(e, "call)");
+ -|}
+ 1|try {
+ 1|  empty.missing.
+ -|    // see the docs.
+ 1|    b;
+ 1|} catch (e) {
+ 1|  caught(e, "missing.");
+ -|}
+ 1|try {
+ 1|  empty.missing[
+ -|    // the first [
+ 1|    2
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, "missing[");
+ -|}
+ 1|try {
+ 1|  empty.nothing(). /* nothing */
+ -|    // explain it.
+ 1|    c;
+ 1|} catch (e) {
+ 1|  caught(e, "). /* nothing */");
+ -|}
+ 1|try {
+ 1|  fails.self()?. /* itself */
+ -|    // or fails.self()?.
+ 1|    value;
+ 1|} catch (e) {
+ 1|  caught(e, ")?. /* itself */");
+ -|}
+ 1|try {
+ 1|  fails.make(10)?.(
+ -|    // maybe?.(
+ 1|    11);
+ 1|} catch (e) {
+ 1|  caught(e, ")?.(");
+ -|}
+ 1|try {
+ 1|  String.raw\`x\`
+ -|  // a \`quote\`
+ 1|  (12);
+ 1|} catch (e) {
+ 1|  caught(e, "raw\`x\`");
+ -|}
+ 1|try {
+ 1|  for (const item of
+ -|    // every one of
+ 1|    empty.missing) void item;
+ 1|} catch (e) {
+ 1|  caught(e, "item of");
+ -|}
+`,
+  },
+  // Issue #17153. Where declarations in a row are printed as one, the frame is at the second text: the `[`, as written.
+  "declarations.ts": {
+    functions: "2/5",
+    lines: `
+ -|type IPost = { id: number };
+ 1|async function scrape(response: any[]): Promise<number> {
+ 1|  const data = (
+ 1|    await Promise.all(
+ 1|      response.map(async (post): Promise<IPost | null> => post)
+ 1|    )
+ 1|  ).filter((post) => post) as IPost[];
+ -|  // Set limit
+ 1|  const [{ id }] = data;
+ 1|  return id;
+ -|}
+ 1|scrape([]).catch(e => caught(e, "const [{ id }]", "[{ id }]"));
+ -|// The rest of an object is copied at the \`{\`. Behind \`const\` the \`{\` starts no line: the frame is at \`const\`.
+ 1|try {
+ 1|  const label = String(1);
+ 1|  const { self, ...rest } = fails;
+ 1|} catch (e) {
+ 1|  caught(e, "const { self, ...rest }", "{ self, ...rest }");
+ -|}
+ 1|try {
+ 1|  const other = String(2),
+ 1|    { call, ...others } = fails;
+ 1|} catch (e) {
+ 1|  caught(e, "{ call, ...others }");
+ -|}
+ 1|const gone = Proxy.revocable({}, {});
+ 1|gone.revoke();
+ 1|try {
+ 1|  const held = String(3);
+ 1|  const { ...copy } = gone.proxy;
+ 1|} catch (e) {
+ 1|  caught(e, "const { ...copy }", "{ ...copy }");
+ -|}
+ 1|try {
+ 1|  const kept = String(4),
+ 1|    { ...taken } = gone.proxy;
+ 1|} catch (e) {
+ 1|  caught(e, "{ ...taken }");
+ -|}
+ -|// The rest of a parameter, of what was caught and of an element of a list is copied at the \`{\` as well. Parameters and what a \`catch\` takes ran as often as the block behind them: never, here.
+ 1|try {
+ 0|  (function (
+ 0|    { own, ...more }: any,
+ 1|  ) {})(fails);
+ 1|} catch (e) {
+ 1|  caught(e, "{ own, ...more }");
+ -|}
+ 1|try {
+ 1|  try {
+ 1|    throw fails;
+ 0|  } catch (
+ 0|    { tag, ...left }
+ -|  ) {}
+ 1|} catch (e) {
+ 1|  caught(e, "{ tag, ...left }");
+ -|}
+ 1|try {
+ 1|  const [
+ 1|    { make, ...spare },
+ 1|  ] = [fails];
+ 1|} catch (e) {
+ 1|  caught(e, "{ make, ...spare }");
+ -|}
+`,
+  },
   "common.cjs": {
     functions: "1/1",
     lines: `
@@ -1123,6 +1480,72 @@ export const cases: Record<string, Case> = {
  1|awaited();
  1|new Imported().method();
  1|new (class extends Base {})().method();
+`,
+  },
+  // A bundle prints a member of a namespace as a name, which stands where the name of the member is written. The frame is in front of a `[` that ends the line above such a key, and at one that starts a line.
+  "tokens.ts": {
+    functions: "0/0",
+    lines: `
+ 1|export const primaryColorVeryLongName = "primary";
+ 1|export const hue = "hue";
+ 1|export const x = "x";
+`,
+  },
+  // The name in quotes has three letters: a bundle maps the name it prints for it to the quote, and only a word of four letters or more is looked up in a map.
+  "keys.ts": {
+    functions: "1/1",
+    lines: `
+ 1|import * as tokens from "./tokens.ts";
+ 2|const theme: any = { get() {} };
+ 1|try {
+ 1|  theme.colors[
+ 1|    tokens.primaryColorVeryLongName
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, "colors[");
+ -|}
+ 1|try {
+ 1|  theme.get()[
+ 1|    tokens.x
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, ")[");
+ -|}
+ 1|try {
+ 1|  theme.sizes[
+ 1|    tokens["hue"]
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, "sizes[");
+ -|}
+ 1|try {
+ 1|  theme.get()
+ 1|    [tokens.x];
+ 1|} catch (e) {
+ 1|  caught(e, "[tokens.x]");
+ -|}
+`,
+  },
+  // A bundle prints `module.id` as a text, and one of ES modules prints `exports.x` as a name.
+  "keys.cjs": {
+    functions: "1/1",
+    lines: `
+ 1|exports.x = "x";
+ 1|const theme = { get() {} };
+ 1|try {
+ 1|  theme.colors[
+ 1|    exports.x
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, "colors[");
+ -|}
+ 1|try {
+ 1|  theme.get()[
+ 1|    module.id
+ -|  ];
+ 1|} catch (e) {
+ 1|  caught(e, ")[");
+ -|}
 `,
   },
   // The error is from the file that is loaded. Below it is who loads it.
@@ -1210,4 +1633,349 @@ test("snapshots", () => {
   expect(3)
     .toMatchInlineSnapshot(«\`3\`»);
 });
+`;
+
+// Plain JavaScript that also runs as it is written. ASCII only: Bun reads that copy as Latin-1. Every row throws.
+export const asWritten = `
+const fails = {
+  self() { return this; },
+  call() { throw new Error("called"); },
+  make() { return fails.call; },
+  tag() { throw new Error("tagged"); },
+  get value() { throw new Error("read"); },
+};
+const empty = { missing: null, self() { return this; }, nothing() {} };
+const callers = [null, fails.call];
+const registry = new Map([["five", 5]]);
+const rows = {
+  member() {
+    empty
+      .self()
+      .nothing()
+      .first;
+  },
+  index() {
+    empty
+      .missing
+      [0];
+  },
+  keyInListBelowBracket(key) {
+    empty.nothing()[
+      [key][0]
+    ];
+  },
+  keyInListBehindBracket(key) {
+    empty.nothing()
+      [[key][0]];
+  },
+  nameInQuotesOfConstant() {
+    const attrs = registry.get("six");
+    const indices = attrs["indices"];
+    return indices;
+  },
+  commentBetweenBracketAndKey() {
+    empty.nothing()
+      [ /* the key */ 2];
+  },
+  constantKey() {
+    const once = empty.nothing();
+    const key = ["k"][0];
+    return once
+      [key];
+  },
+  constantKeyThatIsNoName() {
+    const once = empty.nothing();
+    const key = ["a-b"][0];
+    return once
+      [key];
+  },
+  store() {
+    empty
+      .missing
+      .stored = 1;
+  },
+  getter() {
+    fails
+      .self()
+      .value;
+  },
+  dotOnLineOfItsOwn() {
+    empty.nothing()
+      .
+      member;
+  },
+  optionalMember() {
+    fails
+      .self()
+      ?.value;
+  },
+  nameThenMember() {
+    notDeclared
+      .member;
+  },
+  nameThenIndex() {
+    notDeclared
+      [0];
+  },
+  nameThenTag() {
+    notDeclared
+      \`tagged\`;
+  },
+  callOfMember() {
+    fails
+      .self()
+      .call();
+  },
+  callOfResult() {
+    fails.make(
+      1,
+    )(2);
+  },
+  callOfFunction() {
+    (() => {
+      fails.call();
+    })(3);
+  },
+  callOfGroup() {
+    (fails.make()
+    )
+      (4);
+  },
+  callOfFunctionWithArgumentsBelow() {
+    (() => {
+      fails.call();
+    })(
+      18,
+    );
+  },
+  functionUsedOnce() {
+    const once = () => {
+      fails.call();
+    };
+    once(5);
+  },
+  resultUsedOnce() {
+    const made = fails.make(6);
+    const result = made(7);
+    return result + 1;
+  },
+  numberUsedOnce() {
+    const handler = registry.get("five");
+    const answer = handler(8);
+    return answer + 1;
+  },
+  optionalCall() {
+    fails.call
+      ?.(9);
+  },
+  optionalCallOfNumber() {
+    1
+      ?.(10);
+  },
+  optionalCallOfTemplate() {
+    \`text\`
+      ?.(11);
+  },
+  optionalCallOfList() {
+    [1]
+      ?.(12);
+  },
+  optionalCallOfFunction() {
+    (function () {
+      fails.call();
+    })
+      ?.(13);
+  },
+  optionalCallOfClass() {
+    (class {})
+      ?.(14);
+  },
+  optionalCallOfSum() {
+    (empty.missing + 1)
+      ?.(15);
+  },
+  optionalCallBehindComma() {
+    (empty, [1])
+      ?.(16);
+  },
+  optionalCallWithoutArguments() {
+    [1]
+      ?.();
+  },
+  optionalCallWithArgumentsBelow() {
+    [1]
+      ?.(
+        17,
+      );
+  },
+  optionalCallOfMemberWithArgumentsBelow() {
+    fails.call
+      ?.(
+        19,
+      );
+  },
+  tag() {
+    fails.tag
+      \`tagged\`;
+  },
+  tagOnTwoLines() {
+    fails.tag
+      \`a head
+      on two lines\`;
+  },
+  of() {
+    for (const each
+      of 1) void each;
+  },
+  pattern() {
+    const
+      [first] = 1;
+  },
+  ofAfterPattern() {
+    for (const
+      [] of null) {}
+  },
+  async afterAwait() {
+    (await empty.missing)
+      .awaited;
+  },
+  inGenerator() {
+    function* steps() {
+      (yield 1)
+        .yielded;
+    }
+    for (const step of steps()) void step;
+  },
+  patternAfterDeclaration() {
+    const data = [1].filter(
+      each => each > 1,
+    );
+    // a comment
+    const [{ id }] = data;
+    return id;
+  },
+  objectRestAfterDeclaration() {
+    const label = String(1);
+    const { self, ...rest } = fails;
+    return [label, self, rest];
+  },
+  objectRestBelowDeclarator() {
+    const label = String(2),
+      { self, ...rest } = fails;
+    return [label, self, rest];
+  },
+  objectRestOfParameter() {
+    function take(
+      { self, ...rest }
+    ) {
+      return [self, rest];
+    }
+    return [take(fails)];
+  },
+  objectRestInHeadOfLoop() {
+    for (const
+      { self, ...rest } of [fails]) void self;
+  },
+  dotBelowComment() {
+    empty.missing
+      // the dot is below.
+      .below;
+  },
+  commentAfterCall() {
+    fails.make(10)
+    // that is called (too)
+    (11);
+  },
+  commentAfterElement() {
+    callers[1]
+    // the one at [1]
+    (12);
+  },
+  commentAfterCalledFunction() {
+    (() => {
+      return fails.call;
+    })()
+    // (which is called)
+    (13);
+  },
+  commentAfterGroup() {
+    (0, fails.call)
+    // a group (in parentheses)
+    (14);
+  },
+  commentAfterDot() {
+    empty.missing.
+      // see the docs.
+      b;
+  },
+  commentAfterBracket() {
+    empty.missing[
+      // the first [
+      2
+    ];
+  },
+  commentAfterDotOfCall() {
+    empty.nothing().
+      // explain it.
+      c;
+  },
+  commentAfterOptionalDot() {
+    fails.self()?.
+      // or fails.self()?.
+      value;
+  },
+  commentInOptionalCall() {
+    fails.make(15)?.(
+      // maybe?.(
+      16);
+  },
+  commentAfterTemplate() {
+    String.raw\`x\`
+    // a \`quote\`
+    (17);
+  },
+  memberOfName(nothing) {
+    nothing
+      .member;
+  },
+  indexOfName(nothing) {
+    nothing
+      [0];
+  },
+  tagOfName(tag = fails.tag) {
+    tag
+      \`tagged\`;
+  },
+  lastArgument() {
+    String(
+      notDeclared
+    );
+  },
+  spread() {
+    String(...
+      1);
+  },
+  construct() {
+    new
+      empty.missing();
+  },
+  commentAboveCallOfFunction() {
+    (function () {
+      fails.call();
+    })
+    // call it (now)
+    ();
+  },
+};
+const frames = {};
+for (const [name, row] of Object.entries(rows)) {
+  try {
+    await row();
+    frames[name] = "did not throw";
+  } catch (e) {
+    const lines = e.stack.split("\\n").flatMap(frame => frame.match(/rows\\.mjs:(\\d+):\\d+\\)?$/)?.[1] ?? []);
+    frames[name] = e.name + " on " + lines.join(", ");
+  }
+}
+console.log(JSON.stringify(frames));
 `;

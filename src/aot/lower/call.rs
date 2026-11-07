@@ -294,7 +294,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_done_in_place: is_reflect_construct_syntax || self.file.makes_array_in_caller(site),
             call_number: self.file.find_number_of_symbol_call(call),
         };
-        self.set_position(self.file.call_position(site));
+        let position = match hir[call].kind {
+            ExprKind::TaggedTemplate(tagged) => self.file.tag_call_position(tagged),
+            _ => self.file.call_position(site),
+        };
+        self.set_position(position);
         // The callee is read from whatever `Reflect` names there.
         let tests_callee = is_reflect_construct_syntax && callee.key.is_some();
         if is_reflect_construct_syntax && !tests_callee {

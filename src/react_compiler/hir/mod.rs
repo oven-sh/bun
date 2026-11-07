@@ -802,6 +802,8 @@ pub enum InstructionValue {
     TaggedTemplateExpression {
         tag: Place,
         value: TemplateQuasi,
+        /// `E::Template.head_loc` of the template that was written: its opening backquote.
+        head_loc: bun_ast::Loc,
         loc: Option<SourceLocation>,
     },
     TemplateLiteral {

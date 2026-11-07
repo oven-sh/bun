@@ -27,7 +27,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let position = match object {
-            Some(object) => self.file.member_position(object),
+            Some(_) => self.file.member_position(inner),
             None => self.file.recorded_name_position(inner),
         };
         self.builder.record_position(position);

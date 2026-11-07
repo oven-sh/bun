@@ -1,5 +1,8 @@
+use bun_ast::FrameToken;
 use bun_sema::check::aot::{CheckedType, GaveUp};
-use bun_sema::hir::{ExprId, NameKind, PatId, PatKind, PatProp, StmtId, StmtKind, VarKind};
+use bun_sema::hir::{
+    ExprId, NameKind, PatId, PatKind, PatProp, PropKey, StmtId, StmtKind, VarKind,
+};
 use smallvec::SmallVec;
 
 use super::control::{BreakTargetKind, CleanupLanding, CleanupPath};
@@ -275,31 +278,48 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.is_shown_without_source_map() {
             return self.next_token_position(hir[left].loc.end);
         }
+        let start = hir[statement].start;
         let position = match hir[left].kind {
             StmtKind::Var(declarations) => {
                 let head = declarations.iter().next();
-                head.and_then(|declaration| self.last_mapped_pattern_position(hir[declaration].pat))
+                head.and_then(|head| self.last_mapped_pattern_position(hir[head].pat, Some(start)))
             }
             StmtKind::Expr(target) => Some(self.last_mapped_position(target)),
             _ => None,
         };
-        position.unwrap_or(hir[statement].start)
+        position.unwrap_or(start)
     }
 
-    pub(in crate::lower) fn last_mapped_pattern_position(&self, pattern: PatId) -> Option<u32> {
+    // The last token of a pattern that the source map knows. `in_front` is the last one in front of the pattern: None where only the names of the pattern are printed.
+    pub(in crate::lower) fn last_mapped_pattern_position(
+        &self,
+        pattern: PatId,
+        in_front: Option<u32>,
+    ) -> Option<u32> {
         let hir = self.hir;
-        let last_of = |part: PatId, default: ExprId| match default.is_some() {
-            true => Some(self.last_mapped_position(default)),
-            false => self.last_mapped_pattern_position(part),
-        };
+        // A text that is shown without a source map has no token in front.
+        let in_front = in_front.filter(|_| !self.is_shown_without_source_map());
         match hir[pattern].kind {
             PatKind::Missing => None,
             PatKind::Ident(_) => Some(hir[pattern].pos),
             PatKind::Array(elements) => {
-                let mut elements = elements.iter().rev().map(|element| hir[element]);
-                elements.find_map(|element| last_of(element.pat, element.default))
+                // The `[` is mapped where it starts a line, and is the last token of a list whose elements map nothing.
+                let bracket = hir[pattern].pos;
+                let mut last = in_front.and_then(|in_front| {
+                    self.find_token_on_new_line(FrameToken::Known, bracket, bracket, in_front)
+                });
+                for element in elements.iter().map(|element| hir[element]) {
+                    let before = in_front.map(|in_front| last.unwrap_or(in_front));
+                    let mapped = match element.default.some() {
+                        Some(default) => Some(self.last_mapped_position(default)),
+                        None => self.last_mapped_pattern_position(element.pat, before),
+                    };
+                    last = mapped.or(last);
+                }
+                last
             }
             PatKind::Object(properties) => {
+                // The `{` of a pattern with a rest element is mapped where it starts a line, and is never the last token: the name behind `...` is mapped behind it.
                 let mut properties = properties.iter().rev().map(|property| hir[property]);
                 // `{ "a": a }` is printed as `{ a }`, at the key.
                 let is_printed_as_one_name = |property: &PatProp| {
@@ -311,9 +331,21 @@ impl FileLowering<'_, '_, '_, '_> {
                         && property.default.is_none()
                         && matches!(hir[property.value].kind, PatKind::Ident(bound) if Some(bound) == name)
                 };
-                properties.find_map(|property| match is_printed_as_one_name(&property) {
-                    true => Some(property.key_pos),
-                    false => last_of(property.value, property.default),
+                properties.find_map(|property| {
+                    if is_printed_as_one_name(&property) {
+                        return Some(property.key_pos);
+                    }
+                    if let Some(default) = property.default.some() {
+                        return Some(self.last_mapped_position(default));
+                    }
+                    // The key is mapped in front of what the property binds, and is the last token where that maps nothing.
+                    let is_keyed = in_front.is_some() && !property.is_rest;
+                    let key = is_keyed.then(|| match property.key {
+                        PropKey::Computed(key) => self.last_mapped_position(key),
+                        PropKey::None | PropKey::Name(_) | PropKey::Private(_) => property.key_pos,
+                    });
+                    self.last_mapped_pattern_position(property.value, key)
+                        .or(key)
                 })
             }
         }

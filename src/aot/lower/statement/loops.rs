@@ -87,6 +87,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     // The source map knows no `let` in the head of a loop.
                     self.joined_declarations_end = Some(self.file.hir[statement].start);
                     self.lower_statement(init);
+                    self.joined_declarations_end = None;
                 }
                 self.lower_for_loop(statement);
             }

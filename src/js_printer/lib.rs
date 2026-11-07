@@ -1595,7 +1595,12 @@ enum ClauseItemAs {
 // ───────────────────────────────────────────────────────────────────────────
 pub(crate) mod __gated_printer {
     use super::*;
+    use bun_ast::FrameToken;
     use bun_ast::ImportRecordTag;
+    use bun_ast::frame_token::{
+        callee_ends_in_name, callee_is_written_in_front, is_identifier_kind,
+        is_import_printed_as_name,
+    };
     use bun_ptr::BackRef;
     use js_ast::Symbol;
     use js_ast::binding::{Binding, Data as BindingData};
@@ -1622,6 +1627,21 @@ pub(crate) mod __gated_printer {
             set.insert(flag);
         } else {
             set.remove(flag);
+        }
+    }
+    /// The backquote that was written, where `call` is `` tag(__rawTemplate([..])`..`, x) ``, which the parser makes of a tagged template whose text is not ASCII: its first argument is that template, without a position and behind a made-up tag.
+    #[inline]
+    fn find_backquote_of_tag_call(call: &E::Call) -> Option<bun_ast::Loc> {
+        // PERF: a call that the parser read has a `)`, and pays this one compare.
+        if !call.close_paren_loc.is_empty() {
+            return None;
+        }
+        let first = call.args.first()?;
+        match &first.data {
+            ExprData::ETemplate(template) if first.loc.is_empty() && template.tag.is_some() => {
+                Some(template.head_loc)
+            }
+            _ => None,
         }
     }
 
@@ -2415,6 +2435,120 @@ pub(crate) mod __gated_printer {
             }
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
+        }
+
+        /// `add_source_mapping(location)` behind `token`, of which `printed_len` bytes were just printed. Maps the token too where it is on another line than what was mapped last.
+        #[inline]
+        pub(crate) fn add_source_mapping_behind(
+            &mut self,
+            location: bun_ast::Loc,
+            token: FrameToken,
+            printed_len: u8,
+            first: bun_ast::Loc,
+        ) {
+            if !GENERATE_SOURCE_MAP {
+                return;
+            }
+            self.source_map_builder.add_source_mapping_behind(
+                location,
+                self.writer.slice(),
+                token,
+                printed_len,
+                first,
+            );
+        }
+
+        /// `add_source_mapping(location)` behind the `.` or `?.` of a member, of which `printed_len` bytes were just printed. Maps that token too where the member starts a line behind a target that is no name.
+        #[inline(always)]
+        fn add_source_mapping_behind_member(
+            &mut self,
+            location: bun_ast::Loc,
+            printed_len: u8,
+            target: &Expr,
+        ) {
+            if !GENERATE_SOURCE_MAP {
+                return;
+            }
+            // PERF: a member behind a name, or on the line of what was mapped last, pays these two inlined tests and nothing else.
+            if is_identifier_kind(&target.data)
+                || self
+                    .source_map_builder
+                    .is_on_line_of_previous_mapping(location)
+            {
+                return self.add_source_mapping(location);
+            }
+            self.add_source_mapping_behind_member_off_previous_line(location, printed_len, target);
+        }
+
+        /// The rest of `add_source_mapping_behind_member`. Behind what is printed as a name the token stays unmapped: JSC reports the name where it ends, which is where the token is printed.
+        #[inline(never)]
+        fn add_source_mapping_behind_member_off_previous_line(
+            &mut self,
+            location: bun_ast::Loc,
+            printed_len: u8,
+            target: &Expr,
+        ) {
+            if self.is_printed_as_name(target) {
+                self.add_source_mapping(location);
+            } else {
+                self.add_source_mapping_behind(
+                    location,
+                    FrameToken::Member,
+                    printed_len,
+                    target.loc,
+                );
+            }
+        }
+
+        /// Maps the `[` of `member`, an expression at `loc`, which is printed next: where the parser read it on another line than what was mapped last, behind a target that is no name.
+        #[inline(always)]
+        fn add_source_mapping_of_bracket(&mut self, member: &E::Index, loc: bun_ast::Loc) {
+            // PERF: a `[` behind a name pays this one inlined test, and one on the line of what was mapped last the two below and nothing else.
+            if !GENERATE_SOURCE_MAP || is_identifier_kind(&member.target.data) {
+                return;
+            }
+            // A `[` that no parser read stays unmapped: nothing says where it stands.
+            let Some(bracket) = member.bracket_loc(loc) else {
+                return;
+            };
+            if self
+                .source_map_builder
+                .is_on_line_of_previous_mapping(bracket)
+            {
+                return;
+            }
+            self.add_source_mapping_of_bracket_off_previous_line(bracket, &member.target);
+        }
+
+        /// The rest of `add_source_mapping_of_bracket`. Behind what is printed as a name the `[` stays unmapped, as the `.` of a member does.
+        #[inline(never)]
+        fn add_source_mapping_of_bracket_off_previous_line(
+            &mut self,
+            bracket: bun_ast::Loc,
+            target: &Expr,
+        ) {
+            if !self.is_printed_as_name(target) {
+                self.add_source_mapping_on_new_line(bracket, FrameToken::Known, bracket);
+            }
+        }
+
+        /// Maps `token`, which is printed next, where it and `anchor` are on another line than what was mapped last.
+        #[inline(always)]
+        pub(crate) fn add_source_mapping_on_new_line(
+            &mut self,
+            anchor: bun_ast::Loc,
+            token: FrameToken,
+            first: bun_ast::Loc,
+        ) {
+            if !GENERATE_SOURCE_MAP
+                || self
+                    .source_map_builder
+                    .is_on_line_of_previous_mapping(anchor)
+            {
+                return;
+            }
+            self.source_map_builder
+                .add_source_mapping_off_previous_line(anchor, self.writer.slice(), token, first);
         }
 
         #[inline]
@@ -3508,11 +3642,49 @@ pub(crate) mod __gated_printer {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
 
-                    if e.optional_chain == Some(js_ast::OptionalChain::Start) {
+                    let args = e.args.slice();
+                    let is_optional = e.optional_chain == Some(js_ast::OptionalChain::Start);
+                    if is_optional {
                         self.print(b"?.");
                     }
+                    if GENERATE_SOURCE_MAP {
+                        // JSC reports a call where its callee ends and an optional call behind its `?.`. A callee that ends in a name is mapped on that line already.
+                        let behind = || args.first().map_or(e.close_paren_loc, |arg| arg.loc);
+                        if is_optional {
+                            self.add_source_mapping_on_new_line(
+                                behind(),
+                                FrameToken::OptionalCall,
+                                e.target.loc,
+                            );
+                        } else if let Some(backquote) = find_backquote_of_tag_call(e) {
+                            // Written as a tagged template, the call is reported at the backquote. Its `(` is mapped as that backquote is: not behind a tag that is printed as a name.
+                            if !self.is_printed_as_name(&e.target) {
+                                self.add_source_mapping_on_new_line(
+                                    backquote,
+                                    FrameToken::Known,
+                                    backquote,
+                                );
+                            }
+                        } else if !callee_ends_in_name(&e.target.data)
+                            && !self.is_printed_as_name(&e.target)
+                        {
+                            if callee_is_written_in_front(e.target.loc, expr.loc) {
+                                // A callee that was written in front of the call is printed in place of a name.
+                                self.add_source_mapping_on_new_line(
+                                    expr.loc,
+                                    FrameToken::Known,
+                                    expr.loc,
+                                );
+                            } else {
+                                self.add_source_mapping_on_new_line(
+                                    behind(),
+                                    FrameToken::EndOfCallee,
+                                    e.target.loc,
+                                );
+                            }
+                        }
+                    }
                     self.print(b"(");
-                    let args = e.args.slice();
 
                     if !args.is_empty() {
                         self.print_expr(args[0], Level::Comma, ExprFlag::none());
@@ -3694,7 +3866,11 @@ pub(crate) mod __gated_printer {
                             self.print(b".");
                         }
 
-                        self.add_source_mapping(e.name_loc);
+                        self.add_source_mapping_behind_member(
+                            e.name_loc,
+                            if is_optional_chain { 2 } else { 1 },
+                            &e.target,
+                        );
                         self.print_identifier(&e.name);
                     } else {
                         if is_optional_chain {
@@ -3759,10 +3935,16 @@ pub(crate) mod __gated_printer {
                             if !is_optional_chain_start {
                                 self.print(b".");
                             }
-                            self.add_source_mapping(e.index.loc);
+                            self.add_source_mapping_behind_member(
+                                e.index.loc,
+                                if is_optional_chain_start { 2 } else { 1 },
+                                &e.target,
+                            );
                             self.print_symbol(priv_.ref_);
                         }
                         _ => {
+                            // JSC reports an element at its `[`. The key may be printed from elsewhere, so the `[` is mapped from where the parser read it.
+                            self.add_source_mapping_of_bracket(e, expr.loc);
                             self.print(b"[");
                             self.add_source_mapping(e.index.loc);
                             self.print_expr(e.index, Level::Lowest, ExprFlag::none());
@@ -4071,6 +4253,7 @@ pub(crate) mod __gated_printer {
                             }
                             E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                         },
+                        head_loc: e.head_loc,
                     };
                     if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
                         // `TemplatePart` is structurally
@@ -4136,6 +4319,7 @@ pub(crate) mod __gated_printer {
                                     }
                                     E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                                 },
+                                head_loc: e.head_loc,
                             };
                             let e2 = copy.fold(self.bump, expr.loc);
                             match &e2.data {
@@ -4167,6 +4351,7 @@ pub(crate) mod __gated_printer {
                                                 E::TemplateContents::Raw(*r)
                                             }
                                         },
+                                        head_loc: t.head_loc,
                                     };
                                 }
                                 _ => {}
@@ -4199,6 +4384,20 @@ pub(crate) mod __gated_printer {
                             self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                        }
+                        // JSC reports the call of a tag at the backquote. A name is reported where it ends, which is the same place, so the backquote behind one stays unmapped. So does the one behind a made-up tag, in a template without a position: the `(` of the call that the parser made stands for it. PERF: the line is asked first, because whether an import is printed as a name is read off its symbol.
+                        if GENERATE_SOURCE_MAP
+                            && !expr.loc.is_empty()
+                            && !self
+                                .source_map_builder
+                                .is_on_line_of_previous_mapping(e.head_loc)
+                            && !self.is_printed_as_name(tag)
+                        {
+                            self.add_source_mapping_on_new_line(
+                                e.head_loc,
+                                FrameToken::Known,
+                                e.head_loc,
+                            );
                         }
                     } else {
                         self.add_source_mapping(expr.loc);
@@ -5166,6 +5365,12 @@ pub(crate) mod __gated_printer {
                 BindingData::BArray(b) => {
                     let b = b.get();
                     let items = slice_of(b.items);
+                    // JSC reports what iterating the value throws at the `[`.
+                    self.add_source_mapping_on_new_line(
+                        binding.loc,
+                        FrameToken::Known,
+                        binding.loc,
+                    );
                     self.print(b"[");
                     if !items.is_empty() {
                         if !b.is_single_line {
@@ -5218,6 +5423,18 @@ pub(crate) mod __gated_printer {
                                 if printer.symbols().get_const(id.get().r#ref)
                                     .is_some_and(|symbol| symbol.is_bound_import_item()))
                     };
+                    // JSC reports what copying the rest throws at the `{`. A rest element is the last property.
+                    if GENERATE_SOURCE_MAP
+                        && properties.last().is_some_and(|rest| {
+                            rest.flags.contains(js_ast::flags::Property::IsSpread)
+                        })
+                    {
+                        self.add_source_mapping_on_new_line(
+                            binding.loc,
+                            FrameToken::Known,
+                            binding.loc,
+                        );
+                    }
                     self.print(b"{");
                     if !properties.is_empty()
                         && (!self.options.has_dynamic_import_items
@@ -6749,6 +6966,53 @@ pub(crate) mod __gated_printer {
             ))
         }
 
+        /// Whether `print_expr` writes `target` as a name: an identifier kind, or an import that is not read from a namespace. An `X.name` that its `EDot` and `EIndex` arms replace by the import the linker bound it to is printed as that import.
+        #[inline(always)]
+        fn is_printed_as_name(&self, target: &Expr) -> bool {
+            match &target.data {
+                ExprData::EDot(e) if e.is_import_property_use => {
+                    self.is_import_printed_as_name(target)
+                }
+                ExprData::EIndex(e) if e.is_import_property_use => {
+                    self.is_import_printed_as_name(target)
+                }
+                ExprData::EImportIdentifier(_) => self.is_import_printed_as_name(target),
+                data => is_identifier_kind(data),
+            }
+        }
+
+        /// Whether `print_expr` writes a name for `target`, an import or an `X.name` that the linker bound to one. Its `EImportIdentifier` arm writes an import that is read from a namespace as `X.name`.
+        #[inline(never)]
+        fn is_import_printed_as_name(&self, target: &Expr) -> bool {
+            let binding = match &target.data {
+                ExprData::EImportIdentifier(_) => Some(*target),
+                ExprData::EDot(e) if e.optional_chain.is_none() => {
+                    self.import_member_binding(e.target, &e.name)
+                }
+                ExprData::EIndex(e) if e.optional_chain.is_none() => {
+                    let key = e.index.unwrap_inlined().data.as_e_string();
+                    key.and_then(|key| {
+                        let key = key.flattened(self.bump);
+                        let key = key.is_utf8().then(|| key.slice8())?;
+                        self.import_member_binding(e.target, key)
+                    })
+                }
+                _ => None,
+            };
+            let Some(ExprData::EImportIdentifier(import)) = binding.map(|binding| binding.data)
+            else {
+                return false;
+            };
+            let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
+                self.symbols().follow(import.ref_)
+            } else {
+                import.ref_
+            };
+            let minify_syntax = self.options.minify_syntax;
+            (self.symbols().get_const(ref_))
+                .is_some_and(|symbol| is_import_printed_as_name(symbol, minify_syntax))
+        }
+
         pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,
@@ -7632,6 +7896,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
         ),
         cover_lines_without_mappings: true,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+        source_contents: source.contents(),
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
             None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {

@@ -1,3 +1,4 @@
+use bun_ast::FrameToken;
 use bun_sema::hir::PropKey;
 use smallvec::SmallVec;
 
@@ -27,12 +28,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.set_position(property.position);
             if property.is_rest {
                 let prepared = self.prepare_target(property.target);
-                // JSC records the copy at the pattern and nothing for the store. The `{` of an assignment is the start of an expression, which the source map knows.
+                // JSC records the copy at the `{` and nothing for the store. The `{` of an assignment starts an expression, which the source map knows. It knows the `{` of a binding only where that starts a line.
+                let file = &*self.file;
+                let brace = file.node_position(node);
                 let recorded = match node {
-                    PatternNode::Binding(_) if !self.file.runs_as_written() => mapped,
-                    PatternNode::Binding(_) | PatternNode::Assignment(_) => {
-                        self.file.node_position(node)
+                    PatternNode::Binding(_) if !file.runs_as_written() => {
+                        let known = FrameToken::Known;
+                        let found = file.find_token_on_new_line(known, brace, brace, mapped);
+                        found.unwrap_or(mapped)
                     }
+                    PatternNode::Binding(_) | PatternNode::Assignment(_) => brace,
                 };
                 self.set_position(recorded);
                 let layout = self.find_rest_layout(property.target);

@@ -4415,6 +4415,131 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    // A Hugo project. The plugin reads `.gohtml`, `.tmpl` and the like, and `.go.html` before Prettier reads `.html`.
+    // Its `.html` layouts need an override, which the themes ship.
+    describe("Go templates, with prettier-plugin-go-template", () => {
+      const plugin = "prettier-plugin-go-template";
+      const list = `{{ define "main" }}\n  <ul>\n    {{ range .Pages }}\n      <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>\n    {{ end }}\n  </ul>\n{{ end }}\n`;
+      const meta = `{{ define "head" }}\n  <meta content="{{ .Date.Format "2006-01-02" }}" />\n{{ end }}\n`;
+      const collapsed = (text: string) => text.replace(/ +/g, " ");
+      const project = {
+        "node_modules/prettier/package.json": packages["node_modules/prettier/package.json"],
+        "node_modules/prettier/index.cjs": packages["node_modules/prettier/index.cjs"],
+        [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "version": "0.0.15" }`,
+        "a.js": "b  ;\n",
+        "layouts/list.html": list,
+        "layouts/meta.html": meta,
+        "partials/x.gotmpl": "<p   >x</p>\n",
+        "partials/y.go.html": "<p   >y</p>\n",
+      };
+      const reads = [...Object.keys(project).slice(3), "node_modules/prettier/calls.txt"];
+      const sentTo = (calls: string | null) =>
+        (calls ?? "")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map(it => basename(JSON.parse(it).filepath))
+          .sort();
+
+      test(
+        "the plugin's own files go to Prettier, and the rest is formatted natively, as without the plugin",
+        async () => {
+          const files = { ...project, ".prettierrc": `{ "plugins": ["${plugin}"] }\n` };
+          const result = await format(files, [], { reads });
+          const { "node_modules/prettier/calls.txt": calls, ...written } = result.files;
+          expect(written).toEqual({
+            "a.js": "b;\n",
+            // Prettier reads `.html` with its own parser unless an override says otherwise.
+            "layouts/list.html": `{{ define "main" }}\n<ul>\n  {{ range .Pages }}\n  <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>\n  {{ end }}\n</ul>\n{{ end }}\n`,
+            "layouts/meta.html": meta,
+            "partials/x.gotmpl": "<p >x</p>\n",
+            "partials/y.go.html": "<p >y</p>\n",
+          });
+          expect(sentTo(calls)).toEqual(["x.gotmpl", "y.go.html"]);
+          expect(result.stderr).toContain('error: Opening tag "meta" not terminated.');
+          expect(result.stderr).toContain("Used your installed Prettier for 2 files in a language that needs a plugin");
+          expect(result.stderr).not.toContain("plugins that bun fmt does not include");
+          expect(result.exitCode).toBe(2);
+        },
+        timeout,
+      );
+
+      test(
+        "with an override that gives *.html the plugin's parser, the layouts go to Prettier too",
+        async () => {
+          const overrides = [{ files: ["*.html"], options: { parser: "go-template" } }];
+          const config = JSON.stringify({ plugins: [plugin], overrides }) + "\n";
+          const files = { ...project, ".prettierrc": config };
+          const result = await format(files, [], { reads });
+          const { "node_modules/prettier/calls.txt": calls, ...written } = result.files;
+          expect(written).toEqual({
+            "a.js": "b;\n",
+            "layouts/list.html": collapsed(list),
+            "layouts/meta.html": collapsed(meta),
+            "partials/x.gotmpl": "<p >x</p>\n",
+            "partials/y.go.html": "<p >y</p>\n",
+          });
+          expect(sentTo(calls)).toEqual(["list.html", "meta.html", "x.gotmpl", "y.go.html"]);
+          expect(result.stderr).toContain("Used your installed Prettier for 4 files in a language that needs a plugin");
+          expect(result.exitCode).toBe(0);
+          const listed = await format(files, ["--list-files"]);
+          expect(listed.stdout.split("\n").sort()).toEqual([
+            ".prettierrc",
+            "a.js",
+            "layouts/list.html",
+            "layouts/meta.html",
+            "partials/x.gotmpl",
+            "partials/y.go.html",
+          ]);
+          expect(listed.exitCode).toBe(0);
+          const piped = await format(files, ["--stdin-filepath", "layouts/single.html"], { stdin: meta });
+          expect(piped).toMatchObject({ raw: collapsed(meta), stderr: "", exitCode: 0 });
+          const checked = await format({ ...files, "a.js": "b;\n" }, ["--check"]);
+          expect(checked.stderr).toContain("[warn] layouts/list.html\n");
+          expect(checked.stderr).toContain("[warn] layouts/meta.html\n");
+          expect(checked.exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      test("with nothing installed, only the plugin's files are skipped", async () => {
+        const overrides = [{ files: ["*.html"], options: { parser: "go-template" } }];
+        const config = JSON.stringify({ plugins: [plugin], overrides }) + "\n";
+        const { "node_modules/prettier/package.json": _, "node_modules/prettier/index.cjs": __, ...rest } = project;
+        const { [`node_modules/${plugin}/package.json`]: ___, ...files } = rest;
+        const result = await format({ ...files, ".prettierrc": config }, [], { reads: reads.slice(0, -1) });
+        expect(result.files).toEqual({
+          "a.js": "b;\n",
+          "layouts/list.html": list,
+          "layouts/meta.html": meta,
+          "partials/x.gotmpl": project["partials/x.gotmpl"],
+          "partials/y.go.html": project["partials/y.go.html"],
+        });
+        expect(result.stderr).toContain(`warn: Not installed: prettier, ${plugin}`);
+        expect(result.stderr).toContain(
+          "error: 4 files were not formatted because bun fmt does not support their language yet: 3 .html, 1 .gotmpl",
+        );
+        expect(result.exitCode).toBe(2);
+      });
+
+      // Prettier only knows the plugin's endings once the plugin is loaded.
+      test.each([["{}\n"], ['{ "plugins": ["prettier-plugin-astro"] }\n']])(
+        "without the plugin in the config, its endings mean nothing: %j",
+        async config => {
+          const { "a.js": _, "layouts/list.html": __, "layouts/meta.html": ___, ...rest } = project;
+          const files = { ...rest, ".prettierrc": config };
+          const result = await format(files, [], { reads: ["partials/x.gotmpl", "partials/y.go.html"] });
+          expect(result.files).toEqual({ "partials/x.gotmpl": "<p   >x</p>\n", "partials/y.go.html": "<p>y</p>\n" });
+          expect(result.stderr).not.toContain("installed Prettier");
+          expect(result.stderr).not.toContain("does not support");
+          expect(result.exitCode).toBe(0);
+          const named = await format(files, ["partials/x.gotmpl"]);
+          expect(named.stderr).toContain("No parser could be inferred");
+          expect(named.exitCode).toBe(2);
+        },
+      );
+    });
+
     test(
       "--parser with the plugin's parser and a file name: the file goes to Prettier",
       async () => {

@@ -428,8 +428,15 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
-static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+/* Bound `timeout` (NULL == forever) by the work the loop has queued for itself: TLS handshakes
+ * parked in the low-priority queue, and the socket-timeout sweep deadline. */
+static const struct timespec *us_internal_clamp_timeout(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+    /* See us_internal_handle_low_priority_sockets: only a loop turn resumes a parked socket. */
+    if (loop->data.low_prio_head) {
+        storage->tv_sec = 0;
+        storage->tv_nsec = 0;
+        return storage;
+    }
     long long ns = us_internal_sweep_timeout_ns(loop);
     if (ns < 0) {
         return timeout;
@@ -452,8 +459,8 @@ void us_loop_run(struct us_loop_t *loop) {
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
-        struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
+        struct timespec clamp_ts;
+        const struct timespec *timeout = us_internal_clamp_timeout(loop, NULL, &clamp_ts);
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -499,8 +506,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
-    struct timespec sweep_ts;
-    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
+    struct timespec clamp_ts;
+    timeout = us_internal_clamp_timeout(loop, timeout, &clamp_ts);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));

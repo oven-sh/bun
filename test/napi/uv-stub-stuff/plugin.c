@@ -102,29 +102,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_check_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_check_t *arg1 = {0};
-
-    uv_check_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_check_start") == 0) {
-    uv_check_t *arg0 = {0};
-    uv_check_cb arg1 = NULL;
-
-    uv_check_start(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_check_stop") == 0) {
-    uv_check_t *arg0 = {0};
-
-    uv_check_stop(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_clock_gettime") == 0) {
     uv_clock_id arg0 = {0};
     uv_timespec64_t *arg1 = {0};
@@ -226,22 +203,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     void **arg2 = NULL;
 
     uv_dlsym(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_err_name") == 0) {
-    int arg0 = {0};
-
-    uv_err_name(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_err_name_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_err_name_r(arg0, arg1, arg2);
     return NULL;
   }
 
@@ -880,29 +841,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_idle_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_idle_t *arg1 = {0};
-
-    uv_idle_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_idle_start") == 0) {
-    uv_idle_t *arg0 = {0};
-    uv_idle_cb arg1 = NULL;
-
-    uv_idle_start(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_idle_stop") == 0) {
-    uv_idle_t *arg0 = {0};
-
-    uv_idle_stop(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_if_indextoiid") == 0) {
     unsigned int arg0 = {0};
     char *arg1 = {0};
@@ -1133,13 +1071,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_metrics_t *arg1 = {0};
 
     uv_metrics_info(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_now") == 0) {
-    const uv_loop_t *arg0 = {0};
-
-    uv_now(arg0);
     return NULL;
   }
 
@@ -1378,63 +1309,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_pipe_t *arg0 = {0};
 
     uv_pipe_pending_type(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_poll_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_poll_t *arg1 = {0};
-    int arg2 = {0};
-
-    uv_poll_init(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_poll_init_socket") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_poll_t *arg1 = {0};
-    uv_os_sock_t arg2 = {0};
-
-    uv_poll_init_socket(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_poll_start") == 0) {
-    uv_poll_t *arg0 = {0};
-    int arg1 = {0};
-    uv_poll_cb arg2 = NULL;
-
-    uv_poll_start(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_poll_stop") == 0) {
-    uv_poll_t *arg0 = {0};
-
-    uv_poll_stop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_prepare_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_prepare_t *arg1 = {0};
-
-    uv_prepare_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_prepare_start") == 0) {
-    uv_prepare_t *arg0 = {0};
-    uv_prepare_cb arg1 = NULL;
-
-    uv_prepare_start(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_prepare_stop") == 0) {
-    uv_prepare_t *arg0 = {0};
-
-    uv_prepare_stop(arg0);
     return NULL;
   }
 
@@ -1738,22 +1612,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_strerror") == 0) {
-    int arg0 = {0};
-
-    uv_strerror(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_strerror_r(arg0, arg1, arg2);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_tcp_bind") == 0) {
     uv_tcp_t *arg0 = {0};
     const struct sockaddr *arg1 = {0};
@@ -1911,60 +1769,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     size_t arg3 = {0};
 
     uv_thread_setaffinity(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_again") == 0) {
-    uv_timer_t *arg0 = {0};
-
-    uv_timer_again(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_get_due_in") == 0) {
-    const uv_timer_t *arg0 = {0};
-
-    uv_timer_get_due_in(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_get_repeat") == 0) {
-    const uv_timer_t *arg0 = {0};
-
-    uv_timer_get_repeat(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_timer_t *arg1 = {0};
-
-    uv_timer_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_set_repeat") == 0) {
-    uv_timer_t *arg0 = {0};
-    uint64_t arg1 = {0};
-
-    uv_timer_set_repeat(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_start") == 0) {
-    uv_timer_t *arg0 = {0};
-    uv_timer_cb arg1 = NULL;
-    uint64_t arg2 = {0};
-    uint64_t arg3 = {0};
-
-    uv_timer_start(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_stop") == 0) {
-    uv_timer_t *arg0 = {0};
-
-    uv_timer_stop(arg0);
     return NULL;
   }
 
@@ -2212,13 +2016,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     const uv_udp_t *arg0 = {0};
 
     uv_udp_using_recvmmsg(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_update_time") == 0) {
-    uv_loop_t *arg0 = {0};
-
-    uv_update_time(arg0);
     return NULL;
   }
 

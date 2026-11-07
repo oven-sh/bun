@@ -262,6 +262,72 @@ UV_EXTERN const char* uv_req_type_name(uv_req_type type)
     return NULL;
 }
 
+// Like in libuv, nothing frees the copy.
+static const char* uv__unknown_err_code(int err)
+{
+    char buf[32];
+    char* copy;
+
+    snprintf(buf, sizeof(buf), "Unknown system error %d", err);
+    copy = strdup(buf);
+
+    return copy != NULL ? copy : "Unknown system error";
+}
+
+UV_EXTERN const char* uv_err_name(int err)
+{
+    switch (err) {
+#define XX(name, _) \
+    case UV_##name: \
+        return #name;
+        UV_ERRNO_MAP(XX)
+#undef XX
+    }
+    return uv__unknown_err_code(err);
+}
+
+UV_EXTERN char* uv_err_name_r(int err, char* buf, size_t buflen)
+{
+    switch (err) {
+#define XX(name, _)                         \
+    case UV_##name:                         \
+        snprintf(buf, buflen, "%s", #name); \
+        break;
+        UV_ERRNO_MAP(XX)
+#undef XX
+    default:
+        snprintf(buf, buflen, "Unknown system error %d", err);
+    }
+    return buf;
+}
+
+UV_EXTERN const char* uv_strerror(int err)
+{
+    switch (err) {
+#define XX(name, message) \
+    case UV_##name:       \
+        return message;
+        UV_ERRNO_MAP(XX)
+#undef XX
+    }
+    return uv__unknown_err_code(err);
+}
+
+UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
+{
+    switch (err) {
+#define XX(name, message)                     \
+    case UV_##name:                           \
+        snprintf(buf, buflen, "%s", message); \
+        break;
+        UV_ERRNO_MAP(XX)
+#undef XX
+    default:
+        snprintf(buf, buflen, "Unknown system error %d", err);
+    }
+    return buf;
+}
+
 UV_EXTERN uv_handle_type uv_handle_get_type(const uv_handle_t* handle)
 {
     return handle->type;

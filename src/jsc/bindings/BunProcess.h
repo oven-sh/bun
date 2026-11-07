@@ -32,6 +32,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    WriteBarrier<JSFunction> m_cwdFunction;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
@@ -54,6 +55,7 @@ public:
     ~Process();
 
     bool m_isExitCodeObservable = false;
+    bool m_isCwdObservable = false;
     bool m_sourceMapsEnabled = false;
     // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
     bool m_emitEnvNonstringWarning = true;
@@ -66,7 +68,8 @@ public:
     bool m_warnedProcessBinding = false;
     bool m_warnedErrname = false;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+    // Write hooks delegate to JSObject before recording successful cwd changes.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable | JSC::WriteHooksHonorImmutableProperties;
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
     void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
@@ -84,6 +87,10 @@ public:
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
+
+    JSFunction* cwdFunction(VM&);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }

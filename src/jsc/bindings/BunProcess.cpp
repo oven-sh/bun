@@ -4851,6 +4851,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
+    visitor.append(thisObject->m_cwdFunction);
     visitor.append(thisObject->m_onWarning);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
@@ -5877,9 +5878,109 @@ JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 
-extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+JSFunction* Process::cwdFunction(VM& vm)
 {
-    return JSValue::encode(getCachedCwd(globalObject));
+    if (!m_cwdFunction)
+        m_cwdFunction.set(vm, this, JSFunction::create(vm, globalObject(), 1, "cwd"_s, Process_functionCwd, ImplementationVisibility::Public));
+    return m_cwdFunction.get();
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processCwd, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    auto* process = uncheckedDowncast<Process>(JSValue::decode(thisValue));
+    return JSValue::encode(process->cwdFunction(globalObject->vm()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessCwd, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName name))
+{
+    auto* object = uncheckedDowncast<JSObject>(JSValue::decode(thisValue));
+    object->putDirect(globalObject->vm(), name, JSValue::decode(value));
+    if (auto* process = dynamicDowncast<Process>(object))
+        process->m_isCwdObservable = true;
+    return true;
+}
+
+bool Process::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    if (!Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow))
+        return false;
+    if (name == builtinNames(globalObject->vm()).cwdPublicName())
+        uncheckedDowncast<Process>(object)->m_isCwdObservable = true;
+    return true;
+}
+
+bool Process::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
+{
+    if (!Base::deleteProperty(cell, globalObject, name, slot))
+        return false;
+    if (name == builtinNames(globalObject->vm()).cwdPublicName())
+        uncheckedDowncast<Process>(cell)->m_isCwdObservable = true;
+    return true;
+}
+
+extern "C" EncodedJSValue Process__getCachedDefaultCwd(JSGlobalObject* globalObject)
+{
+    auto* process = defaultGlobalObject(globalObject)->processObject();
+    if (process->m_isCwdObservable)
+        return JSValue::encode(jsUndefined());
+    if (auto* cached = process->cachedCwd())
+        return JSValue::encode(cached);
+    // Cache misses use the resolver's slow path, which can fetch cwd or throw.
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" bool Process__isCwdObservable(JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->processObject()->m_isCwdObservable;
+}
+
+// Match lib/path.js: a replaced process.cwd is observable when resolution needs a base.
+extern "C" EncodedJSValue Process__getPathCwd(JSC::JSGlobalObject* globalObject, bool posix)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* processObject = defaultGlobalObject(globalObject)->processObject();
+    auto& cwdName = builtinNames(vm).cwdPublicName();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result;
+    if (!processObject->m_isCwdObservable) {
+        result = getCachedCwd(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        JSValue cwd = processObject->get(globalObject, cwdName);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* function = dynamicDowncast<JSFunction>(cwd);
+        if (function && function->isHostFunction() && function->nativeFunction() == Process_functionCwd) {
+            result = getCachedCwd(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            auto callData = JSC::getCallData(cwd);
+            if (callData.type == CallData::Type::None) [[unlikely]] {
+                JSC::throwTypeError(globalObject, scope, "process.cwd is not a function"_s);
+                return {};
+            }
+            result = JSC::profiledCall(globalObject, ProfilingReason::API, cwd, callData, processObject, JSC::MarkedArgumentBuffer());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!result.isString()) [[unlikely]] {
+                JSC::throwTypeError(globalObject, scope, "process.cwd returned a non-string value"_s);
+                return {};
+            }
+        }
+    }
+
+#if OS(WINDOWS)
+    if (posix) {
+        auto value = result.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        value = makeStringByReplacingAll(value, '\\', '/');
+        auto slash = value.find('/');
+        auto start = slash == WTF::notFound ? (value.isEmpty() ? 0 : value.length() - 1) : slash;
+        result = jsString(vm, value.substring(start));
+    }
+#else
+    UNUSED_PARAM(posix);
+#endif
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -6172,7 +6273,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   constrainedMemory                Process_functionConstrainedMemory                   Function 0
   cpuUsage                         Process_functionCpuUsage                            Function 1
   threadCpuUsage                   Process_functionThreadCpuUsage                      Function 1
-  cwd                              Process_functionCwd                                 Function 1
   debugPort                        processDebugPort                                    CustomAccessor
   disconnect                       constructProcessDisconnect                          PropertyCallback
   dlopen                           Process_functionDlopen                              Function 1
@@ -6243,6 +6343,7 @@ const JSC::ClassInfo Process::s_info
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
+    putDirectCustomAccessor(vm, builtinNames(vm).cwdPublicName(), CustomGetterSetter::create(vm, processCwd, setProcessCwd), PropertyAttribute::CustomValue | 0);
 
     // Before the hook below: onDidChangeListeners loads the signal tables on any add.
     installDefaultWarningListener(vm);

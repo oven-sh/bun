@@ -3,21 +3,25 @@
 use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::jsc::{JSString, SysErrorJsc as _};
+use crate::jsc::{
+    JSGlobalObject, JSString, JSStringView, JSValue, JsError, JsResult, StringJsc as _,
+    SysErrorJsc as _, bun_string_jsc,
+};
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
-use bun_core::Utf8Bytes;
+use bun_core::{Utf8Bytes, strings};
 use bun_node_path::{
-    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
+    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathCharCwd, PathParsed, RelativePosixLatin1,
     basename_posix_latin1, basename_posix_t, basename_windows_t,
     basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
     extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
     is_absolute_windows_t, is_ascii, is_resolved_ascii_posix, is_tidy_ascii_posix, join_buf_len,
     join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
     normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
-    relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
-    resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
-    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
+    posix_cwd_t, relative_buf_len, relative_posix_latin1, relative_posix_t,
+    relative_posix_with_cwd, relative_windows_with_cwd, resolve_absolute_posix_latin1,
+    resolve_buf_len, resolve_posix_t, resolve_posix_with_cwd, resolve_windows_t,
+    resolve_windows_with_cwd, to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -109,9 +113,13 @@ macro_rules! by_form_of_operands {
 /// What `resolve` and `relative` answer: on Windows also an error, which is not thrown.
 trait Resolved<'a>: Sized {
     fn from_text(text: Text<'a>) -> Self;
+    fn from_value(heap: &JsHeap<'a>, value: JSValue) -> Self;
     fn from_error(heap: &JsHeap<'a>, error: bun_sys::Error) -> Self;
 }
 impl<'a> Resolved<'a> for JsLocal<'a> {
+    fn from_value(heap: &JsHeap<'a>, value: JSValue) -> Self {
+        JsLocal::new(heap, value)
+    }
     #[inline(always)]
     fn from_text(text: Text<'a>) -> Self {
         text.as_value()
@@ -123,6 +131,11 @@ impl<'a> Resolved<'a> for JsLocal<'a> {
     }
 }
 impl<'a> Resolved<'a> for Text<'a> {
+    fn from_value(heap: &JsHeap<'a>, value: JSValue) -> Self {
+        JsLocal::new(heap, value)
+            .as_string()
+            .expect("path.posix returns a string")
+    }
     #[inline(always)]
     fn from_text(text: Text<'a>) -> Self {
         text
@@ -780,16 +793,56 @@ fn relative_of_absolute_posix<'a>(
     )
 }
 
+enum NativePathError {
+    System(bun_sys::Error),
+    ObservableCwd,
+}
+
+impl From<bun_sys::Error> for NativePathError {
+    fn from(error: bun_sys::Error) -> Self {
+        Self::System(error)
+    }
+}
+
+// The native kernels invoke this only when resolution actually needs cwd.
+#[inline]
+fn native_cwd<'b, const WINDOWS: bool, const CHECK_CWD: bool>(
+    global: &JSGlobalObject,
+    buf: &'b mut [u8],
+) -> Result<&'b mut [u8], NativePathError> {
+    if CHECK_CWD && Process__isCwdObservable(global) {
+        return Err(NativePathError::ObservableCwd);
+    }
+    if WINDOWS {
+        Ok(<u8 as PathCharCwd>::get_cwd(buf)?)
+    } else {
+        Ok(posix_cwd_t(buf)?)
+    }
+}
+
+fn native_path_result<'a, R: Resolved<'a>>(
+    heap: &JsHeap<'a>,
+    result: Result<&[u8], NativePathError>,
+) -> bindgen::Result<'a, Option<R>> {
+    match result {
+        Ok(answer) => heap
+            .create_utf8_string(answer)
+            .map(|text| Some(R::from_text(text))),
+        Err(NativePathError::System(error)) => Ok(Some(R::from_error(heap, error))),
+        Err(NativePathError::ObservableCwd) => Ok(None),
+    }
+}
+
 #[inline(never)]
-fn relative_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
+fn relative_utf8_checked<'a, const WINDOWS: bool, const CHECK_CWD: bool, R: Resolved<'a>>(
     heap: &JsHeap<'a>,
     from: Text<'a>,
     to: Text<'a>,
-) -> bindgen::Result<'a, R> {
+) -> bindgen::Result<'a, Option<R>> {
     let from_view = from.view(heap)?;
     let to_view = to.view(heap)?;
     if from_view.is_empty() && to_view.is_empty() {
-        return Ok(R::from_text(from));
+        return Ok(Some(R::from_text(from)));
     }
     let (from, to) = (from_view.to_utf8(), to_view.to_utf8());
     let (from, to) = (from.slice(), to.slice());
@@ -797,20 +850,38 @@ fn relative_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     let mut scratch = PathScratch::new(heap, buf_len * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len);
     let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
-    match if WINDOWS {
-        relative_windows_t(from, to, buf, from_buf, tmp_buf)
-    } else {
-        relative_posix_t(from, to, buf, from_buf, tmp_buf)
-    } {
-        Ok(answer) => heap.create_utf8_string(answer).map(R::from_text),
-        Err(error) => Ok(R::from_error(heap, error)),
-    }
+    // SAFETY: the callback reads native state and never runs JavaScript.
+    let global = unsafe { heap.global() };
+    native_path_result(
+        heap,
+        if WINDOWS {
+            relative_windows_with_cwd(from, to, buf, from_buf, tmp_buf, |buf| {
+                native_cwd::<WINDOWS, CHECK_CWD>(global, buf)
+            })
+        } else {
+            relative_posix_with_cwd(from, to, buf, from_buf, tmp_buf, |buf| {
+                native_cwd::<WINDOWS, CHECK_CWD>(global, buf)
+            })
+        },
+    )
+}
+
+#[inline(never)]
+fn relative_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    heap: &JsHeap<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    Ok(relative_utf8_checked::<WINDOWS, false, R>(heap, from, to)?
+        .expect("native cwd does not request a callback"))
 }
 by_form_of_operands!(relative, relative_other, relative_latin1, relative_utf8, <R: Resolved<'a>>(from: Text<'a>, to: Text<'a>) -> R);
 
 #[cfg(unix)]
 unsafe extern "C" {
-    safe fn Process__getCachedCwd(global: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue;
+    safe fn Process__getCachedDefaultCwd(
+        global: &crate::jsc::JSGlobalObject,
+    ) -> crate::jsc::JSValue;
 }
 
 /// `None` unless the paths that count are 8-bit strings and [`SHORT`] together.
@@ -846,8 +917,19 @@ fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
             return Ok(resolve_joined_posix(heap, joined.characters()));
         }
     }
-    // `process.cwd()` itself is kept as a string.
+    // SAFETY: these queries only read native state, without running JavaScript.
+    let global = unsafe { heap.global() };
+    // Return a warm native cwd before building UTF-8 argument views.
     if matches!(joined.characters(), b"" | b"." | b"./") {
+        #[cfg(unix)]
+        {
+            let cwd = Process__getCachedDefaultCwd(global);
+            return Ok(JsLocal::new(heap, cwd).as_string());
+        }
+        #[cfg(not(unix))]
+        return Ok(None);
+    }
+    if Process__isCwdObservable(global) {
         return Ok(None);
     }
     #[cfg(not(windows))]
@@ -882,7 +964,7 @@ fn resolve_untidy_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
 fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     heap: &JsHeap<'a>,
     paths: &'a [JsLocal<'a>],
-) -> bindgen::Result<'a, R> {
+) -> bindgen::Result<'a, Option<R>> {
     // SAFETY: it is passed to what throws, after which this returns, and to what reads the cached working directory.
     let global = unsafe { heap.global() };
     // From the last to the first that is absolute.
@@ -909,27 +991,26 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     if !WINDOWS
         && (parts.is_empty() || (parts.len() == 1 && (parts[0] == b"." || parts[0] == b"./")))
     {
-        // `process.cwd()`, which throws when `getcwd` fails (for example, a deleted working directory).
-        let cwd = crate::jsc::call_zero_is_throw(global, || Process__getCachedCwd(global))?;
-        let Some(cwd) = JsLocal::new(heap, cwd).as_string() else {
-            unreachable!("process.cwd() is a string");
-        };
-        return Ok(R::from_text(cwd));
+        let cwd = Process__getCachedDefaultCwd(global);
+        return Ok(JsLocal::new(heap, cwd).as_string().map(R::from_text));
     }
 
     let buf_len = resolve_buf_len(WINDOWS, &parts);
     let mut scratch = PathScratch::new(heap, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    match if WINDOWS {
-        resolve_windows_t(&parts, buf, buf2)
-    } else {
-        resolve_posix_t(&parts, buf, buf2)
-    } {
-        Ok(answer) => heap.create_utf8_string(answer).map(R::from_text),
-        Err(error) => Ok(R::from_error(heap, error)),
-    }
+    native_path_result(
+        heap,
+        if WINDOWS {
+            resolve_windows_with_cwd::<u8, _, _, false>(&parts, buf, buf2, MAX_PATH_BYTES, |buf| {
+                native_cwd::<WINDOWS, true>(global, buf)
+            })
+        } else {
+            resolve_posix_with_cwd::<u8, _, _, false>(&parts, buf, buf2, MAX_PATH_BYTES, |buf| {
+                native_cwd::<WINDOWS, true>(global, buf)
+            })
+        },
+    )
 }
-by_form_of_operands!(resolve, resolve_other, resolve_latin1, resolve_utf8, <R: Resolved<'a>>(paths: &'a [JsLocal<'a>]) -> R);
 
 fn format<'a, const WINDOWS: bool>(
     cx: &mut JsScope<'a>,
@@ -999,6 +1080,334 @@ fn format_with_separator<'a>(
     ))
 }
 
+unsafe extern "C" {
+    safe fn Process__getPathCwd(global: &JSGlobalObject, posix: bool) -> JSValue;
+    safe fn Process__isCwdObservable(global: &JSGlobalObject) -> bool;
+}
+
+enum ResolveJsError {
+    System(bun_sys::Error),
+    JavaScript(JsError),
+    CwdRequired,
+    CwdBufferTooSmall(usize),
+}
+
+impl From<bun_sys::Error> for ResolveJsError {
+    fn from(error: bun_sys::Error) -> Self {
+        Self::System(error)
+    }
+}
+
+impl From<JsError> for ResolveJsError {
+    fn from(error: JsError) -> Self {
+        Self::JavaScript(error)
+    }
+}
+
+fn copy_cached_cwd<'a>(
+    cached: &Option<Utf8Bytes<'static>>,
+    buf: &'a mut [u8],
+    cwd_capacity: usize,
+) -> Result<&'a mut [u8], ResolveJsError> {
+    let Some(bytes) = cached else {
+        return Err(ResolveJsError::CwdRequired);
+    };
+    if bytes.len() > cwd_capacity {
+        return Err(ResolveJsError::CwdBufferTooSmall(bytes.len()));
+    }
+    if bytes.len() > buf.len() {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::TODO).into());
+    }
+    buf[..bytes.len()].copy_from_slice(bytes.slice());
+    let cwd = &mut buf[..bytes.len()];
+
+    Ok(cwd)
+}
+
+fn js_string_to_wtf8(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Utf8Bytes<'static>> {
+    let view = value.to_js_string_view(global_object)?;
+    if view.is_8bit() {
+        return Ok(view.to_utf8().into_owned());
+    }
+
+    let units = view.utf16();
+    let mut bytes = Vec::with_capacity(units.len() * 3);
+    let mut index = 0;
+    while index < units.len() {
+        let (codepoint, width) = strings::decode_wtf16_raw(&units[index..]);
+        index += usize::from(width);
+        let mut encoded = [0u8; 4];
+        let encoded_len = strings::encode_wtf8_rune(&mut encoded, codepoint);
+        bytes.extend_from_slice(&encoded[..encoded_len]);
+    }
+    Ok(Utf8Bytes::Owned(bytes))
+}
+
+fn path_cwd_to_wtf8(global_object: &JSGlobalObject, posix: bool) -> JsResult<Utf8Bytes<'static>> {
+    let value = crate::jsc::call_zero_is_throw(global_object, || {
+        Process__getPathCwd(global_object, posix)
+    })?;
+    js_string_to_wtf8(global_object, value)
+}
+
+fn create_wtf8_path_string(global_object: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+    match strings::wtf8_to_utf16_alloc(bytes) {
+        Some(utf16) => bun_core::String::clone_utf16(&utf16).into_js(global_object),
+        None => bun_string_jsc::create_utf8_for_js(global_object, bytes),
+    }
+}
+
+#[inline]
+fn resolve_native(
+    global_object: &JSGlobalObject,
+    is_windows: bool,
+    paths: &[&[u8]],
+) -> JsResult<JSValue> {
+    let buf_len = resolve_buf_len(is_windows, paths);
+    let mut scratch = PathScratch::new(JsHeap::from_global(global_object), buf_len * 2);
+    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
+    let path = if is_windows {
+        resolve_windows_t(paths, buf, buf2)
+    } else {
+        resolve_posix_t(paths, buf, buf2)
+    };
+    match path {
+        Ok(path) => bun_string_jsc::create_utf8_for_js(global_object, path),
+        Err(error) => Ok(error.to_js(global_object)),
+    }
+}
+
+fn resolve_js(
+    global_object: &JSGlobalObject,
+    is_windows: bool,
+    paths: &[&[u8]],
+    cached_cwd: Option<Utf8Bytes<'static>>,
+) -> JsResult<JSValue> {
+    let mut cwd_capacity = MAX_PATH_BYTES;
+    let mut cached_cwd = cached_cwd;
+    loop {
+        // Adding 8 bytes when Windows for the possible UNC root.
+        let mut buf_len: usize = if is_windows { 8 } else { 0 };
+        for path in paths {
+            buf_len += if buf_len > 0 && !path.is_empty() {
+                path.len() + 1
+            } else {
+                path.len()
+            };
+        }
+        buf_len += cwd_capacity + 1;
+        buf_len = buf_len.max(path_size::<u8>());
+        // +2 to account for separator and null terminator during path resolution.
+        // Carve buf/buf2 from one pooled slab.
+        let resolved = {
+            let mut scratch =
+                PathScratch::new(JsHeap::from_global(global_object), (buf_len + 2) * 2);
+            let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
+            let path = if is_windows {
+                resolve_windows_with_cwd::<u8, _, _, true>(paths, buf, buf2, cwd_capacity, |cwd| {
+                    copy_cached_cwd(&cached_cwd, cwd, cwd_capacity)
+                })
+            } else {
+                resolve_posix_with_cwd::<u8, _, _, true>(paths, buf, buf2, cwd_capacity, |cwd| {
+                    copy_cached_cwd(&cached_cwd, cwd, cwd_capacity)
+                })
+            };
+            match path {
+                Ok(path) => {
+                    create_wtf8_path_string(global_object, path).map_err(ResolveJsError::JavaScript)
+                }
+                Err(error) => Err(error),
+            }
+        };
+        match resolved {
+            Ok(path) => return Ok(path),
+            Err(ResolveJsError::CwdRequired) => {
+                let cwd = path_cwd_to_wtf8(global_object, !is_windows)?;
+                cwd_capacity = cwd_capacity.max(cwd.len());
+                cached_cwd = Some(cwd);
+            }
+            Err(ResolveJsError::CwdBufferTooSmall(required)) => cwd_capacity = required,
+            Err(ResolveJsError::System(e)) => return Ok(e.to_js(global_object)),
+            Err(ResolveJsError::JavaScript(e)) => return Err(e),
+        }
+    }
+}
+
+fn resolve_observable(
+    global_object: &JSGlobalObject,
+    is_windows: bool,
+    args: &[JSValue],
+) -> JsResult<JSValue> {
+    let args_len = args.len();
+    // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
+    // on the stack; `PathScratch` spills to the heap for very long paths.
+
+    // Borrow each argument's JSString backing as `Utf8Bytes` (ASCII inputs
+    // borrow in place, only non-ASCII transcodes). Inline-8 keeps the typical
+    // call alloc-free. Walk back-to-front to early-out on the first absolute
+    // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
+    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::new();
+    let mut resolved_root = false;
+
+    let mut i = args_len;
+    while i > 0 {
+        i -= 1;
+
+        if resolved_root {
+            break;
+        }
+
+        let path = args[i as usize];
+        validate_string(global_object, path, format_args!("paths[{}]", i))?;
+        let path_str = path.to_js_string_view(global_object)?;
+        if path_str.is_empty() {
+            continue;
+        }
+
+        if !is_windows && path_str.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
+            resolved_root = true;
+        }
+        views.push(path_str);
+    }
+
+    let owned: SmallVec<[Utf8Bytes<'static>; 8]> = views
+        .iter()
+        .map(|view| view.to_utf8().into_owned())
+        .collect();
+    drop(views);
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
+
+    if resolved_root {
+        return resolve_native(global_object, is_windows, &paths);
+    }
+    resolve_observable_cwd(global_object, is_windows, args_len, &paths)
+}
+
+#[cold]
+#[inline(never)]
+fn resolve_observable_cwd(
+    global_object: &JSGlobalObject,
+    is_windows: bool,
+    args_len: usize,
+    paths: &[&[u8]],
+) -> JsResult<JSValue> {
+    let current_directory_arg =
+        args_len == 0 || (args_len == 1 && (paths.is_empty() || paths[0] == b"."));
+    let mut cached_cwd = None;
+    if current_directory_arg {
+        let value = crate::jsc::call_zero_is_throw(global_object, || {
+            Process__getPathCwd(global_object, !is_windows)
+        })?;
+        let view = value.to_js_string_view(global_object)?;
+        let bytes = view.to_utf8();
+        if is_windows {
+            let starts_with_separator = bytes
+                .slice()
+                .first()
+                .is_some_and(|byte| *byte == CHAR_FORWARD_SLASH || *byte == CHAR_BACKWARD_SLASH);
+            if args_len == 0 || starts_with_separator {
+                #[cfg(windows)]
+                return Ok(value);
+                #[cfg(not(windows))]
+                {
+                    let mut cwd = js_string_to_wtf8(global_object, value)?.into_vec();
+                    for byte in &mut cwd {
+                        if *byte == CHAR_FORWARD_SLASH {
+                            *byte = CHAR_BACKWARD_SLASH;
+                        }
+                    }
+                    return create_wtf8_path_string(global_object, &cwd);
+                }
+            }
+            cached_cwd = Some(js_string_to_wtf8(global_object, value)?);
+        } else {
+            if bytes.slice().first() == Some(&CHAR_FORWARD_SLASH) {
+                return Ok(value);
+            }
+        }
+    }
+
+    resolve_js(global_object, is_windows, paths, cached_cwd)
+}
+
+#[inline(always)]
+fn resolve_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    paths: &'a [JsLocal<'a>],
+) -> bindgen::Result<'a, R> {
+    match resolve_latin1::<WINDOWS, true>(&cx.heap, paths) {
+        Ok(Some(answer)) => Ok(R::from_text(answer)),
+        _ => resolve_other_with_scope::<WINDOWS, R>(cx, paths),
+    }
+}
+
+#[inline(never)]
+fn resolve_other_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    paths: &'a [JsLocal<'a>],
+) -> bindgen::Result<'a, R> {
+    if let Some(answer) = resolve_latin1::<WINDOWS, false>(&cx.heap, paths)? {
+        return Ok(R::from_text(answer));
+    }
+    if let Some(answer) = resolve_utf8::<WINDOWS, R>(&cx.heap, paths)? {
+        return Ok(answer);
+    }
+    let values: SmallVec<[JSValue; FEW]> = paths.iter().map(|path| path.to_js()).collect();
+    let value = resolve_observable(cx.global(), WINDOWS, &values)?;
+    Ok(R::from_value(&cx.heap, value))
+}
+
+#[inline(always)]
+fn relative_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    match relative_latin1::<WINDOWS, true>(&cx.heap, from, to) {
+        Ok(Some(answer)) => Ok(R::from_text(answer)),
+        _ => relative_other_with_scope::<WINDOWS, R>(cx, from, to),
+    }
+}
+
+#[inline(never)]
+fn relative_other_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    if let Some(answer) = relative_latin1::<WINDOWS, false>(&cx.heap, from, to)? {
+        return Ok(R::from_text(answer));
+    }
+    if let Some(answer) = relative_utf8_checked::<WINDOWS, true, R>(&cx.heap, from, to)? {
+        return Ok(answer);
+    }
+    relative_observable::<WINDOWS, R>(cx, from, to)
+}
+
+#[cold]
+#[inline(never)]
+fn relative_observable<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    if from.to_js().is_strict_equal(to.to_js(), cx.global())? {
+        return Ok(R::from_text(cx.heap.create_latin1_string(b"")));
+    }
+    let from_value = resolve_observable(cx.global(), WINDOWS, &[from.to_js()])?;
+    let to_value = resolve_observable(cx.global(), WINDOWS, &[to.to_js()])?;
+    let Some(from) = JsLocal::new(&cx.heap, from_value).as_string() else {
+        return Ok(R::from_value(&cx.heap, from_value));
+    };
+    let Some(to) = JsLocal::new(&cx.heap, to_value).as_string() else {
+        return Ok(R::from_value(&cx.heap, to_value));
+    };
+    relative::<WINDOWS, R>(&cx.heap, from, to)
+}
+
 // ───────────────────────────── what node_path.bind.ts names ─────────────────────────────
 
 macro_rules! on_both_platforms {
@@ -1026,33 +1435,33 @@ on_both_platforms! {
 
 #[inline(always)]
 pub(crate) fn relative_posix<'a>(
-    heap: &JsHeap<'a>,
+    cx: &mut JsScope<'a>,
     from: Text<'a>,
     to: Text<'a>,
 ) -> TextResult<'a> {
-    relative::<false, _>(heap, from, to)
+    relative_with_scope::<false, _>(cx, from, to)
 }
 
 #[inline(always)]
 pub(crate) fn relative_win32<'a>(
-    heap: &JsHeap<'a>,
+    cx: &mut JsScope<'a>,
     from: Text<'a>,
     to: Text<'a>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
-    relative::<true, _>(heap, from, to)
+    relative_with_scope::<true, _>(cx, from, to)
 }
 
 #[inline(always)]
-pub(crate) fn resolve_posix<'a>(heap: &JsHeap<'a>, paths: &'a [JsLocal<'a>]) -> TextResult<'a> {
-    resolve::<false, _>(heap, paths)
+pub(crate) fn resolve_posix<'a>(cx: &mut JsScope<'a>, paths: &'a [JsLocal<'a>]) -> TextResult<'a> {
+    resolve_with_scope::<false, _>(cx, paths)
 }
 
 #[inline(always)]
 pub(crate) fn resolve_win32<'a>(
-    heap: &JsHeap<'a>,
+    cx: &mut JsScope<'a>,
     paths: &'a [JsLocal<'a>],
 ) -> bindgen::Result<'a, JsLocal<'a>> {
-    resolve::<true, _>(heap, paths)
+    resolve_with_scope::<true, _>(cx, paths)
 }
 
 #[inline(always)]

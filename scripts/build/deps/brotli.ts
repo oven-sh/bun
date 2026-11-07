@@ -36,6 +36,8 @@ export const brotli: Dependency = {
     commit: BROTLI_COMMIT,
   }),
 
+  patches: ["patches/brotli/reject-invalid-block-switch.patch"],
+
   build: () => {
     const spec: DirectBuild = {
       kind: "direct",

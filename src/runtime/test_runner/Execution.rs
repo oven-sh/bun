@@ -180,7 +180,6 @@ pub(crate) struct ExecutionSequence {
     /// Failures from earlier attempts, for the JUnit report.
     pub(crate) earlier_failures: Vec<test_command::TestFailure>,
     /// Vitest counts a call when `expect()` is called. Jest counts it when a matcher is called.
-    /// The test decides for its hooks. A `beforeAll`, `afterAll` or `aroundAll` hook decides for itself.
     pub(crate) counts_expect_calls: bool,
 }
 

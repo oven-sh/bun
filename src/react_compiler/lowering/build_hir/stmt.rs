@@ -76,7 +76,7 @@ fn lower_block_statement_inner(
                 let kind = match local.kind {
                     s::Kind::KLet => InstructionKind::HoistedLet,
                     s::Kind::KConst => InstructionKind::HoistedConst,
-                    _ => continue,
+                    s::Kind::KVar | s::Kind::KUsing | s::Kind::KAwaitUsing => continue,
                 };
                 for d in local.decls.iter() {
                     collect_binding_refs(builder.environment(), &d.binding, &mut |r, loc| {
@@ -625,31 +625,28 @@ fn lower_statement(
             result?;
         }
         Data::SLocal(var_decl) => {
-            if matches!(var_decl.kind, s::Kind::KVar) {
+            let unsupported_node_kind = match var_decl.kind {
+                s::Kind::KVar => Some("var"),
+                s::Kind::KUsing => Some("using"),
+                s::Kind::KAwaitUsing => Some("await using"),
+                s::Kind::KLet | s::Kind::KConst => None,
+            };
+            if let Some(node_kind) = unsupported_node_kind {
                 builder.record_error(CompilerErrorDetail {
-                    reason: "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration"
-                        .to_string(),
+                    reason: format!(
+                        "(BuildHIR::lowerStatement) Handle {node_kind} kinds in VariableDeclaration"
+                    ),
                     category: ErrorCategory::Todo,
                     loc: convert_loc(stmt_loc),
                     description: None,
                     suggestions: None,
                 })?;
-                // Treat `var` as `let` so references to the variable don't break
+                // Treat `var` as `let` and `using`/`await using` as `const` so
+                // references to the variable don't break while the error unwinds
             }
             let kind = match var_decl.kind {
                 s::Kind::KLet | s::Kind::KVar => InstructionKind::Let,
-                s::Kind::KConst | s::Kind::KUsing => InstructionKind::Const,
-                s::Kind::KAwaitUsing => {
-                    builder.record_error(CompilerErrorDetail {
-                        reason: "(BuildHIR::lowerStatement) Handle `await using` declarations"
-                            .to_string(),
-                        category: ErrorCategory::Todo,
-                        loc: convert_loc(stmt_loc),
-                        description: None,
-                        suggestions: None,
-                    })?;
-                    InstructionKind::Const
-                }
+                s::Kind::KConst | s::Kind::KUsing | s::Kind::KAwaitUsing => InstructionKind::Const,
             };
             for declarator in var_decl.decls.iter() {
                 let stmt_loc = convert_loc(stmt.loc);
@@ -1717,6 +1714,27 @@ fn lower_for_in_of_left(
 ) -> Result<Option<Place>, CompilerDiagnostic> {
     match init.data {
         Data::SLocal(var_decl) => {
+            // Upstream reads no kind here and lowers every head as `let`: a `using` is never disposed, and a `var` is
+            // out of scope after the loop. `bun lint` reports what upstream's lowering reports, so not a `var` head.
+            let unsupported_node_kind = match var_decl.kind {
+                s::Kind::KVar if builder.environment().output_mode != OutputMode::Lint => {
+                    Some("var")
+                }
+                s::Kind::KUsing => Some("using"),
+                s::Kind::KAwaitUsing => Some("await using"),
+                s::Kind::KVar | s::Kind::KLet | s::Kind::KConst => None,
+            };
+            if let Some(node_kind) = unsupported_node_kind {
+                builder.record_error(CompilerErrorDetail {
+                    category: ErrorCategory::Todo,
+                    reason: format!(
+                        "(BuildHIR::lowerStatement) Handle {node_kind} kinds in VariableDeclaration"
+                    ),
+                    description: None,
+                    loc: left_loc,
+                    suggestions: None,
+                })?;
+            }
             if var_decl.decls.len() != 1 {
                 builder.record_error(CompilerErrorDetail {
                     category: ErrorCategory::Invariant,

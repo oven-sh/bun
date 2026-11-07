@@ -4595,6 +4595,278 @@ describe("bundler", () => {
       });
     },
   });
+
+  // The compiler's IR has `let` and `const` only. A `using` was printed as `let`, so nothing was disposed. A `var` in the
+  // head of a for-in or for-of loop was printed as `const`, so it was out of scope after the loop, and new in each turn.
+  // For a target other than bun the parser lowers `using` first, but not in the head of a `for (;;)`.
+  const declarationKindFiles = {
+    "/entry.jsx": /* jsx */ `
+      import { useState } from "react";
+      const log = [];
+      const note = text => log.push(text);
+      function open(name) {
+        log.push("+" + name);
+        return {
+          name,
+          [Symbol.dispose]() { log.push("-" + name); },
+          [Symbol.asyncDispose]() { log.push("~" + name); },
+        };
+      }
+      function Body({ name }) {
+        using res = open(name);
+        return <b>{res.name}</b>;
+      }
+      function Block({ name }) {
+        let text;
+        {
+          using res = open(name);
+          text = res.name;
+        }
+        note("after");
+        return <b>{text}</b>;
+      }
+      function If({ name }) {
+        let text = name;
+        if (name) {
+          using res = open(name);
+          text = res.name;
+        }
+        return <b>{text}</b>;
+      }
+      function Case({ name }) {
+        let text = name;
+        switch (name) {
+          default: {
+            using res = open(name);
+            text = res.name;
+          }
+        }
+        return <b>{text}</b>;
+      }
+      function Two({ name }) {
+        using one = open(name), two = open(name + 2);
+        note("body");
+        return <b>{one.name + two.name}</b>;
+      }
+      function Arrow({ name }) {
+        const read = () => {
+          using res = open(name);
+          return res.name;
+        };
+        return <b>{read()}</b>;
+      }
+      function Method({ name }) {
+        const reader = {
+          read() {
+            using res = open(name);
+            return res.name;
+          },
+        };
+        return <b>{reader.read()}</b>;
+      }
+      function useHook({ name }) {
+        using res = open(name);
+        const [suffix] = useState("!");
+        return res.name + suffix;
+      }
+      function makeNested() {
+        function Nested({ name }) {
+          using res = open(name);
+          return <b>{res.name}</b>;
+        }
+        return Nested;
+      }
+      function ForHead({ name }) {
+        let text = "";
+        for (using res = open(name); text.length < 2; ) {
+          text += res.name;
+        }
+        note("after");
+        return <b>{text}</b>;
+      }
+      function ForOfHead({ name }) {
+        let text = "";
+        for (using res of [open(name), open(name + 2)]) {
+          text += res.name;
+          note("body");
+        }
+        return <b>{text}</b>;
+      }
+      async function AwaitUsing({ name }) {
+        await using res = open(name);
+        return <b>{res.name}</b>;
+      }
+      async function AwaitUsingForOfHead({ name }) {
+        let text = "";
+        for (await using res of [open(name)]) {
+          text += res.name;
+        }
+        return <b>{text}</b>;
+      }
+      function NotDisposable({ name }) {
+        using res = { name };
+        return <b>{res.name}</b>;
+      }
+      function VarOfHead({ name }) {
+        for (var item of [name, name + 2]) {
+          note("body");
+        }
+        note(item);
+        return <b>{item}</b>;
+      }
+      function VarInHead({ name }) {
+        for (var key in { [name]: 1, [name + 2]: 2 }) {
+          note("body");
+        }
+        note(key);
+        return <b>{key}</b>;
+      }
+      function VarOfHeadClosure({ name }) {
+        const reads = [];
+        for (var item of [name, name + 2]) {
+          reads.push(() => item);
+        }
+        note(reads.map(read => read()).join(","));
+        return <b>{reads.length}</b>;
+      }
+      function LetAndConst({ name }) {
+        const style = { top: name };
+        return <b style={style}>{name}</b>;
+      }
+      const leftAsWritten = [
+        Body, Block, If, Case, Two, Arrow, Method, useHook, makeNested(),
+        ForHead, ForOfHead, AwaitUsing, AwaitUsingForOfHead, NotDisposable,
+        VarOfHead, VarInHead, VarOfHeadClosure,
+      ];
+      for (const fn of leftAsWritten) {
+        log.length = 0;
+        try {
+          await fn({ name: "a" });
+        } catch (error) {
+          log.push(error.name);
+        }
+        console.log(fn.name + ": " + log.join(" "));
+      }
+      const memoized = [...leftAsWritten, LetAndConst].filter(fn => /\\$\\d*\\[\\d+\\]/.test(String(fn)));
+      console.log("memoized: " + (memoized.map(fn => fn.name).join(" ") || "none"));
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
+    "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+  };
+  const asWritten = [
+    "Body: +a -a",
+    "Block: +a -a after",
+    "If: +a -a",
+    "Case: +a -a",
+    "Two: +a +a2 body -a2 -a",
+    "Arrow: +a -a",
+    "Method: +a -a",
+    "useHook: +a -a",
+    "Nested: +a -a",
+    "ForHead: +a -a after",
+    "ForOfHead: +a +a2 body -a body -a2",
+    "AwaitUsing: +a ~a",
+    "AwaitUsingForOfHead: +a ~a",
+    "NotDisposable: TypeError",
+    "VarOfHead: body body a2",
+    "VarInHead: body body a2",
+    "VarOfHeadClosure: a2,a2",
+  ];
+  for (const [target, memoized] of [
+    ["bun", "none"],
+    ["node", "none"],
+    ["browser", "LetAndConst"],
+  ] as const) {
+    itBundled(`react-compiler/UsingAndVarLoopHead-${target}`, {
+      files: declarationKindFiles,
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: { stdout: [...asWritten, `memoized: ${memoized}`].join("\n") },
+    });
+  }
+  itBundled("react-compiler/UsingAndVarLoopHead-bun-client", {
+    files: declarationKindFiles,
+    reactCompiler: true,
+    reactCompilerOutputMode: "client",
+    target: "bun",
+    backend: "api",
+    run: { stdout: [...asWritten, "memoized: LetAndConst"].join("\n") },
+  });
+});
+
+// At run time no `using` is lowered before the compiler. Only `bun test` compiles a hook in a .ts file.
+test("react-compiler does not compile a function that declares `using` for bun test", async () => {
+  using dir = tempDir("react-compiler-using-bun-test", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: {
+        ".": "./index.js",
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "resource.ts": `
+      export const log: string[] = [];
+      export function open(name: string) {
+        log.push("+" + name);
+        return { name, [Symbol.dispose]() { log.push("-" + name); } };
+      }
+    `,
+    "Disposes.tsx": `
+      import { open } from "./resource";
+      export function Disposes({ name }: { name: string }) {
+        using resource = open(name);
+        return <b>{resource.name}</b>;
+      }
+      export function Memoized({ name }: { name: string }) {
+        const style = { top: name };
+        return <b style={style}>{name}</b>;
+      }
+    `,
+    "useDisposes.ts": `
+      import { useState } from "react";
+      import { open } from "./resource";
+      export function useDisposes(name: string) {
+        using resource = open(name);
+        const [suffix] = useState("!");
+        return resource.name + suffix;
+      }
+    `,
+    "using.test.tsx": `
+      import { test } from "bun:test";
+      import { Disposes, Memoized } from "./Disposes";
+      import { log } from "./resource";
+      import { useDisposes } from "./useDisposes";
+      test("dispose log", () => {
+        for (const name of ["a", "a", "b"]) Disposes({ name });
+        useDisposes("c");
+        const all = { Disposes, Memoized, useDisposes };
+        const memoized = Object.keys(all).filter(name => /\\$\\[\\d+\\]/.test(String(all[name])));
+        console.log("memoized: " + memoized.join(" ") + ", disposed: " + log.join(" "));
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./using.test.tsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.match(/memoized: .*/)?.[0] ?? stderr).toBe("memoized: Memoized, disposed: +a -a +a -a +b -b +c -c");
+  expect(exitCode).toBe(0);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

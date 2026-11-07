@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_common.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e9bcb64b690623cf8e8b8ce199a3326e23a7430bdeed5fd855a1902f2798e2d8.
+// Written against that file with the SHA-256 0d1fd706eaf5fdc6a02e5bf7ea7be7c963c340fb52ec8474fce8f9a9e74c2265.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_common.js
@@ -183,7 +183,7 @@ function parserOnHeadersComplete(
 
   // If parser.maxHeaderPairs <= 0 assume that there's no limit.
   const maxHeaderPairs = parser.maxHeaderPairs;
-  if (maxHeaderPairs > 0) n = Math.min(n, maxHeaderPairs);
+  if (maxHeaderPairs > 0) n = $min(n, maxHeaderPairs);
 
   incoming._addHeaderLines(headers, n);
 

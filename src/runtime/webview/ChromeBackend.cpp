@@ -1411,13 +1411,14 @@ void Transport::retireGlobal(Zig::GlobalObject* global)
 namespace Ops {
 
 // Allocate promise, store in slot, add to Transport pending map, send frame.
-// Caller guarantees the slot is empty and m_closed == false. Command is
+// The view is open and the slot is empty: checkReady() in JSWebViewPrototype.cpp. Command is
 // moved in; t.send() calls finishAndWrite which zero-copies to the pipe
 // when the body is all-ASCII.
 static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     WriteBarrier<JSPromise>& slot, PendingSlot ps, Method m,
     uint32_t id, Command&& cmd)
 {
+    v->assertReady(slot);
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());

@@ -141,11 +141,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-qjznw47b.js",
+                "path": "./client-emkzgtn9.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "l5IfNVyE54s",
+                  "etag": "zpTzn5CadSk",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -155,17 +155,17 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "xh1kdn7wbmI",
+                  "etag": "Z8eUkQ2Mbyo",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
               {
                 "input": "client.html",
-                "path": "./client-gsg59jv4.css",
+                "path": "./client-ktkb7geg.css",
                 "loader": "css",
                 "isEntry": true,
                 "headers": {
-                  "etag": "cJnwBSkS-4Q",
+                  "etag": "M9oTK-dwjpA",
                   "content-type": "text/css;charset=utf-8"
                 }
               },
@@ -325,17 +325,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "Dl7kT6q7eY4",
+                  "etag": "OFwXdH2gPbI",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-ey4favse.js",
+                "path": "./home-rwqmx0xj.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "IhvRaM9jGDU",
+                  "etag": "Ttj8meWS96w",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -345,12 +345,12 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "hT1GudlsHgI",
+                  "etag": "meNO9STq36E",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "css",
-                "path": "./home-5x6sscy2.css",
+                "path": "./home-s3en4az1.css",
               },
             ],
             "index": "./home.html",
@@ -360,17 +360,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "RCRrF1EbBvo",
+                  "etag": "SPfBLKGgkb8",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-44bqhv6t.js",
+                "path": "./about-8q1c10hz.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "2OGqRD6vx54",
+                  "etag": "N4Qr9nULlWA",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -380,12 +380,12 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "ti_Q2k-EP3o",
+                  "etag": "aCSQlKMHZRs",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "css",
-                "path": "./about-pfgtf4zt.css",
+                "path": "./about-84gm375v.css",
               },
             ],
             "index": "./about.html",

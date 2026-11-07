@@ -272,6 +272,13 @@ impl<'a> Chunk<'a> {
             .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
+    /// Names this chunk and its source map. It covers what the final content hash covers.
+    pub(crate) fn debug_id(&self) -> source_map::DebugIDFormatter {
+        source_map::DebugIDFormatter {
+            id: self.id().value,
+        }
+    }
+
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
     pub(crate) fn reachable_chunks(
         chunks: &[Chunk],
@@ -824,12 +831,7 @@ impl IntermediateOutput {
 
                 let debug_id_len = if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID
                 {
-                    bun_core::fmt::count(format_args!(
-                        "\n//# debugId={}\n",
-                        source_map::DebugIDFormatter {
-                            id: chunk.isolated_hash
-                        }
-                    ))
+                    bun_core::fmt::count(format_args!("\n//# debugId={}\n", chunk.debug_id()))
                 } else {
                     0
                 };
@@ -1036,14 +1038,8 @@ impl IntermediateOutput {
                     // This comment must go before the //# sourceMappingURL comment
                     let mut cursor: &mut [u8] = remain;
                     let before_len = cursor.len();
-                    write!(
-                        &mut cursor,
-                        "\n//# debugId={}\n",
-                        source_map::DebugIDFormatter {
-                            id: chunk.isolated_hash
-                        }
-                    )
-                    .unwrap_or_else(|_| panic!("unexpected NoSpaceLeft error from bufPrint"));
+                    write!(&mut cursor, "\n//# debugId={}\n", chunk.debug_id())
+                        .unwrap_or_else(|_| panic!("unexpected NoSpaceLeft error from bufPrint"));
                     let written = before_len - cursor.len();
                     remain = &mut remain[written..];
                 }
@@ -1075,13 +1071,7 @@ impl IntermediateOutput {
                     if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
                         // This comment must go before the //# sourceMappingURL comment
                         let mut debug_id_fmt = Vec::new();
-                        let _ = write!(
-                            &mut debug_id_fmt,
-                            "\n//# debugId={}\n",
-                            source_map::DebugIDFormatter {
-                                id: chunk.isolated_hash
-                            }
-                        );
+                        let _ = write!(&mut debug_id_fmt, "\n//# debugId={}\n", chunk.debug_id());
 
                         let _ = arena; // Note: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
                         break 'brk joiner.done_with_end(&debug_id_fmt)?;

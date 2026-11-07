@@ -515,6 +515,378 @@ describe.skipIf(isWindows)("a file on stdin piped to a stdout under backpressure
   });
 });
 
+// A pipe, socket or terminal stdin ends the way Node's net.Socket does: push(null), then
+// read(0). With an empty buffer 'end' and 'close' come even when nothing reads. Each child
+// prints what process.stdin emitted and the state of the Readable at exit: `ended: true`
+// shows that EOF was pushed.
+describe("'end' at EOF on a pipe, socket or terminal", () => {
+  const header = `
+    const s = process.stdin;
+    const out = [];
+    const m = x => out.push(x);
+    s.on("end", () => m("end"));
+    s.on("close", () => m("close"));
+    process.on("exit", () => {
+      const { ended, length } = s._readableState;
+      console.log(JSON.stringify({ events: out.join(" "), ended, length }));
+    });`;
+  const addedAndRemoved = `const f = () => m("r"); s.on("readable", f); s.removeListener("readable", f);`;
+  const neverReads = `s.on("readable", () => m("r"));`;
+  const throwsAtEof = `s.on("readable", () => { m("r"); throw new Error("x"); });`;
+  const state = (events: string, length = 0) => JSON.stringify({ events, ended: true, length });
+
+  // "pipe" gets the input and EOF at once, "ready pipe" when the child prints READY on stderr.
+  // "open pipe" gets neither.
+  type Stdin = "pipe" | "ready pipe" | "open pipe" | "file";
+  async function run(stdin: Stdin, input: string, body: string) {
+    using dir = tempDir("stdin-eof", { "empty": "" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", header + body],
+      stdin: stdin === "file" ? Bun.file(join(String(dir), "empty")) : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const decoder = new TextDecoder();
+    let stderr = "";
+    let sent = stdin !== "pipe" && stdin !== "ready pipe";
+    const send = () => {
+      sent = true;
+      const sink = proc.stdin as Bun.FileSink;
+      if (input) sink.write(input);
+      sink.end();
+    };
+    if (stdin === "pipe") send();
+    const drained = (async () => {
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (!sent && stderr.includes("READY\n")) send();
+      }
+    })();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, drained]);
+    return { stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? undefined : stderr };
+  }
+
+  test.concurrent.each([
+    // 'end' and 'close' were missing in these.
+    ["'readable' added and removed", "pipe", "", addedAndRemoved, state("end close")],
+    ["a 'readable' listener that never reads", "pipe", "", neverReads, state("r end close")],
+    ["once('readable') that never reads", "pipe", "", `s.once("readable", () => m("r"));`, state("r end close")],
+    [
+      "setEncoding() and a listener that never reads",
+      "pipe",
+      "",
+      `s.setEncoding("utf8"); ${neverReads}`,
+      state("r end close"),
+    ],
+    ["one read()", "pipe", "", `m("read=" + s.read());`, state("read=null end close")],
+    [
+      "once('readable') that reads, then finished()",
+      "pipe",
+      "hello",
+      `s.once("readable", () => m("read=" + s.read()));
+      require("node:stream").finished(s, err => m("finished" + (err ? ":" + err.code : "")));`,
+      state("read=hello end finished close"),
+    ],
+    // pause() does not hold a stream that has a 'readable' listener.
+    ["a 'readable' listener, then pause()", "pipe", "", `${neverReads} s.pause();`, state("r end close")],
+    [
+      "once('readable'), then pause()",
+      "pipe",
+      "",
+      `s.once("readable", () => m("r")); s.pause();`,
+      state("r end close"),
+    ],
+    [
+      "pause() inside the 'readable' listener at EOF",
+      "pipe",
+      "",
+      `s.on("readable", () => { m("r"); s.pause(); });`,
+      state("r end close"),
+    ],
+    // These print the same without the read(0), and the same in Node.
+    ["unread bytes hold 'end' back", "pipe", "0123456789", addedAndRemoved, state("", 10)],
+    [
+      "a 'readable' listener that throws at EOF gets no 'end'",
+      "pipe",
+      "",
+      `process.on("uncaughtException", () => m("uncaught")); ${throwsAtEof}`,
+      state("r uncaught"),
+    ],
+    [
+      "the same with two reads in flight",
+      "ready pipe",
+      "",
+      `process.on("uncaughtException", () => m("uncaught"));
+      s.on("data", () => {});
+      setImmediate(() => {
+        s.pause();
+        s.resume();
+        setImmediate(() => { ${throwsAtEof} require("node:fs").writeSync(2, "READY\\n"); });
+      });`,
+      state("r uncaught"),
+    ],
+    [
+      "a drain on 'readable', then resume(), emits 'end' once",
+      "pipe",
+      "0123456789",
+      `s.on("readable", function drain() {
+        for (let chunk; (chunk = s.read()) !== null; ) m("d" + chunk.length);
+        if (s._readableState.ended) { s.removeListener("readable", drain); s.resume(); }
+      });`,
+      state("d10 end close"),
+    ],
+    ["push(null) from user code while the pipe is open", "open pipe", "", `s.push(null);`, state("")],
+    ["a file: 'readable' added and removed", "file", "", addedAndRemoved, state("")],
+    ["a file: a 'readable' listener that never reads", "file", "", neverReads, state("r")],
+  ] as const)("%s", async (_name, stdin, input, body, expected) => {
+    expect(await run(stdin, input, body)).toEqual({ stdout: expected, exitCode: 0 });
+  });
+
+  // pause() holds the stream and nothing resumes it: these print `d10 i` and `d10 read=null`,
+  // with no 'end'. Node ends a paused socket one poll after its last chunk.
+  test.todo.each([
+    [
+      "pause() in 'data', then ref()",
+      `s.on("data", v => { m("d" + v.length); s.pause(); setImmediate(() => { s.ref(); m("i"); }); });`,
+      state("d10 i end close"),
+    ],
+    [
+      "pause() in 'data', then read()",
+      `s.on("data", v => { m("d" + v.length); s.pause(); setImmediate(() => m("read=" + s.read())); });`,
+      state("d10 read=null end close"),
+    ],
+  ] as const)("%s", async (_name, body, expected) => {
+    expect(await run("pipe", "0123456789", body)).toEqual({ stdout: expected, exitCode: 0 });
+  });
+
+  // EOF is pushed in the loop turn of the last chunk, so the read(0) ends the stream while the
+  // body of the loop has not pushed its result: the 'end' listener prints `end:[]`. Node v26
+  // reads EOF one poll later and prints `end:[3]`.
+  test.todo("for await with one yield in its body: 'end' comes after the last result", async () => {
+    const body = `
+      const results = [];
+      s.on("end", () => m("end:" + JSON.stringify(results)));
+      (async () => {
+        for await (const chunk of s) {
+          await new Promise(resolve => setImmediate(resolve));
+          results.push(chunk.length);
+        }
+      })();`;
+    expect(await run("pipe", "abc", body)).toEqual({ stdout: state("end end:[3] close"), exitCode: 0 });
+  });
+
+  test.skipIf(isWindows).concurrent("a shell pipe: 'readable' added and removed", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", ': | "$0" -e "$1"', bunExe(), header + addedAndRemoved],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({
+      stdout: state("end close"),
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(isWindows).concurrent("a terminal: a 'readable' listener that never reads, then Ctrl-D", async () => {
+    const decoder = new TextDecoder();
+    let output = "";
+    const ready = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${header} ${neverReads} require("node:fs").writeSync(1, "READY\\n");`],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("READY")) ready.resolve();
+          if (output.includes('"length"')) done.resolve();
+        },
+        exit() {
+          ready.resolve();
+          done.resolve();
+        },
+      },
+    });
+    await ready.promise;
+    proc.terminal!.write("\x04");
+    await done.promise;
+    const exitCode = await proc.exited;
+    proc.terminal!.close();
+    expect({ result: output.match(/\{"events".*\}/)?.[0], exitCode }).toEqual({
+      result: state("r end close"),
+      exitCode: 0,
+    });
+  });
+
+  // A server that reads whole frames and stops when its client closes stdin. At EOF its
+  // listener has nothing to read, so only the read(0) ends the stream.
+  test.concurrent("a frame reader with a live timer exits when stdin ends", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const keepAlive = setInterval(() => {}, 1000);
+        let total = 0;
+        process.stdin.on("readable", () => {
+          if (process.stdin.readableLength >= 4) total += process.stdin.read().length;
+        });
+        process.stdin.on("end", () => {
+          console.log("end total=" + total);
+          clearInterval(keepAlive);
+        });`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write("abcdefgh");
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({
+      stdout: "end total=8\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // pause() holds a 'data' consumer: 'end' waits for its resume(). The handler pauses, awaits,
+  // yields once to the loop, records and resumes. The last chunk and EOF are written together.
+  test.concurrent.each([
+    [
+      "a 'data' listener",
+      `process.stdin.on("data", async chunk => {
+        process.stdin.pause();
+        await yieldToLoop();
+        results.push(String(chunk).trim());
+        process.stdin.resume();
+        fs.writeSync(2, "ACK\\n");
+      });
+      process.stdin.on("end", () => console.log(JSON.stringify(results)));`,
+    ],
+    [
+      "a readline 'line' listener",
+      `const rl = require("node:readline").createInterface({ input: process.stdin });
+      rl.on("line", async line => {
+        rl.pause();
+        await yieldToLoop();
+        results.push(line);
+        rl.resume();
+        fs.writeSync(2, "ACK\\n");
+      });
+      rl.on("close", () => console.log(JSON.stringify(results)));`,
+    ],
+  ])("pause() in %s: the last record is there at 'end'", async (_name, listener) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+        const { setImmediate: yieldToLoop } = require("node:timers/promises");
+        const results = [];
+        ${listener}
+        fs.writeSync(2, "READY\\n");`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const decoder = new TextDecoder();
+    let stderr = "";
+    let acks = 0;
+    const drained = (async () => {
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (acks === 0 && stderr.includes("READY\n")) {
+          acks = 1;
+          proc.stdin.write("ab\n");
+          proc.stdin.flush();
+        }
+        if (acks === 1 && stderr.includes("ACK\n")) {
+          acks = 2;
+          proc.stdin.write("cde\n");
+          proc.stdin.end();
+        }
+      }
+    })();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, drained]);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({
+      stdout: JSON.stringify(["ab", "cde"]) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  // The same hold when the chunk and EOF are in the socket together and two reads are in
+  // flight: EOF is pushed in the turn of the chunk, before the listener's setImmediate() runs.
+  test.skipIf(isWindows).concurrent("pause() in 'data': work in a setImmediate() runs before 'end'", async () => {
+    using dir = tempDir("stdin-eof-order", {});
+    const gate = join(String(dir), "gate");
+    const [childEnd, parentEnd] = createSocketPair();
+    // shutdown() and not close(): see "pause() in 'data', EOF, then resume()". The socket owns parentEnd.
+    const writer = await Bun.connect({ fd: parentEnd, socket: { data() {} } } as any);
+    let sent = false;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("node:fs");
+          const s = process.stdin;
+          const out = [];
+          s.on("end", () => out.push("end"));
+          s.on("close", () => out.push("close"));
+          s.on("data", chunk => {
+            out.push("d" + chunk.length);
+            s.pause();
+            setImmediate(() => {
+              out.push("work");
+              s.resume();
+            });
+          });
+          setImmediate(() => {
+            s.pause();
+            s.resume();
+            setImmediate(() => {
+              fs.writeSync(1, "READY\\n");
+              // Blocks this thread until the chunk and EOF are both in the socket.
+              while (!fs.existsSync(${JSON.stringify(gate)})) {}
+            });
+          });
+          process.on("exit", () => fs.writeSync(1, out.join(" ") + "\\n"));`,
+        ],
+        stdin: childEnd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const stderr = proc.stderr.text();
+      const decoder = new TextDecoder();
+      let stdout = "";
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (!sent && stdout.includes("READY\n")) {
+          sent = true;
+          expect(writer.write("0123456789")).toBe(10);
+          writer.shutdown();
+          writeFileSync(gate, "");
+        }
+      }
+      const exitCode = await proc.exited;
+      expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : await stderr }).toEqual({
+        stdout: "READY\nd10 work end close\n",
+        exitCode: 0,
+      });
+    } finally {
+      closeSync(childEnd);
+      writer.end();
+    }
+  });
+});
+
 test.concurrent("stdin should allow process to exit when paused", async () => {
   const proc = Bun.spawn({
     cmd: [

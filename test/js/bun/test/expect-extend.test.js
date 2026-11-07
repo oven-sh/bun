@@ -731,6 +731,12 @@ describe("MatcherContext", () => {
       expect(Bun.stripANSI(utils.diff(Symbol("a"), Symbol("b")))).toBe("Expected: Symbol(a)\nReceived: Symbol(b)");
     });
 
+    test("diff prints a Set inside an object on the line of its key", () => {
+      expect(Bun.stripANSI(utils.diff({ s: new Set([1]) }, { s: new Set([2]) }))).toContain(
+        '\n    "s": Set {\n-     1,\n+     2,\n    },\n',
+      );
+    });
+
     test("diff rethrows an error thrown while printing a value", () => {
       const thrown = new Error("from the trap");
       const value = new Proxy(

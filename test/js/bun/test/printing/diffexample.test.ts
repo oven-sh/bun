@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
@@ -63,12 +63,10 @@ test.concurrent("no color", async () => {
         "object1": "a",
     -   "object2": " b",
     +   "object2": "b",
-        "object3": 
-      "c
-    - d"
+        "object3": "c
+    - d",
     + d
-    + e"
-      ,
+    + e",
       }
 
     - Expected  - 2
@@ -713,13 +711,91 @@ test.concurrent("no color", async () => {
           at <anonymous> (FILE:LINE)
     (fail) mix of whitespace-only and non-whitespace-only differences
     (skip) mix of whitespace-only and non-whitespace-only differences (ANSI)
+    356 |   }
+    357 | });
+    358 | 
+    359 | test("the output of a subprocess in an object", () => {
+    360 |   const received = { stdout: "hello\\n", stderr: "warn: x\\n", exitCode: 1 };
+    361 |   expect(received).toEqual({ stdout: "hello\\n", stderr: "", exitCode: 0 });
+                             ^
+    error: expect(received).toEqual(expected)
+
+      {
+    -   "exitCode": 0,
+    -   "stderr": "",
+    +   "exitCode": 1,
+    +   "stderr": "warn: x
+    + ",
+        "stdout": "hello
+      ",
+      }
+
+    - Expected  - 2
+    + Received  + 3
+
+          at <anonymous> (FILE:LINE)
+    (fail) the output of a subprocess in an object
+    361 |   expect(received).toEqual({ stdout: "hello\\n", stderr: "", exitCode: 0 });
+    362 | });
+    363 | 
+    364 | test("a Set and a Map in an object", () => {
+    365 |   const received = { s: new Set([1, 2]), m: new Map([["a", 1]]), a: 1 };
+    366 |   expect(received).toEqual({ s: new Set([1, 3]), m: new Map([["a", 2]]), a: 1 });
+                             ^
+    error: expect(received).toEqual(expected)
+
+      {
+        "a": 1,
+        "m": Map {
+    -     "a" => 2,
+    +     "a" => 1,
+        },
+        "s": Set {
+          1,
+    -     3,
+    +     2,
+        },
+      }
+
+    - Expected  - 2
+    + Received  + 2
+
+          at <anonymous> (FILE:LINE)
+    (fail) a Set and a Map in an object
+    366 |   expect(received).toEqual({ s: new Set([1, 3]), m: new Map([["a", 2]]), a: 1 });
+    367 | });
+    368 | 
+    369 | test("a Set and a Map in an array", () => {
+    370 |   const received = [new Set([1, 2]), new Map([["a", 1]]), 1];
+    371 |   expect(received).toEqual([new Set([1, 3]), new Map([["a", 2]]), 1]);
+                             ^
+    error: expect(received).toEqual(expected)
+
+      [
+        Set {
+          1,
+    -     3,
+    +     2,
+        },
+        Map {
+    -     "a" => 2,
+    +     "a" => 1,
+        },
+        1,
+      ]
+
+    - Expected  - 2
+    + Received  + 2
+
+          at <anonymous> (FILE:LINE)
+    (fail) a Set and a Map in an array
 
      0 pass
      2 skip
      1 todo
-     16 fail
-     16 expect() calls
-    Ran 19 tests across 1 file.
+     19 fail
+     19 expect() calls
+    Ran 22 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
@@ -967,4 +1043,301 @@ test("stops printing deeper once a value has printed 1,000,000 characters", () =
   expect(message).toContain(`"list": [Array],\n`);
   expect(message).toContain(`"right": [Object],\n`);
   expect(message.length).toBeWithin(1_000_000, 1_500_000);
+});
+
+// The text that a failure message has for `expected`. `not.toEqual` prints it whole, so no diff hides a line.
+function printedInFailureMessage(expected: unknown, received: unknown = expected): string {
+  const before = "expect(received).not.toEqual(expected)\n\nExpected: not ";
+  let message = "";
+  try {
+    expect(received).not.toEqual(expected);
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toStartWith(before);
+  return message.slice(before.length, -1);
+}
+
+// A snapshot of these values keeps a line break before and after each of them (see "most types" in snapshot.test.ts).
+test("prints a multi-line string, Map, Set or String object inside another value on the line where its key or element starts", () => {
+  const leaves = () => ({
+    emptyMap: new Map(),
+    emptySet: new Set(),
+    map: new Map([["k", 1]]),
+    set: new Set([1]),
+    stringObject: new String("ab"),
+    text: "a\nb",
+    weakMap: new WeakMap(),
+    weakSet: new WeakSet(),
+  });
+
+  expect(printedInFailureMessage(leaves())).toBe(`{
+  "emptyMap": Map {},
+  "emptySet": Set {},
+  "map": Map {
+    "k" => 1,
+  },
+  "set": Set {
+    1,
+  },
+  "stringObject": String {
+    "0": "a",
+    "1": "b",
+  },
+  "text": "a
+b",
+  "weakMap": WeakMap {},
+  "weakSet": WeakSet {},
+}`);
+
+  const elements = `
+  Map {},
+  Set {},
+  Map {
+    "k" => 1,
+  },
+  Set {
+    1,
+  },
+  String {
+    "0": "a",
+    "1": "b",
+  },
+  "a
+b",
+  WeakMap {},
+  WeakSet {},
+`;
+  expect(printedInFailureMessage(Object.values(leaves()))).toBe(`[${elements}]`);
+  expect(printedInFailureMessage(new Set(Object.values(leaves())))).toBe(`Set {${elements}}`);
+
+  const keys = Object.values(leaves());
+  const values = Object.values(leaves());
+  expect(printedInFailureMessage(new Map(keys.map((key, i) => [key, values[i]])))).toBe(`Map {
+  Map {} => Map {},
+  Set {} => Set {},
+  Map {
+    "k" => 1,
+  } => Map {
+    "k" => 1,
+  },
+  Set {
+    1,
+  } => Set {
+    1,
+  },
+  String {
+    "0": "a",
+    "1": "b",
+  } => String {
+    "0": "a",
+    "1": "b",
+  },
+  "a
+b" => "a
+b",
+  WeakMap {} => WeakMap {},
+  WeakSet {} => WeakSet {},
+}`);
+
+  expect(printedInFailureMessage({ a: [{ b: new Set([new Map([["k", new Set(["x\ny"])]])]) }] })).toBe(`{
+  "a": [
+    {
+      "b": Set {
+        Map {
+          "k" => Set {
+            "x
+y",
+          },
+        },
+      },
+    },
+  ],
+}`);
+
+  // As in a snapshot, `\r` and `\r\n` print as a line break, and a quote prints as it is.
+  expect(printedInFailureMessage({ cr: "a\rb", crlf: "a\r\nb", quote: 'say "hi"\nbye' })).toBe(
+    '{\n  "cr": "a\nb",\n  "crlf": "a\nb",\n  "quote": "say "hi"\nbye",\n}',
+  );
+
+  // The whole value has the text it had before.
+  expect(Object.values(leaves()).map(value => printedInFailureMessage(value))).toEqual([
+    "Map {}",
+    "Set {}",
+    'Map {\n  "k" => 1,\n}',
+    "Set {\n  1,\n}",
+    'String {\n  "0": "a",\n  "1": "b",\n}',
+    '"a\nb"',
+    "WeakMap {}",
+    "WeakSet {}",
+  ]);
+  // So does the operand of a matcher that is the whole value: it prints at the depth of the whole value.
+  expect(printedInFailureMessage(expect.stringContaining("a\nb"), "a\nb")).toBe('StringContaining \n"a\nb"');
+});
+
+class Instance {
+  set = new Set([1]);
+  text = "a\nb";
+}
+expect.extend({
+  toBeNamed: () => ({ pass: true, message: () => "" }),
+});
+
+test.each<[string, () => [expected: unknown, received?: unknown], string]>([
+  [
+    "the value of a symbol key",
+    () => [{ [Symbol("k")]: new Set([1]) }],
+    `{
+  [Symbol(k)]: Set {
+    1,
+  },
+}`,
+  ],
+  [
+    "a field of a class instance",
+    () => [new Instance()],
+    `Instance {
+  "set": Set {
+    1,
+  },
+  "text": "a
+b",
+}`,
+  ],
+  [
+    "the operand of StringContaining in an array",
+    () => [[expect.stringContaining("a\nb")], ["a\nb"]],
+    `[
+  StringContaining "a
+b",
+]`,
+  ],
+  [
+    "the operand of StringMatching in an array",
+    () => [[expect.stringMatching("a\nb")], ["a\nb"]],
+    `[
+  StringMatching "a
+b",
+]`,
+  ],
+  [
+    "an argument of a custom asymmetric matcher",
+    () => [[(expect as any).toBeNamed(new Set([1]), "a\nb")], [1]],
+    `[
+  toBeNamed [
+    Set {
+      1,
+    },
+    "a
+b",
+  ],
+]`,
+  ],
+])("prints %s on the line where it starts", (_, values, text) => {
+  expect(printedInFailureMessage(...values())).toBe(text);
+});
+
+test("prints a prop, a child and the key of a JSX element, and a field of an Event, on the line where it starts", () => {
+  const element = (props: object, key: unknown = null) => ({
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+    key,
+    props,
+  });
+  expect(printedInFailureMessage([element({ set: new Set([1]) })])).toContain("<div set=Set {\n      1,\n    } />");
+  expect(printedInFailureMessage([element({ text: "a\nb" })])).toContain('<div text="a\nb" />');
+  expect(printedInFailureMessage([element({ children: [new Set([1]), "x"] })])).toContain(
+    "<div>\n    Set {\n      1,\n    }\n    x\n  </div>",
+  );
+  expect(printedInFailureMessage([element({}, new Set([1]))])).toContain("<div key=Set {\n    1,\n  } />");
+
+  expect(printedInFailureMessage(new MessageEvent("message", { data: new Set([1]) }))).toContain(
+    "\n  data: Set {\n    1,\n  },",
+  );
+  const errorEvent = printedInFailureMessage(new ErrorEvent("error", { message: "a\nb", error: new Set([1]) }));
+  expect(errorEvent).toContain('\n  message: "a\nb",');
+  expect(errorEvent).toContain("\n  error: Set {\n    1,\n  }\n}");
+});
+
+async function messageOfFailing(fail: () => unknown): Promise<string> {
+  try {
+    await fail();
+  } catch (e) {
+    return cleanAnsiEscapes((e as Error).message);
+  }
+  return "";
+}
+
+test("prints a Promise on the line of its key or element, however long the line before it is", async () => {
+  const long = Buffer.alloc(90, "x").toString();
+  const promise = Promise.resolve();
+  expect(printedInFailureMessage([long, promise])).toBe(`[\n  "${long}",\n  Promise {},\n]`);
+  expect(printedInFailureMessage(new Set([long, promise]))).toBe(`Set {\n  "${long}",\n  Promise {},\n}`);
+  expect(printedInFailureMessage(new Map([[long, promise]]))).toBe(`Map {\n  "${long}" => Promise {},\n}`);
+  expect(printedInFailureMessage({ [long]: promise })).toBe(`{\n  "${long}": Promise {},\n}`);
+
+  // A snapshot breaks the line before a Promise once the members before it add up to 80 columns.
+  // In a diff that break moved with the length of an earlier key, and marked equal entries as changed.
+  const requests = (first: string) =>
+    new Map<string, unknown>([[first, 1], ...Array.from({ length: 8 }, (_, i) => [`request-${i}`, promise] as const)]);
+  const message = await messageOfFailing(() => expect(requests("short")).toEqual(requests("a-longer-first-key")));
+  expect(message).toContain("- Expected  - 1\n+ Received  + 1");
+});
+
+const calledWith = (argument: unknown) => {
+  const fn = mock();
+  fn(argument);
+  return fn;
+};
+
+// The arguments of a call print as an array, so each row prints its value inside an array.
+// With AGENT=1 in the environment a diff keeps one unchanged line next to a changed one, so these compare no more.
+test.each<[string, (received: unknown, expected: unknown) => unknown]>([
+  ["toEqual", (received, expected) => expect([received]).toEqual([expected])],
+  ["toStrictEqual", (received, expected) => expect([received]).toStrictEqual([expected])],
+  ["toHaveProperty", (received, expected) => expect({ p: [received] }).toHaveProperty("p", [expected])],
+  ["toHaveBeenCalledWith", (received, expected) => expect(calledWith(received)).toHaveBeenCalledWith(expected)],
+  ["toHaveBeenLastCalledWith", (received, expected) => expect(calledWith(received)).toHaveBeenLastCalledWith(expected)],
+  [
+    "toHaveBeenNthCalledWith",
+    (received, expected) => expect(calledWith(received)).toHaveBeenNthCalledWith(1, expected),
+  ],
+  [
+    "toHaveBeenCalledExactlyOnceWith",
+    (received, expected) => expect(calledWith(received)).toHaveBeenCalledExactlyOnceWith(expected),
+  ],
+  ["resolves.toEqual", (received, expected) => expect(Promise.resolve([received])).resolves.toEqual([expected])],
+])("%s prints a multi-line string and a Set in an array on the line where the element starts", async (_, fail) => {
+  expect(await messageOfFailing(() => fail("a\nb", "a\nc"))).toContain(`
+    "a
+- c",
++ b",
+  ]
+`);
+  expect(await messageOfFailing(() => fail(new Set([2]), new Set([3])))).toContain(`
+    Set {
+-     3,
++     2,
+    },
+`);
+});
+
+test("toMatchObject and an asymmetric matcher print a nested Set the same way", async () => {
+  const unchanged = await messageOfFailing(() => expect([1, new Set([2]), 3]).toMatchObject([0, new Set([2]), 4]));
+  expect(unchanged).toContain("+   1,\n    Set {\n");
+  expect(unchanged).toContain("    },\n-   4,\n");
+
+  expect(await messageOfFailing(() => expect([1]).toEqual([expect.objectContaining({ s: new Set([2]) })]))).toContain(`
+-   ObjectContaining {
+-     "s": Set {
+-       2,
+-     },
+-   },
++   1,
+`);
+});
+
+// jest-diff escapes a quote in a string, and this printer does not. So a string can read as two elements.
+test.failing("a multi-line string that holds a quote prints as one element", () => {
+  expect(printedInFailureMessage(['x",\n  "y'])).not.toBe(printedInFailureMessage(["x", "y"]));
 });

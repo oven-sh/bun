@@ -355,3 +355,18 @@ test.skipIf(!Bun.enableANSIColors)("mix of whitespace-only and non-whitespace-on
     `);
   }
 });
+
+test("the output of a subprocess in an object", () => {
+  const received = { stdout: "hello\n", stderr: "warn: x\n", exitCode: 1 };
+  expect(received).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+});
+
+test("a Set and a Map in an object", () => {
+  const received = { s: new Set([1, 2]), m: new Map([["a", 1]]), a: 1 };
+  expect(received).toEqual({ s: new Set([1, 3]), m: new Map([["a", 2]]), a: 1 });
+});
+
+test("a Set and a Map in an array", () => {
+  const received = [new Set([1, 2]), new Map([["a", 1]]), 1];
+  expect(received).toEqual([new Set([1, 3]), new Map([["a", 2]]), 1]);
+});

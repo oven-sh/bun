@@ -768,6 +768,12 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
 use bun_io::AsFmt;
 
 impl<'a> Formatter<'a> {
+    /// Stored snapshots keep the line breaks that older versions wrote around a nested Map, Set, String object,
+    /// multi-line string or Promise. A failure message, the only text with an `output_length`, has them at depth 0 only.
+    fn has_snapshot_line_breaks(&self) -> bool {
+        self.indent == 0 || self.output_length.is_none()
+    }
+
     pub(crate) fn write_indent<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
         let indent = self.indent.min(32);
         let buf = [b' '; 64];
@@ -1152,6 +1158,7 @@ impl<'a> Formatter<'a> {
                             writer.write_all(b"String {}");
                             return Ok(());
                         }
+                        let line_breaks = self.has_snapshot_line_breaks();
                         if self.indent == 0 && str.len > 0 {
                             writer.write_all(b"\n");
                         }
@@ -1172,8 +1179,14 @@ impl<'a> Formatter<'a> {
                             }
                         }
                         self.reset_line();
-                        writer.write_all(b"}\n");
                         self.indent = self.indent.saturating_sub(1);
+                        if line_breaks {
+                            // In a snapshot the closing brace of a nested String object has no indentation.
+                            writer.write_all(b"}\n");
+                        } else {
+                            let _ = self.write_indent(writer.ctx);
+                            writer.write_all(b"}");
+                        }
                         return Ok(());
                     }
 
@@ -1189,7 +1202,7 @@ impl<'a> Formatter<'a> {
 
                         let mut has_newline = false;
 
-                        if str.index_of_any(b"\n\r").is_some() {
+                        if str.index_of_any(b"\n\r").is_some() && self.has_snapshot_line_breaks() {
                             has_newline = true;
                             writer.write_all(b"\n");
                         }
@@ -1728,7 +1741,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"[native code]");
                 }
                 Tag::Promise => {
-                    if self.good_time_for_a_new_line() {
+                    if self.has_snapshot_line_breaks() && self.good_time_for_a_new_line() {
                         writer.write_all(b"\n");
                         let _ = self.write_indent(writer.ctx);
                     }
@@ -1783,7 +1796,12 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     }
 
-                    writer.print(format_args!("\n{} {{\n", map_name));
+                    let line_breaks = self.has_snapshot_line_breaks();
+                    if line_breaks {
+                        writer.print(format_args!("\n{} {{\n", map_name));
+                    } else {
+                        writer.print(format_args!("{} {{\n", map_name));
+                    }
                     {
                         self.indent += 1;
                         // hoist global_this (Copy &ref) before iter mutably
@@ -1807,7 +1825,9 @@ impl<'a> Formatter<'a> {
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
-                    writer.write_all(b"\n");
+                    if line_breaks {
+                        writer.write_all(b"\n");
+                    }
                 }
                 Tag::Set => {
                     let length_value = value
@@ -1822,7 +1842,11 @@ impl<'a> Formatter<'a> {
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
-                    let _ = self.write_indent(writer.ctx);
+                    let line_breaks = self.has_snapshot_line_breaks();
+                    if line_breaks {
+                        // A snapshot also has the indentation of a nested Set before its name.
+                        let _ = self.write_indent(writer.ctx);
+                    }
 
                     let set_name: &str =
                         if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
@@ -1833,7 +1857,11 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     }
 
-                    writer.print(format_args!("\n{} {{\n", set_name));
+                    if line_breaks {
+                        writer.print(format_args!("\n{} {{\n", set_name));
+                    } else {
+                        writer.print(format_args!("{} {{\n", set_name));
+                    }
                     {
                         self.indent += 1;
                         let global = self.global_this;
@@ -1854,7 +1882,9 @@ impl<'a> Formatter<'a> {
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
-                    writer.write_all(b"\n");
+                    if line_breaks {
+                        writer.write_all(b"\n");
+                    }
                 }
                 Tag::JSON => {
                     let str = value.json_stringify(self.global_this, self.indent)?;

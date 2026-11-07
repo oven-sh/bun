@@ -1876,6 +1876,34 @@ devTest("stylesheet of a server file and a client file imports a stylesheet that
     expect(await css()).toContain(".fixed {");
   },
 });
+devTest("css module of two graphs keeps the browser's stylesheet when the client graph grows past 512 files", {
+  framework: frameworkWithClientEntry(false),
+  files: {
+    ...Object.fromEntries(Array.from({ length: 520 }, (_, i) => [`m/${i}.ts`, `export const v${i} = ${i};`])),
+    "client.ts": [
+      ...Array.from({ length: 520 }, (_, i) => `import "./m/${i}.ts";`),
+      `import "./styles.module.css";`,
+      `import "./broken.module.css";`,
+    ].join("\n"),
+    "styles.module.css": `.title { color: lab(50% 40 30); }`,
+    "broken.module.css": `.b { composes: missing; color: red; }`,
+    "routes/index.ts": `
+      import styles from "../styles.module.css";
+      export default function (req, meta) {
+        return Response.json({ title: styles.title, styles: meta.styles });
+      }
+    `,
+  },
+  async test(dev) {
+    // The failure of the other module is recorded after the browser's copy of styles.module.css is stored.
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("broken.module.css", `.b { color: red; }`);
+    const { title, styles } = (await (await dev.fetch("/")).json()) as { title: string; styles: string[] };
+    const sheets = await Promise.all(styles.map(href => dev.fetch(href).text()));
+    // Only the browser's copy has the fallbacks for the color.
+    expect(sheets.find(css => css.includes("." + title))).toContain("color(display-p3");
+  },
+});
 devTest("css file that imports a file that is not css does not kill old styles", {
   files: {
     "theme.json": `{}`,

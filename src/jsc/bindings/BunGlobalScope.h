@@ -7,6 +7,9 @@ namespace Bun {
 
 using namespace JSC;
 
+// A Math.random seed drawn from BoringSSL's DRBG (BunReseedRandom.cpp).
+unsigned freshWeakRandomSeed();
+
 class GlobalScope : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
 

@@ -131,6 +131,9 @@ public:
     // target's thread when the work whose completion this is was initiated, or Regular for work no
     // script there initiated.
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
+    // Posts `task` once to every other live VM's regular loop. A VM that is terminating, or
+    // terminates before the task runs, drops it unrun.
+    WEBCORE_EXPORT static void postToEveryOtherVM(const ::BunVmHandleRef* caller, void (*task)(ScriptExecutionContext&));
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
@@ -158,6 +161,8 @@ public:
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
     JSC::VM& vm() { return *realm().m_vm; }
+    // The thread's Bun VM (bun_jsc::VirtualMachine).
+    void* bunVM() const { return m_bunVM; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
     // This thread only: the loop the VM is running now. What an object that will later be posted to
     // from another thread records alongside identifier() when script here sets it up.

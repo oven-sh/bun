@@ -729,6 +729,12 @@ impl RareData {
         UUID::init_with(&bytes)
     }
 
+    /// Drop the random values drawn ahead of time (`VirtualMachine::reseed_random_state`).
+    pub fn forget_random_state(&mut self) {
+        self.entropy_cache = None;
+        self.default_csrf_secret = Box::default();
+    }
+
     // ── lazy-init: misc heap slots ────────────────────────────────────────
 
     /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather

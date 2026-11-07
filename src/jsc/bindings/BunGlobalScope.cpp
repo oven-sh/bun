@@ -9,6 +9,7 @@
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/TypeError.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/Options.h>
 
 namespace Bun {
 
@@ -18,6 +19,10 @@ void GlobalScope::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    // Not WTF's ARC4 stream (JSGlobalObject's default): a restored VM snapshot duplicates it too.
+    if (!JSC::Options::forceWeakRandomSeed())
+        weakRandom().setSeed(freshWeakRandomSeed());
 
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

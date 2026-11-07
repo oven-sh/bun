@@ -1,6 +1,7 @@
 use crate::bind::Parent;
 use crate::check::errors::operator_text;
 use crate::check::*;
+use crate::hir::ImportPhase;
 
 pub(super) fn is_reached(bound: &Bound<'_>, e: ExprId) -> bool {
     !matches!(bound.parent_of_expr(e), Parent::None)
@@ -236,7 +237,11 @@ impl Checker<'_, '_> {
             let at = self.span_of_token(file, name_pos);
             if is_on_super {
                 self.early_grammar_error_at(at, 1034, &[]);
-            } else if self.classes_enclosing_private_name(file, e).is_empty() {
+            } else if self
+                .classes_enclosing_private_name(file, e)
+                .next()
+                .is_none()
+            {
                 self.early_grammar_error_at(at, 18016, &[]);
             } else {
                 let written = self.declaration_name_at(file, name_pos);
@@ -246,7 +251,7 @@ impl Checker<'_, '_> {
         self.check_private_names(file);
         for &e in index.of(ExprTag::PrivateIdentifier).iter().filter(reached) {
             if !self.is_private_name_declared(file, e)
-                && !self.enclosing_classes(file, e).is_empty()
+                && self.enclosing_classes(file, e).next().is_some()
             {
                 let written = self.declaration_name_at(file, hir[e].pos);
                 self.early_grammar_error_at((file, hir[e].pos, 0), 1111, &[Arg::Bytes(&written)]);
@@ -342,7 +347,7 @@ impl Checker<'_, '_> {
 
     fn check_import_call_early_errors(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
-        let ExprKind::ImportCall { args } = hir[e].kind else {
+        let ExprKind::ImportCall { args, phase } = hir[e].kind else {
             return;
         };
         if is_operand_of_new(hir, e) {
@@ -350,10 +355,14 @@ impl Checker<'_, '_> {
         }
         let specifier = hir.id_at(args, 0);
         // `bun run` takes `meta` alone after `import.`.
-        let mut deferred = hir.deferred_import_calls.iter();
-        if deferred.any(|call| call.0 == specifier) {
+        let written = match phase {
+            ImportPhase::Evaluation => None,
+            ImportPhase::Defer => Some(b"defer".as_slice()),
+            ImportPhase::Source => Some(b"source".as_slice()),
+        };
+        if let Some(written) = written {
             let name = hir.node(e).with(Part::Name);
-            let words = [b"defer".as_slice(), b"import", b"meta"].map(Arg::Bytes);
+            let words = [written, b"import", b"meta"].map(Arg::Bytes);
             self.early_grammar_error_on_node(file, name, 17012, &words);
         }
         if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {

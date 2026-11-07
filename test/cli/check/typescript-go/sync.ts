@@ -1,10 +1,10 @@
-// Collects TypeScript's compiler and conformance tests, and what typescript-go expects of them, in `bundle.zst`.
+// Collects TypeScript's compiler and conformance tests, and what TypeScript expects of them, in `bundle.zst`.
 //
-//   bun test/cli/check/typescript-go/sync.ts <tag, branch or commit of microsoft/typescript-go>
-//   bun test/cli/check/typescript-go/sync.ts <path to a checkout of it, with its submodule>
+//   bun test/cli/check/typescript-go/sync.ts <tag, branch or commit of microsoft/TypeScript, 7.1 or later>
+//   bun test/cli/check/typescript-go/sync.ts <path to a checkout of it>
 //   bun test/cli/check/typescript-go/sync.ts --extract <part of a path> [directory]
 //
-// The files in `../conformance` run the tests. After a sync, `bun check` is expected to differ wherever typescript-go changed.
+// The files in `../conformance` run the tests. After a sync, `bun check` is expected to differ wherever TypeScript changed.
 import { $ } from "bun";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,39 +40,31 @@ if (source === "--extract") {
 
 // With the same paths as there.
 const copied = [
-  "_submodules/TypeScript/tests/cases/compiler",
-  "_submodules/TypeScript/tests/cases/conformance",
-  "_submodules/TypeScript/tests/lib",
-  "testdata/tests/cases/compiler",
-  "testdata/tests/cases/conformance",
-  "internal/bundled/libs",
+  "tsc/testdata/tests/cases/compiler",
+  "tsc/testdata/tests/cases/conformance",
+  "tsc/testdata/tests/lib",
+  "tsc/internal/bundled/libs",
 ];
 // Of a directory of baselines, the kinds that are compared. `names.txt` has the names of all of them, which say which
 // configurations a test has, and that a test without an `.errors.txt` has no errors.
-const kinds = [".errors.txt", ".types", ".symbols", ".js", ".trace.json"];
-const baselines = [
-  "testdata/baselines/reference/submodule/compiler",
-  "testdata/baselines/reference/submodule/conformance",
-  "testdata/baselines/reference/compiler",
-  "testdata/baselines/reference/conformance",
-];
+const kinds = [".errors.txt", ".types", ".symbols", ".js", ".trace.json", ".contentmapper"];
+const baselines = ["tsc/testdata/baselines/reference/compiler", "tsc/testdata/baselines/reference/conformance"];
 
 let checkout = source;
 let temporary: string | undefined;
-if (!existsSync(join(source, "testdata"))) {
+if (!existsSync(join(source, "tsc/testdata"))) {
   temporary = checkout = mkdtempSync(join(tmpdir(), "typescript-go-"));
   await $`git init -q`.cwd(checkout);
-  await $`git remote add origin https://github.com/microsoft/typescript-go`.cwd(checkout);
+  await $`git remote add origin https://github.com/microsoft/TypeScript`.cwd(checkout);
   await $`git fetch -q --depth 1 --filter=blob:none origin ${source}`.cwd(checkout);
   const wanted = [
-    "/LICENSE",
+    "/tsc/LICENSE",
     "/NOTICE.txt",
-    ...copied.filter(path => !path.startsWith("_submodules")).map(path => `/${path}/`),
+    ...copied.map(path => `/${path}/`),
     ...baselines.flatMap(path => kinds.map(kind => `/${path}/*${kind}`)),
   ];
   await $`git sparse-checkout set --no-cone ${wanted}`.cwd(checkout);
   await $`git checkout -q FETCH_HEAD`.cwd(checkout);
-  await $`git submodule update -q --init --depth 1 --filter=blob:none _submodules/TypeScript`.cwd(checkout);
 }
 
 const files = new Map<string, Uint8Array>();
@@ -105,18 +97,8 @@ for (const path of [...files.keys()].sort()) {
   parts.push(Buffer.from(`=== /${path} ${bytes.length}\n`), bytes, Buffer.from("\n"));
 }
 writeFileSync(bundle, Bun.zstdCompressSync(Buffer.concat(parts), { level: 19 }));
-for (const name of ["LICENSE", "NOTICE.txt"]) writeFileSync(join(here, name), readFileSync(join(checkout, name)));
+for (const path of ["tsc/LICENSE", "NOTICE.txt"]) writeFileSync(join(here, basename(path)), readFileSync(join(checkout, path)));
 
-const commit = async (dir: string) => (await $`git rev-parse HEAD`.cwd(dir).text()).trim();
-writeFileSync(
-  join(here, "version.json"),
-  JSON.stringify(
-    {
-      "microsoft/typescript-go": await commit(checkout),
-      "microsoft/TypeScript": await commit(join(checkout, "_submodules/TypeScript")),
-    },
-    null,
-    2,
-  ) + "\n",
-);
+const commit = (await $`git rev-parse HEAD`.cwd(checkout).text()).trim();
+writeFileSync(join(here, "version.json"), JSON.stringify({ "microsoft/TypeScript": commit }, null, 2) + "\n");
 if (temporary) rmSync(temporary, { recursive: true, force: true });

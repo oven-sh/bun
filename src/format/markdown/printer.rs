@@ -1046,6 +1046,16 @@ impl<'a> Printer<'a, '_> {
         true
     }
 
+    /// True if `id` is in the paragraph behind the `[ ] ` of a task. Its other lines are printed four columns to the
+    /// right of the item's content, so whatever they start with is text. oxfmt keeps markup off the start of those
+    /// lines too.
+    fn can_start_lines_with_markup(&self, id: NodeId) -> bool {
+        let paragraph = self.find_ancestor(id, |it| it.kind == Kind::Paragraph);
+        let item = paragraph.and_then(|it| self.node(self.node(it)?.parent));
+        !self.options.flavor.is_oxfmt()
+            && item.is_some_and(|it| it.checked != 0 && Some(it.first_child) == paragraph)
+    }
+
     /// Prettier's `printSentence`
     fn print_sentence(&mut self, id: NodeId, node: &Node) -> Doc<'a> {
         if node.number == preprocess::PLAIN {
@@ -1071,7 +1081,9 @@ impl<'a> Printer<'a, '_> {
             let joins = (next.is_some_and(|it| Self::may_start_block(self.str(it.value)))
                 && !after_next.is_some_and(|it| it.kind == TokenKind::NoSpace)
                 && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line))
-                || (can_break && self.must_not_start_line(node, tokens, index + 1));
+                || (can_break
+                    && !self.can_start_lines_with_markup(id)
+                    && self.must_not_start_line(node, tokens, index + 1));
             let prose_wrap = if joins {
                 ProseWrap::Never
             } else {

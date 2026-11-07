@@ -263,10 +263,19 @@ impl ConfigGlobals {
     fn libs(language: &LanguageOptions) -> (Box<[u8]>, Box<[u16]>) {
         let mut flags = vec![0u8; tables::NAME_ENDS.len().div_ceil(4)].into_boxed_slice();
         let mut order = Vec::new();
-        let find = |name: &[u8]| {
+        let known = |name: &[u8]| {
             tables::LIBS
                 .binary_search_by(|it| it.0.as_bytes().cmp(name))
                 .ok()
+        };
+        // typescript-eslint's table ends at an earlier edition than TypeScript's libraries. What a later one has is in
+        // `esnext` there.
+        let find = |name: &[u8]| {
+            known(name).or_else(|| match name.starts_with(b"es2") {
+                true if name.ends_with(b".full") => known(b"esnext.full"),
+                true => known(b"esnext"),
+                false => None,
+            })
         };
         let mut included: Vec<usize> = match &language.lib {
             Some(libs) => libs.iter().filter_map(|lib| find(lib)).collect(),
@@ -409,12 +418,10 @@ pub struct GlobalVariable<'f> {
     /// A TypeScript library defines it, whether or not anything else does: typescript-eslint's
     /// `variable instanceof ImplicitLibVariable`.
     pub is_in_lib: bool,
-    /// Only a TypeScript library defines it. A reference then only resolves to it if the reference's kind (type or
-    /// value) matches the variable's.
+    /// Only a TypeScript library defines it.
     pub is_only_in_lib: bool,
-    /// Only the types of the file's program define it: [`File::inferred_globals`]. References resolve as for
-    /// `is_only_in_lib`.
-    pub is_inferred: bool,
+    /// A reference only resolves to it if the reference's kind (type or value) matches the variable's.
+    pub(crate) checks_reference_kind: bool,
     /// ESLint's `variable.eslintExported`, which also sets `variable.eslintUsed`: an `/* exported */` comment lists it.
     pub is_exported: bool,
 }
@@ -423,8 +430,7 @@ impl GlobalVariable<'_> {
     /// True if a reference resolves to it. `is_type` tells whether the reference is in a type.
     #[inline]
     pub fn accepts(&self, is_type: bool) -> bool {
-        let checks_reference_kind = self.is_only_in_lib || self.is_inferred;
-        !checks_reference_kind || if is_type { self.is_type } else { self.is_value }
+        !self.checks_reference_kind || if is_type { self.is_type } else { self.is_value }
     }
 }
 
@@ -494,7 +500,7 @@ impl<'a> File<'a> {
                 is_value: found.is_value,
                 is_in_lib: false,
                 is_only_in_lib: false,
-                is_inferred: true,
+                checks_reference_kind: true,
                 is_exported,
             });
         }
@@ -509,7 +515,9 @@ impl<'a> File<'a> {
                 is_value: lib & VALUE != 0 && !self.language().is_oxlint,
                 is_in_lib: true,
                 is_only_in_lib: true,
-                is_inferred: false,
+                // `Promise` and `Symbol` are only types in typescript-eslint's libraries. Before ESLint 10, a reference
+                // that typescript-eslint left unresolved resolves to any global variable with its name.
+                checks_reference_kind: self.language().eslint_major >= 10,
                 is_exported,
             }),
             Some(setting) => Some(GlobalVariable {
@@ -520,7 +528,7 @@ impl<'a> File<'a> {
                 is_value: lib == 0 || lib & VALUE != 0,
                 is_in_lib: lib != 0,
                 is_only_in_lib: false,
-                is_inferred: false,
+                checks_reference_kind: false,
                 is_exported,
             }),
         }

@@ -4,6 +4,7 @@ use super::code_load::{LoadKey, LoadedCode};
 use super::*;
 use crate::bind::{Binding, Parent};
 use crate::file_analysis::FileAnalysis;
+use crate::hir::ImportPhase;
 use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, DeclaredSideEffects, SiteResolution};
@@ -406,7 +407,8 @@ impl Summary<'_, '_> {
                 (Some(name), _) => names.push(name),
                 // The bundler loads every file behind `import *`, and leaves out those that nothing is read of only if they may go.
                 (None, Some(members))
-                    if !self.hir[import].is_deferred && !self.runs_all_that_is_loaded =>
+                    if self.hir[import].phase == ImportPhase::Evaluation
+                        && !self.runs_all_that_is_loaded =>
                 {
                     names.extend_from_slice(members);
                 }
@@ -523,7 +525,7 @@ impl Summary<'_, '_> {
             ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_) => true,
             ImportSiteKind::Import(import) => {
                 let mut bindings = self.bindings_of(import).into_iter();
-                !self.hir[import].is_deferred
+                self.hir[import].phase == ImportPhase::Evaluation
                     && bindings.all(|(symbol, _)| {
                         self.uses.exported.contains(&symbol) && !self.is_evaluated(symbol)
                     })

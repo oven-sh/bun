@@ -6,13 +6,15 @@
 //! - One reported inside a query belongs to the query. A hit on the query's entry reports nothing,
 //!   but several tasks may each have evaluated the query. The first task that commits a diagnostic
 //!   under the query reports. Diagnostics that later tasks commit under it are dropped
-//!   (`Program::publish_reported`). For a query about syntax that's decided for each file it reports in (`owned_part`).
+//!   (`Program::publish_reported`). That's decided for each file it reports in.
 //!
 //! `add_diagnostic` pushes onto `Checker::reported`. A frame's diagnostics are the suffix from
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
 //! - If the result is final, they move to `Task::diagnostics`, tagged with the query.
 //! - If the result depends on a cycle, a trial or a rejected query (`drops_reported`), they're
-//!   dropped. The next evaluation reports them again.
+//!   dropped. The next evaluation reports them again. Under a frame that drops its own, they stay until that frame is
+//!   settled: `keep_type_of_returned_expression_in_cycle` can make it final, and then they're what tsc reports. Those of
+//!   a resolution that's resolved again after the cycle don't stay (`cache_provisionally`).
 //! - If the result depends on an incomplete flow-loop type (`taint_from`), they stay and belong to
 //!   the enclosing frame.
 //!
@@ -24,7 +26,7 @@
 //!
 //! An `addDeferredDiagnostic` callback whose message prints a type is a `Reported` too, with
 //! `Reported::deferred` in place of the arguments. So it belongs to the task or to a query, and is
-//! dropped with a frame, like a diagnostic. `produce_type_not_iterable_errors` creates the message.
+//! dropped with a frame, like a diagnostic. `call_deferred_diagnostics` creates the message.
 //!
 //! A diagnostic that leaves its task is settled (`Checker::settled`): every field that only its
 //! file's HIR can provide has been filled in. The HIR of a file that nothing imports is freed at
@@ -33,7 +35,9 @@
 use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::explain::NOWHERE;
 use super::*;
+use crate::content_mapper::ExternalDiagnostic;
 use crate::util::SharedSort;
+use crate::verify::Problem;
 use bun_threading::Guarded;
 
 /// `args ...any` of `NewDiagnostic` and `reportError`.
@@ -103,16 +107,34 @@ pub(super) struct Reported {
     pub(super) directive: u32,
     /// Once settled, the value of `is_bare` before `end` was filled in.
     pub(super) was_bare: bool,
-    /// `Emit` reported it, before the check (`Options::emits_first`). It's kept even in a range
-    /// that `checkSourceFile` never visits.
-    pub(super) by_emit: bool,
     /// It was reported by the check of a node other than the one it points at:
     /// `checkUnusedIdentifiers` for the container of a declaration, `resolveAlias` for a reference.
     /// It's kept even in a range that `checkSourceFile` never visits.
     pub(super) by_another_node: bool,
     /// Set for an `addDeferredDiagnostic` callback that hasn't been called yet. `args` is then
     /// empty.
-    pub(super) deferred: Option<TypeNotIterable>,
+    pub(super) deferred: Option<Deferred>,
+    /// `Source() != ""`: a content mapper wrote it. `args` are its text and its source, and its span is in the original
+    /// text.
+    pub(super) is_external: bool,
+}
+
+/// What an `addDeferredDiagnostic` callback captures besides the error node.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum Deferred {
+    TypeNotIterable(TypeNotIterable),
+    NonexistentProperty(NonexistentProperty),
+}
+
+/// The arguments the callback of `checkPropertyAccessExpressionOrQualifiedName` passes to
+/// `reportNonexistentProperty`. The error node is the name.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) struct NonexistentProperty {
+    /// The `a.b`.
+    pub(super) access: ExprId,
+    pub(super) name: Atom,
+    pub(super) containing: TypeId,
+    pub(super) is_unchecked_js: bool,
 }
 
 /// The arguments a `getIterationTypesOfIterableWorker` callback passes to
@@ -149,10 +171,41 @@ impl Reported {
             skipped_on_no_emit: false,
             directive: NO_DIRECTIVE,
             was_bare: false,
-            by_emit: false,
             by_another_node: false,
             deferred: None,
+            is_external: false,
         }
+    }
+
+    /// `NewExternalDiagnostic`
+    pub(super) fn external(file: FileId, d: &ExternalDiagnostic) -> Reported {
+        let end = match d.end > d.start {
+            true => d.end,
+            false => hir::Diagnostic::NO_LENGTH,
+        };
+        let args = [&d.text[..], &d.source].map(Box::from);
+        Reported {
+            is_external: true,
+            ..Reported::new((file, d.start, end), d.code as u32, args.into())
+        }
+    }
+
+    /// Converts `problem`, which is about the file as a whole, to a diagnostic at the start of `file`.
+    pub(super) fn at_start_of_file(file: FileId, problem: &Problem) -> Reported {
+        let held = |args: &[Vec<u8>]| args.iter().map(|arg| arg.as_slice().into()).collect();
+        let at = (file, 0, hir::Diagnostic::NO_LENGTH);
+        let mut reported = Reported::new(at, problem.code, held(&problem.args));
+        for (level, code, args) in &problem.chain {
+            let mut under = &mut reported.message_chain;
+            for _ in 1..*level {
+                match under.is_empty() {
+                    true => break,
+                    false => under = &mut under.last_mut().unwrap().message_chain,
+                }
+            }
+            under.push(Reported::new(NOWHERE, *code, held(args)));
+        }
+        reported
     }
 
     /// Converts a diagnostic stored in `file`'s HIR.
@@ -175,11 +228,11 @@ impl Reported {
 
     /// Placeholder left in `Task::diagnostics` for a diagnostic that a commit took out while a file was being checked.
     /// The list can't shrink, because `check_file` remembers indexes into it.
-    fn placeholder() -> Reported {
+    pub(super) fn placeholder() -> Reported {
         Reported::bare(NOWHERE, 0)
     }
 
-    fn is_placeholder(&self) -> bool {
+    pub(super) fn is_placeholder(&self) -> bool {
         self.code == 0
     }
 
@@ -249,8 +302,9 @@ pub(super) struct Sink<'s> {
     /// The diagnostics reported in each file. A `Reported` owns regular heap memory, which
     /// `release` frees.
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
-    /// The queries under which a task has reported (`owned_part`), each with the `Task::number` of the first task that did.
-    owners: Guarded<FxHashMap<(Query, Option<FileId>), u64>>,
+    /// The queries under which a task has reported, each with the `Task::number` of the first task that did. Any thread
+    /// can add to it, so it's on the regular heap too.
+    owners: Guarded<FxHashMap<(Query, FileId), u64>>,
     /// See `Program::keep_what_is_reported`.
     keeps_buffers: bool,
 }
@@ -323,18 +377,14 @@ fn is_same_in_every_task(q: Query) -> bool {
     }
 }
 
-/// What the first task to commit a diagnostic in `file` under `q` owns: everything `q` reports, or only what it reports in `file`.
-fn owned_part(q: Query, file: FileId) -> (Query, Option<FileId>) {
-    (q, q.syntax().map(|_| file))
-}
-
 impl super::Program<'_> {
     /// Moves a task's diagnostics to their files' buffers. Called in a commit. `task` is `Task::number`.
     pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
         for (owner, diagnostic) in reported {
-            let part = owner.map(|q| owned_part(q, diagnostic.file));
-            if part.is_some_and(|part| *owners.entry(part).or_insert(task) != task) {
+            // Per file: a task for a later file doesn't report the diagnostics in an earlier one. That file's task does.
+            let file = diagnostic.file;
+            if owner.is_some_and(|q| *owners.entry((q, file)).or_insert(task) != task) {
                 continue;
             }
             self.push_diagnostic(diagnostic);
@@ -580,7 +630,8 @@ impl Checker<'_, '_> {
     /// True if this task doesn't report an error in `file` because it checks a later file. tsc never collects such an
     /// error, since it's reported after `file` was checked. If the check of `file` or of an earlier file also reaches
     /// the error, that file's own task reports it.
-    /// - An entry under a record is shared no matter which task stores it, so its errors go with it.
+    /// - An entry under a record is shared no matter which task stores it, so its errors go with it. Not if the record
+    ///   is in a cycle that `Task::close_cycle` got: no earlier file reaches that cycle, or the task is discarded.
     /// - tsc's check of a file resolves every alias the file declares. Here that happens on demand, so the first task
     ///   to resolve the alias reports.
     fn defers_to_earlier_file(&self, owner: Option<Query>, file: FileId) -> bool {
@@ -588,7 +639,10 @@ impl Checker<'_, '_> {
         self.task.file.is_some_and(is_late)
             && match owner {
                 Some(Query::AliasTarget(alias)) => is_late(alias.file),
-                Some(q) if q.syntax().is_none() => !self.is_reported_in_time(owner, file),
+                Some(q) if q.syntax().is_none() => {
+                    self.task.has_closed_cycle_with(crate::util::fx_hash(&q))
+                        || !self.is_reported_in_time(owner, file)
+                }
                 _ => true,
             }
     }
@@ -610,8 +664,8 @@ impl Checker<'_, '_> {
             }
             return self.discarded.insert(diagnostic);
         }
-        if self.is_reported_too_late(None, diagnostic.file) {
-            self.mark_tainted_from(0);
+        if self.is_reported_too_late(None, (diagnostic.file, diagnostic.start)) {
+            self.store_nothing_in_progress();
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
@@ -750,13 +804,26 @@ impl Checker<'_, '_> {
     pub(super) fn add_deferred_diagnostic(&mut self, callback: Reported) {
         if self.save_deferred_diagnostics {
             self.reported.push(callback);
+        } else if self.is_type_checked
+            && self.task.file != Some(callback.file)
+            && self.reports_semantic_errors(callback.file)
+        {
+            // `Emit` runs after every file's check. Here it runs after that of the task's file, and the check of
+            // `callback.file` may still come. Nothing is stored, so it evaluates this itself and calls the callback.
+            self.store_nothing_in_progress();
         }
+    }
+
+    /// Nothing that's in progress is stored, and no loop that's being analyzed gets into `flowLoopCache`.
+    pub(super) fn store_nothing_in_progress(&mut self) {
+        self.mark_tainted_from(0);
+        self.rejected_at = self.work;
     }
 
     /// Takes the diagnostics reported from index `from` on, for a caller that stores or rewrites
     /// them. `addDeferredDiagnostic` callbacks stay.
     pub(super) fn take_reported_from(&mut self, from: usize) -> Vec<Reported> {
-        let drained = self.reported.split_off(from).into_iter();
+        let drained = (self.reported.split_off(from.min(self.reported.len()))).into_iter();
         let (callbacks, reported): (Vec<_>, Vec<_>) = drained.partition(|d| d.deferred.is_some());
         self.reported.extend(callbacks);
         reported
@@ -767,8 +834,20 @@ impl Checker<'_, '_> {
     #[cold]
     pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
-        if frame.marks.drops_reported() {
-            self.reported.truncate(from);
+        // What follows from the types that a loop has collected so far isn't reported again.
+        let drops_reported =
+            frame.marks.drops_reported() && !(frame.incomplete_flow && self.is_in_flow_loop());
+        if drops_reported {
+            // A frame that drops its own drops these too, unless it turns out to be final after all.
+            // Not those of a query that TypeScript wouldn't have made here.
+            if !self
+                .frames
+                .last()
+                .is_some_and(|outer| outer.marks.drops_reported())
+                || self.is_requested_eagerly(self.frames.len())
+            {
+                self.reported.truncate(from);
+            }
         } else if !frame.marks.tainted() {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);
@@ -778,7 +857,7 @@ impl Checker<'_, '_> {
         }
         let requests = &self.reported_iteration_requests;
         let since_entered = requests.partition_point(|request| request.0 < frame.serial);
-        self.settle_iteration_requests(since_entered, frame.marks.drops_reported());
+        self.settle_iteration_requests(since_entered, drops_reported);
     }
 
     /// `settle_reported` for an innermost frame that stores nothing under its query, like an
@@ -822,6 +901,8 @@ impl Checker<'_, '_> {
             && diagnostic.file != NOWHERE.0
             && self.reports_semantic_errors(diagnostic.file)
             && self.defers_to_earlier_file(owner, diagnostic.file)
+            // A record's cycle is closed already, and that took into account which files can reach it.
+            && (q.syntax().is_some() || matches!(q, Query::AliasTarget(_)))
         {
             let members = std::iter::once(crate::util::fx_hash(&q));
             self.task.close_cycle(|| false, members);
@@ -829,14 +910,14 @@ impl Checker<'_, '_> {
         self.log_diagnostic(owner, diagnostic);
     }
 
-    /// True if the last logged diagnostic belongs to the task and is `Reported::bare(at, code)`. It's still in the log,
-    /// so whatever reported it wasn't discarded.
-    pub(super) fn is_last_diagnostic_of_task(&self, at: (FileId, u32, u32), code: u32) -> bool {
+    /// True if the last logged diagnostic belongs to the task and has the position, code and arguments of `new`. It's
+    /// still in the log, so whatever reported it wasn't discarded.
+    pub(super) fn is_last_diagnostic_of_task(&self, new: &Reported) -> bool {
         (self.task.diagnostics.last()).is_some_and(|(owner, last)| {
             owner.is_none()
-                && last.code == code
-                && (last.file, last.start, last.end) == at
-                && last.by_emit == self.is_emitting
+                && last.code == new.code
+                && (last.file, last.start, last.end) == (new.file, new.start, new.end)
+                && last.args == new.args
         })
     }
 
@@ -850,14 +931,19 @@ impl Checker<'_, '_> {
     /// Logs the diagnostics reported from index `from` on, so they survive whatever the frames in progress do with
     /// theirs. See `Query::ExprInFlowLoop`.
     pub(super) fn log_reported_in_flow_loop(&mut self, from: usize, file: FileId, e: ExprId) {
+        self.log_reported_of(Query::ExprInFlowLoop(file, e), from);
+    }
+
+    /// Logs the diagnostics reported from index `from` on as belonging to the entry that `owner` stores.
+    pub(super) fn log_reported_of(&mut self, owner: Query, from: usize) {
         for diagnostic in self.reported.split_off(from) {
-            self.log_diagnostic(Some(Query::ExprInFlowLoop(file, e)), diagnostic);
+            self.log_diagnostic(Some(owner), diagnostic);
         }
     }
 
     /// `owner` is the query whose entry the diagnostic belongs to, or `None` if it belongs to the
     /// task.
-    fn log_diagnostic(&mut self, owner: Option<Query>, mut diagnostic: Reported) {
+    fn log_diagnostic(&mut self, owner: Option<Query>, diagnostic: Reported) {
         // A query that runs after a file's `checkSourceFile` reports nothing in that file, because its diagnostics have
         // already been collected. A baseline writer can still be the first to evaluate another file's entry, and then
         // this task owns what that evaluation reports.
@@ -868,15 +954,11 @@ impl Checker<'_, '_> {
         // those two are the first to evaluate isn't stored, so the check of a later file that needs it evaluates it
         // again and reports.
         if self.is_type_checked && diagnostic.file == NOWHERE.0
-            || self.is_reported_too_late(owner, diagnostic.file)
+            || self.is_reported_too_late(owner, (diagnostic.file, diagnostic.start))
         {
-            return self.mark_tainted_from(0);
+            return self.store_nothing_in_progress();
         }
-        diagnostic.by_emit |= self.is_emitting;
-        if diagnostic.file != NOWHERE.0
-            && !diagnostic.by_emit
-            && self.defers_to_earlier_file(owner, diagnostic.file)
-        {
+        if diagnostic.file != NOWHERE.0 && self.defers_to_earlier_file(owner, diagnostic.file) {
             // Not every error goes through `add_diagnostic`.
             return self.note_error_in(diagnostic.file);
         }
@@ -963,15 +1045,20 @@ impl Checker<'_, '_> {
 
     /// `GetDiagnosticsOfAnyProgram`: `Emit`, like a baseline writer, runs after every file's
     /// diagnostics are collected. Here it runs after those of the task's file. Returns true if only
-    /// `Emit` or a baseline writer causes a diagnostic in `file`, another checked file, because no
+    /// `Emit` or a baseline writer causes a diagnostic at `start` in `file`, another checked file, because no
     /// check requests `owner` or a query in progress in time. The caller then stores no result, so
     /// the check of a later file that does request it evaluates it and reports.
-    fn is_reported_too_late(&self, owner: Option<Query>, file: FileId) -> bool {
+    pub(super) fn is_reported_too_late(
+        &self,
+        owner: Option<Query>,
+        (file, start): (FileId, u32),
+    ) -> bool {
         self.is_type_checked
             && file != NOWHERE.0
             && self.task.file != Some(file)
             && self.reports_semantic_errors(file)
-            && !self.is_requested_by_check_in_time(owner, &self.stack, file)
+            && (self.bound(file).is_resolved_on_demand(start)
+                || !self.is_requested_by_check_in_time(owner, &self.stack, file))
     }
 
     /// Takes the diagnostics that a commit publishes. A query's diagnostics go with the query's entry, which the commit

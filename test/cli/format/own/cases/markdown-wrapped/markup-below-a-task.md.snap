@@ -1,0 +1,19 @@
+---------------------------------------
+{ printWidth: 80, proseWrap: "always" }
+---------------------------------------
+- [ ] Ready to be
+      merged <!-- In your opinion, is this ready to be merged as soon as it is reviewed? -->
+- [ ] word word word word word word word word word word word word word word
+      wordd <div>
+- [ ] word word word word word word word word word word word word word word
+      wordd ===
+
+----------------------------------------
+{ printWidth: 100, proseWrap: "always" }
+----------------------------------------
+- [ ] Ready to be
+      merged <!-- In your opinion, is this ready to be merged as soon as it is reviewed? -->
+- [ ] word word word word word word word word word word word word word word wordd <div>
+- [ ] word word word word word word word word word word word word word word wordd ===
+
+===================== End =====================

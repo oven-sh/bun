@@ -180,7 +180,10 @@ impl<'a> Node<'a> {
                     one!(alias.ty());
                 }
                 StmtKind::Enum(it) => list!(it.members()),
-                StmtKind::Module(module) => list!(module.innermost().body()),
+                StmtKind::Module(module) => {
+                    opt!(module.attributes());
+                    list!(module.innermost().body());
+                }
                 StmtKind::If { test, yes, no } => {
                     one!(test);
                     one!(yes);

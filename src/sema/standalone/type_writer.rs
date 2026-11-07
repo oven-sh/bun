@@ -1,7 +1,7 @@
 //! Prints the type at every expression and declaration name in a file. This is what TypeScript's
 //! test harness writes into `.types` baselines (`typeWriterWalker`, `GetTypeAtLocation`).
 
-use super::enclosing_declaration::Enclosing;
+use super::enclosing_declaration::{Enclosing, EnclosingModuleSpecifier};
 use super::services::visited::VisitedKind;
 use super::visit_node::VisitedNode;
 use super::*;
@@ -98,8 +98,7 @@ impl Checker<'_, '_> {
         if let VisitedKind::DeclarationName(decl, _) | VisitedKind::SpecifierPropertyName(decl, _) =
             kind
         {
-            self.enclosing_module_specifier_mode =
-                self.mode_of_module_specifier_of_declaration(file, decl);
+            self.enclosing_module_specifier = self.module_specifier_of_declaration(file, decl);
         }
         let hir = self.hir(file);
         let enclosing_declaration = Enclosing {
@@ -111,7 +110,7 @@ impl Checker<'_, '_> {
         };
         let text = self.type_to_string_for_baseline_with(ty, Some(enclosing_declaration));
         let text = crate::messages::text(&text);
-        self.enclosing_module_specifier_mode = None;
+        self.enclosing_module_specifier = None;
         if let Some(index) = repeated {
             walk.text_of_expr[index] = Some((ty, text.clone()));
         }
@@ -169,11 +168,10 @@ impl Checker<'_, '_> {
             // `IsPartOfTypeNode`: `const` is a type reference, and a `TypePredicate` is a type node.
             VisitedKind::ConstOfAsConst(_) | VisitedKind::TypePredicateParameter(_) => true,
             // `isPartOfTypeNodeInParent`: in `A.B.C`, only `C` and the whole name are direct children
-            // of a type node. In a heritage clause the same applies to the property accesses
-            // (`isPartOfTypeExpressionWithTypeArguments`).
+            // of a type node.
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
-            | VisitedKind::HeritageClausePropertyAccess(node, index) => {
+            | VisitedKind::HeritageClauseQualifiedName(node, index) => {
                 !matches!(hir[node].kind, TypeNodeKind::Ref { name, .. } if index as usize + 1 != name.len())
             }
             // The `b` of `typeof import("m").a.b` isn't skipped, because `isPartOfTypeNodeInParent`
@@ -227,35 +225,46 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration`, for an import or an
-    /// export.
-    fn mode_of_module_specifier_of_declaration(
+    /// `TryGetModuleSpecifierFromDeclaration`, for an import or an export.
+    fn module_specifier_of_declaration(
         &self,
         file: FileId,
         decl: Decl,
-    ) -> Option<ResolutionMode> {
+    ) -> Option<EnclosingModuleSpecifier> {
         let (hir, files) = (self.hir(file), self.files());
-        let declared_mode = match decl {
-            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].mode,
-            Decl::ImportSpec(spec) => hir[hir[spec].import].mode,
+        let (declared_mode, statement) = match decl {
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
+                (hir[import].mode, hir[import].stmt)
+            }
+            Decl::ImportSpec(spec) => {
+                let import = &hir[hir[spec].import];
+                (import.mode, import.stmt)
+            }
             Decl::ExportSpec(spec) => {
                 let export = &hir[hir[spec].export];
                 if export.spec.is_none() {
                     return None;
                 }
-                export.mode
+                (export.mode, export.stmt)
             }
             Decl::ExportStarAs(stmt) => match hir[stmt].kind {
-                StmtKind::ExportStar { mode, .. } => mode,
+                StmtKind::ExportStar { mode, .. } => (mode, stmt),
                 _ => return None,
             },
             Decl::ImportEquals(import) => {
-                return matches!(hir[import].target, ImportEqualsTarget::Require(_))
-                    .then_some(ResolutionMode::Require);
+                return matches!(hir[import].target, ImportEqualsTarget::Require(_)).then_some(
+                    EnclosingModuleSpecifier {
+                        mode: ResolutionMode::Require,
+                        attributes: None,
+                    },
+                );
             }
             _ => return None,
         };
-        Some(files.mode_of_import(file, declared_mode))
+        Some(EnclosingModuleSpecifier {
+            mode: files.mode_of_import(file, declared_mode),
+            attributes: hir.attributes_of_statement(statement),
+        })
     }
 }
 

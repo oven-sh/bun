@@ -111,13 +111,21 @@ Bun.plugin({
       return { exports: {}, loader: "object" };
     }),
 });
-// `eslint-plugin-html` changes the `Linter` that it finds among the modules that are loaded, and throws if there is none.
-class Linter {
-  verify() {}
+// `eslint-plugin-html` changes the `Linter` that it finds among the modules that are loaded, and throws if there is none. So there
+// is one while it is loaded. Any other plugin that requires `eslint` gets the real one: `eslint-plugin-vue` 8 asks it for its rules.
+function requirePlugin(request, file) {
+  const linter = nodePath.join(pluginsFrom, "node_modules", "eslint", "lib", "linter", "linter.js");
+  if (request !== "eslint-plugin-html" || linter in require.cache) return require(file);
+  class Linter {
+    verify() {}
+  }
+  require.cache[linter] = { exports: { Linter } };
+  try {
+    return require(file);
+  } finally {
+    delete require.cache[linter];
+  }
 }
-require.cache[nodePath.join(pluginsFrom, "node_modules", "eslint", "lib", "linter", "linter.js")] = {
-  exports: { Linter },
-};
 
 // The rules of version 8 of typescript-eslint are all implemented here, and to load it is to load TypeScript: of that version only
 // the configurations are loaded, which are modules of their own, unless its own rules are to run. `file`: its main module.
@@ -164,7 +172,7 @@ function plugin(name, from) {
     }
     const isLoaded = found.version === undefined || loadsTypescriptEslint;
     hide("config", isLoaded ? null : configsOfTypescript(file, found.version));
-    const loaded = found.config ? {} : require(file);
+    const loaded = found.config ? {} : requirePlugin(request, file);
     if (!found.config) hide("loaded", loaded);
     found.path = portable(file);
     found.name = objectId(loaded) ?? request;

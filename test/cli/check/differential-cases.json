@@ -3664,13 +3664,7 @@
       "c.ts": "type MA  = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype MB  = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: number } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype MA2 = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ndeclare let a: MA; declare let b: MB; declare let a2: MA2;\ninterface Face { p: MA } class Impl implements Face { p!: MB }\nexport {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     },
-    "deep": true,
-    "theirs": [
-      "a.ts(5,32): error TS2859: Excessive complexity comparing types 'KB' and 'KA'.",
-      "a.ts(5,56): error TS2416: Property 'p' in type 'KB' is not assignable to the same property in base type 'KA'.",
-      "  Excessive complexity comparing types 'T1 & T2' and 'T1 | T2'.",
-      "a.ts(6,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    "deep": true
   },
   "17-SC3": {
     "files": {
@@ -3695,8 +3689,7 @@
     "files": {
       "a.ts": "type A  = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype B  = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: number } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype A2 = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ndeclare let a: A; declare let b: B; declare let a2: A2;\nclass KA { static p: A } class KB extends KA { static p: B }\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(6,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "17-SC6": {
     "files": {
@@ -3709,8 +3702,7 @@
       "a.ts": "type La = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype Lb = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype Ta = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: La } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype Tb = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: Lb } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ndeclare let lb: Lb; const la: La = lb;\nclass K { m(x: Tb): void; m(x: Ta) {} }\nconst sentinel: number = \"\";\n",
       "b.ts": "type A  = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype B  = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: number } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ntype A2 = { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: { a: string } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } };\ndeclare let a: A; declare let b: B; declare let a2: A2;\nfunction ov(x: A): void; function ov(x: B): void; function ov(x: B) {}\nexport {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(7,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "18-C10a": {
     "files": {
@@ -3818,11 +3810,7 @@
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { v: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { v: 1 }\ndeclare const i0: I0;\nconst j0: J0 = i0;\ntype T = I99 extends J99 ? 1 : 2;\nconst t: T = 0;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": [
-      "a.ts(206,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(207,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "18-C6a": {
     "files": {
@@ -4248,8 +4236,7 @@
     "files": {
       "a.ts": "declare const rec: Record<string, string | undefined>;\nfunction outer() { let n: number; function inc(k: string) { if (rec[k]) rec[k]; n++; } n = 0; }\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "21-C11": {
     "files": {
@@ -4777,7 +4764,7 @@
   },
   "23-C4": {
     "files": {
-      "a.ts": "export namespace Q { namespace H2 { export enum P { A, B } } export const v = H2.P.A as H2.P; }\nexport const l1 = Q.v;\nconst sentinel: number = \"\";\n",
+      "a.ts": "export namespace Q { namespace H2 { export enum P { A, B } } export const v = H2.P.A as H2.P; }\nexport const l1 = Q.v;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -4867,7 +4854,7 @@
   },
   "23-P2": {
     "files": {
-      "a.mts": "export const x = require(\"pkg\");\nconst sentinel: number = \"\";\n",
+      "a.mts": "export const x = require(\"pkg\");\n",
       "g.d.ts": "declare function require(id: string): import(\"pkg\", { with: { \"resolution-mode\": \"require\" } }).Foo;\n",
       "node_modules/pkg/index.d.ts": "export interface Foo { a: 1 }\n",
       "node_modules/pkg/package.json": "{ \"name\": \"pkg\", \"exports\": { \"require\": { \"types\": \"./index.d.ts\" } } }\n",
@@ -6612,7 +6599,7 @@
   },
   "29-C1a": {
     "files": {
-      "a.ts": "namespace N { interface I { readonly p: unique symbol } export declare const x: I[\"p\"]; }\nexport const a = [N.x] as const;\nconst sentinel: number = \"\";\n",
+      "a.ts": "namespace N { interface I { readonly p: unique symbol } export declare const x: I[\"p\"]; }\nexport const a = [N.x] as const;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -6680,20 +6667,20 @@
   },
   "29-C6": {
     "files": {
-      "b.js": "import { mkH } from \"./m\";\nexport function f() { return mkH(); }\n/** @type {number} */ const sentinel = \"\";\n",
+      "b.js": "import { mkH } from \"./m\";\nexport function f() { return mkH(); }\n",
       "m.ts": "interface Hidden { h: 1 }\nexport declare function mkH(): Hidden;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"allowJs\": true, \"checkJs\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "29-C7a": {
     "files": {
-      "a.ts": "namespace NS { namespace P { export interface J { j: 1 } } export declare function mk(): P.J; }\nexport const e = NS.mk();\nconst sentinel: number = \"\";\n",
+      "a.ts": "namespace NS { namespace P { export interface J { j: 1 } } export declare function mk(): P.J; }\nexport const e = NS.mk();\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "29-C7b": {
     "files": {
-      "a.ts": "import { mk } from \"./m\";\nexport const v = mk();\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { mk } from \"./m\";\nexport const v = mk();\n",
       "m.ts": "namespace Hid { export interface I { i: 1 } }\nexport declare function mk(): Hid.I;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
@@ -6736,13 +6723,13 @@
   },
   "29-P1a": {
     "files": {
-      "a.ts": "type T = { readonly s: unique symbol };\ndeclare const o: T;\nexport const v = { [o.s]: 1 };\nconst sentinel: number = \"\";\n",
+      "a.ts": "type T = { readonly s: unique symbol };\ndeclare const o: T;\nexport const v = { [o.s]: 1 };\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "29-P1b": {
     "files": {
-      "a.ts": "export function f() { class C { static readonly s: unique symbol = Symbol(); } return { [C.s]: 1 }; }\nconst sentinel: number = \"\";\n",
+      "a.ts": "export function f() { class C { static readonly s: unique symbol = Symbol(); } return { [C.s]: 1 }; }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -9747,7 +9734,7 @@
   },
   "39-C11d": {
     "files": {
-      "node_modules/x/index.ts": "export const c = [1].map(x => x);\nconst sentinel: number = \"\";\n",
+      "node_modules/x/index.ts": "export const c = [1].map(x => x);\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"declaration\": true, \"isolatedDeclarations\": true }, \"files\": [\"node_modules/x/index.ts\"] }\n"
     }
   },
@@ -10631,7 +10618,7 @@
   },
   "42-C14b": {
     "files": {
-      "a.ts": "import { a, b } from \"outer\";\nexport default { x: b(), y: a() };\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { a, b } from \"outer\";\nexport default { x: b(), y: a() };\n",
       "node_modules/outer/index.d.ts": "import { B } from \"inner\";\nimport { A } from \"inner/zz/deep\";\nexport declare function b(): B;\nexport declare function a(): A;\n",
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface B { b: 1 }\n",
       "node_modules/outer/node_modules/inner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
@@ -10789,7 +10776,7 @@
   },
   "42-P4": {
     "files": {
-      "a.ts": "import { mk } from \"outer\";\nexport const v = mk();\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { mk } from \"outer\";\nexport const v = mk();\n",
       "node_modules/outer/index.d.ts": "import { T } from \"Binner\";\nimport { T as T2 } from \"ainner\";\nexport declare function mk(): T;\n",
       "node_modules/outer/node_modules/Binner/index.d.ts": "export interface T { t: 1 }\n",
       "node_modules/outer/node_modules/Binner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
@@ -12431,6 +12418,60 @@
       "x.ts": "export const x = 1;\n"
     }
   },
+  "reference-to-the-file-itself-without-an-extension": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"src/a.ts\", \"src/d.d.ts\"] }\n",
+      "src/a.ts": "/// <reference path=\"a\" />\n/// <reference path=\"./a.ts\" />\n/// <reference path=\"../src/a\" />\n/// <reference path=\"b\" />\nconst sentinel: number = \"\";\n",
+      "src/b.ts": "var b = 1;\n",
+      "src/d.d.ts": "/// <reference path=\"d\" />\n/// <reference path=\"d.d.ts\" />\ndeclare var d: 1;\n"
+    }
+  },
+  "reference-to-the-file-itself-with-no-resolve": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noResolve\": true }, \"files\": [\"a.ts\"] }\n",
+      "a.ts": "/// <reference path=\"a\" />\n/// <reference path=\"./a.ts\" />\nconst sentinel: number = \"\";\n"
+    }
+  },
+  "import-of-a-module-that-the-script-declares": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\", \"declarations.d.ts\", \"augmentation.ts\"] }\n",
+      "a.ts": "fooGlobal; barGlobal; bazGlobal;\nconst sentinel: number = \"\";\n",
+      "declarations.d.ts": "declare module \"foo\" {\n  import _foo from \"foo\";\n  import {} from \"bar\";\n  export const declared: 1;\n}\ntype T = typeof import(\"foo\");\n",
+      "augmentation.ts": "import {} from \"baz\";\ndeclare module \"baz\" { export const more: 1; }\n",
+      "node_modules/foo/index.d.ts": "declare global { var fooGlobal: 1 }\nexport {};\n",
+      "node_modules/bar/index.d.ts": "declare global { var barGlobal: 1 }\nexport {};\n",
+      "node_modules/baz/index.d.ts": "declare global { var bazGlobal: 1 }\nexport {};\n"
+    }
+  },
+  "separator-after-a-file-name-in-exports-and-types": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n",
+      "a.ts": "import { x as x1 } from \"e/f\";\nimport { x as x2 } from \"e/sub/a.d.ts/\";\nimport { x as x3 } from \"e/sub/a.d.ts\";\nimport { x as x4 } from \"t\";\nconst n: [0, 0, 0, 0] = [x1, x2, x3, x4];\nconst sentinel: number = \"\";\n",
+      "node_modules/e/package.json": "{ \"name\": \"e\", \"version\": \"1.0.0\", \"exports\": { \"./f\": \"./dist/a.d.ts/\", \"./sub/*\": \"./dist/*\" } }\n",
+      "node_modules/e/dist/a.d.ts": "export const x: \"e\";\n",
+      "node_modules/t/package.json": "{ \"name\": \"t\", \"version\": \"1.0.0\", \"types\": \"dist/a.d.ts/\" }\n",
+      "node_modules/t/dist/a.d.ts": "export const x: \"dist\";\n",
+      "node_modules/t/index.d.ts": "export const x: \"index\";\n"
+    }
+  },
+  "type-roots-and-names-with-dots-or-a-separator-at-the-end": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [\"../lib/decl\", \"dir/\", \"file\"], \"typeRoots\": [\"./typings\"], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n",
+      "a.ts": "/// <reference types=\"dir/../dir\" />\nimport css from \"dir/./x.css\";\nimport { m } from \"file/\";\ndecl; dir; file;\nconst sentinel: number = \"\";\n",
+      "lib/decl/index.d.ts": "declare var decl: 1;\n",
+      "typings/dir/index.d.ts": "declare var dir: 1;\n",
+      "typings/dir/x.d.css.ts": "declare const css: string; export default css;\n",
+      "typings/file.d.ts": "declare var file: 1;\n"
+    }
+  },
+  "root-dirs-and-the-directory-of-a-root-itself": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDirs\": [\"./one\", \"./two\"] }, \"files\": [\"one/a.ts\"] }\n",
+      "one/a.ts": "import { x } from \"./\";\nconst n: 0 = x;\nconst sentinel: number = \"\";\n",
+      "two/index.ts": "export declare const x: \"two/index\";\n",
+      "two.ts": "export declare const x: \"two\";\n"
+    }
+  },
   "59-L10": {
     "files": {
       "a.ts": "import { make, make2, make3 } from \"other\";\nexport const x = make();\nexport const x2 = make2();\nexport const x3 = make3();\nconst sentinel: number = \"\";\n",
@@ -12472,19 +12513,19 @@
   },
   "60-L02": {
     "files": {
-      "a.ts": "export function f(this, a: number): void {}\nexport const g = function (this, a: number): void {};\nexport class A { m(this, v: number): void {} static n(this): void {} }\nexport interface I { m(this, v: number): void; (this): void; }\nexport type T = (this, a: number) => void;\nexport const o = { m(this, a: number): void {} };\nexport function h(b, a: number): void {}\nconst sentinel: number = \"\";\n",
+      "a.ts": "export function f(this, a: number): void {}\nexport const g = function (this, a: number): void {};\nexport class A { m(this, v: number): void {} static n(this): void {} }\nexport interface I { m(this, v: number): void; (this): void; }\nexport type T = (this, a: number) => void;\nexport const o = { m(this, a: number): void {} };\nexport function h(b, a: number): void {}\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noImplicitAny\": false, \"declaration\": true, \"isolatedDeclarations\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "60-L04a": {
     "files": {
-      "a.js": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport class C0 { constructor() { this.x = f(); } }\nexport class C1 { [+1]() {} constructor() { this[1] = f(); } }\nexport class C2 { 1() {} constructor() { this[1] = f(); } }\nexport class C3 { [1]() {} constructor() { this[1] = f(); } }\nexport class C4 { [-1]() {} constructor() { this[\"-1\"] = f(); } }\nexport class C5 { [+1]() {} constructor() { this[\"+1\"] = f(); } }\n/** @type {number} */\nconst sentinel = \"\";\n",
+      "a.js": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport class C0 { constructor() { this.x = f(); } }\nexport class C1 { [+1]() {} constructor() { this[1] = f(); } }\nexport class C2 { 1() {} constructor() { this[1] = f(); } }\nexport class C3 { [1]() {} constructor() { this[1] = f(); } }\nexport class C4 { [-1]() {} constructor() { this[\"-1\"] = f(); } }\nexport class C5 { [+1]() {} constructor() { this[\"+1\"] = f(); } }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"allowJs\": true, \"checkJs\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "60-L04b": {
     "files": {
-      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport function g() {}\ng[\"ab\"] = f();\ng.cd = f();\ng[1] = f();\nexport const h = () => {};\nh[\"ab\"] = f();\nh.cd = f();\nconst sentinel: number = \"\";\n",
+      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport function g() {}\ng[\"ab\"] = f();\ng.cd = f();\ng[1] = f();\nexport const h = () => {};\nh[\"ab\"] = f();\nh.cd = f();\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -12542,7 +12583,7 @@
   },
   "60-L20b": {
     "files": {
-      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nconst k = \"foo\";\nexport class H1 { get foo() { return f(); } set [k](v) {} }\nexport class H2 { get [k]() { return f(); } set foo(v) {} }\nexport class H3 { get [k]() { return f(); } set [k](v) {} }\nexport class H4 { set [k](v) {} get foo() { return f(); } }\nexport class H5 { static get foo() { return f(); } static set [k](v) {} }\nconst sentinel: number = \"\";\n",
+      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nconst k = \"foo\";\nexport class H1 { get foo() { return f(); } set [k](v) {} }\nexport class H2 { get [k]() { return f(); } set foo(v) {} }\nexport class H3 { get [k]() { return f(); } set [k](v) {} }\nexport class H4 { set [k](v) {} get foo() { return f(); } }\nexport class H5 { static get foo() { return f(); } static set [k](v) {} }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -12560,13 +12601,13 @@
   },
   "61-L04": {
     "files": {
-      "a.ts": "export const o1 = { m(this, a: number): void {} };\nexport const f1 = function (this, a: number): void {};\nexport function g1(this, a: number): void {}\nexport class C { m(this, a: number): void {} }\nexport interface I { m(this, a: number): void }\nexport const f2 = function (this: string, a: number): void {};\nconst sentinel: number = \"\";\n",
+      "a.ts": "export const o1 = { m(this, a: number): void {} };\nexport const f1 = function (this, a: number): void {};\nexport function g1(this, a: number): void {}\nexport class C { m(this, a: number): void {} }\nexport interface I { m(this, a: number): void }\nexport const f2 = function (this: string, a: number): void {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"declaration\": true, \"isolatedDeclarations\": true } }\n"
     }
   },
   "61-L04b": {
     "files": {
-      "a.ts": "export const o3 = { get y(): number { return 1; }, set y(this: any) {} };\nexport const o2 = { get x(): number { return 1; }, set x(this: any, v: number) {} };\nconst sentinel: number = \"\";\n",
+      "a.ts": "export const o3 = { get y(): number { return 1; }, set y(this: any) {} };\nexport const o2 = { get x(): number { return 1; }, set x(this: any, v: number) {} };\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"declaration\": true, \"isolatedDeclarations\": true } }\n"
     }
   },
@@ -12774,7 +12815,7 @@
   },
   "63-L03b": {
     "files": {
-      "a.ts": "export class B { set x(this, v: number) {} }\nexport class H { get x(this): number { return 1; } }\nexport class I { get x(this): number { return 1; } set x(this, v: number) {} }\nexport class J { static set x(this, v: number) {} }\nexport class K { private set x(this, v: number) {} }\nexport class M { get x(): number { return 1; } set x(this, v: number) {} }\nexport class N { get x(this) { return 1; } }\nexport abstract class O { abstract set x(this, v: number); }\nexport declare class P { set x(this, v: number); }\nexport interface Q { set x(this, v: number); get y(this): number }\nexport type R = { set x(this, v: number); get y(this): number }\nconst sentinel: number = \"\";\n",
+      "a.ts": "export class B { set x(this, v: number) {} }\nexport class H { get x(this): number { return 1; } }\nexport class I { get x(this): number { return 1; } set x(this, v: number) {} }\nexport class J { static set x(this, v: number) {} }\nexport class K { private set x(this, v: number) {} }\nexport class M { get x(): number { return 1; } set x(this, v: number) {} }\nexport class N { get x(this) { return 1; } }\nexport abstract class O { abstract set x(this, v: number); }\nexport declare class P { set x(this, v: number); }\nexport interface Q { set x(this, v: number); get y(this): number }\nexport type R = { set x(this, v: number); get y(this): number }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"isolatedDeclarations\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -13081,8 +13122,7 @@
   },
   "73-R04": {
     "files": {
-      "a.ts": "import { L3 } from \"./b\";\ndeclare const u: unknown;\n// an ambient class: no TS2449\nconst k1 = u instanceof L1 ? \"s\" : \"s\";\ndeclare class L1 { static [k1]: number; i: number }\nconst p1: never = L1.s;\n// a class in another file\nexport const k3 = u instanceof L3 ? \"s\" : \"s\";\nconst p3: never = L3.s;\n// with TS2449\nconst k2 = u instanceof L2 ? \"s\" : \"s\";\nclass L2 { static [k2] = 1; i = 1 }\nconst p2: never = L2.s;\nconst sentinel: number = \"\";\n",
-      "b.ts": "import { k3 } from \"./a\";\nexport class L3 { static [k3] = 1; i = 1 }\nconst sentinel: number = \"\";\n",
+      "a.ts": "export {};\ndeclare const u: unknown;\n// an ambient class: no TS2449\nconst k1 = u instanceof L1 ? \"s\" : \"s\";\ndeclare class L1 { static [k1]: number; i: number }\nconst p1: never = L1.s;\n// with TS2449\nconst k2 = u instanceof L2 ? \"s\" : \"s\";\nclass L2 { static [k2] = 1; i = 1 }\nconst p2: never = L2.s;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -13247,7 +13287,7 @@
   },
   "75-R02": {
     "files": {
-      "a.ts": "import { make, make2, make3, cls } from \"./m\";\nexport const v = make();\nexport const v2 = make2();\nexport const v3 = make3();\nexport const v4 = cls();\nexport function f(p = make()) { return [make2()]; }\nexport class C { p = make(); static s = make2(); m() { return make3(); } }\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { make, make2, make3, cls } from \"./m\";\nexport const v = make();\nexport const v2 = make2();\nexport const v3 = make3();\nexport const v4 = cls();\nexport function f(p = make()) { return [make2()]; }\nexport class C { p = make(); static s = make2(); m() { return make3(); } }\n",
       "m.ts": "namespace N { export default class Foo { x = 1 } }\nnamespace N2 { export default class { y = 1 } }\nnamespace N3 { export default interface Ifc { z: number } }\nexport function make() { return new N.default(); }\nexport function make2() { return new N2.default(); }\nexport function make3() { return null! as N3.default; }\nexport function cls() { return N.default; }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
@@ -14248,12 +14288,7 @@
       "a.ts": "declare const i0: I0;\nconst j0: J0 = i0;\ndeclare const i70: I70;\nconst j70: J70 = i70;\ntype TC = I70 extends J70 ? 1 : 2;\nconst tc: TC = 0;\ntype TD = I69 extends J69 ? 1 : 2;\nconst td: TD = 0;\nconst sentinel: number = \"\";\n",
       "t.d.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { v: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { v: 1 }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"t.d.ts\", \"a.ts\"] }\n"
-    },
-    "theirs": [
-      "a.ts(6,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(8,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(9,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "87-R01a": {
     "files": {
@@ -14317,8 +14352,7 @@
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { n: I101 }\ninterface I101 { n: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { n: J101 }\ninterface J101 { n: 1 }\ndeclare let i0: I0; declare let j0: J0; declare const c: boolean;\nvar v: I0;\nvar v: J0;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(208,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "87-R03": {
     "files": {
@@ -14342,45 +14376,25 @@
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { n: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { n: 1 }\ndeclare let i0: I0; declare let jj: J0; declare const c: boolean;\njj = i0;\ntype T = I99 extends J99 ? 1 : 2;\nconst k: T = 0;\ntype T50 = I50 extends J50 ? 1 : 2;\nconst k50: T50 = 0;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": [
-      "a.ts(206,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(208,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(209,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "87-R05b": {
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { n: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { n: 1 }\ndeclare let i0: I0; declare let jj: J0; declare const c: boolean;\nconst o: { p: J0 } = { p: i0 };\ntype T = I99 extends J99 ? 1 : 2;\nconst k: T = 0;\ntype T50 = I50 extends J50 ? 1 : 2;\nconst k50: T50 = 0;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": [
-      "a.ts(206,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(208,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(209,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "87-R05c": {
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { n: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { n: 1 }\ndeclare let i0: I0; declare let jj: J0; declare const c: boolean;\ninterface A { p: J0 }\nclass B implements A { p!: I0 }\ntype T = I99 extends J99 ? 1 : 2;\nconst k: T = 0;\ntype T50 = I50 extends J50 ? 1 : 2;\nconst k50: T50 = 0;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": [
-      "a.ts(207,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(209,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(210,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "87-R05d": {
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { n: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { n: 1 }\ndeclare let i0: I0; declare let jj: J0; declare const c: boolean;\nfunction h(): I0;\nfunction h(): J0 { return jj; }\ntype T = I99 extends J99 ? 1 : 2;\nconst k: T = 0;\ntype T50 = I50 extends J50 ? 1 : 2;\nconst k50: T50 = 0;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": [
-      "a.ts(207,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(209,7): error TS2322: Type '0' is not assignable to type '1'.",
-      "a.ts(210,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "87-R08": {
     "files": {
@@ -14406,8 +14420,7 @@
     "files": {
       "a.ts": "interface I0 { n: I1 }\ninterface I1 { n: I2 }\ninterface I2 { n: I3 }\ninterface I3 { n: I4 }\ninterface I4 { n: I5 }\ninterface I5 { n: I6 }\ninterface I6 { n: I7 }\ninterface I7 { n: I8 }\ninterface I8 { n: I9 }\ninterface I9 { n: I10 }\ninterface I10 { n: I11 }\ninterface I11 { n: I12 }\ninterface I12 { n: I13 }\ninterface I13 { n: I14 }\ninterface I14 { n: I15 }\ninterface I15 { n: I16 }\ninterface I16 { n: I17 }\ninterface I17 { n: I18 }\ninterface I18 { n: I19 }\ninterface I19 { n: I20 }\ninterface I20 { n: I21 }\ninterface I21 { n: I22 }\ninterface I22 { n: I23 }\ninterface I23 { n: I24 }\ninterface I24 { n: I25 }\ninterface I25 { n: I26 }\ninterface I26 { n: I27 }\ninterface I27 { n: I28 }\ninterface I28 { n: I29 }\ninterface I29 { n: I30 }\ninterface I30 { n: I31 }\ninterface I31 { n: I32 }\ninterface I32 { n: I33 }\ninterface I33 { n: I34 }\ninterface I34 { n: I35 }\ninterface I35 { n: I36 }\ninterface I36 { n: I37 }\ninterface I37 { n: I38 }\ninterface I38 { n: I39 }\ninterface I39 { n: I40 }\ninterface I40 { n: I41 }\ninterface I41 { n: I42 }\ninterface I42 { n: I43 }\ninterface I43 { n: I44 }\ninterface I44 { n: I45 }\ninterface I45 { n: I46 }\ninterface I46 { n: I47 }\ninterface I47 { n: I48 }\ninterface I48 { n: I49 }\ninterface I49 { n: I50 }\ninterface I50 { n: I51 }\ninterface I51 { n: I52 }\ninterface I52 { n: I53 }\ninterface I53 { n: I54 }\ninterface I54 { n: I55 }\ninterface I55 { n: I56 }\ninterface I56 { n: I57 }\ninterface I57 { n: I58 }\ninterface I58 { n: I59 }\ninterface I59 { n: I60 }\ninterface I60 { n: I61 }\ninterface I61 { n: I62 }\ninterface I62 { n: I63 }\ninterface I63 { n: I64 }\ninterface I64 { n: I65 }\ninterface I65 { n: I66 }\ninterface I66 { n: I67 }\ninterface I67 { n: I68 }\ninterface I68 { n: I69 }\ninterface I69 { n: I70 }\ninterface I70 { n: I71 }\ninterface I71 { n: I72 }\ninterface I72 { n: I73 }\ninterface I73 { n: I74 }\ninterface I74 { n: I75 }\ninterface I75 { n: I76 }\ninterface I76 { n: I77 }\ninterface I77 { n: I78 }\ninterface I78 { n: I79 }\ninterface I79 { n: I80 }\ninterface I80 { n: I81 }\ninterface I81 { n: I82 }\ninterface I82 { n: I83 }\ninterface I83 { n: I84 }\ninterface I84 { n: I85 }\ninterface I85 { n: I86 }\ninterface I86 { n: I87 }\ninterface I87 { n: I88 }\ninterface I88 { n: I89 }\ninterface I89 { n: I90 }\ninterface I90 { n: I91 }\ninterface I91 { n: I92 }\ninterface I92 { n: I93 }\ninterface I93 { n: I94 }\ninterface I94 { n: I95 }\ninterface I95 { n: I96 }\ninterface I96 { n: I97 }\ninterface I97 { n: I98 }\ninterface I98 { n: I99 }\ninterface I99 { n: I100 }\ninterface I100 { n: 1 }\ninterface J0 { n: J1 }\ninterface J1 { n: J2 }\ninterface J2 { n: J3 }\ninterface J3 { n: J4 }\ninterface J4 { n: J5 }\ninterface J5 { n: J6 }\ninterface J6 { n: J7 }\ninterface J7 { n: J8 }\ninterface J8 { n: J9 }\ninterface J9 { n: J10 }\ninterface J10 { n: J11 }\ninterface J11 { n: J12 }\ninterface J12 { n: J13 }\ninterface J13 { n: J14 }\ninterface J14 { n: J15 }\ninterface J15 { n: J16 }\ninterface J16 { n: J17 }\ninterface J17 { n: J18 }\ninterface J18 { n: J19 }\ninterface J19 { n: J20 }\ninterface J20 { n: J21 }\ninterface J21 { n: J22 }\ninterface J22 { n: J23 }\ninterface J23 { n: J24 }\ninterface J24 { n: J25 }\ninterface J25 { n: J26 }\ninterface J26 { n: J27 }\ninterface J27 { n: J28 }\ninterface J28 { n: J29 }\ninterface J29 { n: J30 }\ninterface J30 { n: J31 }\ninterface J31 { n: J32 }\ninterface J32 { n: J33 }\ninterface J33 { n: J34 }\ninterface J34 { n: J35 }\ninterface J35 { n: J36 }\ninterface J36 { n: J37 }\ninterface J37 { n: J38 }\ninterface J38 { n: J39 }\ninterface J39 { n: J40 }\ninterface J40 { n: J41 }\ninterface J41 { n: J42 }\ninterface J42 { n: J43 }\ninterface J43 { n: J44 }\ninterface J44 { n: J45 }\ninterface J45 { n: J46 }\ninterface J46 { n: J47 }\ninterface J47 { n: J48 }\ninterface J48 { n: J49 }\ninterface J49 { n: J50 }\ninterface J50 { n: J51 }\ninterface J51 { n: J52 }\ninterface J52 { n: J53 }\ninterface J53 { n: J54 }\ninterface J54 { n: J55 }\ninterface J55 { n: J56 }\ninterface J56 { n: J57 }\ninterface J57 { n: J58 }\ninterface J58 { n: J59 }\ninterface J59 { n: J60 }\ninterface J60 { n: J61 }\ninterface J61 { n: J62 }\ninterface J62 { n: J63 }\ninterface J63 { n: J64 }\ninterface J64 { n: J65 }\ninterface J65 { n: J66 }\ninterface J66 { n: J67 }\ninterface J67 { n: J68 }\ninterface J68 { n: J69 }\ninterface J69 { n: J70 }\ninterface J70 { n: J71 }\ninterface J71 { n: J72 }\ninterface J72 { n: J73 }\ninterface J73 { n: J74 }\ninterface J74 { n: J75 }\ninterface J75 { n: J76 }\ninterface J76 { n: J77 }\ninterface J77 { n: J78 }\ninterface J78 { n: J79 }\ninterface J79 { n: J80 }\ninterface J80 { n: J81 }\ninterface J81 { n: J82 }\ninterface J82 { n: J83 }\ninterface J83 { n: J84 }\ninterface J84 { n: J85 }\ninterface J85 { n: J86 }\ninterface J86 { n: J87 }\ninterface J87 { n: J88 }\ninterface J88 { n: J89 }\ninterface J89 { n: J90 }\ninterface J90 { n: J91 }\ninterface J91 { n: J92 }\ninterface J92 { n: J93 }\ninterface J93 { n: J94 }\ninterface J94 { n: J95 }\ninterface J95 { n: J96 }\ninterface J96 { n: J97 }\ninterface J97 { n: J98 }\ninterface J98 { n: J99 }\ninterface J99 { n: J100 }\ninterface J100 { n: 1 }\ndeclare let i0: I0; declare let j0: J0; declare let i99: I99; declare let j99: J99; declare let i50: I50; declare let j50: J50; declare const c: boolean;\nvar use = f2();\nconst fn = () => { if (i99 === j99) {} };\nfunction f2() { return i0 as J0; }\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(207,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "87-R18b": {
     "files": {
@@ -14480,13 +14493,13 @@
       "node_modules/dep/internal.d.ts": "export interface T { a: 1 }\n",
       "node_modules/dep/package.json": "{\"name\": \"dep\", \"version\": \"1.0.0\", \"exports\": {\".\": \"./index.d.ts\"}}",
       "package.json": "{\"name\": \"p\", \"dependencies\": {\"dep\": \"*\"}}",
-      "src/a.ts": "import { f } from \"dep\";\nexport const x = f();\nconst sentinel: number = \"\";\n",
+      "src/a.ts": "import { f } from \"dep\";\nexport const x = f();\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"declaration\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"paths\": {\"@/*\": [\"./*\"]}}, \"files\": [\"src/a.ts\"]}"
     }
   },
   "88-R19b": {
     "files": {
-      "a.ts": "import { f } from \"dep\";\nexport const x = f();\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { f } from \"dep\";\nexport const x = f();\n",
       "node_modules/dep/index.d.ts": "import { T } from \"./internal\";\nexport declare function f(): T;\n",
       "node_modules/dep/internal.d.ts": "export interface T { a: 1 }\n",
       "node_modules/dep/package.json": "{\"name\": \"dep\", \"version\": \"1.0.0\", \"exports\": {\".\": \"./index.d.ts\"}}",
@@ -15151,35 +15164,7 @@
     "files": {
       "a.ts": "declare function id<T>(x: T): T; declare function abs(n: number): number;\nconst a = { m() { return this.z; }, f() { return this.z; }, g: id(() => ({}).nope) };\nconst b = { m() { return this.z; }, f() { return this.z; }, g: id(() => nope) };\nconst c = { m() { return this.z; }, f() { return this.z; }, g: id(() => abs(\"\")) };\nconst d = { m() { return this.z; }, f() { return this.z; }, g: id(function () { return abs(\"\"); }) };\nconst e = { m() { return this.z; }, f() { return this.z; }, g: id({ h() { return abs(\"\"); } }) };\n// not an argument of a generic call: both tools lose the error\nconst h = { m() { return this.z; }, f() { return this.z; }, g: [() => abs(\"\")] };\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": [
-      "a.ts(2,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(2,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
-      "a.ts(2,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(2,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
-      "a.ts(2,78): error TS2339: Property 'nope' does not exist on type '{}'.",
-      "a.ts(3,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(3,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
-      "a.ts(3,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(3,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
-      "a.ts(4,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(4,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
-      "a.ts(4,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(4,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
-      "a.ts(5,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(5,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
-      "a.ts(5,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(5,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
-      "a.ts(6,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(6,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: { h(): number; }; }'.",
-      "a.ts(6,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(6,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: { h(): number; }; }'.",
-      "a.ts(8,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(8,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: (() => number)[]; }'.",
-      "a.ts(8,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
-      "a.ts(8,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: (() => number)[]; }'.",
-      "a.ts(9,7): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "93-R05a": {
     "files": {
@@ -15467,15 +15452,13 @@
     "files": {
       "a.ts": "type NTuple<T, N extends number, R extends unknown[] = []> = R[\"length\"] extends N ? R : NTuple<T, N, [...R, T]>;\nclass Base<T extends readonly never[]> { x!: T }\nclass Derived<N extends number> extends Base<[never, ...NTuple<never, N>]> {}\nfunction f<N extends number>() { return class extends Base<[never, never, ...NTuple<never, N>]> {}; }\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(5,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "96-REMEDA2": {
     "files": {
       "a.ts": "type NTuple<T, N extends number, R extends unknown[] = []> = R[\"length\"] extends N ? R : NTuple<T, N, [...R, T]>;\ndeclare function fn<T extends readonly never[]>(): T;\nfunction f<N extends number>() { return fn<[never, ...NTuple<never, N>]>; }\ntype Q<N extends number> = typeof fn<[never, never, ...NTuple<never, N>]>;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    },
-    "theirs": ["a.ts(5,7): error TS2322: Type 'string' is not assignable to type 'number'."]
+    }
   },
   "96-SOLID1": {
     "files": {
@@ -18216,12 +18199,7 @@
       "index.ts": "import { css } from './lib';\n\ncss({ ':hover': { notAProperty: '1' } });\n",
       "lib.d.ts": "type Pseudos = ':hover';\ntype CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\ntype Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\nexport {};\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"skipLibCheck\": true}, \"files\": [\"index.ts\", \"before.ts\", \"after.ts\"]}"
-    },
-    "theirs": [
-      "after.ts(5,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style3, \":hover\">'.",
-      "before.ts(1,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style2, \":hover\">'.",
-      "index.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'."
-    ]
+    }
   },
   "99-W4": {
     "files": {
@@ -18242,40 +18220,21 @@
       "before.ts": "css2({ ':hover': { notAProperty: '1' } });\nexport declare function css2(style: Style2): void;\ntype Pseudos2 = ':hover';\nexport type CSSPseudos2 = { [P in Pseudos2]?: Omit<Style2, Pseudos2> };\nexport type Style2 = CSSPseudos2 & { top?: string };\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"before.ts\", \"zafter.ts\"]}",
       "zafter.ts": "import { css2 } from './before';\ncss2({ ':hover': { notAProperty: '2' } });\n"
-    },
-    "theirs": [
-      "before.ts(1,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style2, \":hover\">'.",
-      "zafter.ts(2,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style2, \":hover\">'."
-    ]
+    }
   },
   "99-W7": {
     "files": {
       "index.ts": "import { css, Style } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\nconst p: Partial<Style> = { ':hover': {} };\ndeclare const style: Style;\nconst spread = { ...style };\nconst hover: never = spread[':hover'];\nconst top: never = spread.top;\nconst required: Required<Style> = { top: '' };\nconst picked: never = null! as keyof Partial<Style>;\nconst wrong: Style = { tpo: '' };\nexport const sentinel: number = '';\n",
       "lib.d.ts": "type Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"skipLibCheck\": true}, \"files\": [\"index.ts\"]}"
-    },
-    "theirs": [
-      "index.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
-      "index.ts(6,7): error TS2322: Type 'Omit<Style, \":hover\"> | undefined' is not assignable to type 'never'.",
-      "  Type 'undefined' is not assignable to type 'never'.",
-      "index.ts(7,7): error TS2322: Type 'string | undefined' is not assignable to type 'never'.",
-      "  Type 'undefined' is not assignable to type 'never'.",
-      "index.ts(8,7): error TS2741: Property '\":hover\"' is missing in type '{ top: string; }' but required in type 'Required<Style>'.",
-      "index.ts(9,7): error TS2322: Type '\":hover\" | \"top\"' is not assignable to type 'never'.",
-      "  Type '\":hover\"' is not assignable to type 'never'.",
-      "index.ts(10,24): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
-      "index.ts(11,14): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "99-W8": {
     "files": {
       "index.ts": "import { css } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\n",
       "lib.ts": "// @ts-nocheck\ntype Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"lib.ts\", \"index.ts\"]}"
-    },
-    "theirs": [
-      "index.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'."
-    ]
+    }
   },
   "99-W9": {
     "files": {
@@ -18291,19 +18250,7 @@
       "index.ts": "import { css, get } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\ncss({});\ncss({ top: 'a' });\nconst s = get();\nconst a: { ':hover': { top?: string } } = s;\nconst b: { top?: string } = s;\nexport const sentinel: number = '';\n",
       "lib.d.ts": "type Pseudos = ':hover';\ntype CSSPseudos = { [P in Pseudos]: Omit<Style, Pseudos> };\ntype Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\nexport declare function get(): Style;\nexport {};\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"skipLibCheck\": true}, \"files\": [\"index.ts\", \"before.ts\"]}"
-    },
-    "theirs": [
-      "before.ts(1,6): error TS2345: Argument of type '{}' is not assignable to parameter of type 'Style2'.",
-      "  Property '\":hover\"' is missing in type '{}' but required in type 'CSSPseudos2'.",
-      "before.ts(2,6): error TS2345: Argument of type '{ top: string; }' is not assignable to parameter of type 'Style2'.",
-      "  Property '\":hover\"' is missing in type '{ top: string; }' but required in type 'CSSPseudos2'.",
-      "index.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
-      "index.ts(3,5): error TS2345: Argument of type '{}' is not assignable to parameter of type 'Style'.",
-      "  Property '\":hover\"' is missing in type '{}' but required in type 'CSSPseudos'.",
-      "index.ts(4,5): error TS2345: Argument of type '{ top: string; }' is not assignable to parameter of type 'Style'.",
-      "  Property '\":hover\"' is missing in type '{ top: string; }' but required in type 'CSSPseudos'.",
-      "index.ts(8,14): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "99-WC": {
     "files": {
@@ -18311,31 +18258,14 @@
       "other.ts": "import { CSSPseudos2, css2 } from './before';\ntype T = CSSPseudos2 & { x: 1 };\ndeclare const t: T;\nconst a: { x: 1 } = t;\nconst b: never = t;\ncss2({ ':hover': { notAProperty: '2' } });\n",
       "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"target\":\"es2022\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"types\":[]},\"files\":[\"before.ts\",\"other.ts\",\"zleaf.ts\"]}\n",
       "zleaf.ts": "import { css2 } from './before';\ncss2({ ':hover': { notAProperty: '3' } });\nexport const sentinel: number = '';\n"
-    },
-    "theirs": [
-      "before.ts(1,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style2, \":hover\">'.",
-      "other.ts(5,7): error TS2322: Type 'T' is not assignable to type 'never'.",
-      "other.ts(6,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style2, \":hover\">'.",
-      "zleaf.ts(2,20): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style2, \":hover\">'.",
-      "zleaf.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "99-WD": {
     "files": {
       "index.ts": "import { css, Style } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\nconst p: Pick<Style, ':hover'> = {};\nconst q: Pick<Style, ':hover' | 'top'> = {};\nconst o: Omit<Style, 'top'> = {};\nconst r: Readonly<Style> = {};\nconst all: Required<Pick<Style, ':hover'>> = {};\ndeclare const picked: Pick<Style, 'top'>;\npicked.top = '';\nconst hover: never = null! as Style[':hover'];\nconst keys: never = null! as keyof Pick<Style, ':hover' | 'top'>;\nexport const sentinel: number = '';\n",
       "lib.d.ts": "type Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { readonly top?: string };\nexport declare function css(style: Style): void;\n",
       "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"target\":\"es2022\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"types\":[],\"skipLibCheck\":true},\"files\":[\"index.ts\"]}\n"
-    },
-    "theirs": [
-      "index.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
-      "index.ts(7,7): error TS2741: Property '\":hover\"' is missing in type '{}' but required in type 'Required<Pick<Style, \":hover\">>'.",
-      "index.ts(9,8): error TS2540: Cannot assign to 'top' because it is a read-only property.",
-      "index.ts(10,7): error TS2322: Type 'Omit<Style, \":hover\"> | undefined' is not assignable to type 'never'.",
-      "  Type 'undefined' is not assignable to type 'never'.",
-      "index.ts(11,7): error TS2322: Type '\":hover\" | \"top\"' is not assignable to type 'never'.",
-      "  Type '\":hover\"' is not assignable to type 'never'.",
-      "index.ts(12,14): error TS2322: Type 'string' is not assignable to type 'number'."
-    ]
+    }
   },
   "99-WE": {
     "files": {
@@ -18364,6 +18294,20 @@
       "three-deep.ts": "const q = 1;\ntype T = import(\"./m\", { with: { a: 0 as import(\"./n\", { with: { x: 0 as import(\"./o\", { with: { y: () => q } }), x2: () => q } }), c: () => q } });\nexport type { T };\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noUnusedLocals\": true, \"noUnusedParameters\": true, \"allowJs\": true, \"checkJs\": true } }\n",
       "two-inner.ts": "const q = 1;\ntype T = import(\"./m\", { with: { a: 0 as import(\"./n\", { with: { x: () => q } }), b: 0 as import(\"./o\", { with: { y: () => q } }), c: () => q } });\nexport type { T };\n"
+    }
+  },
+  "references-in-loops-of-unreachable-code": {
+    "files": {
+      "a.ts": "declare function fail(): never;\ndeclare const make: () => { p: string };\ndeclare const more: boolean;\nconst outer = make();\nfunction declaredBeforeTheConstant() {\n  fail();\n  while (more) { const p: never = outer; }\n}\nfunction afterAnExhaustiveSwitch(k: \"a\" | \"b\") {\n  switch (k) { case \"a\": return; case \"b\": return; }\n  const v = make();\n  const p1: never = v;\n  while (more) { const p2: never = v; }\n}\nfunction afterASwitchThatIsNotExhaustive(k: \"a\" | \"b\" | \"c\") {\n  switch (k) { case \"a\": return; case \"b\": return; }\n  const v = make();\n  while (more) { const p: never = v; }\n}\nfunction afterClausesThatNeverReturn(k: number) {\n  switch (typeof k) { case \"number\": fail(); }\n  const v = make();\n  while (more) { const p: never = v; }\n}\nfunction afterACallThatNeverReturns(a: { p: string }) {\n  fail();\n  const v = make();\n  const p1: never = v;\n  while (more) { const p2: never = v; const p3: never = a; const p4: never = make; }\n}\ndeclare function assert(v: unknown): asserts v;\nfunction afterAssertFalse(a: { p: string }) {\n  assert(false);\n  const p1: never = a;\n  while (more) { const p2: never = a; }\n}\nfunction unionsOfNever(a: { p?: string; q?: string }) {\n  fail();\n  assert(a.p || a.q);\n  const v = make();\n}\nfunction clausesOfNever(a: { p?: string; q?: string }) {\n  fail();\n  switch (true) { case a.p != null: case a.q != null: { const v = make(); } }\n  const w = make();\n}\nfunction oneClauseOfNever(a: { p?: string; q?: string }) {\n  fail();\n  switch (true) { case a.p != null: { const v = make(); } }\n  const w = make();\n}\nfunction afterATryThatAlwaysReturns(k: \"a\" | \"b\", list: { p: string }[]) {\n  try { switch (k) { case \"a\": return; case \"b\": return; } } finally { }\n  const v = make();\n  while (more) { const p: never = v; }\n  for (const item of list) { const f = () => { while (more) { } const p: never = item; }; }\n}\nfunction propertiesAfterAnExhaustiveSwitch(k: \"a\" | \"b\", list: { p: string }[], i: number) {\n  switch (k) { case \"a\": return; case \"b\": return; }\n  const v = make();\n  const all = [v];\n  for (const item of list) {\n    while (more) { }\n    const p1: never = item.p, p2: never = v.p, p3: never = all[i], p4: never = list[i];\n  }\n}\ninterface Q { readonly fixed: \"a\" | \"b\" }\ninterface O { p: string | number; q?: Q; n: Q; readonly ro: Q }\nfunction aPropertyOfALoopVariable<T extends O | undefined>(k: \"a\" | \"b\", t: T, o: O | undefined, list: (O | undefined)[]) {\n  switch (k) { case \"a\": return; case \"b\": return; }\n  t.n.fixed = \"a\";\n  for (let item of list) {\n    for (const n of [1]) { if (o?.q) break; switch (t.p) { case \"a\": fail(); } }\n    switch (true) { case t.n.fixed === item?.ro?.fixed: }\n  }\n}\nfunction afterAFunctionCalledInPlaceThatThrows(a: { p: string }) {\n  const u = (() => { throw 0; })(), v = make(), f = () => {\n    while (more) { const p1: never = v, p2: never = v.p, p3: never = a, p4: never = a.p; }\n    const p5: never = v, p6: never = a;\n  };\n}\nexport {};\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"lib\": [\"esnext\"], \"types\": [], \"allowUnreachableCode\": true } }\n"
+    }
+  },
+  "what-can-narrow-a-name-a-property-or-this": {
+    "files": {
+      "a.ts": "import { O, Q, Wide, DU, Base, Derived, isString, isSecond, assertString, assertSecond, assertEqual, assert, idle, fail, more, imported, importedUnion, maybe, listOf } from \"./lib\";\nimport * as lib from \"./lib\";\n\n// A test of a property narrows the object only if that's a union.\nfunction properties(o: O, u: DU, b: Base) {\n  if (o.kind === \"a\") { const p1: never = o; const p2: never = o.kind; const p3: never = o.p; }\n  if (u.kind === \"a\") { const p1: never = u; const p2: never = u.p; }\n  if (typeof o.p === \"string\") { const p1: never = o; const p2: never = o.p; const p3: never = o.n; }\n  if (o.n.r) { const p1: never = o.n; const p2: never = o.n.r; const p3: never = o.n.kind; const p4: never = o.q; }\n  if (b.constructor === Derived) { const p: never = b; }\n  if (b[\"constructor\"] === Derived) { const p: never = b; }\n  if (o[\"kind\"] === \"a\") { const p: never = o.kind; }\n  if (\"wide\" in o) { const p: never = o; }\n  if (\"q\" in o) { const p: never = o.q; }\n  if (o.hasOwnProperty(\"q\")) { const p: never = o.q; }\n  const { kind } = u;\n  if (kind === \"a\") { const p: never = u; }\n  const alias = u.kind;\n  if (alias === \"b\") { const p: never = u; }\n}\nfunction optionalChains<T extends O | undefined, V>(t: T, v: V, k: unknown, o: O | undefined, n: O) {\n  if (t?.p) { const p: never = t; }\n  if (o?.q?.r) { const p1: never = o; const p2: never = o.q; const p3: never = o.n; }\n  if (n.q?.r) { const p1: never = n; const p2: never = n.q; }\n  if (n.q?.kind === \"a\") { const p1: never = n.q; const p2: never = n.p; }\n  if (typeof o?.p === \"string\") { const p: never = o; }\n  switch (o?.kind) { case \"a\": { const p: never = o; } }\n  for (const key in o?.n) { const p: never = o; }\n  assertString(o?.p);\n  const p: never = o;\n}\nfunction guards(o: O, s: string | number, w: string | number) {\n  if (isString(s)) { const p1: never = s; const p2: never = w; }\n  if (isSecond(s, w)) { const p1: never = s; const p2: never = w; }\n  if (isString(o.p)) { const p1: never = o; const p2: never = o.p; }\n  if (o.isWide()) { const p1: never = o; const p2: never = o.q; }\n  if (lib.isString(s) === true) { const p: never = s; }\n  const ok = isString(s), same = ok;\n  if (same) { const p: never = s; }\n}\nfunction assertions(o: O, s: string | number, w: string | number, x: string | number, y: string | number) {\n  assertSecond(s, w);\n  const p1: never = s, p2: never = w;\n  assertEqual(o.kind, \"a\" as const);\n  const p3: never = o, p4: never = o.kind, p5: never = o.p;\n  assertEqual(x, y);\n  const p6: never = x, p7: never = y;\n  idle(s, o);\n  assert(typeof s === \"string\" && o.q);\n  const p8: never = s, p9: never = o.q, p10: never = o.n;\n  o.assertWide();\n  const p11: never = o, p12: never = imported;\n  assert(more || typeof y === \"string\");\n  const p13: never = y;\n}\nfunction afterAssertFalse(o: O) {\n  if (more) { assert(false); const p1: never = o; }\n  const p2: never = o;\n}\nfunction assignments(o: O, l: O, s: string | number) {\n  o.p = \"s\";\n  const p1: never = o.p, p2: never = o, p3: never = o.kind;\n  l = o;\n  const p4: never = l, p5: never = l.p;\n  [s] = [1];\n  const p6: never = s;\n  ({ p: o.p } = { p: 1 });\n  const p7: never = o.p;\n  for (o.p of [\"\"]) { const p8: never = o.p; }\n  o.n.kind = \"a\";\n  const p9: never = o.n.kind, p10: never = o.n;\n  let later = o;\n  const p11: never = later;\n  while (more) { const p12: never = later; later = l; }\n}\nfunction switches(o: O, u: DU, s: string | number) {\n  switch (o.kind) { case \"a\": { const p1: never = o.kind; const p2: never = o; break; } }\n  switch (u.kind) { case \"a\": { const p: never = u; } }\n  switch (typeof s) { case \"string\": { const p: never = s; } }\n  switch (true) { case isString(s): { const p: never = s; } }\n  switch (s) { case 1: { const p: never = s; } }\n}\nfunction outerFunctions(o: O | undefined, u: DU, l: O | undefined, n: O) {\n  if (!o || u.kind !== \"a\" || !l || !n.q) return;\n  const f = () => { const p1: never = o; const p2: never = u; const p3: never = l; const p4: never = n.q; };\n  const g = function () { const p: never = o; };\n  const h = { m() { const p: never = o; } };\n  (() => { const p1: never = n.q; const p2: never = l; })();\n  (async () => { const p1: never = n.q; const p2: never = o; })();\n  function declared() { const p: never = o; }\n  class C { m() { const p: never = o; } x = o; }\n  l = undefined;\n}\nfunction declarations(d: string | undefined = \"s\", e: string | undefined = undefined) {\n  const p1: never = d, p2: never = e;\n  const u: string | number = \"s\";\n  const p3: never = u;\n  let unassigned: string;\n  const f = () => { const p: never = unassigned; };\n  const p4: never = unassigned;\n  const p5: never = early;\n  const early = imported;\n  for (const item of [1, \"s\"]) { const p: never = item; }\n  for (const key in imported) { const p: never = key; }\n  try { fail(); } catch (caught) { const p: never = caught; }\n}\nfunction inACase(d: string) {\n  switch (d) { case \"a\": const inCase = imported; default: const p: never = inCase; }\n}\nfunction inABranch() {\n  if (more) { var hoisted = imported; const p1: never = hoisted; }\n  const p2: never = hoisted;\n}\nfunction forIn(o: O | undefined, n: O) {\n  for (const key in o) { const p: never = o; }\n  for (const key in n.q) { const p1: never = n.q; const p2: never = n; }\n}\nfunction notUnions<V>(v: V, k: unknown, a: any) {\n  if (v?.p) { const p: never = v; }\n  if (k?.p) { const p: never = k; }\n  if (a?.p) { const p: never = a; }\n}\nclass Members extends Base {\n  must: string;\n  also: O;\n  constructor(o: O) {\n    super();\n    const p1: never = this.must;\n    this.must = \"s\";\n    const p2: never = this.must, p3: never = this.also;\n    this.also = o;\n  }\n  isDerived(): this is Derived { return true; }\n  assertDerived(): asserts this is Derived {}\n  assertArgument(v: unknown): asserts v is string {}\n  stop(): never { throw 0; }\n  tests(s: string | number) {\n    const p0: never = this;\n    if (this.q) { const p1: never = this.q; const p2: never = this; const p3: never = this.n; const f = () => { const p4: never = this.q; const p5: never = this; }; }\n    if (this.kind === \"a\") { const p: never = this.kind; }\n    if (this instanceof Derived) { const p1: never = this; const f = () => { const p2: never = this; }; const g = function (this: O) { const p3: never = this; }; }\n    if (this.isDerived()) { const p: never = this; }\n    if (this.constructor === Derived) { const p: never = this; }\n    this.p = 1;\n    const p6: never = this.p;\n    this.assertArgument(s);\n    const p7: never = s, p8: never = this;\n    this.assertDerived();\n    const p9: never = this, p10: never = this.q;\n  }\n  ends() {\n    if (more) { this.stop(); const p1: never = this; while (more) { const p2: never = this; const p3: never = this.p; } }\n    const p4: never = this;\n  }\n}\nfunction globalsAndImports() {\n  const p1: never = globalObject, p2: never = globalUnion, p3: never = imported, p4: never = importedUnion, p5: never = lib.imported;\n  if (globalObject.q) { const p: never = globalObject.q; }\n  if (globalUnion.kind === \"a\") { const p: never = globalUnion; const f = () => { const q: never = globalUnion; }; }\n  if (importedUnion.kind === \"a\") { const p: never = importedUnion; const f = () => { const q: never = importedUnion; }; }\n  if (imported.q) { const p1: never = imported.q; const p2: never = imported; const p3: never = lib.imported.q; }\n  if (lib.imported.q) { const p1: never = lib.imported.q; const p2: never = lib.imported; }\n  globalObject = imported;\n  const p6: never = globalObject, p7: never = globalObject.q;\n}\nfunction finallyBlocks(o: O, s: string | number) {\n  try { if (more) return; s = 1; } finally { const p1: never = s; const p2: never = o; }\n  const p3: never = s, p4: never = o, p5: never = o.p;\n}\nfunction loopVariables(list: O[], mixed: (O | undefined)[], pairs: { o: O }[]) {\n  for (const item of list) { const p1: never = item; if (item.q) { const p2: never = item.q; } const f = () => { const p3: never = item; }; }\n  for (const item of mixed) { const p1: never = item; if (!item) continue; const p2: never = item; }\n  for (const { o } of pairs) { const p: never = o; }\n  for (var hoisted of list) { const p: never = hoisted; }\n  for (const key in list) { const p: never = key; }\n  for (const item of listOf<O>(() => { const p: never = item; })) { }\n  for (const item of [item!]) { }\n}\nfunction unionsWithAnInitializer(o: O) {\n  const whole = maybe();\n  const p1: never = whole;\n  const part: O | undefined = o;\n  const p2: never = part;\n  const literals = more ? 1 : \"s\";\n  const p3: never = literals;\n  let changed = maybe();\n  const p4: never = changed;\n  changed = undefined;\n  const p5: never = changed;\n  const { bound } = { bound: maybe() };\n  const p6: never = bound;\n  const present = maybe()!;\n  const p7: never = present;\n  const own = listOf<O | undefined>(() => { const p: never = own; })[0];\n  if (whole) { const p8: never = whole; const f = () => { const p9: never = whole; }; }\n}\n",
+      "glob.d.ts": "declare var globalObject: import(\"./lib\").O;\ndeclare var globalUnion: import(\"./lib\").DU;\n",
+      "lib.ts": "export interface Q { r: string | undefined; kind: \"a\" | \"b\" }\nexport interface O { p: string | number; q?: Q; n: Q; kind: \"a\" | \"b\"; isWide(): this is Wide; assertWide(): asserts this is Wide }\nexport interface Wide extends O { q: Q; wide: true }\nexport type DU = { kind: \"a\"; p: string } | { kind: \"b\"; p: number };\nexport class Base { p: string | number = 1; q?: Q; n: Q = null!; kind: \"a\" | \"b\" = \"a\"; }\nexport class Derived extends Base { d = 1; }\nexport declare function isString(v: unknown): v is string;\nexport declare function isSecond(a: unknown, v: unknown): v is string;\nexport declare function assertString(v: unknown): asserts v is string;\nexport declare function assertSecond(a: unknown, v: unknown): asserts v is string;\nexport declare function assertEqual<T>(v: unknown, w: T): asserts v is T;\nexport declare function assert(v: unknown): asserts v;\nexport declare function idle(...v: unknown[]): void;\nexport declare function fail(): never;\nexport declare const more: boolean;\nexport declare const imported: O;\nexport declare const importedUnion: DU;\nexport declare function maybe(): O | undefined;\nexport declare function listOf<T>(f: () => void): T[];\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"lib\": [\"esnext\"], \"types\": [], \"allowUnreachableCode\": true } }\n"
     }
   },
   "assignment-in-value-assigned-on-loop-back-edge": {
@@ -18724,6 +18668,39 @@
       "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
     },
     "build": true
+  },
+  "import-attributes-on-pattern-ambient-modules": {
+    "files": {
+      "types.d.ts": "declare module \"*.css\" { export const plain: 1; }\ndeclare module \"*.txt\" with { type: \"text\" } { export const text: 1; }\ndeclare module \"*.txt\" with { type: \"text\", encoding: \"utf8\" } { export const utf8: 1; }\ndeclare module \"a/*.txt\" with { type: \"text\" } { export const a: 1; }\ndeclare module \"*.dup\" with { type: \"a\", type: \"b\" } { export const dup: 1; }\ndeclare module \"*.q\" with { \"type\": 'x' } { export const q: 1; }\ndeclare module \"*.q\" with { type: \"x\" } { export const q2: 1; }\ndeclare module \"*.m\" with { f(): void } { export const m: 1; }\ndeclare module \"*.e\" with {} { export const e: 1; }\ndeclare module \"*.e\" { export const e2: 1; }\ndeclare module \"script\" with { type: \"x\" };\ndeclare module \"*.u\" with { type: \"a\" | \"b\" } { export const u: 1; }\ntype Alias = \"z\";\ndeclare module \"*.z\" with { type: Alias } { export type Alias = \"no\"; export const z: 1; }\n",
+      "real.css.d.ts": "export const real: 1;\n",
+      "index.ts": "import * as c1 from \"./real.css\";\nimport * as c2 from \"./real.css\" with { type: \"css\" };\nimport * as c3 from \"./real.css\" with {};\nc1.real; c2.real; c2.plain; c3.real;\nimport * as t1 from \"x.txt\";\nimport * as t2 from \"x.txt\" with { type: \"text\" };\nimport * as t3 from \"x.txt\" with { type: \"text\", encoding: \"utf8\" };\nimport * as t4 from \"x.txt\" with { type: \"text\", encoding: \"latin1\" };\nimport * as t5 from \"a/x.txt\" with { type: \"text\", encoding: \"utf8\" };\nimport * as t6 from \"a/x.txt\" with { type: \"text\" };\nimport * as t7 from \"x.txt\" with { type: `text` };\nt2.text; t2.utf8; t2.aug; t3.text; t3.utf8; t4.text; t4.utf8; t5.a; t5.utf8; t5.text; t6.a; t6.text; t7.text;\nimport * as d1 from \"x.dup\" with { type: \"a\" };\nimport * as d2 from \"x.dup\" with { type: \"b\" };\nimport * as q1 from \"x.q\" with { type: \"x\" };\nq1.q; q1.q2;\nimport * as m1 from \"x.m\";\nimport * as m2 from \"x.m\" with { f: \"x\" };\nimport * as e1 from \"x.e\";\ne1.e; e1.e2;\nimport * as n1 from \"./script.css\";\nimport * as n2 from \"./script.css\" with { type: \"css\" };\nn1.plain; n2.plain;\nimport * as x1 from \"x.css\";\nimport * as x2 from \"x.css\" with { type: \"css\" };\nx1.aug; x1.plain; x2.aug; x2.plain;\nasync function f(o: { with: { type: \"text\" } }, p: any, r: { with: { type: string } }, u: { with: { type: \"text\" | \"x\" } }) {\n  (await import(\"x.txt\", o)).text;\n  (await import(\"x.txt\", p)).text;\n  (await import(\"x.txt\", r)).text;\n  (await import(\"x.txt\", u)).text;\n  (await import(\"x.txt\", { with: { type: \"text\", ...{ encoding: \"utf8\" } } })).utf8;\n  (await import(\"x.txt\", { \"with\": { type: \"text\" } })).text;\n  (await import(\"x.txt\", { [\"with\"]: { type: \"text\" } })).text;\n}\ntype T1 = typeof import(\"x.txt\", { with: { type: \"text\" } });\ntype T2 = import(\"x.txt\").text;\nexport * from \"x.txt\" with { type: \"text\" };\nexport { utf8 } from \"x.txt\" with { type: \"text\", encoding: \"utf8\" };\nexport * as ns from \"x.txt\";\nimport * as u1 from \"x.u\" with { type: \"b\" };\nimport * as u2 from \"x.u\" with { type: \"c\" };\nimport * as z1 from \"x.z\" with { type: \"z\" };\nimport * as z2 from \"x.z\" with { type: \"no\" };\nu1.u; z1.z;\n",
+      "aug.ts": "export {};\ndeclare module \"x.css\" { export const aug: 1; }\ndeclare module \"x.txt\" { export const aug: 1; }\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"module\": \"preserve\", \"moduleResolution\": \"bundler\", \"noEmit\": true, \"target\": \"esnext\", \"types\": [] }, \"files\": [\"types.d.ts\", \"script.css.d.ts\", \"real.css.d.ts\", \"index.ts\", \"aug.ts\"] }\n",
+      "script.css.d.ts": "declare const notAModule: 1;\n"
+    }
+  },
+  "pattern-ambient-modules-declared-twice-and-augmented": {
+    "files": {
+      "types1.d.ts": "declare module \"*.svg\" { export const a: 1; }\ndeclare module \"*.w\" with { type: \"w\" } { export const a: 1; export interface I { a: 1 } }\n",
+      "types2.d.ts": "declare module \"*.svg\" { export const b: 1; }\ndeclare module \"*.w\" with { type: \"w\" } { export const b: 1; export interface I { b: 1 } }\ndeclare module \"*.w\" with { type: \"w\" } { export const a: 2; }\n",
+      "aug.ts": "export {};\ndeclare module \"x.svg\" { export const c: 1; }\n",
+      "amb.ts": "declare module \"*.inTs\" with {\n  type: \"t\",\n  'other-key': \"o\"\n} { export const v: 1; }\ndeclare module \"*.inTs2\" with { type: \"t\" } {}\ndeclare module \"*.inTs3\" with { type: \"t\" };\n",
+      "index.ts": "import * as x from \"x.svg\"; x.a; x.b; x.c;\nimport * as y from \"y.svg\"; y.a; y.b; y.c;\nimport * as w from \"x.w\" with { type: \"w\" }; w.a; w.b;\nimport type { I } from \"x.w\" with { type: \"w\", extra: \"e\" };\nexport declare const i: I;\nexport const j = i;\nexport const k = w;\nexport const l = import(\"x.w\", { with: { type: \"w\" } });\nexport function f(p: import(\"x.w\", { with: { type: \"w\", extra: \"e\" } }).I) { return p; }\nimport v3 from \"q.inTs3\" with { type: \"t\" };\nexport const m = v3;\nexport { w };\n",
+      "j.js": "/** @import { I } from \"x.w\" with { type: \"w\" } */\n/** @type {I} */\nexport const a = { a: 1, b: 1 };\n/** @type {import(\"x.w\", { with: { type: \"w\" } }).I} */\nexport const b = { a: 1 };\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"module\": \"preserve\", \"moduleResolution\": \"bundler\", \"declaration\": true, \"outDir\": \"out\", \"target\": \"esnext\", \"types\": [], \"allowJs\": true, \"checkJs\": true }, \"files\": [\"types1.d.ts\", \"types2.d.ts\", \"aug.ts\", \"index.ts\", \"j.js\", \"amb.ts\"] }\n"
+    }
+  },
+  "misplaced-imports-and-exports-of-missing-modules": {
+    "files": {
+      "a.ts": "export {};\n{ import a from \"./missing1\"; }\n{ import \"./missing2\"; }\n{ import b = require(\"./missing3\"); }\n{ export * from \"./missing4\"; }\n{ export { c } from \"./missing5\"; }\nfunction f() { import d from \"./missing6\"; }\nnamespace N { { import e from \"./missing7\"; } }\nif (true) { import g from \"./missing8\"; g; }\n{ import type h from \"./missing9\"; }\nclass C { m() { { import i from \"./missing10\"; } } }\n{ import * as j from \"./missing11\" with { type: \"x\" }; }\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true, \"target\": \"esnext\", \"types\": [] } }\n"
+    }
+  },
+  "case-of-letters-since-unicode-16": {
+    "files": {
+      "a.ts": "/// <reference lib=\"QA\" />\n/// <reference lib=\"Qİ\" />\n/// <reference lib=\"QꟐ\" />\n/// <reference lib=\"QᲉ\" />\n/// <reference lib=\"QꟋ\" />\n/// <reference lib=\"QꟌ\" />\n/// <reference lib=\"Q꟎\" />\n/// <reference lib=\"QꟜ\" />\n/// <reference lib=\"Q𐵐\" />\n/// <reference lib=\"Q𖺠\" />\nexport const uA7CC: Uppercase<\"Ꟍ\"> = 0;\nexport const lA7CC: Lowercase<\"Ꟍ\"> = 0;\nexport const uA7CD: Uppercase<\"ꟍ\"> = 0;\nexport const lA7CD: Lowercase<\"ꟍ\"> = 0;\nexport const u264: Uppercase<\"ɤ\"> = 0;\nexport const l264: Lowercase<\"ɤ\"> = 0;\nexport const u10D50: Uppercase<\"𐵐\"> = 0;\nexport const l10D50: Lowercase<\"𐵐\"> = 0;\nexport const u16EBB: Uppercase<\"𖺻\"> = 0;\nexport const l16EBB: Lowercase<\"𖺻\"> = 0;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
   },
   "inferred-type-is-a-module-in-a-nested-node-modules": {
     "files": {

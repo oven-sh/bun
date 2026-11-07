@@ -93,7 +93,8 @@ const filesOnDisk = {
 
 describe.skipIf(!canTrim)("bun build --compile --aot", () => {
   test.each([
-    ["Check", 0.85],
+    // Lower than the rest: the type checker also spawns processes and compresses with zstd, and programs use that code too.
+    ["Check", 0.8],
     ["Lint", 0.85],
     ["Fmt", 0.85],
     ["ImageCompiler", 0.85],

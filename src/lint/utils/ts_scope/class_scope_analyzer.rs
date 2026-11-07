@@ -771,8 +771,8 @@ pub fn analyze_class_member_usage<'a>(
         if !is_private && !matches!(tag_of(obj), Some(ExprTag::This | ExprTag::Ident)) {
             continue;
         }
-        // JSX tag names aren't `MemberExpression`s either.
-        if e.is_jsx_tag_name() || is_in_type_query(e) {
+        // JSX tag names aren't `MemberExpression`s either. The `#a` of `typeof this.#a` is a `PrivateIdentifier`.
+        if e.is_jsx_tag_name() || !is_private && is_in_type_query(e) {
             continue;
         }
         match is_private {

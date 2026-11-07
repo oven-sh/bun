@@ -6,8 +6,8 @@ use crate::file_analysis::{FileInputs, analyze_file};
 use crate::fold::{FoldError, FoldErrorKind, FoldInputs, FoldOptions};
 use crate::hir::{
     BinOp, Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func, Import,
-    ListAt, NameKind, NodeData, Param, ParamId, PatKind, Prop, PropKey, PropKind, ResolutionMode,
-    Span, StmtId, StmtKind, TextRange, TypeNodeId, rare,
+    ImportPhase, ListAt, NameKind, NodeData, Param, ParamId, PatKind, Prop, PropKey, PropKind,
+    ResolutionMode, Span, StmtId, StmtKind, TextRange, TypeNodeId, rare,
 };
 use crate::import_sites::JsxMode;
 use crate::session::Session;
@@ -143,7 +143,7 @@ fn add_import(file: &mut FileBuilder, spec: Atom, type_only: bool, attributes: E
         named: Span::EMPTY,
         has_named_imports: false,
         type_only,
-        is_deferred: false,
+        phase: ImportPhase::Evaluation,
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes,

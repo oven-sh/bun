@@ -254,7 +254,7 @@ fn svelte_in(settings: &Settings) -> Option<bool> {
 
 /// Returns true for a plugin that's built in. These sort imports, classes or `package.json` keys, or format Svelte.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
-    let name = package_of(name);
+    let name = &*package_of(name);
     name.ends_with(b"/prettier-plugin-sort-imports")
         || name == b"prettier-plugin-organize-imports"
         || name == TAILWIND_PLUGIN
@@ -300,7 +300,7 @@ fn is_built_in(plugin: &Json) -> bool {
 
 /// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
 /// of a project is formatted the same without them.
-const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 21] = [
+const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 28] = [
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
     (b"@prettier/plugin-php", &[b".php"]),
@@ -331,12 +331,22 @@ const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 21] = [
     (b"prettier-plugin-marko", &[b".marko"]),
     (b"prettier-plugin-ejs", &[b".ejs"]),
     (b"prettier-plugin-elm", &[b".elm"]),
+    (b"prettier-plugin-ember-template-tag", &[b".gjs", b".gts"]),
+    (b"@shopify/prettier-plugin-liquid", &[b".liquid"]),
+    (b"prettier-plugin-blade", &[b".blade.php"]),
+    (b"prettier-plugin-edgejs", &[b".edge"]),
+    (
+        b"prettier-plugin-sql-cst",
+        &[b".sql", b".sqlite", b".bigquery"],
+    ),
+    (b"prettier-plugin-terraform-formatter", &[b".tf"]),
+    (b"@zackad/prettier-plugin-twig", &[b".twig"]),
 ];
 
 fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     LANGUAGE_PLUGINS
         .iter()
-        .find(|it| it.0 == package_of(name))
+        .find(|it| package_of(name) == it.0)
         .map(|it| it.1)
 }
 

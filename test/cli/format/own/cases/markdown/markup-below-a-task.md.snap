@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+- [ ] Ready to be merged <!-- In your opinion, is this ready to be merged as soon as it is reviewed? -->
+- [x] text ***
+- [ ] text
+          ```
+- [ ] text <div>
+- [ ] text | - |
+
+-------------------
+{ printWidth: 100 }
+-------------------
+- [ ] Ready to be merged <!-- In your opinion, is this ready to be merged as soon as it is reviewed? -->
+- [x] text ***
+- [ ] text
+          ```
+- [ ] text <div>
+- [ ] text | - |
+
+===================== End =====================

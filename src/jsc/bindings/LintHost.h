@@ -75,8 +75,11 @@ public:
     bool isOxlint() const { return m_flags & 16; }
     // See `shortens_nodes` in src/lint/js_plugin/ast.rs.
     bool shortensNodes() const { return m_flags & 256; }
+    // See src/lint/js_plugin/types.rs.
+    bool hasTypes() const { return m_flags & 512; }
+    bool isBeforeESLint10() const { return m_flags & 1024; }
     // Every node, token and comment has `start` and `end`: `has_start_end` in src/lint/estree/mod.rs.
-    bool hasStartEnd() const { return m_flags & 512; }
+    bool hasStartEnd() const { return m_flags & 2048; }
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts()

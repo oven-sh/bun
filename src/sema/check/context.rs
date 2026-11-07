@@ -5,7 +5,7 @@ use super::infer::{Inference, Parts};
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::symbols::IterationUse;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, PackedParent, Parent, PatParent};
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -62,6 +62,10 @@ impl PushedContextualTypes {
     const SEARCHED_ONE_BY_ONE: usize = 64;
 
     #[inline]
+    pub(super) fn len(&self) -> usize {
+        self.infos.len()
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.infos.is_empty()
     }
@@ -198,18 +202,36 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Same for a direct child of `parent`.
     pub fn enclosing_fn(&self, file: FileId, mut parent: Parent) -> Option<FnId> {
+        // As in `enclosing_scope_of_expr`. In a chain like `a, b, ..` or `if .. else if ..`, each part's distance from
+        // the function is the length of the rest of the chain.
+        const UNCACHED_STEPS: usize = 32;
         let bound = self.bound(file);
-        loop {
+        let (mut steps, mut passed) = (0, Vec::new());
+        let function = loop {
+            steps += 1;
+            if steps > UNCACHED_STEPS {
+                cold_path();
+                let key = (file, PackedParent::from(parent));
+                if let Some(&known) = self.enclosing_fns.borrow().get(&key) {
+                    break known;
+                }
+                passed.push(key);
+            }
             parent = match parent {
                 // FOR SPEED: most steps are these two.
                 Parent::Expr(e) if e.is_some() => bound.parent_of_expr(e),
                 Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
-                Parent::FnBody(f) => return Some(f),
-                Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
-                Parent::None | Parent::File => return None,
+                Parent::FnBody(f) => break Some(f),
+                Parent::ParamDefault(p) => break Some(bound.param_fn[p.idx()]),
+                Parent::None | Parent::File => break None,
                 _ => self.parent_of_node(file, parent),
             };
+        };
+        if !passed.is_empty() {
+            let mut known = self.enclosing_fns.borrow_mut();
+            known.extend(passed.into_iter().map(|key| (key, function)));
         }
+        function
     }
 
     /// Resolves the calls that determine the parameter types of the functions enclosing `e`,
@@ -676,34 +698,41 @@ impl<'p, 's> Checker<'p, 's> {
     /// object literal that's an assignment target. `Some(true)` means the pattern has names that
     /// are only known at run time (`ObjectFlagsObjectLiteralPatternWithComputedProperties`).
     pub(super) fn pattern_of_type(&mut self, ty: TypeId) -> Option<bool> {
-        match *self.data(ty) {
+        let (file, e) = match *self.data(ty) {
             TypeData::Synth(ref shape) => match shape.literal {
-                Literalness::Pattern => Some(false),
-                Literalness::PatternWithComputedNames => Some(true),
-                _ => None,
+                Literalness::Pattern => return Some(false),
+                Literalness::PatternWithComputedNames => return Some(true),
+                // `object_literal_with_shape`
+                Literalness::Literal | Literalness::Partial => {
+                    let (file, _, e) = shape.symbol_declared_at?;
+                    (file, e)
+                }
+                _ => return None,
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
-            } if self.is_assignment_target(file, e) => {
-                let hir = self.hir(file);
-                let ExprKind::Object(props) = hir[e].kind else {
-                    return None;
-                };
-                let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-                let mut has_computed_names = false;
-                for p in props.iter() {
-                    if let PropKey::Computed(k) = hir[p].key
-                        && self.member_name(file, hir[p].key).is_none()
-                    {
-                        let key = self.type_of_expr(file, k);
-                        has_computed_names |= self.is_assignable(key, keys);
-                    }
-                }
-                Some(has_computed_names)
-            }
-            _ => None,
+            } => (file, e),
+            _ => return None,
+        };
+        if e.is_none() || !self.is_assignment_target(file, e) {
+            return None;
         }
+        let hir = self.hir(file);
+        let ExprKind::Object(props) = hir[e].kind else {
+            return None;
+        };
+        let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+        let mut has_computed_names = false;
+        for p in props.iter() {
+            if let PropKey::Computed(k) = hir[p].key
+                && self.member_name(file, hir[p].key).is_none()
+            {
+                let key = self.type_of_expr(file, k);
+                has_computed_names |= self.is_assignable(key, keys);
+            }
+        }
+        Some(has_computed_names)
     }
 
     /// `patternForType[t] != nil`
@@ -861,6 +890,12 @@ impl<'p, 's> Checker<'p, 's> {
                     && let crate::bind::ClassOwner::Expr(class) = bound.class_owner[c.idx()]
                 {
                     let expected = self.contextual_type(file, class, context_flags)?;
+                    // The class's own type may still be in progress.
+                    let symbol = self.symbol_of_type(expected);
+                    if symbol.and_then(|it| it.as_binder_symbol()) == Some(self.class_sym(file, c))
+                    {
+                        return None;
+                    }
                     let name = self.declared_member_name(file, hir[m].key)?;
                     return self.contextual_property(expected, name);
                 }
@@ -1462,6 +1497,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getApparentType`
             let constraint = if c.is_deferred(t) {
+                cold_path();
                 let constraint = c.base_constraint(t);
                 c.with_outer_type_arguments(t, constraint, outer_mapper)
             } else {
@@ -1744,7 +1780,6 @@ impl<'p, 's> Checker<'p, 's> {
             && self.constraint_stack.is_empty()
             && self.reverse_mapped_source_stack.is_empty()
             && self.flow_loops.is_empty()
-            && self.reporting_nonexistent.is_empty()
             && self.stack.iter().all(|q| {
                 matches!(
                     q,
@@ -2433,6 +2468,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getContextualSignature`: the signature a function expression is expected to have.
     pub fn contextual_signature(&mut self, file: FileId, func: FnId) -> Option<SigId> {
+        if let Some(known) = self.contextual_signature_in_check
+            && known.function == (file, func)
+            && known.contextual_types == self.contextual.len()
+            && known.inference_contexts == self.inference_contexts.len()
+        {
+            return known.signature;
+        }
         let owner = self.takes_context(file, func)?;
         let context =
             self.apparent_type_of_contextual_type(file, owner, ContextFlags::SIGNATURE)?;
@@ -2590,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `IsNodeDescendantOf`
-    fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
+    pub(super) fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
         let hir = self.hir(file);
         let ancestor = hir.node(ancestor);
         hir.find_ancestor(hir.node(e), |n| n == ancestor).is_some()

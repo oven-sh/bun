@@ -1,7 +1,7 @@
 use crate::atom::Atom;
 use crate::bind::PatParent;
 use crate::check::mapped::AccessNode;
-use crate::check::shape::{Access, Found};
+use crate::check::shape::{Access, Found, FoundProperty};
 use crate::check::{Checker, Program, root_declaration};
 use crate::hir::{ExprId, PatId, StmtId, VarKind};
 use crate::module_format::ModuleFormat;
@@ -17,6 +17,28 @@ impl Program<'_> {
     #[inline]
     pub(in crate::check) fn is_in_compile_build(&self, file: FileId) -> bool {
         is_in_compile_build(self.files, file)
+    }
+}
+
+impl<'p> Checker<'p, '_> {
+    pub(in crate::check) fn property_type_in(
+        &mut self,
+        file: FileId,
+        left_type: TypeId,
+        apparent_type: TypeId,
+        name: Atom,
+        access: Access,
+    ) -> Option<FoundProperty<'p>> {
+        let mut found = self.property_type(left_type, apparent_type, name, access)?;
+        let of_program = self.files.options.no_unchecked_indexed_access;
+        let of_file = self.module_options(file).no_unchecked_indexed_access;
+        if found.how == Found::ByIndex && access == Access::Read && of_file != of_program {
+            found.ty = match of_file {
+                true => self.with_missing(found.ty),
+                false => self.filter(found.ty, |_, member| member != TypeId::MISSING),
+            };
+        }
+        Some(found)
     }
 }
 
@@ -56,29 +78,6 @@ impl<'s> Checker<'_, 's> {
             }
         };
         self.module_options(file).no_unchecked_indexed_access
-    }
-
-    pub(in crate::check) fn property_type_in(
-        &mut self,
-        file: FileId,
-        left_type: TypeId,
-        apparent_type: TypeId,
-        name: Atom,
-        access: Access,
-    ) -> Option<(TypeId, Found)> {
-        let found = self.property_type(left_type, apparent_type, name, access);
-        let of_program = self.files.options.no_unchecked_indexed_access;
-        let of_file = self.module_options(file).no_unchecked_indexed_access;
-        match found {
-            Some((ty, Found::ByIndex)) if access == Access::Read && of_file != of_program => {
-                let ty = match of_file {
-                    true => self.with_missing(ty),
-                    false => self.filter(ty, |_, member| member != TypeId::MISSING),
-                };
-                Some((ty, Found::ByIndex))
-            }
-            found => found,
-        }
     }
 
     #[inline]

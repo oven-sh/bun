@@ -88,7 +88,10 @@ async function loadV3(root, config) {
   const resolveConfig = require(join(root, "resolveConfig"));
   const { createContext } = require(join(root, "lib/lib/setupContextUtils"));
   const { generateRules } = require(join(root, "lib/lib/generateRules"));
-  const options = config ? await importDefault(config) : {};
+  // Tailwind's own loader, there since 3.3.0, also reads a file with both `import` and `module.exports`.
+  const loader = join(root, "loadConfig.js");
+  const loadConfig = fs.existsSync(loader) ? require(loader) : importDefault;
+  const options = config ? await loadConfig(config) : {};
   options.content = ["no-op"];
   const context = createContext(resolveConfig(options));
   if (context.getClassOrder) return classes => context.getClassOrder(classes);

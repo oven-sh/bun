@@ -6,7 +6,6 @@
 //!
 //! One thing can't be detected here: serde_json doesn't treat `1.0` as an integer.
 
-use super::oxlint_fields::OPTIONS;
 use super::rust_regex;
 use crate::options::Json;
 use bun_core::strings;
@@ -94,9 +93,14 @@ struct Struct {
     has_flattened: bool,
 }
 
-/// The text after `key` and a space in the table.
+/// The text after `key` and a space in `oxlint_fields.txt`. It has a line per oxlint rule that takes options: the rule as
+/// `oxlint_rule_key` writes it, a space, and the shape of its options. `generate-oxlint-fields.mjs` documents the notation.
+/// An oxlint rule that isn't listed takes no options. Release builds embed the file compressed and inflate it on first use.
 fn row(key: &[u8]) -> Option<&'static [u8]> {
-    let table = OPTIONS.as_bytes();
+    let table = bun_zstd::embed_compressed!(
+        "src/lint/linter/config/oxlint_fields.txt",
+        include_bytes!("oxlint_fields.txt")
+    );
     let start = [b"\n", key, b" "].concat();
     let rest = table.get(strings::index_of(table, &start)? + start.len()..)?;
     rest.get(..strings::index_of_char_usize(rest, b'\n')?)

@@ -1,0 +1,11 @@
+const logger = new Logger(<DateProvider>{ get: () => getDateMock() }, <BrowserWindowNotifier>{
+  notifyAll: (c) => notifyAllMock(c),
+});
+foo(<A>[getDateMockgetDateMock, 2], <B>[
+  notifyAllOfThemAgainnotifyAllOfThemAgain,
+  notifyAllOfThemAgainnotifyAllOfThemAgain,
+  notifyAllOfThemAgain,
+]);
+foo({ get: () => getDateMock() } as DateProvider, {
+  notifyAll: (c) => notifyAllMock(c),
+} as BrowserWindowNotifierBrowserWindowNotifier);

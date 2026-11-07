@@ -358,6 +358,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, Encod
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
     LintSourceCodeState& state = host->sourceCode;
+    // It depends on the rule that asks.
+    if (host->hasTypes()) {
+        JSValue typed = callHook(globalObject, state.typedServices);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (typed.isObject())
+            return JSValue::encode(typed);
+    }
     if (JSObject* services = state.parserServices.get())
         return JSValue::encode(services);
     JSObject* services;
@@ -1380,8 +1387,8 @@ const Member members[] = {
 
 } // namespace
 
-// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, scopeManagerOfOxlint]`, three
-// functions and an object.
+// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, typedServices,
+// scopeManagerOfOxlint]`, four functions and an object.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1393,7 +1400,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsiz
     if (!tokenStore || !hooks)
         return throwVMTypeError(globalObject, scope, "Expected a class and hooks"_s);
     unsigned at = 0;
-    for (auto* hook : { &state.program, &state.scopeManager, &state.parserOptions }) {
+    for (auto* hook : { &state.program, &state.scopeManager, &state.parserOptions, &state.typedServices }) {
         JSValue function = hooks->getIndex(globalObject, at++);
         RETURN_IF_EXCEPTION(scope, {});
         if (!function.isCallable())

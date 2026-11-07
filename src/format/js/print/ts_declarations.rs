@@ -557,6 +557,9 @@ pub(crate) fn write_ts_module_declaration<'a>(
         }
         current = nested;
     }
+    if let Some(attributes) = module.attributes() {
+        write!(f, [space(), "with", space(), attributes]);
+    }
 
     let Some(span) = body_span else {
         return write!(f, OptionalSemicolon);

@@ -5,9 +5,10 @@ use crate::file_analysis::FileInputs;
 use crate::fold::{FoldError, FoldErrorKind, FoldInputs, FoldOptions, fold_file};
 use crate::hir::{
     Call, Chain, Export, ExportId, ExportSpec, ExprFlags, ExprId, ExprKind, FileBuilder, Flags,
-    FnBody, FnKind, Func, IdList, Import, ImportEquals, ImportEqualsTarget, ImportId, Jsx, Keyword,
-    ListAt, Module, ModuleName, NameKind, NodeData, Param, ParamId, PatKind, Prop, PropId, PropKey,
-    PropKind, ResolutionMode, Span, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
+    FnBody, FnKind, Func, IdList, Import, ImportEquals, ImportEqualsTarget, ImportId, ImportPhase,
+    Jsx, Keyword, ListAt, Module, ModuleName, NameKind, NodeData, Param, ParamId, PatKind, Prop,
+    PropId, PropKey, PropKind, ResolutionMode, Span, StmtId, StmtKind, TextRange, TypeNodeId,
+    TypeNodeKind,
 };
 use crate::module_format::{DeclaredModuleType, ModuleFormat, decide_module_format};
 use crate::session::Session;
@@ -179,6 +180,7 @@ fn add_namespace(file: &mut FileBuilder, alias: StmtId, has_value: bool) -> Stmt
         name: ModuleName::Ident(known::object),
         name_pos: 0,
         flags: Flags::empty(),
+        attributes: TypeNodeId::NONE,
         body,
         has_body: true,
         specifies_module: false,
@@ -225,7 +227,7 @@ fn add_import(file: &mut FileBuilder, default: Atom, attributes: ExprId) -> Stmt
         named: Span::EMPTY,
         has_named_imports: false,
         type_only: false,
-        is_deferred: false,
+        phase: ImportPhase::Evaluation,
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes,

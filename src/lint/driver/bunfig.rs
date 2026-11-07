@@ -692,6 +692,7 @@ const LINT: Table = Table {
         b"ignore",
         b"warn-ignored",
         b"quiet",
+        b"verbose",
         b"silent",
         b"max-warnings",
         b"deny-warnings",

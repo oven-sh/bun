@@ -116,10 +116,11 @@ function filesWithDepthLimit(maxNodeModuleJsDepth: number): Record<string, strin
   };
 }
 
-// tsc starts the imports of a file once (`parseTask.startedSubTasks`), so the lower depth never reaches leaf/index.js.
+// Since TypeScript 7.1, tsc starts the imports of a file again when it reaches the file at a lower depth, so the lower
+// depth reaches leaf/index.js. 7.0 started them once (`parseTask.startedSubTasks`).
 const depthLimits: [maxNodeModuleJsDepth: number, tscLoadsLeaf: boolean][] = [
   [1, false],
-  [2, false],
+  [2, true],
   [3, true],
 ];
 

@@ -56,6 +56,16 @@ pub(crate) struct RuleSetting {
     /// The rule's default options with no config file: `$defaultOptions` in `bun lint`'s default config. Options from a later
     /// setting are merged over them, the way ESLint merges options over a rule's `meta.defaultOptions`. Empty with a config file.
     pub(crate) defaults: Vec<Json>,
+    /// [`Written`], if `options` has more than the config says.
+    pub(crate) written: Option<Written>,
+}
+
+/// What the config itself says about a rule whose setting has implied options too.
+#[derive(Clone, Debug)]
+pub(crate) enum Written {
+    /// Nothing. The setting is only there for what's implied.
+    Nothing,
+    Options(Vec<Json>),
 }
 
 impl RuleSetting {
@@ -74,6 +84,7 @@ impl RuleSetting {
             has_only_severity: value.len() == 1,
             yields: false,
             defaults: Vec::new(),
+            written: None,
         })
     }
 }

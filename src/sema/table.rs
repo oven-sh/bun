@@ -22,6 +22,7 @@ use crate::util::memory::{Cells, FixedCells, Zeroed};
 use crate::util::{AppendVec, Windowed, WindowedMap, spread_hash, spread_in_window};
 use std::alloc::{Allocator, Global};
 use std::hash::Hash;
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -148,6 +149,23 @@ impl Packed for () {
     }
     #[inline]
     fn unpack(_: u32) {}
+}
+
+/// A set of up to four flags. Flags are only ever added.
+#[derive(Copy, Clone)]
+pub struct FourFlags(u8);
+
+impl Packed for FourFlags {
+    type Cell = AtomicU32;
+    const BITS: u32 = 4;
+    #[inline]
+    fn pack(self) -> u32 {
+        u32::from(self.0)
+    }
+    #[inline]
+    fn unpack(raw: u32) -> FourFlags {
+        FourFlags(raw as u8)
+    }
 }
 
 impl Packed for u8 {
@@ -734,6 +752,39 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, Frozen, A> {
     }
 }
 
+impl<K: NodeKey, A: Alloc> ByNode<K, FourFlags, Frozen, A> {
+    #[inline]
+    pub fn flags(&self, key: K) -> u8 {
+        self.get(&key).map_or(0, |flags| flags.0)
+    }
+
+    /// The flags of every key of `file`, in order.
+    pub fn flags_in(&self, file: FileId) -> Vec<u8> {
+        let keys = self.bases.range_of(file);
+        let mut flags = vec![0; keys.len()];
+        let cells = keys.start / Self::PER_CELL..keys.end.div_ceil(Self::PER_CELL);
+        for (cell, sets) in self.cells.written_in(cells) {
+            let (first, mut sets) = (cell * Self::PER_CELL, Cell::load(sets));
+            while sets != 0 {
+                let at = first + (sets.trailing_zeros() / FourFlags::BITS) as usize;
+                if keys.contains(&at) {
+                    flags[at - keys.start] = (sets >> Self::cell_and_shift(at).1) as u8 & 15;
+                }
+                sets &= !(15 << Self::cell_and_shift(at).1);
+            }
+        }
+        flags
+    }
+
+    /// Any thread may call it at any time. As with `get`, the caller orders it before another thread's read.
+    #[inline]
+    pub fn add(&self, key: K, flags: u8) {
+        if let Some((cell, shift)) = self.field(key) {
+            cell.fetch_or(u32::from(flags) << shift, Ordering::Relaxed);
+        }
+    }
+}
+
 impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
     #[inline]
     pub fn get_ref(&self, key: &K) -> Option<&T> {
@@ -828,6 +879,8 @@ fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
 }
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V, Buffered<W>, A> {
+    /// For what's inlined into the callers. The functions that aren't inlined read `slot`, so tables that differ only in
+    /// their slot share the machine code.
     #[inline]
     fn own_slot(&self) -> u32 {
         known_slot::<Buffered<W>>(self.slot)
@@ -856,8 +909,9 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             None => self.published_at(at),
             // `snapshot_of` runs before the load, because a miss counts as a look at the file too.
             Some(view) => {
-                let raw = self.seen_up_to(view.snapshot_of(FileId(file)), at);
-                match raw != 0 && view.hides(FileId(file), self.stamp_at(at)) {
+                let snapshot = view.snapshot_of(FileId(file));
+                let raw = self.seen_up_to(snapshot, at);
+                match raw != 0 && view.hides(FileId(file), snapshot, self.stamp_at(at)) {
                     true => 0,
                     false => raw,
                 }
@@ -907,13 +961,16 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     /// `get` for when `Buffer::in_row` returns `None`.
     #[inline(never)]
     fn get_outside_the_row(&self, task: &Task, file: u32, index: u32) -> u32 {
-        let (slot, buffer) = (self.own_slot(), task.buffer());
+        let (slot, buffer) = (self.slot, task.buffer());
         if file == buffer.file() && Self::has_a_whole_row(task, file) {
             self.adopt(task, buffer, file);
             return buffer.in_row(slot, file, index).unwrap_or(0);
         }
         match self.seen(task, file, index) {
-            (0, at) => buffer.node_anywhere(slot, file, index, at),
+            (0, at) => {
+                cold_path();
+                buffer.node_anywhere(slot, file, index, at)
+            }
             (raw, _) => raw,
         }
     }
@@ -924,7 +981,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     #[cold]
     #[inline(never)]
     fn adopt(&self, task: &Task, buffer: &mut Buffer<'_>, file: u32) {
-        let (slot, nodes) = (self.own_slot(), self.bases.range_of(FileId(file)));
+        let (slot, nodes) = (self.slot, self.bases.range_of(FileId(file)));
         buffer.cover(slot, file, &nodes, self.bases.count_in(FileId(file)));
         if !Self::has_a_whole_row(task, file) {
             return;
@@ -962,7 +1019,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         file: u32,
         index: u32,
     ) -> Result<&'b mut u32, u32> {
-        let slot = self.own_slot();
+        let slot = self.slot;
         if file == buffer.file() {
             let is_adopted = match Self::has_a_whole_row(task, file) {
                 true => buffer.has_whole_row(slot, file),
@@ -996,7 +1053,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             }
             Err(published) if !replaces => return published,
             Err(published) => {
-                buffer.shadow(self.own_slot(), file, index, raw);
+                buffer.shadow(self.slot, file, index, raw);
                 (published, true)
             }
         };
@@ -1004,7 +1061,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             return current;
         }
         if is_stored {
-            buffer.log_node(self.own_slot(), file, index);
+            buffer.log_node(self.slot, file, index);
         }
         // The entry waits in the task-local part for a commit, unless `Bases` doesn't count the node. Nothing is ever
         // published under such a node, so no other task could find the entry.
@@ -1023,10 +1080,23 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         V::unpack(self.put(task, key.file().0, key.index(), value.pack(), false))
     }
 
+    #[inline]
     pub fn rewrite(&self, task: &Task, key: K, value: V, _: Stored) -> V {
-        if key.index() != u32::MAX {
-            self.put(task, key.file().0, key.index(), value.pack(), true);
+        let (file, index, slot, buffer) =
+            (key.file().0, key.index(), self.own_slot(), task.buffer());
+        if index == u32::MAX {
+            return value;
         }
+        // FOR SPEED: what `put` does for nearly every expression.
+        if W::KEEPS_VISITED_FILE_LOCAL
+            && file == buffer.file()
+            && buffer.has_whole_row(slot, file)
+            && !buffer.has_seeds(slot)
+        {
+            *buffer.cell_in_row(slot, index) = value.pack();
+            return value;
+        }
+        self.put(task, file, index, value.pack(), true);
         value
     }
 }
@@ -1135,6 +1205,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
                 }
                 return self.put_value_immediately(task, key, value);
             }
+            cold_path();
             task.hold_back();
         }
         self.insert_in_task(task, key, value)
@@ -1365,6 +1436,7 @@ where
         // If the task already has a deferred entry under the key, it keeps using that one.
         let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
         if !task.may_write_immediately(self.slot.number(), stored) || own().is_some() {
+            cold_path();
             task.hold_back();
             return Err(true);
         }
@@ -1429,6 +1501,27 @@ where
             return Some(value);
         }
         (task.buffer().typed(&self.slot)?.get(spread, key)).copied()
+    }
+
+    /// `get`, for a table where a task that doesn't find an entry can compute something else than the task that has it.
+    /// If the entry isn't published and `is_missed` returns true for it, whatever the task is evaluating waits for a
+    /// commit too (`Task::hold_back`), and the commit stores it after the entry.
+    #[inline]
+    pub fn get_and_hold_back_if(
+        &self,
+        task: &Task<'s>,
+        key: &K,
+        is_missed: impl FnOnce(V) -> bool,
+    ) -> Option<V> {
+        let spread = spread_in_window(key);
+        if let Some(value) = self.published(task, spread, key) {
+            return Some(value);
+        }
+        let own = *task.buffer().typed(&self.slot)?.get(spread, key)?;
+        if is_missed(own) {
+            task.hold_back();
+        }
+        Some(own)
     }
 
     #[inline]

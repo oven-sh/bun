@@ -377,7 +377,10 @@ impl Checker {
                     | UnOp::Delete,
                 ),
             )) if is_oxlint => (full, None, value, full.parent()),
-            Some((full, Some(UnOp::Plus))) => (full, Some(b'+'), value, full.parent()),
+            // ESLint 8 reports the number after the `+`.
+            Some((full, Some(UnOp::Plus))) if cx.language().eslint_major >= 9 => {
+                (full, Some(b'+'), value, full.parent())
+            }
             _ => (e, None, value, parent),
         };
         if self.is_ignored_value(value) {

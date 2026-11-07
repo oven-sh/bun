@@ -306,8 +306,9 @@ impl<'a> CxBase<'a> {
                     (self.oxlint_rule_messages).get_or_init(|| oxlint_messages::of_rule(self.meta));
                 oxlint_messages::of(oxlint_texts, message)
             }
-            false if language.eslint_8.is_some() => {
-                crate::linter::config::eslint8::message_of(self.meta, message)
+            false if language.eslint_major < 10 => {
+                let major = language.eslint_major;
+                crate::linter::config::eslint8::message_of(self.meta, message, major)
             }
             false => message,
         };

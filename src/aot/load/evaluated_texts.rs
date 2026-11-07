@@ -314,7 +314,7 @@ fn has_unsupported_syntax(hir: &File<'_>) -> bool {
 
 fn is_supported_expression(hir: &File<'_>, kind: ExprKind) -> bool {
     // `import("a", "b", "c")`: the parser of the run time refuses the third, and this one does not.
-    if let ExprKind::ImportCall { args } = kind
+    if let ExprKind::ImportCall { args, .. } = kind
         && hir.ids(args).count() > 2
     {
         return false;

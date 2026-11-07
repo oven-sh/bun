@@ -18,9 +18,9 @@ use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
     self, BinOp, Chain, ClassId, EnumId, EnumMemberId, ExprId, ExprKind, Flags, FnBody,
-    ImportEqualsId, ImportEqualsTarget, JsxId, MemberId, MemberKey, MemberKind, ModifierId,
-    ModifierKind, NameKind, NodeData, PatId, PatKind, PropId, PropKey, PropKind, Span, StmtId,
-    StmtKind, UnOp, VarDeclId, VarKind,
+    ImportEqualsId, ImportEqualsTarget, ImportPhase, JsxId, MemberId, MemberKey, MemberKind,
+    ModifierId, ModifierKind, NameKind, NodeData, PatId, PatKind, PropId, PropKey, PropKind, Span,
+    StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files, Sym};
@@ -812,7 +812,7 @@ impl<'a, 's> Removable<'a, 's> {
                     let is_global = object.is_some_and(|object| {
                         table::entry(object.id).holder == Some(BuiltinId::GlobalThis)
                     });
-                    !self.hir[import].is_deferred && !is_global
+                    self.hir[import].phase == ImportPhase::Evaluation && !is_global
                 }
                 _ => false,
             },

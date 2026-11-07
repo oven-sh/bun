@@ -184,9 +184,9 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
             _ => "Use `String(value)` instead",
         });
     }
-    // ESLint's suggestion is a fix in oxlint.
+    // ESLint's suggestion is a fix in oxlint, and was one in ESLint 8.
     let remedy = match remedy {
-        Remedy::Suggestion if cx.language().is_oxlint => Remedy::Fix,
+        Remedy::Suggestion if cx.language().is_oxlint || cx.language().eslint_major == 8 => Remedy::Fix,
         _ => remedy,
     };
     // The fix only copies the operand, so the comment in `!!(a /* b */)` would be dropped. ESLint and oxlint drop it.

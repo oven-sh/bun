@@ -81,7 +81,7 @@ fn push_expr_children<S: Storage>(hir: &FileIn<S>, e: ExprId, stack: &mut Vec<Tr
         | ExprKind::ImportMeta
         | ExprKind::NewTarget(_) => {}
         ExprKind::Template { exprs: list }
-        | ExprKind::ImportCall { args: list }
+        | ExprKind::ImportCall { args: list, .. }
         | ExprKind::Array(list) => push_exprs(hir.ids(list), stack),
         ExprKind::TaggedTemplate(call) => {
             push_exprs([hir[call].callee, hir.template_of(call)], stack);

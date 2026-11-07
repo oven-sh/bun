@@ -1,5 +1,6 @@
 //! Validates the `compilerOptions` of a config file: unknown options and values of the wrong type.
 
+use crate::config::is_network_path_value;
 use crate::hir::{ExprId, PropId};
 use crate::json::{Json, TsConfigSourceFile};
 
@@ -67,8 +68,8 @@ bun_core::comptime_string_map! {
         b"explainfiles" => (b"explainFiles", Kind::Boolean),
         b"extendeddiagnostics" => (b"extendedDiagnostics", Kind::Boolean),
         b"forceconsistentcasinginfilenames" => (b"forceConsistentCasingInFileNames", Kind::Boolean),
-        b"generatecpuprofile" => (b"generateCpuProfile", Kind::String),
-        b"generatetrace" => (b"generateTrace", Kind::String),
+        b"generatecpuprofile" => (b"generateCpuProfile", Kind::FilePath),
+        b"generatetrace" => (b"generateTrace", Kind::FilePath),
         b"ignoredeprecations" => (b"ignoreDeprecations", Kind::String),
         b"importhelpers" => (b"importHelpers", Kind::Boolean),
         b"incremental" => (b"incremental", Kind::Boolean),
@@ -120,12 +121,12 @@ bun_core::comptime_string_map! {
         b"outfile" => (b"outFile", Kind::FilePath),
         b"paths" => (b"paths", Kind::Object),
         b"plugins" => (b"plugins", Kind::List(Element::Object)),
-        b"pprofdir" => (b"pprofDir", Kind::String),
+        b"pprofdir" => (b"pprofDir", Kind::FilePath),
         b"preserveconstenums" => (b"preserveConstEnums", Kind::Boolean),
         b"preservesymlinks" => (b"preserveSymlinks", Kind::Boolean),
         b"preservewatchoutput" => (b"preserveWatchOutput", Kind::Boolean),
         b"pretty" => (b"pretty", Kind::Boolean),
-        b"project" => (b"project", Kind::String),
+        b"project" => (b"project", Kind::FilePath),
         b"quiet" => (b"quiet", Kind::Boolean),
         b"reactnamespace" => (b"reactNamespace", Kind::String),
         b"removecomments" => (b"removeComments", Kind::Boolean),
@@ -149,7 +150,7 @@ bun_core::comptime_string_map! {
         b"strictpropertyinitialization" => (b"strictPropertyInitialization", Kind::Boolean),
         b"stripinternal" => (b"stripInternal", Kind::Boolean),
         b"target" => (b"target", Kind::OneOf(
-            &[b"es6", b"es2015", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020", b"es2021", b"es2022", b"es2023", b"es2024", b"es2025", b"esnext"],
+            &[b"es6", b"es2015", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020", b"es2021", b"es2022", b"es2023", b"es2024", b"es2025", b"es2026", b"esnext"],
             &[b"es5"],
         )),
         b"traceresolution" => (b"traceResolution", Kind::Boolean),
@@ -165,7 +166,18 @@ bun_core::comptime_string_map! {
 
 bun_core::comptime_string_set! {
     /// The options declared `IsCommandLineOnly` (tsoptions).
-    static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"showConfig", b"watch" };
+    static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"runExternalCode", b"showConfig", b"watch" };
+}
+
+bun_core::comptime_string_set! {
+    /// `commonOptionsWithBuild`. Every other option is in `optionsForCompiler`.
+    static COMMON_OPTIONS_WITH_BUILD = {
+        b"help", b"watch", b"preserveWatchOutput", b"listFiles", b"explainFiles", b"listEmittedFiles", b"pretty",
+        b"traceResolution", b"diagnostics", b"extendedDiagnostics", b"generateCpuProfile", b"generateTrace",
+        b"incremental", b"declaration", b"declarationMap", b"emitDeclarationOnly", b"sourceMap", b"inlineSourceMap",
+        b"noCheck", b"deduplicatePackages", b"noEmit", b"assumeChangesOnlyAffectDirectDependencies", b"locale",
+        b"quiet", b"singleThreaded", b"pprofDir", b"checkers", b"runExternalCode",
+    };
 }
 
 /// An error in an option.
@@ -340,6 +352,14 @@ pub fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
+/// `CommandLineOptionNameMap.GetSpellingSuggestion`
+fn spelling_suggestion(
+    name: &[u8],
+    options: impl Iterator<Item = &'static [u8]>,
+) -> Option<&'static [u8]> {
+    crate::check::get_spelling_suggestion(name, options, |option| option, |a, b| a.cmp(b))
+}
+
 /// The object of a configuration file that the options are in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum In {
@@ -376,6 +396,7 @@ impl Declaration {
                     b"include",
                     b"exclude",
                     b"references",
+                    b"contentMappers",
                     b"extends",
                     b"compileOnSave",
                     b"compilerOptions",
@@ -422,7 +443,7 @@ impl Declaration {
 fn kind_of_root(name: &[u8]) -> Option<Kind> {
     Some(match name {
         b"files" | b"include" | b"exclude" => Kind::List(Element::String),
-        b"references" => Kind::List(Element::Object),
+        b"references" | b"contentMappers" => Kind::List(Element::Object),
         b"extends" => Kind::ListOrElement,
         b"compileOnSave" => Kind::Boolean,
         b"compilerOptions" | b"typeAcquisition" => Kind::Object,
@@ -431,9 +452,17 @@ fn kind_of_root(name: &[u8]) -> Option<Kind> {
 }
 
 /// Returns the errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object `object` in
-/// `file`.
-pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Problem> {
+/// `file`. Paths are relative to `base_path`.
+pub fn problems(
+    file: &TsConfigSourceFile,
+    object: ExprId,
+    within: In,
+    base_path: &[u8],
+) -> Vec<Problem> {
     let mut out = Vec::new();
+    // `rootCompilerOptions[0]`
+    let mut root_compiler_option = None;
+    let mut has_compiler_options = false;
     for (property, name) in file.properties(object) {
         let name = &name.to_vec();
         let value = &file.convert_property_value_to_json(file.initializer(property));
@@ -448,6 +477,20 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
                 span: name_span,
             });
             continue;
+        }
+        has_compiler_options |= name == b"compilerOptions";
+        if within == In::Root
+            && root_compiler_option.is_none()
+            && possible_option(name).is_some_and(|option| option == &name[..])
+            && !COMMON_OPTIONS_WITH_BUILD.contains(name)
+        {
+            root_compiler_option = Some(Problem {
+                property,
+                index: None,
+                code: 6258,
+                args: vec![name.clone()],
+                span: name_span,
+            });
         }
         if within == In::Root && name == b"excludes" {
             out.push(Problem {
@@ -475,11 +518,18 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
             let (suggestion, with, without) = match within {
                 In::Root => continue,
                 In::TypeAcquisition => {
-                    let mut options = TYPE_ACQUISITION_OPTIONS.iter();
-                    let other_case = options.find(|option| option.0.eq_ignore_ascii_case(name));
-                    (other_case.map(|option| option.0), 17018, 17010)
+                    let options = || TYPE_ACQUISITION_OPTIONS.iter().map(|option| option.0);
+                    let other_case = options().find(|option| option.eq_ignore_ascii_case(name));
+                    let suggestion = other_case.or_else(|| spelling_suggestion(name, options()));
+                    (suggestion, 17018, 17010)
                 }
-                In::CompilerOptions => (possible_option(name), 5025, 5023),
+                In::CompilerOptions => {
+                    let options = OPTIONS.values().map(|option| option.0);
+                    let options = options.chain(COMMAND_LINE_ONLY_OPTIONS.iter());
+                    let suggestion =
+                        possible_option(name).or_else(|| spelling_suggestion(name, options));
+                    (suggestion, 5025, 5023)
+                }
             };
             let (code, args) = match suggestion {
                 Some(suggestion) => (with, vec![name.clone(), suggestion.to_vec()]),
@@ -511,6 +561,9 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
                 [b"'", &allowed.join(&b"', '"[..])[..], b"'"].concat(),
             ]
         };
+        let is_network_path = |value: &Json| {
+            (value.as_str()).is_some_and(|path| is_network_path_value(path, base_path))
+        };
         let kind = match (kind, value) {
             (Kind::ListOrElement, Json::Array(_)) => Kind::List(Element::String),
             (kind, _) => kind,
@@ -519,6 +572,13 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
             Kind::ListOrElement if value.as_str().is_none() => wrong(b"string or Array"),
             Kind::Boolean if value.as_bool().is_none() => wrong(b"boolean"),
             Kind::String | Kind::FilePath if value.as_str().is_none() => wrong(b"string"),
+            Kind::FilePath if is_network_path(value) => out.push(Problem {
+                property,
+                index: None,
+                code: 5116,
+                args: value.as_str().map(<[u8]>::to_vec).into_iter().collect(),
+                span: value_span,
+            }),
             Kind::Number if !matches!(value, Json::Number(_)) => wrong(b"number"),
             Kind::Object if value.as_object().is_none() => wrong(b"object"),
             Kind::List(element) => match value.as_array() {
@@ -539,6 +599,9 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
                         let at = non_null_index;
                         non_null_index += usize::from(*item != Json::Null);
                         let (code, args) = match (element, item) {
+                            (Element::FilePath, Json::String(path)) if is_network_path(item) => {
+                                (5116, vec![path.clone()])
+                            }
                             (_, Json::Null)
                             | (Element::String | Element::FilePath, Json::String(_))
                             | (Element::Object, Json::Object(_)) => continue,
@@ -590,5 +653,6 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
             _ => {}
         }
     }
+    out.extend(root_compiler_option.filter(|_| !has_compiler_options));
     out
 }

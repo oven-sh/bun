@@ -7,9 +7,10 @@ use super::errors_operators::{
     language_version,
 };
 use super::infer::Inference;
-use super::shape::{Access, Found};
+use super::shape::{Access, Found, FoundProperty};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
+use crate::program::{ImportAttribute, ImportAttributes};
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
@@ -85,6 +86,20 @@ pub(super) struct LeftOfPropertyAccess {
     pub(super) any_like: Option<TypeId>,
 }
 
+/// True if the receiver of `call` has a call in it, as in `a.b().c()`.
+fn has_call_in_receiver(hir: &File, call: CallId) -> bool {
+    let mut at = hir[call].callee;
+    while at.is_some() {
+        at = match hir[at].kind {
+            ExprKind::Call(_) => return true,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::NonNull(x) => x,
+            _ => return false,
+        };
+    }
+    false
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `getQuickTypeOfExpression`
     pub(super) fn quick_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
@@ -129,6 +144,10 @@ impl<'p, 's> Checker<'p, 's> {
             return self.check_expression_worker(file, e);
         }
         cold_path();
+        // `getTypeOfExpression(e)` doesn't check `e` on behalf of its parent.
+        if self.type_only_node == Some((file, e)) {
+            return self.check_expression_ex(file, e, check_mode);
+        }
         let check_mode = self.check_mode_passed_to(file, e, check_mode);
         self.check_expression_ex(file, e, check_mode)
     }
@@ -227,9 +246,9 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         };
         // `checkExpressionEx` restores `currentNode` after this function returns.
-        let outer_argument =
-            self.instantiating_generic_argument
-                .replace((file, e, self.stack.len()));
+        let outer_expression = self
+            .expression_without_query
+            .replace((CurrentNode::Expr(file, e), self.stack.len()));
         let instantiated = self.with_inference_context(level, |c, n| {
             let returns_plain_function = n.sig.is_some_and(|sig| {
                 let returned = c.sig_return(sig);
@@ -283,7 +302,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.is_assignable(s, t)
             })
         });
-        self.instantiating_generic_argument = outer_argument;
+        self.expression_without_query = outer_expression;
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
             None => ty,
@@ -344,7 +363,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getNarrowableTypeForReference` may substitute a type parameter's constraint, depending on
     /// the check mode and `hasContextualTypeWithNoGenericTypes`. It does the same for `this["p"]`
     /// and `keyof this`, and every method has a `this` type in scope. There the single check
-    /// detects the substitution, see `is_reference_to_recheck`.
+    /// detects the substitution, see `is_reference_to_recheck`. The next walk after one that ended
+    /// with an incomplete type may compute another type too.
     #[inline]
     fn is_rechecked(&mut self, file: FileId, e: ExprId) -> bool {
         self.is_rechecking()
@@ -355,7 +375,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(
             self.hir(file)[e].kind,
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. }
-        ) {
+        ) || self.is_checked_with_incomplete_walk(file, e)
+        {
             return true;
         }
         if !self.hir(file).type_params.is_empty() {
@@ -403,7 +424,42 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> TypeId {
-        let is_checked_once = !is_rechecked && self.is_rechecking();
+        if is_rechecked
+            || self.is_rechecking()
+            || !self.declared_index_infos_in_progress.is_empty()
+            || !self.contextual_binding_patterns.is_empty()
+            || !self.provisional.is_empty()
+            || self.check_in_flow_loop.is_some()
+            || self.is_flow_loop_or_exhaustive_state_in_progress()
+        {
+            cold_path();
+            return self.check_expression_in_any_state(file, e, is_rechecked);
+        }
+        self.check_expression_and_cache::<true>(file, e, false)
+    }
+
+    #[inline(never)]
+    fn check_expression_in_any_state(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_rechecked: bool,
+    ) -> TypeId {
+        self.check_expression_and_cache::<false>(file, e, is_rechecked)
+    }
+
+    /// FOR SPEED: `IS_PLAIN` means that nothing is rechecked and that no pattern's implied type, no
+    /// index signature of a class, no loop and no provisional result is in progress. Nearly every
+    /// expression is checked in that state, and the tests for the other states are compiled out.
+    #[inline(always)]
+    fn check_expression_and_cache<const IS_PLAIN: bool>(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_rechecked: bool,
+    ) -> TypeId {
+        let is_rechecked = !IS_PLAIN && is_rechecked;
+        let is_checked_once = !IS_PLAIN && !is_rechecked && self.is_rechecking();
         // `getTypeFromBindingElement` rechecks a pattern's defaults every time it computes the type
         // the pattern implies for its initializer. The pattern's names are typed as any during
         // that, so the result isn't valid for other callers.
@@ -416,11 +472,11 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkExpression` has no re-entrancy guard. If an expression was being checked when a
         // class's members were requested and their index signatures re-enter it, it's checked
         // again, and this time it finds the members resolved (`resolveDeclaredMembers`).
-        if let Some(&(floor, ..)) = self.declared_index_infos_in_progress.last() {
+        if !IS_PLAIN && let Some(&(floor, ..)) = self.declared_index_infos_in_progress.last() {
             cold_path();
             visible_from = visible_from.max(floor);
         }
-        if !self.contextual_binding_patterns.is_empty() {
+        if !IS_PLAIN && !self.contextual_binding_patterns.is_empty() {
             cold_path();
             if let Some(floor) = self.contextual_pattern_floor(file, e) {
                 is_uncached = true;
@@ -430,7 +486,10 @@ impl<'p, 's> Checker<'p, 's> {
                 return known;
             }
         }
-        if !is_uncached && let Some(raw) = self.provisional(Query::Expr(file, e)) {
+        if !IS_PLAIN
+            && !is_uncached
+            && let Some(raw) = self.provisional(Query::Expr(file, e))
+        {
             return TypeId(raw as u32);
         }
         // Resolving the enclosing calls may already have computed it.
@@ -441,13 +500,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        if !self.reporting_nonexistent.is_empty() {
-            cold_path();
-            if let Some(ty) = self.type_of_access_being_reported(file, e) {
-                return ty;
-            }
-        }
-        if self.is_flow_loop_or_exhaustive_state_in_progress() {
+        if !IS_PLAIN && self.is_flow_loop_or_exhaustive_state_in_progress() {
             cold_path();
             if let Some(ty) = self.recheck_in_flow_loop(file, e, is_rechecked) {
                 return ty;
@@ -455,7 +508,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let hir = self.hir(file);
         match hir.checked_kind(e) {
-            ExprKind::Binary { .. } | ExprKind::Call(_) => {
+            ExprKind::Binary { left, .. }
+                if left.is_some() && matches!(hir[left].kind, ExprKind::Binary { .. }) =>
+            {
+                cold_path();
+                self.resolve_chain_innermost_first(file, e);
+            }
+            ExprKind::Call(call) if has_call_in_receiver(hir, call) => {
                 self.resolve_chain_innermost_first(file, e);
             }
             // `checkNonNullExpression(expr)`: the object is checked in `CheckModeNormal`.
@@ -474,15 +533,23 @@ impl<'p, 's> Checker<'p, 's> {
                 // `checkExpressionWithContextualType` has no re-entrancy guard. A visit that began
                 // before the pattern's implied type was requested used the declared types of its
                 // names, so this visit takes a different path.
-                let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
+                let resolution_start = self.resolution_start;
+                if !IS_PLAIN {
+                    self.resolution_start = visible_from;
+                }
                 // `checkExpressionEx`
-                self.instantiation_count = 0;
-                let entered = self.enter(Query::Expr(file, e));
-                self.resolution_start = resolution_start;
+                self.reset_instantiation_count();
+                let entered = self.enter_inline(|| Query::Expr(file, e));
+                if !IS_PLAIN {
+                    self.resolution_start = resolution_start;
+                }
                 if !entered {
                     return TypeId::UNRESOLVED;
                 }
-                let ty = self.type_of_entered_expr(file, e, is_rechecked);
+                let ty = match hir[e].kind {
+                    ExprKind::Ident(name) if IS_PLAIN => self.type_of_identifier(file, e, name),
+                    _ => self.type_of_entered_expr(file, e, is_rechecked),
+                };
                 if is_checked_once && self.is_reference_to_recheck() {
                     cold_path();
                     let _ = self.leave(Query::Expr(file, e));
@@ -494,12 +561,21 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     self.drop_reported();
                 }
+                if !is_uncached && self.is_innermost_tainted() {
+                    cold_path();
+                    self.keep_type_of_returned_expression_in_cycle(file, e, ty);
+                }
                 let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
-                let left = self.leave(Query::Expr(file, e));
+                let is_checked_again =
+                    (self.frames.last()).is_some_and(|it| it.is_checked_again_by_next_pass);
+                let left = self.leave_inline();
                 if let Err(open) = left {
                     cold_path();
                     if !is_uncached {
                         self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
+                        if is_checked_again {
+                            self.hide_provisional_from_call_in_progress(Query::Expr(file, e));
+                        }
                     }
                 }
                 (ty, left.ok().filter(|_| is_final))
@@ -528,6 +604,88 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// `checkExpressionCached` assigns `links.resolvedType` no matter what's in progress, and `checkReturnStatement`
+    /// finds it. Where `popTypeResolution` finds a cycle, `getReturnTypeOfSignature` resolves to `anyType`, and the
+    /// returned expression keeps its type and isn't checked again, when `this` or a parameter may have another type.
+    /// So the innermost frame, of `e` with the type `ty`, is final if it's directly under such a resolution and depends
+    /// on nothing but cycles.
+    #[inline(never)]
+    fn keep_type_of_returned_expression_in_cycle(&mut self, file: FileId, e: ExprId, ty: TypeId) {
+        let [.., resolution, returned] = &self.frames[..] else {
+            return;
+        };
+        let since = |at: u64| at >= returned.serial;
+        let is_initializer = matches!(self.stack[self.stack.len() - 2], Query::Pat(..));
+        if !resolution.circular
+            || returned.incomplete_flow
+            || since(self.limit_at)
+            || since(self.rejected_at)
+            || since(self.any_signature_read_at)
+            || since(self.members_in_place_hit_at)
+            || !self.check_mode().is_empty()
+            || self.is_under_eager_request_without_result()
+            || !match self.stack[self.stack.len() - 2] {
+                Query::Return(..) => true,
+                // `getTypeOfAccessors` calls `getReturnTypeFromBody` itself.
+                Query::LiteralProp(of, p) => self.hir(of)[p].kind == PropKind::Getter,
+                Query::Pat(..) => ty == TypeId::ANY,
+                _ => false,
+            }
+            || !self.is_checked_by_check_expression_cached(file, e)
+            || (self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED)
+        {
+            return;
+        }
+        // `checkDeclarationInitializer`: an outer resolution of the variable that's still in `getQuickTypeOfExpression`
+        // finds this type if it gets to `checkExpressionCached`. `getTypeOfExpression` doesn't get there.
+        if is_initializer {
+            let from = returned.reported_from as usize;
+            let outer = &self.stack[..self.stack.len() - 1];
+            if let Some(at) = outer.iter().rposition(|&q| q == Query::Expr(file, e))
+                && self.frames[at].is_quick_type
+                && at > 0
+                && self.stack[at - 1] == self.stack[self.stack.len() - 2]
+                && !(self.initializers_checked_inside.iter()).any(|it| it.quick_type_frame == at)
+            {
+                let serial = returned.serial;
+                let reported = self.take_reported_from(from);
+                // Bits 1 and 16: it depends on nothing but cycles.
+                let return_types = self.provisional.iter().filter_map(|(&q, it)| match q {
+                    Query::Return(of, func)
+                        if it.own_serial > serial && it.event_bits & !17 == 0 =>
+                    {
+                        Some(((of, func), TypeId(it.raw as u32)))
+                    }
+                    _ => None,
+                });
+                let return_types = return_types.collect();
+                let signature = self.provisional(Query::Call(file, e));
+                let call_errors = self.errors_of_provisional_call.take();
+                self.initializers_checked_inside
+                    .push(super::InitializerCheckedInside {
+                        quick_type_frame: at,
+                        signature: signature.map(crate::table::Packed::unpack),
+                        call_errors: call_errors
+                            .filter(|it| (it.0, it.1) == (file, e))
+                            .map(|it| it.2),
+                        return_types,
+                        reported,
+                    });
+            }
+            return;
+        }
+        // tsc caches a `return` statement's expression without its parentheses, so the walk checks it again. The errors
+        // of this visit stay reported.
+        if is_parenthesized(self.hir(file), e) {
+            let from = returned.reported_from as usize;
+            return self.log_reported_of(self.stack[self.stack.len() - 2], from);
+        }
+        if let Some(returned) = self.frames.last_mut() {
+            returned.marks.clear_tainted(&mut self.fully_marked);
+            (returned.marks).set_drops_reported(false, &mut self.fully_marked);
+        }
+    }
+
     /// Records that `e`'s `links.resolvedType` was assigned at `maxSerializationLevel`. See
     /// `expressions_cached_with_errors_discarded`.
     #[cold]
@@ -550,7 +708,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `e`'s type if it's a literal that doesn't need a query: no cycle can re-enter it,
     /// and no result can become provisional while it's computed. Leaves the same state as `enter`
     /// and `leave` would. Also returns `None` where `enter` would fail.
-    #[inline]
+    #[inline(always)]
     fn type_of_plain_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         let kind = hir[e].kind;
@@ -580,51 +738,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(ty)
     }
 
-    /// `reportNonexistentProperty` returns immediately for a property access whose error is already
-    /// being reported, and the access gets the error type. Returns `None` if `e` isn't such an
-    /// access, or if `enter` has to mark the circularity that the second visit closes.
-    fn type_of_access_being_reported(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let &(_, _, depth) = self
-            .reporting_nonexistent
-            .iter()
-            .rev()
-            .find(|r| r.0 == file && r.1 == e)?;
-        // `GetConstantValue` does check the access before whatever encloses it. Every resolution
-        // since then was started by printing the message, and the second visit closes none of them.
-        if self.is_emitting {
-            return Some(TypeId::ERROR);
-        }
-        // `getResolvedSignature`: a call hides the resolutions below it (`resolutionStart`).
-        let after_call = self.stack[depth..]
-            .iter()
-            .rposition(|q| matches!(q, Query::Call(..)))
-            .map_or(depth, |i| depth + i + 1);
-        let visible = after_call.max(self.resolution_start).min(self.stack.len());
-        // tsgo resolves the type of a variable, a parameter or a member before it checks the
-        // initializer. That resolution is always in progress when the access is first checked, and
-        // printing re-enters it. `enter` marks that circularity.
-        if !self.stack[visible..].iter().all(|&q| {
-            matches!(q, Query::Return(..) | Query::ReturnOfSignature(_)) || !self.is_resolution(q)
-        }) {
-            return None;
-        }
-        // `checkFunctionExpressionOrObjectLiteralMethodDeferred` resolves a function's return type
-        // before it checks the body. In a full check these return types are in progress when the
-        // access is first checked, and printing re-enters them, which reports 7023. When the access
-        // is queried first, as here, it closes no circularity and the functions keep their inferred
-        // return types.
-        for i in visible..self.stack.len() {
-            if let Query::Return(f, func) = self.stack[i]
-                && self.hir(f)[func].ret.is_none()
-                && !self.stack[..depth].contains(&self.stack[i])
-            {
-                (self.p.circular_returns).insert(&self.task, (f, func), (), Stored::new());
-                self.report_circular_return_type(Some(Query::Return(f, func)), f, func);
-            }
-        }
-        Some(TypeId::ERROR)
-    }
-
     /// `getTypeOfExpression` has no re-entrancy guard. If a loop's back edge evaluates an
     /// expression that's already being checked, the expression is checked again. It takes the same
     /// path, but this time the flow analysis that led to the loop stops there with the types
@@ -636,19 +749,13 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> Option<TypeId> {
-        let q = Query::Expr(file, e);
-        // FOR SPEED, as in `enter`: search the stack only if a query on it shares this one's hash
-        // bucket.
-        if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
-            return None;
-        }
-        let first = self.position_in_progress(q, 0)?;
+        let first = self.positions_in_progress(Query::Expr(file, e)).next()?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query
         // depth run out.
         let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
-        self.instantiation_count = 0;
+        self.reset_instantiation_count();
         let entered = self.enter(Query::Expr(file, e));
         self.resolution_start = resolution_start;
         if !entered {
@@ -973,10 +1080,30 @@ impl<'p, 's> Checker<'p, 's> {
             && !matches!(hir[property].key, PropKey::Computed(k) if k == e)
             && matches!(hir[owner].kind, ExprKind::Object(_))
         {
+            if self.is_inline_import_attributes(file, e, property) {
+                return ControlFlow::Break(true);
+            }
             ControlFlow::Continue(owner)
         } else {
             ControlFlow::Break(false)
         }
+    }
+
+    /// `isInlineImportAttributes`: true if `e`, the value of `property`, is the `{ .. }` of
+    /// `import("m", { with: { .. } })`.
+    fn is_inline_import_attributes(&self, file: FileId, e: ExprId, property: PropId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let options = bound.prop_owner[property.idx()];
+        hir[property].kind == PropKind::Init
+            && hir[property].key == PropKey::Name(known::with)
+            && matches!(
+                hir[property].name_kind,
+                NameKind::Identifier | NameKind::StringLiteral
+            )
+            && matches!(hir[e].kind, ExprKind::Object(_))
+            && matches!(bound.parent_of_expr(options), Parent::Expr(call)
+                if matches!(hir[call].kind, ExprKind::ImportCall { args, .. }
+                    if args.len() > 1 && hir.id_at(args, 1) == options))
     }
 
     /// True if literals passed for `ty` keep their exact types: `ty` is a `<const T>` or is built
@@ -1006,7 +1133,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_const_type_variable_worker(&mut self, ty: TypeId, depth: u32) -> bool {
-        match self.data(ty) {
+        match self.data(self.non_distributed(ty)) {
             // `core.Some(t.symbol.Declarations, ..)`. Same-named type parameters across a class's
             // or interface's declarations share one symbol.
             &TypeData::TypeParam(f, tp, ..) => {
@@ -1109,6 +1236,7 @@ impl<'p, 's> Checker<'p, 's> {
         match chain {
             Chain::No => (ty, false),
             Chain::Start => {
+                cold_path();
                 let non_null = self.non_nullable(ty);
                 let may_short_circuit = non_null != ty && !self.is_any(ty);
                 // An earlier link may have short-circuited too. That shows up as `undefined` in its
@@ -1117,8 +1245,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // The type of the previous link when the chain reaches it, including `undefined` if the
             // link itself can be `undefined`.
-            Chain::Continue if self.is_in_optional_chain(file, obj) => self.type_of_link(file, obj),
-            Chain::Continue => (ty, false),
+            Chain::Continue if self.is_in_optional_chain(file, obj) => {
+                cold_path();
+                self.type_of_link(file, obj)
+            }
+            Chain::Continue => {
+                cold_path();
+                (ty, false)
+            }
         }
     }
 
@@ -1143,25 +1277,28 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Runs the start of `checkPropertyAccessExpressionOrQualifiedName` for the access `e`
-    /// (`obj.name`). Also returns whether the chain may short-circuit before it.
+    /// (`obj.name`), whose `target_kind` is `target`. Also returns whether the chain may
+    /// short-circuit before it.
     pub(super) fn left_type_of_property_access(
         &mut self,
         file: FileId,
         e: ExprId,
         obj: ExprId,
         chain: Chain,
+        target: TargetKind,
     ) -> (LeftOfPropertyAccess, bool) {
         let (receiver, mut may_short_circuit) = self.chain_receiver(file, obj, chain);
         // `x.a` on `any` is `any`, regardless of narrowing. (Not so `x["a"]`.)
         let is_any = self.is_any(receiver) || receiver == TypeId::SILENT_NEVER;
         let left = if is_any {
+            cold_path();
             may_short_circuit = false;
             receiver
         } else {
             self.check_non_null_type(file, obj, receiver)
         };
         // An assignment target or callee is looked up in the object's widened type.
-        let is_widened = !is_any && (self.is_assignment_target(file, e) || self.is_called(file, e));
+        let is_widened = !is_any && (target.written || self.is_called(file, e));
         let widened = if is_widened {
             self.get_widened_type(left)
         } else {
@@ -1218,20 +1355,19 @@ impl<'p, 's> Checker<'p, 's> {
             return (TypeId::UNRESOLVED, false);
         };
         let name_pos = hir.name_pos(e);
-        let (access, may_short_circuit) = self.left_type_of_property_access(file, e, obj, chain);
-        let (left, receiver) = (access.left, access.widened);
         let target = self.target_kind(file, e);
+        let (access, may_short_circuit) =
+            self.left_type_of_property_access(file, e, obj, chain, target);
+        let (left, receiver) = (access.left, access.widened);
         let is_private = self.atoms().is_private_name(name);
-        // `parseRightSideOfDot`: in `typeof a.#b` the name is missing.
-        if is_private && bound.is_in_type_query(e) {
-            return (access.any_like.unwrap_or(TypeId::ERROR), may_short_circuit);
-        }
         let lexical = if is_private {
+            cold_path();
             self.lookup_symbol_for_private_identifier_declaration(file, e, name)
         } else {
             None
         };
         if target.written && lexical.is_some_and(|(_, m)| hir[m].kind == MemberKind::Method) {
+            cold_path();
             let name_text = self.declaration_name_at(file, name_pos);
             let right = self.span_of_token(file, name_pos);
             self.grammar_error_at(right, 2803, &[Arg::Bytes(&name_text)]);
@@ -1247,7 +1383,11 @@ impl<'p, 's> Checker<'p, 's> {
             if !is_private || lexical.is_some() {
                 return (any, may_short_circuit);
             }
-            if self.classes_enclosing_private_name(file, e).is_empty() {
+            if self
+                .classes_enclosing_private_name(file, e)
+                .next()
+                .is_none()
+            {
                 self.early_grammar_error_at(self.span_of_token(file, name_pos), 18016, &[]);
                 return (TypeId::ANY, may_short_circuit);
             }
@@ -1259,6 +1399,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !is_private
             && let Some(initial) = self.auto_this_property(file, e, receiver, name)
         {
+            cold_path();
             return (
                 self.flow_type_of_auto_access(file, e, initial, target),
                 may_short_circuit,
@@ -1267,6 +1408,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_super = matches!(hir[obj].kind, ExprKind::Super);
         // `getPrivateIdentifierPropertyOfType` is given `leftType`.
         let holder = if is_private {
+            cold_path();
             receiver
         } else {
             self.apparent_type_or_type_variable(receiver, access.apparent)
@@ -1276,9 +1418,10 @@ impl<'p, 's> Checker<'p, 's> {
         {
             None
         } else if target.written {
+            cold_path();
             // You can't assign through an index signature of a type parameter's constraint.
             let to_write = self.property_type_in(file, left, holder, name, Access::Written);
-            let is_read = to_write.is_some_and(|(_, how)| match how {
+            let is_read = to_write.is_some_and(|found| match found.how {
                 // `NoUncheckedIndexedAccess`
                 Found::ByIndex => !target.definite,
                 // `getWriteTypeOfSymbol`
@@ -1295,9 +1438,15 @@ impl<'p, 's> Checker<'p, 's> {
         let found = match found {
             // `getPropertyOfTypeEx` with `includeTypeOnlyMembers`: used for a qualified name in
             // `typeof a.b`.
-            None if bound.is_in_type_query(e) => self
-                .type_only_member_of_module(receiver, name)
-                .map(|ty| (ty, Found::Property)),
+            None if bound.is_in_type_query(e) => {
+                cold_path();
+                self.type_only_member_of_module(receiver, name)
+                    .map(|ty| FoundProperty {
+                        ty,
+                        how: Found::Property,
+                        prop: None,
+                    })
+            }
             found => found,
         };
         // `getPropertyOfType(apparentType, ..)` reduces the apparent type, but nothing reduces `leftType`. Reducing
@@ -1306,7 +1455,13 @@ impl<'p, 's> Checker<'p, 's> {
             self.reduce_apparent_type_of_intersection_in_progress(access.apparent);
         }
         let apparent = self.reduced(access.apparent);
-        let Some((declared, how)) = found else {
+        let Some(FoundProperty {
+            ty: declared,
+            how,
+            prop: found,
+        }) = found
+        else {
+            cold_path();
             // The lookup hit a cycle whose head is this expression or a caller, so not all members
             // are known. A cycle that began and ended inside the lookup, like two interfaces that
             // extend each other, is final. So is any cycle for a resolved enum object: its members
@@ -1332,7 +1487,6 @@ impl<'p, 's> Checker<'p, 's> {
             // reports the error.
             if let TypeData::Ref { target, .. } = *self.data(apparent)
                 && let Some(height) = self.stack.iter().position(|&q| q == Query::Bases(target))
-                && !self.is_emitting
                 && !self.is_reported_in_time_under_resolution(height, file)
             {
                 self.mark_tainted_from(self.frames.len().saturating_sub(1));
@@ -1353,7 +1507,10 @@ impl<'p, 's> Checker<'p, 's> {
                     return (TypeId::ERROR, may_short_circuit);
                 }
                 if self.is_plain_js(file)
-                    && !self.classes_enclosing_private_name(file, e).is_empty()
+                    && self
+                        .classes_enclosing_private_name(file, e)
+                        .next()
+                        .is_some()
                 {
                     let name_text = self.declaration_name_at(file, name_pos);
                     let right = self.span_of_token(file, name_pos);
@@ -1384,20 +1541,26 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     left
                 };
-                self.report_nonexistent_property(
-                    file,
-                    e,
-                    name,
-                    name_pos,
-                    containing,
-                    is_unchecked_js,
+                self.report_nonexistent_property_later(
+                    (file, name_pos),
+                    NonexistentProperty {
+                        access: e,
+                        name,
+                        containing,
+                        is_unchecked_js,
+                    },
                 );
             }
             // The error type isn't narrowed.
             return (TypeId::ERROR, may_short_circuit);
         };
         let prop = match how {
-            Found::ByIndex => None,
+            Found::ByIndex => {
+                cold_path();
+                None
+            }
+            // The same lookup.
+            _ if found.is_some() && holder == apparent && self.is_object_type(apparent) => found,
             _ => match self.prop_ref(apparent, name) {
                 Some((prop, _)) => Some(prop),
                 // A property of a union, or of `Object` or `Function`.
@@ -1407,6 +1570,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
         };
         if how == Found::ByIndex {
+            cold_path();
             // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
             let is_deleted = matches!(bound.parent_of_expr(e), Parent::Expr(p)
                 if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
@@ -1433,9 +1597,15 @@ impl<'p, 's> Checker<'p, 's> {
                 && !target.definite
                 && prop.is_some_and(|prop| prop.flags.contains(PropFlags::WRITE_ONLY))
             {
+                cold_path();
                 let start = self.start_inside_parentheses(file, e);
                 let node = (file, start, self.end_inside_parentheses(file, e));
                 self.error_at(node, 2806, &[]);
+            }
+            if (is_private || prop.is_some_and(|prop| prop.flags.contains(PropFlags::PRIVATE)))
+                && prop.is_none_or(|prop| self.may_mark_property(prop))
+            {
+                self.mark_property_as_referenced(file, left, name, Some(e), None);
             }
             // Every `a.b` gets here. `check_property_accessibility_at_location` looks the property
             // up again and then starts with this same test. For an object type, which is its own
@@ -1454,6 +1624,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(prop) = prop
             && self.is_assignment_to_readonly_entity(file, e, obj, prop)
         {
+            cold_path();
             let right = self.span_of_right(file, name, name_pos);
             let text = self.source_text(file, right.1, right.2);
             self.error_at(right, 2540, &[Arg::Bytes(&text)]);
@@ -1789,10 +1960,12 @@ impl<'p, 's> Checker<'p, 's> {
             None => TypeId::ERROR,
         };
         // `getPropertyTypeForIndexType`. Each member of a union of keys is a property name.
-        if self.can_mark_properties_as_referenced(file) && !self.is_generic(key) {
+        if (self.reports_unused() || self.can_mark_properties_as_referenced(file))
+            && !self.is_generic(key)
+        {
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k) {
-                    self.mark_property_as_referenced(file, receiver, name, Some(e));
+                    self.mark_property_as_referenced(file, receiver, name, Some(e), None);
                 }
             }
         }
@@ -1916,7 +2089,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return (TypeId::SILENT_NEVER, false);
                 }
                 let resolved = self.resolved_signature(file, e);
-                let resolved = self.with_return_type(resolved);
+                let resolved = self.with_return_type_of_call(file, e, resolved);
                 let call = &hir[c];
                 let may_short_circuit = match call.chain {
                     Chain::No => false,
@@ -1967,7 +2140,15 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::False => TypeId::FRESH_FALSE,
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
             // `checkPrivateIdentifierExpression`
-            ExprKind::PrivateIdentifier(_) => TypeId::ANY,
+            ExprKind::PrivateIdentifier(name) => {
+                if let Some((_, m)) =
+                    self.lookup_symbol_for_private_identifier_declaration(file, e, name)
+                {
+                    let symbol = self.symbol_of_member(file, m);
+                    self.property_referenced(symbol);
+                }
+                TypeId::ANY
+            }
             ExprKind::String(s) | ExprKind::JsxText(s) => self.string_literal(s, true),
             ExprKind::BigInt(text) => self.fresh_bigint_literal(text, false),
             ExprKind::Regex { .. } => self.global_ref(known::RegExp, &[]),
@@ -2010,7 +2191,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::TaggedTemplate(_) | ExprKind::New(_) => {
                 let resolved = self.resolved_signature(file, e);
-                self.with_return_type(resolved).ret
+                self.with_return_type_of_call(file, e, resolved).ret
             }
             ExprKind::Array(items) => {
                 self.push_cached_contextual_type(file, e);
@@ -2041,6 +2222,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
                 let (ty, may_short_circuit) = self.type_of_link(file, e);
                 if may_short_circuit {
+                    cold_path();
                     self.optional(ty)
                 } else {
                     ty
@@ -2140,8 +2322,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let type_args = hir.list_at(type_args);
                 self.precheck_type_nodes(file, type_args);
                 let ty = self.type_of_expr(file, expr);
-                let args = self.types_from_nodes(file, type_args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::Expr(file, e))
+                self.with_type_arguments(ty, InstantiationExpression::Expr(file, e))
             }
             ExprKind::Jsx(j) => {
                 let is_fragment = hir[j].tag.is_none();
@@ -2163,9 +2344,17 @@ impl<'p, 's> Checker<'p, 's> {
                     ty => ty,
                 }
             }
-            ExprKind::ImportCall { args, .. } => {
+            ExprKind::ImportCall { args, phase } => {
                 self.precheck_with(|c| c.aliases_import_call_or_meta_property(file, e));
-                self.type_of_import_call(file, e, self.hir(file).id_at(args, 0))
+                let hir = self.hir(file);
+                let specifier = hir.id_at(args, 0);
+                if phase == ImportPhase::Source && !matches!(hir[specifier].kind, ExprKind::Missing)
+                {
+                    let source = self.global_ref_checked(known::AbstractModuleSource, &[]);
+                    let node = self.span_of_expr(file, e);
+                    return self.create_promise_return_type(node, true, source);
+                }
+                self.type_of_import_call(file, e, specifier)
             }
             // `checkImportMetaProperty`: `getGlobalImportMetaType`
             ExprKind::ImportMeta => self.global_ref_checked(known::ImportMeta, &[]),
@@ -2232,7 +2421,13 @@ impl<'p, 's> Checker<'p, 's> {
         let module = match hir[specifier].kind {
             // `resolveExternalModuleName`: `IsStringLiteralLike(moduleReferenceExpression)`
             ExprKind::String(text) if !is_parenthesized(hir, specifier) => {
-                files.module_of_specifier_as(file, text, mode)
+                let attributes = match hir[e].kind {
+                    ExprKind::ImportCall { args, .. } if args.len() > 1 => {
+                        self.attributes_of_import_call(file, hir.id_at(args, 1))
+                    }
+                    _ => ImportAttributes::new(),
+                };
+                files.module_of_specifier_with(file, text, mode, &attributes)
             }
             _ => None,
         };
@@ -2282,6 +2477,32 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.create_promise_return_type(node, true, ty)
+    }
+
+    /// `getTypeOfPropertyOfType(checkExpressionCached(options), "with")`, where `options` is the second argument of
+    /// `import()`.
+    pub(super) fn attributes_of_import_call(
+        &mut self,
+        file: FileId,
+        options: ExprId,
+    ) -> ImportAttributes {
+        let options_type = self.type_of_expr(file, options);
+        let Some(attributes_type) = self.type_of_property_of_type(options_type, known::with) else {
+            return ImportAttributes::new();
+        };
+        let mut attributes = ImportAttributes::new();
+        for property in self.properties_of_type(attributes_type) {
+            let value = self.type_of_prop(property, MapperId::IDENTITY);
+            let value = match *self.data(value) {
+                TypeData::StringLit { value, .. } => Some(value),
+                _ => None,
+            };
+            attributes.push(ImportAttribute {
+                name: property.name,
+                value,
+            });
+        }
+        attributes
     }
 
     // ───────────────────────────── names ─────────────────────────────
@@ -2412,9 +2633,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `checkIdentifier`
+    #[inline(never)]
     fn type_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> TypeId {
         // `Err` means `Resolve` returned nil, so `getResolvedSymbol` is `unknownSymbol`.
         let Ok(found) = self.resolve_identifier(file, e, name, false) else {
+            cold_path();
             self.note_unresolved_identifier(file, e, name);
             return TypeId::ERROR;
         };
@@ -2458,6 +2681,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.contextual_binding_patterns.is_empty()
             && self.is_reference_within_contextual_pattern(file, e, sym)
         {
+            cold_path();
             return TypeId::NON_INFERRABLE_ANY;
         }
         let cycles_before = self.cycles;
@@ -2473,13 +2697,17 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_in_own_initializer(file, e, sym)
             && !self.is_type_of_variable_in_progress(sym)
         {
+            cold_path();
             cached
         } else {
             declared
         };
         let flags = self.files().flags(sym);
-        let declared = if sym.file == file && flags.intersects(SymFlags::VARIABLE) {
-            self.narrow_binding(file, e, sym.id, declared)
+        // Of the variables of another file, only a `const` can come from a pattern that narrows it.
+        let declared = if flags.intersects(SymFlags::VARIABLE)
+            && (sym.file == file || flags.contains(SymFlags::CONST))
+        {
+            self.narrow_binding(file, e, sym, declared)
         } else {
             declared
         };
@@ -2663,7 +2891,14 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
     ) -> Option<Result<FnId, (ClassId, bool)>> {
         let hir = self.hir(file);
-        Self::function_or_class_of(hir, hir.get_this_container(hir.node(e), false, false))
+        let mut inside = e;
+        while let Some(function) = self.function_directly_around(file, inside) {
+            match self.bound(file).fns[function.idx()].owner {
+                FnOwner::Expr(arrow) if hir[function].kind == FnKind::Arrow => inside = arrow,
+                _ => return Some(Ok(function)),
+            }
+        }
+        Self::function_or_class_of(hir, hir.get_this_container(hir.node(inside), false, false))
     }
 
     fn function_or_class_of(hir: &File, container: Node) -> Option<Result<FnId, (ClassId, bool)>> {
@@ -2730,16 +2965,27 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let this = hir.node(e);
         let node = |c: &Self| c.span_of_expr(file, e);
-        let mut container = hir.get_this_container(this, true, true);
+        let mut container = match self.function_directly_around(file, e) {
+            Some(function) => hir.node(function),
+            None => hir.get_this_container(this, true, true),
+        };
         let (mut captured_by_arrow_function, mut this_in_computed_property_name) = (false, false);
         if hir.kind(container) == Kind::Constructor {
             self.check_this_before_super(file, e, hir.function_of(container), 17009);
         }
         loop {
             if hir.kind(container) == Kind::ArrowFunction {
-                container =
-                    hir.get_this_container(container, false, !this_in_computed_property_name);
+                // The next arrow function out is skipped the same way.
+                container = match self.bound(file).fns[hir.function_of(container).idx()].owner {
+                    FnOwner::Expr(arrow) => self.function_directly_around(file, arrow),
+                    _ => None,
+                }
+                .map_or_else(
+                    || hir.get_this_container(container, false, !this_in_computed_property_name),
+                    |function| hir.node(function),
+                );
                 captured_by_arrow_function = true;
+                continue;
             }
             if hir.kind(container) != Kind::ComputedPropertyName {
                 break;
@@ -2802,6 +3048,27 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// FOR SPEED. `GetThisContainer(e, true, ..)`, if that's a function and only expressions,
+    /// statements and object literals are between its body and `e`.
+    pub(super) fn function_directly_around(&self, file: FileId, e: ExprId) -> Option<FnId> {
+        let bound = self.bound(file);
+        if bound.is_in_type_query(e) {
+            return None;
+        }
+        let mut parent = bound.parent_of_expr(e);
+        loop {
+            parent = match parent {
+                Parent::Expr(e) if e.is_some() => bound.parent_of_expr(e),
+                Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
+                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
+                Parent::Prop(p) | Parent::PropKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
+                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
+                Parent::FnBody(function) => return Some(function),
+                _ => return None,
+            };
+        }
+    }
+
     /// `tryGetThisTypeAt`
     fn try_get_this_type_at(&mut self, file: FileId, node: Node) -> Option<TypeId> {
         let container = self.hir(file).get_this_container(node, false, false);
@@ -2816,6 +3083,11 @@ impl<'p, 's> Checker<'p, 's> {
         container: Node,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
+        if let Some((of, member, known)) = self.last_this_type
+            && (of, member) == (file, container)
+        {
+            return Some(known);
+        }
         if hir.kind(container).is_function_like() {
             let func = hir.function_of(container);
             let f = &hir[func];
@@ -2853,11 +3125,20 @@ impl<'p, 's> Checker<'p, 's> {
         let class = hir.class_of(hir.parent(container));
         if class.is_some() {
             let sym = self.class_sym(file, class);
-            return Some(if hir.is_static(container) {
-                self.type_of_symbol(sym)
-            } else {
-                self.intern(TypeData::ThisParam(sym))
-            });
+            if hir.is_static(container) {
+                return Some(self.type_of_symbol(sym));
+            }
+            let this = self.intern(TypeData::ThisParam(sym));
+            // Nothing above depends on where `node` is in such a member.
+            if !hir.is_js
+                && matches!(
+                    hir.kind(container),
+                    Kind::MethodDeclaration | Kind::Constructor
+                )
+            {
+                self.last_this_type = Some((file, container, this));
+            }
+            return Some(this);
         }
         if container != Node::FILE {
             return None;
@@ -3405,6 +3686,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(n) = &mut self.inference_contexts[level].context
         {
             n.intra_expression_inference_sites.push((file, node, ty));
+            n.level = level;
         }
     }
 
@@ -3502,6 +3784,13 @@ impl<'p, 's> Checker<'p, 's> {
         };
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(lazy_type);
         shape.mapper = self.mapper_of_object_literal_type(lazy_type);
+        // An accessor is the same symbol in every check. Like the members of `lazy_type`, it's instantiated with the
+        // literal's outer type parameters.
+        for prop in &mut shape.props {
+            if matches!(prop.source, PropSource::Literal(..)) {
+                prop.mapper = shape.mapper;
+            }
+        }
         shape.is_js_literal = self.has_js_literal_flag(lazy_type);
         shape.contains_widening_type = self.contains_widening_type(lazy_type);
         self.synth(shape)
@@ -3695,18 +3984,26 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {
                     let ty = self.type_of_expr(file, item);
                     // `checkExpressionForMutableLocation`. An assertion has the asserted type.
-                    // `isConstContext` depends on the array's const context and also on the
-                    // element's own contextual type, which only matters for a literal.
-                    let ty = if is_const
-                        || self.is_valid_const_assertion_argument(file, item)
-                            && self.is_const_context(file, item)
-                    {
+                    let ty = if self.is_same_in_every_location(ty) {
+                        ty
+                    } else if is_const {
                         self.regular(ty)
                     } else if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
                         ty
                     } else {
-                        let expected = self.instantiated_contextual_type(file, item);
-                        self.widen_literal_for_context(ty, expected)
+                        // `isConstContext`: the array isn't in one, so only the element's own
+                        // contextual type counts.
+                        let expected = self.contextual_type(file, item, ContextFlags::empty());
+                        if self.is_valid_const_assertion_argument(file, item)
+                            && expected.is_some_and(|c| self.is_const_type_variable(c, 0))
+                        {
+                            self.regular(ty)
+                        } else {
+                            let no_flags = ContextFlags::empty();
+                            let expected = expected
+                                .map(|c| self.instantiate_contextual_type(c, file, item, no_flags));
+                            self.widen_literal_for_context(ty, expected)
+                        }
                     };
                     if in_tuple_context {
                         self.add_intra_expression_inference_site(file, e, item, ty);
@@ -3726,15 +4023,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if expects_tuple {
             // Readonly, unless the contextual type is mutable.
-            let list = self.array_of(TypeId::ANY);
             let is_readonly = is_const
-                // `someType` tests `never` itself, which is assignable to any array type.
-                && context != Some(TypeId::NEVER)
-                && !context.is_some_and(|c| {
-                    self.parts(c).iter().any(|&m| {
-                        !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, list)
-                    })
-                });
+                && !context
+                    .is_some_and(|c| self.parts(c).iter().any(|&m| self.is_mutable_array_like(m)));
             let ty = self.normalized_tuple(&types, &flags, is_readonly);
             if in_pattern {
                 return ty;
@@ -4234,6 +4525,16 @@ impl<'p, 's> Checker<'p, 's> {
         // `links.flags |= NodeCheckFlagsContextChecked`, before anything else is read. The entry has
         // `getContextualSignature` until the signature for `assignContextualParameterTypes` exists.
         let checking = (self.context_checking).push(file, func, (contextual_signature, false));
+        let level = self.get_inference_context(file, e);
+        let has_no_inference_context =
+            level.is_none_or(|level| self.inference_contexts[level].context.is_none());
+        let in_check = has_no_inference_context.then_some(ContextualSignatureInCheck {
+            function: (file, func),
+            signature: contextual_signature,
+            contextual_types: self.contextual.len(),
+            inference_contexts: self.inference_contexts.len(),
+        });
+        let outer_in_check = std::mem::replace(&mut self.contextual_signature_in_check, in_check);
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         // `getSignaturesOfType(getTypeOfSymbol(..))`. `resolveAnonymousTypeMembers` starts with
@@ -4251,7 +4552,6 @@ impl<'p, 's> Checker<'p, 's> {
         let is_context_sensitive = self.is_context_sensitive(file, e);
         let mut assigned: AssignedSignature = (None, false);
         if let Some(contextual) = contextual_signature {
-            let level = self.get_inference_context(file, e);
             if is_context_sensitive {
                 let read = self.types_assigned_from_contextual_signature(file, func, contextual);
                 let instantiated = level.and_then(|level| {
@@ -4330,6 +4630,8 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
+            // The return type is stored for good, so `anyFunctionType` may not be part of it.
+            let check_mode = check_mode - CheckMode::SKIP_CONTEXT_SENSITIVE;
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);
             // Under a check mode, `checkExpressionCachedEx` doesn't touch `flowLoopStack`, and a
             // return type derived from a loop's incomplete type is stored like any other. So
@@ -4372,6 +4674,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.precheck_signature(file, func);
         self.end_recheck(outer);
         self.context_checking.pop();
+        self.contextual_signature_in_check = outer_in_check;
         if is_check_final {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
@@ -4710,8 +5013,9 @@ impl<'p, 's> Checker<'p, 's> {
             | TypeNodeKind::NumberLit(_)
             | TypeNodeKind::BigIntLit { .. }
             | TypeNodeKind::BoolLit(_) => return,
-            // FOR SPEED: with nothing in resolution, the rest can wait for the walk.
-            _ => !self.stack.iter().any(|&q| self.is_resolution(q)),
+            // Not only with something in resolution: the message of an error prints types, which resolves what the
+            // statement around the expression asks for next, like the return type of the function it's in.
+            _ => false,
         };
         if only_needs_type {
             self.resolve_type_queries_within(file, node);
@@ -4757,6 +5061,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 continue;
             }
+            // `checkImportType` doesn't visit the type arguments.
+            if hir.kind(at) == Kind::ImportType {
+                continue;
+            }
             let from = pending.len();
             hir.for_each_child(at, &mut |child| {
                 pending.push(child);
@@ -4768,17 +5076,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Runs `check`, a part of `checkExpression` that here belongs to the walk or to a pass over
     /// the file, at the point where tsgo reaches it, because what `check` resolves may be in
-    /// resolution. Errors it reports directly are dropped. The walk or the pass runs it again and
+    /// resolution, or the statement around the expression asks for it next: the message of an error
+    /// prints types. Errors it reports directly are dropped. The walk or the pass runs it again and
     /// reports them.
     fn precheck_with(&mut self, check: impl FnOnce(&mut Self)) {
-        // FOR SPEED: with nothing in resolution, running it later resolves the same things.
-        if self.stack.iter().any(|&q| self.is_resolution(q)) {
-            let (reported, requests) =
-                (self.reported.len(), self.reported_iteration_requests.len());
-            check(self);
-            self.reported.truncate(reported);
-            self.settle_iteration_requests(requests, true);
-        }
+        let (reported, requests) = (self.reported.len(), self.reported_iteration_requests.len());
+        let outer = std::mem::replace(&mut self.is_prechecking, true);
+        check(self);
+        self.is_prechecking = outer;
+        self.reported.truncate(reported);
+        self.settle_iteration_requests(requests, true);
     }
 
     /// `checkBinaryLikeExpression` for `e`, which is `target = ..`. Runs
@@ -5380,6 +5687,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !entered {
             // `getTypeOfAccessors`
             return if self.found_cycle {
+                // Nothing is assigned, so a later request can get another type.
+                self.note_checked_again_with_assigned_type(CheckedAgain::GetterInProgress);
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -5387,23 +5696,50 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.type_of_literal_prop_uncached(file, p);
         let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
+        let is_checked_again =
+            (self.frames.last()).is_some_and(|it| it.is_checked_again_by_next_pass);
         let left = self.leave(Query::LiteralProp(file, p));
+        // `getTypeOfAccessors`: `if links.resolvedType == nil`. When two visits of an accessor nest, the inner one assigns.
+        let is_accessor = matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter);
+        let known = (self.p.literal_prop_types.get(&self.task, &(file, p))).filter(|_| is_accessor);
         if self.left_a_cycle {
             let stored = self.cycle_result();
-            (self.p.literal_prop_types).rewrite(&self.task, (file, p), TypeId::ANY, stored);
+            if known.is_none() {
+                (self.p.literal_prop_types).rewrite(&self.task, (file, p), TypeId::ANY, stored);
+            }
             let hir = self.hir(file);
             if let ExprKind::Fn(accessor) = hir[hir[p].value].kind {
                 let owner = Some(Query::LiteralProp(file, p));
                 self.report_circular_return_type(owner, file, accessor);
             }
-            return TypeId::ANY;
+            return known.unwrap_or(TypeId::ANY);
+        }
+        if let Some(known) = known {
+            return known;
         }
         match left {
             Ok(_) if !is_final => ty,
-            // When two visits of `p` nest, the outer one assigns last, as for an expression.
+            // When two visits of any other `p` nest, the outer one assigns last, as for an expression.
             Ok(stored) => (self.p.literal_prop_types).rewrite(&self.task, (file, p), ty, stored),
+            Err(_)
+                if is_accessor
+                    && self.stack.contains(&Query::LiteralProp(file, p))
+                    && self
+                        .left_frame
+                        .is_some_and(|frame| self.rejected_at < frame.serial)
+                    && !(self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED) =>
+            {
+                let first = Query::LiteralProp(file, p);
+                (self.p.literal_prop_types).insert(&self.task, (file, p), ty, Stored::new());
+                self.note_result(first);
+                self.store_results_below_first_result(first);
+                ty
+            }
             Err(open) => {
                 self.cache_provisionally(Query::LiteralProp(file, p), u64::from(ty.0), open);
+                if is_checked_again {
+                    self.hide_provisional_from_call_in_progress(Query::LiteralProp(file, p));
+                }
                 ty
             }
         }
@@ -5515,7 +5851,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // and a `JsxExpression` is neither a valid argument of a const assertion nor an
                 // assertion.
                 let is_expression = expr.is_some() && jsx_expression_around(hir, expr).is_none();
-                let expression_type = if is_expression && self.is_const_context(file, expr) {
+                let expression_type = if self.is_same_in_every_location(ty) {
+                    ty
+                } else if is_expression && self.is_const_context(file, expr) {
                     self.regular(ty)
                 } else if is_expression
                     && matches!(hir[expr].kind, ExprKind::As { .. } | ExprKind::AsConst(_))
@@ -5724,16 +6062,18 @@ impl<'p, 's> Checker<'p, 's> {
                 // `checkMode&CheckModeTypeOnly == 0`: while a loop analysis is in progress the
                 // operand types may be narrower than the final ones. Outside a loop analysis this
                 // check also replaces the later one in the normal mode, so it reports, unless it's
-                // a recheck.
+                // a recheck or nothing is stored because a walk ended with an incomplete type.
                 let (l, r) = self.check_operands(file, left, right);
                 let is_type_only = self.is_checked_type_only(file, e);
+                let is_checked_again = self.is_rechecking()
+                    || (self.frames.last()).is_some_and(|frame| frame.incomplete_flow);
                 if let Some(pushed_at) = self.flow_loop_pushed_at()
                     && is_type_only
                 {
                     // Nothing was reported, so nothing is stored, and the normal-mode check comes
                     // through here again.
                     self.taint_from(pushed_at);
-                } else if !(is_type_only && self.is_rechecking()) {
+                } else if !(is_type_only && is_checked_again) {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

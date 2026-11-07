@@ -233,8 +233,14 @@ impl Checker<'_, '_> {
         );
     }
 
-    /// `checkVariableLikeDeclaration` for a variable, starting at "validate the initializer".
-    pub(super) fn check_variable_initializer(&mut self, file: FileId, d: VarDeclId) {
+    /// `checkVariableLikeDeclaration` for a variable, starting at "validate the initializer". `type_of_name` is what
+    /// `getTypeOfSymbol` returned for a name: the type it computed, even if a resolution inside it assigned another one.
+    pub(super) fn check_variable_initializer(
+        &mut self,
+        file: FileId,
+        d: VarDeclId,
+        type_of_name: Option<TypeId>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let strict = self.p.files.options.strict_null_checks;
         let decl = &hir[d];
@@ -271,7 +277,7 @@ impl Checker<'_, '_> {
         if self.is_binding_pattern_in_ambient_or_type_node(file, decl.pat) {
             return;
         }
-        let target = self.type_of_pat(file, decl.pat);
+        let target = type_of_name.unwrap_or_else(|| self.type_of_pat(file, decl.pat));
         let target = self.convert_auto_to_any(target);
         let source = self.type_of_expr(file, decl.init);
         // `getESSymbolLikeTypeForNode`, `isValidESSymbolDeclaration`: for a `const` with an identifier name, in its own
@@ -947,7 +953,7 @@ impl Checker<'_, '_> {
             }
             if is_variable
                 && let TypeNodeKind::Mapped(m) = hir[parent].kind
-                && ty == self.type_param(file, hir[m].param)
+                && self.non_distributed(ty) == self.type_param(file, hir[m].param)
                 && let Some((_, constraint)) = self.mapped_key_flow_constraint(file, parent, node)
             {
                 constraints.push(constraint);
@@ -1381,7 +1387,8 @@ impl Checker<'_, '_> {
         if self.try_is_type_related_to(source, target, Relation::Assignable, false) == Ok(true) {
             return true;
         }
-        if error_node.is_none() {
+        // Nothing a discarded task reports is kept.
+        if error_node.is_none() || self.task.was_discarded() {
             return false;
         }
         let output = diagnostic_output.as_deref_mut();
@@ -1950,38 +1957,31 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── diagnostics ─────────────────────────────
 
-    /// `checkTypeRelatedToEx(source, target, assignableRelation, errorNode, headMessage)` with 2684 as the head message,
-    /// for two types that the caller already found to be unrelated. `error_span` is the span of `errorNode`.
-    pub(super) fn report_this_not_assignable(
+    /// `checkTypeRelatedToEx(source, target, assignableRelation, errorNode, headMessage)` with 2684 as the head message.
+    /// `error_span` is the span of `errorNode`.
+    pub(super) fn check_this_assignable(
         &mut self,
         source: TypeId,
         target: TypeId,
         error_span: FileSpan,
-    ) {
+    ) -> bool {
         let relation = Relation::Assignable;
         let (is_related, diagnostic) =
             self.relation_diagnostic(source, target, relation, error_span, Some(2684));
-        let diagnostic = match diagnostic {
-            // The caller used a different relation, so there's no elaboration to give.
-            None if is_related && self.related(source, target, relation) => {
-                self.relation_error_without_elaboration(source, target, error_span)
-            }
-            Some(diagnostic) => diagnostic,
-            None => return,
+        let Some(diagnostic) = diagnostic else {
+            return is_related;
         };
         let RelationDiagnostic {
             at,
             mut lines,
             related,
         } = diagnostic;
-        if lines.is_empty() {
-            return;
-        }
         let first = lines.remove(0);
         let mut diagnostic = Reported::new(at, first.code, first.args);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
         diagnostic.related_information = related;
         self.add_diagnostic(diagnostic);
+        false
     }
 
     /// True if `getTypeWithThisArgument` changes `ty`: a reference with a `this` type to instantiate, or an

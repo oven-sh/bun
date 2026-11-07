@@ -5,6 +5,7 @@ use super::*;
 use crate::bind::{Binding, BindingInitializer, BindingKind};
 use crate::fold::{Constant, FoldedValue};
 use crate::hir::ExprFlags;
+use crate::hir::ImportPhase;
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, SiteResolution};
 use std::cell::RefCell;
@@ -183,7 +184,9 @@ impl<'s> Exports<'_, 's, '_> {
                 Some(&Decl::ImportDefault(import)) => {
                     self.resolve_in_target(file, ImportSiteKind::Import(import), known::default)
                 }
-                Some(&Decl::ImportNamespace(import)) if !hir[import].is_deferred => {
+                Some(&Decl::ImportNamespace(import))
+                    if hir[import].phase == ImportPhase::Evaluation =>
+                {
                     self.namespace_of_target(file, ImportSiteKind::Import(import))
                 }
                 _ => Export::Unknown,

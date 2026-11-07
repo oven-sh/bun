@@ -1108,6 +1108,7 @@ impl<'a, 's> Reader<'a, 's> {
             b"type" => self.parse_type_tag(previous, start, &tag_name, Some(margin), indent_text),
             b"satisfies" => self.parse_satisfies_tag(start, margin, indent_text),
             b"exception" | b"throws" => self.parse_throws_tag(start, margin, indent_text),
+            b"see" => self.parse_see_tag(start, margin, indent_text),
             b"import" => self.parse_import_tag(start, margin, indent_text),
             _ => self.parse_unknown_tag(start, margin, indent_text),
         };
@@ -1570,6 +1571,36 @@ impl<'a, 's> Reader<'a, 's> {
         self.parse_unknown_tag(start, margin, indent_text)
     }
 
+    /// `parseSeeTag`
+    fn parse_see_tag(&mut self, start: usize, margin: usize, indent_text: usize) -> TagKind<'a> {
+        let has_name_reference = match self.scanner.token {
+            // `isIdentifier`
+            JSDocToken::Identifier => {
+                let rest = self.text.get(self.scanner.pos..).unwrap_or_default();
+                !super::errors_declaration_emit::is_reserved_word(&self.token_value())
+                    && !rest.starts_with(b"://")
+            }
+            JSDocToken::OpenBrace => {
+                let state = self.mark();
+                let next = self.next_token();
+                self.rewind(state);
+                matches!(next, JSDocToken::Identifier | JSDocToken::PrivateIdentifier)
+            }
+            _ => false,
+        };
+        // `parseJSDocNameReference`
+        if has_name_reference {
+            let has_brace = self.parse_optional(JSDocToken::OpenBrace);
+            self.parse_jsdoc_link_name();
+            if has_brace && !self.parse_optional_jsdoc(JSDocToken::CloseBrace) {
+                self.error_at_token(1005, &[token_to_string(JSDocToken::CloseBrace)]);
+            }
+            self.reset_pos(self.scanner.full_start);
+            self.next_token_jsdoc();
+        }
+        self.parse_unknown_tag(start, margin, indent_text)
+    }
+
     /// `parseImportTag`
     fn parse_import_tag(&mut self, start: usize, margin: usize, indent_text: usize) -> TagKind<'a> {
         let at = self.scanner;
@@ -1592,7 +1623,7 @@ impl<'a, 's> Reader<'a, 's> {
             name.push(self.parse_jsdoc_identifier_name(Some(1003)));
         }
         let type_args = self.parse_type_arguments();
-        let end = self.scanner.start as u32;
+        let end = self.scanner.full_start as u32;
         if used_brace {
             self.skip_whitespace();
             self.parse_expected(JSDocToken::CloseBrace);
@@ -2107,10 +2138,15 @@ impl<'a, 's> Reader<'a, 's> {
     /// `parseJSDocLinkName`. Returns an empty list if there's no name.
     fn parse_jsdoc_link_name(&mut self) -> Vec<Cow<'a, [u8]>> {
         let mut name = Vec::new();
-        if self.scanner.token != JSDocToken::Identifier {
-            return name;
+        match self.scanner.token {
+            JSDocToken::Identifier => name.push(self.parse_identifier_name()),
+            // `tokenIsIdentifierOrKeyword`
+            JSDocToken::PrivateIdentifier => {
+                name.push(self.token_value());
+                self.next_token();
+            }
+            _ => return name,
         }
-        name.push(self.parse_identifier_name());
         while self.scanner.token == JSDocToken::Dot {
             name.push(match self.next_token() {
                 JSDocToken::PrivateIdentifier => Cow::default(),
@@ -2373,7 +2409,7 @@ pub mod syntax {
         /// `a.b.c`
         pub name: Vec<Name<'a>>,
         pub type_args: Option<TypeArguments>,
-        /// Where the token after the type arguments starts.
+        /// `TokenFullStart` of the token after the type arguments.
         pub end: u32,
     }
 

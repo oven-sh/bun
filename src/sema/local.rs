@@ -226,7 +226,10 @@ impl HashIndex {
         }
         let at = match table.marks.get(vacancy.at) {
             Some(0) if vacancy.table_len == table.marks.len() => vacancy.at,
-            _ => table.free_slot(spread as u32),
+            _ => {
+                cold_path();
+                table.free_slot(spread as u32)
+            }
         };
         table.put(at, slot_value(spread, number));
     }
@@ -1197,7 +1200,10 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn shadowed(&self, slot: u32, file: u32, index: u32) -> u32 {
         match self.half(slot) {
-            Some(half) if !half.sparse.is_empty() => half.sparse_cell(node_word(file, index)),
+            Some(half) if !half.sparse.is_empty() => {
+                cold_path();
+                half.sparse_cell(node_word(file, index))
+            }
             _ => 0,
         }
     }

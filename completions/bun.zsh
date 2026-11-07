@@ -502,6 +502,8 @@ _bun_run_completion() {
         '--port[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '-p[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '--smol[Use less memory, but run garbage collection more often]' \
+        '--check[Type check before running. Nothing runs if there are type errors]' \
+        '--runExternalCode[With --check: run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--minify[Minify (experimental)]' \
         '--minify-syntax[Minify syntax and inline data (experimental)]' \
         '--minify-whitespace[Minify Whitespace (experimental)]' \
@@ -596,6 +598,8 @@ _bun_build_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
         '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
+        '--check[Type check the entry points and what they import. Nothing is bundled if there are type errors]' \
+        '--runExternalCode[With --check: run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--dts[Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir]' \
         '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
         ret=0
@@ -836,6 +840,7 @@ _bun_check_completion() {
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--no-script[Run the type checker even if the project has a check script]' \
+        '--runExternalCode[Run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--aot[Also report the errors bun compile would report for these entry points]' \
         '--explain[With --aot\: print a report. guards lists every type guard that can fail at run time]:report' \
         '--define[With --aot\: substitute k with v while parsing, like bun compile --define]:define' \
@@ -878,6 +883,7 @@ _bun_lint_completion() {
         '--output-file[Write the report to a file]:output-file:_files' \
         '-o[Write the report to a file]:output-file:_files' \
         '--quiet[Report errors only]' \
+        '--verbose[Print every note]' \
         '--max-warnings[Exit with 1 if there are more warnings than this]:max-warnings' \
         '--color[Always use colors]' \
         '--no-color[Never use colors]' \
@@ -1096,6 +1102,8 @@ _bun_test_completion() {
         '--port[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '-p[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '--smol[Use less memory, but run garbage collection more often]' \
+        '--check[Type check before running. Nothing runs if there are type errors]' \
+        '--runExternalCode[With --check: run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--minify[Minify (experimental)]' \
         '--minify-syntax[Minify syntax and inline data (experimental)]' \
         '--minify-identifiers[Minify identifiers]' \

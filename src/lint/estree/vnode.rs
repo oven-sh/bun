@@ -8,6 +8,8 @@ use crate::ast::{
 };
 use crate::span::Span;
 use crate::tokens::skip_trivia;
+use crate::types::Type;
+use bun_sema::check::services::{Location, Row};
 use bun_sema::hir::{ModifierId, PropId};
 
 /// A node of the ESTree that ESLint's parser would produce for the file.
@@ -119,6 +121,16 @@ pub(super) enum Part {
     NamePart(u32),
 }
 
+/// [`VNode::type_at_location`]
+pub(crate) enum TypeAtLocation<'a> {
+    Type(Type<'a>),
+    /// TypeScript's `errorType`, which looks like `any`. It's the answer for a node that's no part of an expression, a
+    /// declaration or a type, and for one that only ESTree has.
+    Error,
+    /// It isn't known which node of TypeScript's the node is made from, or what TypeScript answers for it.
+    Unknown,
+}
+
 /// A node without children that's made from a token.
 #[derive(Copy, Clone)]
 pub(super) enum Leaf<'a> {
@@ -197,7 +209,97 @@ impl<'a> VNode<'a> {
         VNode { part, ..self }
     }
 
-    #[inline]
+    /// `services.getTypeAtLocation(node)`: the type of the node that typescript-estree made this one from.
+    pub(crate) fn type_at_location(self) -> TypeAtLocation<'a> {
+        use TypeAtLocation::{Error, Unknown};
+        let of_base = || TypeAtLocation::Type(self.base.ty());
+        let of_name = |part: Part| {
+            let name = Location::from(Row::NameAt(self.with(part).span().start));
+            TypeAtLocation::Type(self.file().type_checker().get_type_at_location(name))
+        };
+        match (self.base, self.part) {
+            (Node::File(_), _) | (Node::Class(_), Part::TypeArgs) => Unknown,
+            (_, Part::Meta | Part::Operand) => Unknown,
+            (_, Part::Main) if self.is_untyped_setter_of_literal() => Unknown,
+            (_, Part::Main) => match self.node_type() {
+                NodeType::ExportDefaultDeclaration => Error,
+                // The target of an assignment, which TypeScript has as an assignment.
+                NodeType::AssignmentPattern if matches!(self.base, Node::Expr(_)) => Unknown,
+                _ => of_base(),
+            },
+            // A default or namespace import has the type of its name.
+            (_, Part::DefaultSpecifier) => of_name(Part::DefaultLocal),
+            (_, Part::NamespaceSpecifier) => of_name(Part::NamespaceLocal),
+            // A template without substitutions is one node in TypeScript.
+            (_, part @ (Part::Quasi(_) | Part::KeyQuasi)) => match self.file().slice(self.span()) {
+                [b'`', .., b'`'] => of_name(part),
+                _ => Error,
+            },
+            // The `C` of `A.B.C`, and all of it, stand for what it names.
+            (Node::Type(_), Part::NamePart(i) | Part::Qualified(i) | Part::MemberName(i))
+                if (self.entity_name()).is_some_and(|it| it.len() == i as usize + 1) =>
+            {
+                of_base()
+            }
+            (Node::Type(ty), Part::NamePart(_)) if VNode::is_heritage(ty) => Unknown,
+            (_, part @ Part::NamePart(i)) => {
+                let names = self.entity_name().map(EntityName::ts_nodes);
+                match names.and_then(|mut it| it.nth(i as usize)) {
+                    Some(name) => TypeAtLocation::Type(name.get_type_at_location()),
+                    None => of_name(part),
+                }
+            }
+            (_, part) if self.leaf().is_some() => of_name(part),
+            (_, Part::Body) => match self.node_type() {
+                NodeType::BlockStatement | NodeType::TSModuleBlock => Error,
+                _ => of_base(),
+            },
+            // `<a />` is one node in TypeScript.
+            (_, Part::Opening) if self.span() == self.with(Part::Main).span() => of_base(),
+            (
+                _,
+                Part::Opening
+                | Part::Closing
+                | Part::Container
+                | Part::Whitespace(_)
+                | Part::Annotation
+                | Part::TypeParams
+                | Part::Decorator(_)
+                | Part::Attribute(_)
+                | Part::Reference
+                | Part::Catch,
+            ) => Error,
+            (
+                _,
+                Part::Export
+                | Part::Chain
+                | Part::NonNull(_)
+                | Part::Heritage
+                | Part::TypeArgs
+                | Part::Inner
+                | Part::Value
+                | Part::Rest
+                | Part::Named
+                | Part::Optional
+                | Part::ConstType,
+            ) => of_base(),
+            _ => Unknown,
+        }
+    }
+
+    /// True for the `set a(v) {}` of an object literal and for its function. TypeScript gives both the type of `get a()`.
+    fn is_untyped_setter_of_literal(self) -> bool {
+        let func = match self.base {
+            Node::Prop(prop) => prop.func(),
+            base => base.as_func(),
+        };
+        func.is_some_and(|it| {
+            it.kind() == FnKind::Setter
+                && matches!(it.owner(), Node::Expr(_))
+                && it.params().iter().all(|it| it.ty().is_none())
+        })
+    }
+
     pub(crate) fn program(file: &'a File<'a>) -> VNode<'a> {
         VNode::new(file, Part::Main)
     }
@@ -1027,9 +1129,10 @@ impl<'a> VNode<'a> {
                 // ESLint strips a byte order mark from the text.
                 Dialect::Espree => {
                     let whole = Span::new(if file.has_bom() { 3 } else { 0 }, file.span().end);
-                    // In espree 9 the range goes from the first token to the last.
-                    let tokens = (file.language().eslint_8.as_ref())
-                        .and_then(|_| Some((file.first_token(whole)?, file.last_token(whole)?)));
+                    // Before ESLint 10, espree's range starts at the first token and ends at the last.
+                    let tokens = (file.language().eslint_major < 10)
+                        .then(|| Some((file.first_token(whole)?, file.last_token(whole)?)))
+                        .flatten();
                     tokens.map_or(whole, |(first, last)| first.span().to(last.span()))
                 }
             }),

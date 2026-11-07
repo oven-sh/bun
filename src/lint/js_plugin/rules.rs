@@ -6,6 +6,7 @@ use crate::linter::globals::config_globals_in_order;
 use crate::linter::{write_json, write_json_with};
 use crate::options::Json;
 use crate::rule::Kind;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -70,6 +71,18 @@ impl Rule {
 }
 
 impl Plugin {
+    /// The package that it says it is, or else the one that it was loaded from, if that's known.
+    pub(crate) fn package(&self) -> Option<Cow<'_, [u8]>> {
+        let module = || self.location.as_ref()?.get(b"module")?.as_str();
+        match &self.id {
+            Some(id) => {
+                let version = bun_core::strings::last_index_of_char(id, b'@').filter(|at| *at > 0);
+                Some(Cow::Borrowed(&id[..version.unwrap_or(id.len())]))
+            }
+            None => module().map(crate::paths::package_of),
+        }
+    }
+
     /// The rule that the plugin calls `name`.
     pub fn rule(&self, name: &[u8]) -> Option<&Arc<Rule>> {
         let skipped = self.name.len() + usize::from(!self.name.is_empty());

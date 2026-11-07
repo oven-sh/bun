@@ -1201,7 +1201,7 @@ fn kinds(s: &Analyzed<'_>) -> Vec<FoldErrorKind> {
 fn arguments(s: &Analyzed<'_>, call: ExprId) -> Vec<ExprId> {
     match s.hir[call].kind {
         ExprKind::Call(call) => s.hir.ids(s.hir[call].args).collect(),
-        ExprKind::ImportCall { args } => s.hir.ids(args).collect(),
+        ExprKind::ImportCall { args, .. } => s.hir.ids(args).collect(),
         kind => panic!("{kind:?} has no arguments"),
     }
 }

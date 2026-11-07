@@ -9,8 +9,8 @@ use bun_react_compiler::SymbolOrigin;
 use bun_sema::atom::{Atom, known, number_to_string};
 use bun_sema::hir::{
     BinOp, Branches, Call, CallId, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind,
-    Func, IdList, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind, Span,
-    TemplatePart, TextRange, TypeNodeId, UnOp, rare,
+    Func, IdList, ImportPhase, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind,
+    Span, TemplatePart, TextRange, TypeNodeId, UnOp, rare,
 };
 use std::borrow::Cow;
 
@@ -153,7 +153,10 @@ impl TreeWriter<'_, '_> {
                         self.file.list(&[specifier, options])
                     }
                 };
-                ExprKind::ImportCall { args }
+                ExprKind::ImportCall {
+                    args,
+                    phase: ImportPhase::Evaluation,
+                }
             }
             ExprData::EImportMeta(_) => {
                 self.file.rare_syntax |= rare::IMPORT_META;

@@ -61,6 +61,7 @@ pub mod ts_scope;
 pub mod ts_utils;
 pub mod unicode;
 pub mod visible;
+pub mod words;
 
 pub use array::array_sort_by;
 pub use estree_compat::{

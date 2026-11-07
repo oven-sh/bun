@@ -4,9 +4,9 @@ use crate::bind::RuntimeBindOptions;
 use crate::fold::{Constant, Decision, FoldErrorKind, FoldOptions, FoldedValue};
 use crate::hir::{
     BinOp, Call, Chain, ExportId, ExprKind, FileBuilder, Flags, FnBody, FnKind, Func, Import,
-    ImportId, ImportSpec, ImportSpecId, ListAt, NameKind, NodeData, ParamId, PatKind, Prop,
-    PropKey, PropKind, ResolutionMode, Span, StmtId, StmtKind, TextRange, TypeNodeId, VarDecl,
-    VarKind, rare,
+    ImportId, ImportPhase, ImportSpec, ImportSpecId, ListAt, NameKind, NodeData, ParamId, PatKind,
+    Prop, PropKey, PropKind, ResolutionMode, Span, StmtId, StmtKind, TextRange, TypeNodeId,
+    VarDecl, VarKind, rare,
 };
 use crate::hir_from_data::DataValue;
 use crate::import_sites::ImportSpecifier;
@@ -134,7 +134,7 @@ fn add_import(
         named,
         has_named_imports: !named.is_empty(),
         type_only: false,
-        is_deferred: false,
+        phase: ImportPhase::Evaluation,
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes: ExprId::NONE,

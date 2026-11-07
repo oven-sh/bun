@@ -392,7 +392,7 @@ fn property_value(hir: &File<'_>, props: Span<PropId>, key: Atom) -> ExprId {
 
 #[track_caller]
 fn import_call_attributes(hir: &File<'_>, call: ExprId) -> ExprId {
-    let ExprKind::ImportCall { args } = hir[call].kind else {
+    let ExprKind::ImportCall { args, .. } = hir[call].kind else {
         panic!("{:?} is not an import call", hir[call].kind);
     };
     let options = hir[hir.id_at(args, 1)].kind;

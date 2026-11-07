@@ -1,5 +1,5 @@
 use bun_ast::runtime::ReactCompilerMode;
-use bun_sema::hir::{BinOp, CallId, ExprKind, FnBody, FnKind, StmtId, StmtKind};
+use bun_sema::hir::{BinOp, CallId, ExprKind, FnBody, FnKind, ImportPhase, StmtId, StmtKind};
 use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings};
 
 use super::{
@@ -100,7 +100,11 @@ fn generated_imports_are_plain_value_imports() {
             let [import] = tree.imports_from(specifier)[..] else {
                 panic!("expected one import of {specifier}");
             };
-            assert!(import.has_named_imports && !import.type_only && !import.is_deferred);
+            assert!(
+                import.has_named_imports
+                    && !import.type_only
+                    && import.phase == ImportPhase::Evaluation
+            );
             assert!(import.default.is_none() && import.namespace.is_none());
             assert!(import.attributes.is_none());
         }

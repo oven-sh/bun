@@ -757,7 +757,7 @@ impl<'a, 's> Syntax<'a, 's> {
             }
             ExprKind::Template { exprs }
             | ExprKind::Array(exprs)
-            | ExprKind::ImportCall { args: exprs } => file.ids(exprs).collect(),
+            | ExprKind::ImportCall { args: exprs, .. } => file.ids(exprs).collect(),
             ExprKind::Object(properties) => properties
                 .iter()
                 .map(|property| file[property].value)
@@ -4243,8 +4243,14 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
     let count = checker.p.files.modules.len();
     let paths: Vec<Option<Box<[u8]>>> = (0..count as u32)
         .map(|other| {
-            is_project_source(checker, FileId(other))
-                .then(|| checker.p.files.module(FileId(other)).file_name().into())
+            is_project_source(checker, FileId(other)).then(|| {
+                checker
+                    .p
+                    .files
+                    .module(FileId(other))
+                    .language_file_name()
+                    .into()
+            })
         })
         .collect();
     let is_source = |file: FileId| paths.get(file.idx()).cloned().flatten();

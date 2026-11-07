@@ -3,7 +3,7 @@ use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use crate::atom::{Atom, known};
 use crate::bind::{BindingKind, Decl, SymbolId};
-use crate::hir::{ExprId, ImportedName};
+use crate::hir::{ExprId, ImportPhase, ImportedName};
 use crate::util::FxHashMap;
 
 const MAX_SCANNED_CONSTANTS: usize = 16;
@@ -41,7 +41,8 @@ impl<'s> Folder<'_, 's> {
             _ => None,
         })?;
         // A deferred file runs when a member of its namespace object is first read.
-        let is_evaluated_first = !hir[import].type_only && !hir[import].is_deferred;
+        let is_evaluated_first =
+            !hir[import].type_only && hir[import].phase == ImportPhase::Evaluation;
         is_evaluated_first.then_some(ImportedName {
             import,
             export,

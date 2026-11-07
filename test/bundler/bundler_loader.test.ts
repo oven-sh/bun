@@ -275,6 +275,32 @@ describe("bundler", async () => {
       },
     });
 
+    // A translation file: the keys have dots and dashes, and the lookup key is
+    // only known at run time, so the namespace object must hold every key.
+    for (const minify of [false, true]) {
+      itBundled(`bun/loader-data-file-namespace-lookup-by-variable-key${minify ? "-minify" : ""}`, {
+        target: "bun",
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        files: {
+          "/entry.ts": /* js */ `
+            import * as json from "./en.json";
+            import * as toml from "./en.toml";
+            import * as yaml from "./en.yaml";
+            const keys = ["title", "home.title", "sign-in", "404", "a b"];
+            const show = (m: Record<string, unknown>) => keys.map(key => m[key] ?? "-").join("");
+            console.log(show(json), show(toml), show(yaml));
+            console.log(Object.keys(json).filter(key => key !== "default").length);
+          `,
+          "/en.json": `{ "title": "T", "home.title": "H", "sign-in": "S", "404": "N", "a b": "B" }`,
+          "/en.toml": `title = "T"\n"home.title" = "H"\n"sign-in" = "S"\n"404" = "N"\n"a b" = "B"\n`,
+          "/en.yaml": `title: T\nhome.title: H\nsign-in: S\n"404": N\na b: B\n`,
+        },
+        run: { stdout: "THSNB THSNB THSNB\n5" },
+      });
+    }
+
     // The same source prints the same values under `bun run` and after `bun build`.
     test("bun run and bun build agree on a JSON module", async () => {
       using dir = tempDir("json-loader-runtime", {

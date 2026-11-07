@@ -163,6 +163,20 @@ const ROWS: Row[] = [
     ticket: "rm.rs",
     files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "gone/e/f/g.txt": "z" },
   },
+  {
+    // Each operand's root comes back on its own, with its -v lines or its error.
+    name: "$ rm of several operands",
+    worker: `Bun.$\`rm -rv \${workerData.dir}/gone \${workerData.dir}/missing \${workerData.dir}/plain.txt \${workerData.dir}/gone2\`.quiet().catch(() => {});`,
+    ticket: "rm.rs",
+    files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "plain.txt": "p", "gone2/e/f.txt": "z" },
+  },
+  {
+    // Several directory operands and one that fails: the thread that ends the last walk brings the command back.
+    name: "$ rm -r of several directories",
+    worker: `Bun.$\`rm -r gone gone2 missing gone3\`.cwd(workerData.dir).quiet().catch(() => {});`,
+    ticket: "rm.rs",
+    files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "gone2/e/f.txt": "z", "gone3/g.txt": "w" },
+  },
   // ── thread pool: storage inside a JS-owned object ────────────────────────
   {
     // The zlib stream's native part is the pool task; input/output are JS buffers.

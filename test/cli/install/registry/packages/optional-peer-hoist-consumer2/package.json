@@ -1,0 +1,27 @@
+{
+  "_id": "optional-peer-hoist-consumer2",
+  "name": "optional-peer-hoist-consumer2",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-hoist-consumer2",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "optional-peer-hoist-target2": "*"
+      },
+      "peerDependenciesMeta": {
+        "optional-peer-hoist-target2": {
+          "optional": true
+        }
+      },
+      "_id": "optional-peer-hoist-consumer2@1.0.0",
+      "dist": {
+        "integrity": "sha512-9cKPjtskNfVsoLMh7v3AKDZxX3zI0ayq4lD5bCtQzpcscobikU1WNK9PWrPir/xjvGQ8P1YsleCO2OacONQ1iA==",
+        "shasum": "1d3aefe2e6828fa609bfe8b40c35ea541d9846b9",
+        "tarball": "http://localhost:4873/optional-peer-hoist-consumer2/-/optional-peer-hoist-consumer2-1.0.0.tgz"
+      }
+    }
+  }
+}

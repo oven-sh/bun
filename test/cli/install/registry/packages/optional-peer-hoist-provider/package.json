@@ -1,0 +1,22 @@
+{
+  "_id": "optional-peer-hoist-provider",
+  "name": "optional-peer-hoist-provider",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-hoist-provider",
+      "version": "1.0.0",
+      "dependencies": {
+        "optional-peer-hoist-target": "2.0.0"
+      },
+      "_id": "optional-peer-hoist-provider@1.0.0",
+      "dist": {
+        "integrity": "sha512-h9jQ95AgpiWboNU8u/+OtU9GFMySNeOg3sRQUipTUWJzOom4NFJjYnpSYC7CGG1zVVTfuFaMNtJSxocFfGsG0g==",
+        "shasum": "f195ae5906efce71a33a94ee982f50ea263aad69",
+        "tarball": "http://localhost:4873/optional-peer-hoist-provider/-/optional-peer-hoist-provider-1.0.0.tgz"
+      }
+    }
+  }
+}

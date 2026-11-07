@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+<script>
+  #!a
+  b;
+</script>
+<script type="module">
+  #!/usr/bin/env node
+</script>
+<script>
+  #!a
+
+  // c
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script>
+  #!a
+  b;
+</script>
+<script type="module">
+  #!/usr/bin/env node
+</script>
+<script>
+  #!a
+
+  // c
+</script>
+
+===================== End =====================

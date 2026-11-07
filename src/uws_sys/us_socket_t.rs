@@ -20,16 +20,49 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+/// Which of the three codes a close uses decides whether the close callback
+/// has run by the time `close()` returns. Only `failure` guarantees that: for
+/// the other two, `us_internal_ssl_close` (crypto/openssl.c) keeps a TLS
+/// socket open while it still owns the loop's ciphertext spill, i.e. when the
+/// last batch flush hit a full kernel buffer, and finishes the close from the
+/// next writable event or the peer's FIN, which a peer that stopped reading
+/// never produces.
 pub enum CloseCode {
     /// TLS: send close_notify and defer fd close until peer replies. TCP: FIN.
     normal = 0,
-    /// TLS: fast-shutdown (no wait). TCP: SO_LINGER{1,0} → RST, dropping any
-    /// unflushed send buffer. Only for `terminate()` / GC abort.
+    /// Closes now, whatever the peer does: TLS sends no close_notify (abortive);
+    /// TCP SO_LINGER{1,0} → RST, dropping any unflushed send buffer.
+    /// For `terminate()` / GC abort, and for a protocol client that has given
+    /// up on the connection and rejected everything on it (the valkey client's
+    /// `fail()`, and its `close()` once a `fast_shutdown` came back deferred),
+    /// whose callers rely on the close callback having run.
     failure = 1,
-    /// TLS: fast-shutdown (no wait). TCP: FIN. For `_handle.close()` where
-    /// the JS wrapper detaches immediately so `.normal`'s deferral would
-    /// orphan the `us_socket_t`, but already-written data must still drain.
+    /// TLS: fast-shutdown, but still deferred while a spill is pending. TCP:
+    /// FIN. For `_handle.close()` where the JS wrapper detaches immediately so
+    /// `.normal`'s deferral would orphan the `us_socket_t`, but already-written
+    /// data must still drain.
     fast_shutdown = 2,
+}
+
+/// `LIBUS_QUEUED_INPUT_*` in libusockets.h, mirrored by name.
+pub const LIBUS_QUEUED_INPUT_NONE: c_int = 0;
+pub const LIBUS_QUEUED_INPUT_DATA: c_int = 1;
+pub const LIBUS_QUEUED_INPUT_EOF: c_int = 2;
+pub const LIBUS_QUEUED_INPUT_ERROR: c_int = 3;
+
+/// What a socket's read side holds right now. The peek behind it consumes
+/// nothing, so the normal read path still gets the same bytes.
+#[repr(i32)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum QueuedInput {
+    /// A read would block: the peer has written nothing since the last read.
+    None = LIBUS_QUEUED_INPUT_NONE,
+    /// At least one byte is readable.
+    Data = LIBUS_QUEUED_INPUT_DATA,
+    /// The peer sent a FIN.
+    Eof = LIBUS_QUEUED_INPUT_EOF,
+    /// The read side failed, for example a reset.
+    Error = LIBUS_QUEUED_INPUT_ERROR,
 }
 
 /// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
@@ -41,27 +74,6 @@ pub struct UsIoVec {
 }
 
 impl us_socket_t {
-    pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
-        bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
-        if let Some(ip) = ip_addr {
-            debug_assert!(ip.len() < MAX_I32);
-            unsafe {
-                // SAFETY: self is a live us_socket_t; ip.ptr valid for ip.len bytes
-                let _ = c::us_socket_open(
-                    self,
-                    is_client as i32,
-                    ip.as_ptr(),
-                    i32::try_from(ip.len().min(MAX_I32)).expect("int cast"),
-                );
-            }
-        } else {
-            unsafe {
-                // SAFETY: self is a live us_socket_t
-                let _ = c::us_socket_open(self, is_client as i32, ptr::null(), 0);
-            }
-        }
-    }
-
     pub(crate) fn pause(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_pause({:p})", self);
         c::us_socket_pause(self);
@@ -83,6 +95,11 @@ impl us_socket_t {
             // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
+    }
+
+    pub(crate) fn close_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_close_now({:p})", self);
+        let _ = c::us_socket_close_now(self);
     }
 
     pub fn shutdown(&mut self) {
@@ -140,11 +157,9 @@ impl us_socket_t {
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(crate::Error::Sys(
-                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
-            ));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
+                bun_errno::last_error() as u16,
+            )));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -158,11 +173,9 @@ impl us_socket_t {
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(crate::Error::Sys(
-                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
-            ));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
+                bun_errno::last_error() as u16,
+            )));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -205,11 +218,8 @@ impl us_socket_t {
     /// Install a socket-level SNI resolver on an already-adopted server-side
     /// TLS socket (there is no listen socket to hang it off). Must run before
     /// the handshake is driven.
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
-    ) {
-        c::us_socket_on_server_name(self, cb);
+    pub fn on_server_name(&mut self) {
+        c::us_socket_on_server_name(self);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -298,6 +308,22 @@ impl us_socket_t {
         c::us_socket_start_tls_handshake(self);
     }
 
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. No-op on a server socket or after the handshake.
+    pub fn set_inline_reject(&mut self) {
+        c::us_socket_set_inline_reject(self);
+    }
+
+    /// Drop the handshake flight that is held across the handshake callback.
+    pub fn release_held_flight(&mut self) {
+        c::us_socket_release_held_flight(self);
+    }
+
+    /// A shutdown before the first handshake step sends its FIN after that step.
+    pub fn set_first_flight_before_fin(&mut self) {
+        c::us_socket_set_first_flight_before_fin(self);
+    }
+
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
     /// plain-TCP layer consumed before the upgrade) through the same decrypt
     /// path as bytes arriving from the kernel.
@@ -362,13 +388,6 @@ impl us_socket_t {
         );
         rc
     }
-    #[cfg(windows)]
-    pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // A `compile_error!` here would brick the windows build even with no
-        // callers (it is evaluated at item definition), so use a runtime trap
-        // instead; no current Windows call site.
-        unreachable!("us_socket_t::write_fd is not implemented on Windows")
-    }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {
@@ -430,6 +449,12 @@ impl us_socket_t {
         c::us_socket_sendfile_needs_more(self);
     }
 
+    /// SO_RCVBUF / SO_SNDBUF. `size == 0` reads the current value, non-zero sets it. Returns 0
+    /// and writes the resulting value to `out`, or the failing setsockopt/getsockopt result.
+    pub fn buffer_size(&mut self, is_recv: bool, size: i32, out: &mut c_int) -> c_int {
+        c::us_socket_buffer_size(self, is_recv as c_int, size, out)
+    }
+
     pub fn get_fd(&self) -> Fd {
         let raw = c::us_socket_get_fd(self);
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
@@ -455,6 +480,19 @@ impl us_socket_t {
 
     pub(crate) fn is_established(&self) -> bool {
         c::us_socket_is_established(self) > 0
+    }
+
+    pub(crate) fn ssl_send_rejected(&self) -> bool {
+        c::us_socket_ssl_send_rejected(self) > 0
+    }
+
+    pub(crate) fn queued_input(&self) -> QueuedInput {
+        match c::us_socket_queued_input(self) {
+            LIBUS_QUEUED_INPUT_DATA => QueuedInput::Data,
+            LIBUS_QUEUED_INPUT_EOF => QueuedInput::Eof,
+            LIBUS_QUEUED_INPUT_ERROR => QueuedInput::Error,
+            _ => QueuedInput::None,
+        }
     }
 }
 
@@ -496,14 +534,7 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(
-            s: &mut us_socket_t,
-            cb: extern "C" fn(
-                *mut us_socket_t,
-                *const core::ffi::c_char,
-                *mut c_int,
-            ) -> *mut SslCtx,
-        );
+        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -540,12 +571,6 @@ mod c {
         -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
-        pub(super) fn us_socket_open(
-            s: *mut us_socket_t,
-            is_client: i32,
-            ip: *const u8,
-            ip_length: i32,
-        ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
@@ -553,6 +578,7 @@ mod c {
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
@@ -565,9 +591,17 @@ mod c {
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub(super) safe fn us_socket_buffer_size(
+            s: &mut us_socket_t,
+            is_recv: c_int,
+            size: c_int,
+            out: &mut c_int,
+        ) -> c_int;
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
@@ -589,6 +623,9 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }
 
@@ -599,18 +636,6 @@ pub struct us_socket_stream_buffer_t {
     pub(crate) list_len: usize,
     pub(crate) total_bytes_written: usize,
     pub(crate) cursor: usize,
-}
-
-impl Default for us_socket_stream_buffer_t {
-    fn default() -> Self {
-        Self {
-            list_ptr: ptr::null_mut(),
-            list_cap: 0,
-            list_len: 0,
-            total_bytes_written: 0,
-            cursor: 0,
-        }
-    }
 }
 
 /// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.

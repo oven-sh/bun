@@ -41,7 +41,8 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
         for (size_t i = 0; i < names.size(); ++i) {
             JSValue v = options->get(lexicalGlobalObject, names[i]);
             RETURN_IF_EXCEPTION(scope, {});
-            opts->putDirect(vm, names[i], v, 0);
+            opts->putDirectMayBeIndex(lexicalGlobalObject, names[i], v);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         JSValue optionsDepth = options->get(lexicalGlobalObject, Identifier::fromString(vm, "depth"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -51,7 +52,7 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
             childDepth = jsNumber(d - 1);
         }
     }
-    opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
+    Bun::putDirectNamed(vm, opts, "depth"_s, childDepth);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSFunction* utilInspect = globalObject->utilInspectFunction();
@@ -108,9 +109,10 @@ WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisV
 void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunction)
 {
     auto* globalObject = prototype->globalObject();
+    // Matches Node: { writable: true, enumerable: false, configurable: true }.
     prototype->putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
         nativeFunction, ImplementationVisibility::Public, NoIntrinsic,
-        static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum));
+        static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
 } // namespace WebStreams

@@ -19,6 +19,7 @@ struct CheckPrimeJobCtx {
     ncrypto::BignumPointer m_candidate;
 
     bool m_result { false };
+    bool m_failed { false };
 
     WTF_MAKE_TZONE_ALLOCATED(CheckPrimeJobCtx);
 };
@@ -42,6 +43,8 @@ struct GeneratePrimeJobCtx {
     ncrypto::BignumPointer m_add;
     ncrypto::BignumPointer m_rem;
     ncrypto::BignumPointer m_prime;
+    bool m_failed { false };
+    uint32_t m_opensslError { 0 };
 
     WTF_MAKE_TZONE_ALLOCATED(GeneratePrimeJobCtx);
 };

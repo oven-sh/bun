@@ -37,8 +37,7 @@ use crate::{Chunk, CompileResult};
 // HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
 // `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
 // `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` shared. Never forms
-// `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
-// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
+// `&mut LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
 //
 /// # Safety
@@ -51,7 +50,7 @@ use crate::{Chunk, CompileResult};
 pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, _c_ptr, chunk_ptr, _worker) =
+    let (part_range, chunk_ptr, _worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
@@ -77,11 +76,11 @@ struct EndTagIndices {
 
 struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     current_import_record_index: u32,
     /// This task's HTML chunk, an element of `chunks`.
-    chunk: &'a Chunk,
-    chunks: &'a [Chunk],
+    chunk: &'a Chunk<'a>,
+    chunks: &'a [Chunk<'a>],
     compile_to_standalone_html: bool,
     output: Vec<u8>,
     end_tag_indices: EndTagIndices,
@@ -293,12 +292,25 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 ));
             }
-            if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(self.chunks) {
+            if let Some(js_chunk_index) = self.chunk.get_js_chunk_index_for_html(self.chunks) {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
                 array.push(format!(
                     "<script type=\"module\" crossorigin src=\"{}\"></script>",
-                    BStr::new(js_chunk.unique_key)
+                    BStr::new(self.chunks[js_chunk_index].unique_key)
                 ));
+                if self.linker.module_preload() {
+                    let closure = bun_core::handle_oom(Chunk::reachable_chunks(
+                        self.chunks,
+                        js_chunk_index as u32,
+                        &[bun_ast::ImportKind::Stmt],
+                    ));
+                    for &other in &closure[1..] {
+                        array.push(format!(
+                            "<link rel=\"modulepreload\" crossorigin href=\"{}\">",
+                            BStr::new(self.chunks[other as usize].unique_key)
+                        ));
+                    }
+                }
             }
         }
         array
@@ -351,8 +363,8 @@ impl<'a> HTMLLoader<'a> {
 
 fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
-    chunk: &'a Chunk,
-    chunks: &'a [Chunk],
+    chunk: &'a Chunk<'a>,
+    chunks: &'a [Chunk<'a>],
 ) -> CompileResult {
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();

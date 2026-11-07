@@ -1,7 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
-import { connect } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 const { promise, resolve, reject } = Promise.withResolvers();
@@ -14,13 +14,15 @@ await using server = http.createServer(async (req, res) => {
 server.listen(0);
 await once(server, "listening");
 
-const socket = connect(server.address().port, () => {
-  socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
+const socket = connect((server.address() as AddressInfo).port as any, () => {
+  socket.write(
+    `GET / HTTP/1.1\r\nHost: localhost:${(server.address() as AddressInfo).port}\r\nConnection: close\r\n\r\n`,
+  );
 });
 
-const chunks = [];
+const chunks: Buffer[] = [];
 socket.on("data", data => {
-  chunks.push(data);
+  chunks.push(data as Buffer);
 });
 
 function parseChunkedData(buffer) {

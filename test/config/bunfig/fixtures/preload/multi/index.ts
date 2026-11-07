@@ -1,2 +1,1 @@
-import assert from "node:assert";
-assert.deepStrictEqual(globalThis.preload, ["multi/preload1.ts", "multi/preload2.ts"]);
+console.log(globalThis.preload);

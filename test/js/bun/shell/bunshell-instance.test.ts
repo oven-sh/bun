@@ -53,6 +53,21 @@ test("$$", async () => {
   expect((await $`echo $BUN`).stdout.toString()).toBe("bun2\n");
 });
 
+test("new (class extends $.Shell) returns an instance of the subclass", async () => {
+  class GreetingShell extends $.Shell {
+    greet(name: string) {
+      return this`echo $GREETING ${name}`.text();
+    }
+  }
+
+  const $$ = new GreetingShell();
+  expect(Object.getPrototypeOf($$)).toBe(GreetingShell.prototype);
+  expect($$).toBeInstanceOf($.Shell);
+
+  $$.env({ GREETING: "hello" });
+  expect(await $$.greet("bun")).toBe("hello bun\n");
+});
+
 test("$.text", async () => {
   expect(await $`echo hello`.text()).toBe("hello\n");
 });
@@ -68,7 +83,7 @@ test("$.json", async () => {
 test("$.lines", async () => {
   expect(await Array.fromAsync(await $`echo hello`.lines())).toEqual(["hello", ""]);
 
-  const lines = [];
+  const lines: string[] = [];
   for await (const line of $`echo hello`.lines()) {
     lines.push(line);
   }
@@ -81,14 +96,14 @@ test("$.arrayBuffer", async () => {
 });
 
 test("$.bytes", async () => {
-  expect(await $`echo hello`.bytes()).toEqual(new TextEncoder().encode("hello\n"));
+  expect(await ($`echo hello` as any).bytes()).toEqual(new TextEncoder().encode("hello\n"));
 });
 
 test("$.blob", async () => {
   expect(await $`echo hello`.blob()).toEqual(new Blob([new TextEncoder().encode("hello\n")]));
 });
 
-function make(expected: unknown) {
+function make(expected: string) {
   const inputType = [
     new Blob([expected]),
     Buffer.from(expected),

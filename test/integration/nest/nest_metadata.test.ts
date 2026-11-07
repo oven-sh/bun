@@ -18,7 +18,7 @@ describe("Reflect metadata for nestjs", () => {
 
   @Injectable()
   class MainTest {
-    @Inject() property: DependencyOne;
+    @Inject() property!: DependencyOne;
 
     constructor(
       public one: DependencyOne,

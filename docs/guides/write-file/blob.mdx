@@ -8,7 +8,8 @@ Use [`Bun.write()`](/runtime/file-io#writing-files-bun-write) to write a `Blob` 
 
 ```ts
 const path = "/path/to/file.txt";
-await Bun.write(path, "Lorem ipsum");
+const data = new Blob(["Lorem ipsum"]);
+await Bun.write(path, data);
 ```
 
 ---

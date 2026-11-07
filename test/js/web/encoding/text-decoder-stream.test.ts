@@ -100,7 +100,7 @@ import { readableStreamFromArray } from "harness";
 
   for (const label of Object.keys(labelToName)) {
     test(`encoding attribute should have correct value for '${label}'`, () => {
-      const stream = new TextDecoderStream(label);
+      const stream = new TextDecoderStream(label as Bun.Encoding);
       expect(stream.encoding, "encoding should match").toBe(labelToName[label]);
     });
   }
@@ -121,11 +121,13 @@ import { readableStreamFromArray } from "harness";
 
   for (const falseValue of [false, 0, "", undefined, null]) {
     test(`setting fatal to '${falseValue}' should set the attribute to false`, () => {
+      // @ts-expect-error
       const stream = new TextDecoderStream("utf-8", { fatal: falseValue });
       expect(stream.fatal, "fatal should be false").toBeFalse();
     });
 
     test(`setting ignoreBOM to '${falseValue}' should set the attribute to false`, () => {
+      // @ts-expect-error
       const stream = new TextDecoderStream("utf-8", { ignoreBOM: falseValue });
       expect(stream.ignoreBOM, "ignoreBOM should be false").toBeFalse();
     });
@@ -133,11 +135,13 @@ import { readableStreamFromArray } from "harness";
 
   for (const trueValue of [true, 1, {}, [], "yes"]) {
     test(`setting fatal to '${trueValue}' should set the attribute to true`, () => {
+      // @ts-expect-error
       const stream = new TextDecoderStream("utf-8", { fatal: trueValue });
       expect(stream.fatal, "fatal should be true").toBeTrue();
     });
 
     test(`setting ignoreBOM to '${trueValue}' should set the attribute to true`, () => {
+      // @ts-expect-error
       const stream = new TextDecoderStream("utf-8", { ignoreBOM: trueValue });
       expect(stream.ignoreBOM, "ignoreBOM should be true").toBeTrue();
     });
@@ -145,6 +149,7 @@ import { readableStreamFromArray } from "harness";
 
   test("constructing with an invalid encoding should throw", () => {
     expect(() => {
+      // @ts-expect-error
       new TextDecoderStream("");
     }).toThrow(RangeError);
   });
@@ -153,6 +158,7 @@ import { readableStreamFromArray } from "harness";
   // as TextDecoder, including the `replacement` rejection.
   test("constructing with a replacement-encoding label should throw", () => {
     expect(() => {
+      // @ts-expect-error
       new TextDecoderStream("replacement");
     }).toThrow(RangeError);
   });
@@ -164,8 +170,30 @@ import { readableStreamFromArray } from "harness";
     expect((await Bun.readableStreamToArray(output)).join("")).toBe("Привет");
   });
 
+  test("legacy multi-byte encodings carry a split character across chunks", async () => {
+    // "日本" in Shift_JIS (93 FA 96 7B), split inside the first character.
+    const input = readableStreamFromArray([new Uint8Array([0x93]), new Uint8Array([0xfa, 0x96, 0x7b])]);
+    const output = input.pipeThrough(new TextDecoderStream("shift_jis"));
+    expect(await Bun.readableStreamToArray(output)).toEqual(["日本"]);
+  });
+
+  test("a lead byte left over at the end of a legacy multi-byte stream is replaced, or rejects with fatal", async () => {
+    const chunks = () => readableStreamFromArray([new Uint8Array([0x41, 0x93])]);
+    expect(await Bun.readableStreamToArray(chunks().pipeThrough(new TextDecoderStream("shift_jis")))).toEqual([
+      "A",
+      "\uFFFD",
+    ]);
+    await expect(
+      Bun.readableStreamToArray(chunks().pipeThrough(new TextDecoderStream("shift_jis", { fatal: true }))),
+    ).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_ENCODING_INVALID_ENCODED_DATA",
+    });
+  });
+
   test("constructing with a non-stringifiable encoding should throw", () => {
     expect(() => {
+      // @ts-expect-error
       new TextDecoderStream({
         toString() {
           return {};
@@ -177,7 +205,7 @@ import { readableStreamFromArray } from "harness";
   test("a throwing fatal member should cause the constructor to throw", () => {
     expect(() => {
       new TextDecoderStream("utf-8", {
-        get fatal() {
+        get fatal(): boolean {
           throw new Error();
         },
       });
@@ -187,7 +215,7 @@ import { readableStreamFromArray } from "harness";
   test("a throwing ignoreBOM member should cause the constructor to throw", () => {
     expect(() => {
       new TextDecoderStream("utf-8", {
-        get ignoreBOM() {
+        get ignoreBOM(): boolean {
           throw new Error();
         },
       });
@@ -198,6 +226,7 @@ import { readableStreamFromArray } from "harness";
 // Web IDL: `new TextDecoderStream(label, options)` treats undefined/null options as {}.
 test("TextDecoderStream accepts undefined and null options", () => {
   for (const options of [undefined, null]) {
+    // @ts-expect-error
     const stream = new TextDecoderStream("utf-8", options);
     expect(stream.fatal).toBe(false);
     expect(stream.ignoreBOM).toBe(false);

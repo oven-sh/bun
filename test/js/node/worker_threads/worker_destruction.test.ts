@@ -44,4 +44,30 @@ describe("Worker destruction", () => {
     expect(stdout.trim()).toBe("terminated 1");
     expect(exitCode).toBe(0);
   });
+
+  // two private mimalloc heaps on one thread, then thread exit: mimalloc's teardown used to read a freed per-thread heap-slot array (debug builds abort with `threadlocal.c: "tls!=NULL"`)
+  test.concurrent("a Worker that used several allocator heaps exits cleanly", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const w = new Worker(\`
+          Bun.TOML.parse("a = 1");
+          new Bun.Transpiler().transformSync("export const b = 2;");
+        \`, { eval: true });
+        w.on("error", e => { console.error(e); process.exit(2); });
+        w.on("exit", code => console.log("worker exit " + code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("worker exit 0\n");
+    expect(exitCode).toBe(0);
+  });
 });

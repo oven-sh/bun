@@ -1,9 +1,9 @@
 import http from "node:http";
 import assert from "node:assert";
 import { once } from "node:events";
-import { connect } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 
-const { promise: uncaughtExceptionPromise, resolve, reject } = Promise.withResolvers();
+const { promise: uncaughtExceptionPromise, resolve, reject } = Promise.withResolvers<Error>();
 
 process.once("uncaughtException", err => {
   resolve(err);
@@ -18,7 +18,7 @@ server.on("clientError", () => {
 server.listen(0);
 await once(server, "listening");
 
-const port = server.address().port;
+const port = (server.address() as AddressInfo).port;
 const client = connect(port, undefined, () => {
   // HTTP request with invalid Content-Length
   // The Content-Length says 10 but the actual body is 20 bytes

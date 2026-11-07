@@ -72,8 +72,12 @@ describe("fs.Dir", () => {
       });
 
       describe("reading from the directory", () => {
-        it.each([0, 1, false, "foo", {}])("throws if passed a non-function callback (%p)", badCb => {
+        it.each([null, 0, 1, false, "foo", {}])("throws if passed a non-function callback (%p)", badCb => {
+          // toThrow() also takes a rejected promise. toThrowWithCode() takes only a throw from the call.
+          expect(() => dir.read(badCb as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
           expect(() => dir.read(badCb as any)).toThrow(/The "callback" argument must be of type function/);
+          // No read started: a read in flight makes readSync() throw ERR_DIR_CONCURRENT_OPERATION.
+          expect(dir.readSync()).toBeNull();
         });
 
         it("it can be read synchronously, even though no entries exist", () => {
@@ -98,6 +102,13 @@ describe("fs.Dir", () => {
           expect(actual).toBeNull();
         });
       }); // </reading from the directory>
+
+      it.each([null, 0, 1, false, "foo", {}])("close throws if passed a non-function callback (%p)", badCb => {
+        expect(() => dir.close(badCb as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+        expect(() => dir.close(badCb as any)).toThrow(/The "callback" argument must be of type function/);
+        // The directory is still open.
+        expect(dir.closeSync()).toBeUndefined();
+      });
 
       it("can be closed asynchronously", async () => {
         const actual = await dir.close();
@@ -126,6 +137,11 @@ describe("fs.Dir", () => {
         it('attempts to close again will throw "Directory handle was closed"', () => {
           expect(() => dir.closeSync()).toThrow("Directory handle was closed");
           expect(() => dir.close()).toThrow("Directory handle was closed");
+        });
+
+        it("close checks the callback before the closed handle", () => {
+          expect(() => dir.close(null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+          expect(() => dir.close(null as any)).toThrow(/The "callback" argument must be of type function/);
         });
 
         it("attempts to read will throw", () => {

@@ -1,7 +1,7 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunExe, expectRssDeltaBelow } from "harness";
-import { MIMEParams, MIMEType } from "util";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
+import { inspect, MIMEParams, MIMEType } from "util";
 
 describe("MIME API", () => {
   const WHITESPACES = "\t\n\f\r ";
@@ -435,6 +435,70 @@ test("ERR_INVALID_MIME_SYNTAX message matches Node.js", () => {
     "/html": 'The MIME syntax for a type in "/html" is invalid',
     "text/": 'The MIME syntax for a subtype in "text/" is invalid',
     "texthtml": 'The MIME syntax for a type in "texthtml" is invalid',
+  });
+});
+
+// Node's accessors read a private field of the receiver. For a receiver that is not a MIMEType they throw a
+// TypeError with no code and never look at the receiver.
+describe("a MIMEType accessor read on a receiver that is not a MIMEType", () => {
+  const accessors = ["type", "subtype", "essence", "params"] as const;
+
+  test("throws a TypeError and does not describe the receiver", () => {
+    let described = 0;
+    const receiver = Object.create(MIMEType.prototype, {
+      constructor: { value: null },
+      [inspect.custom]: {
+        value: () => {
+          described++;
+          return "the receiver";
+        },
+      },
+    });
+    const thrown = accessors.map(name => {
+      try {
+        receiver[name];
+      } catch (e: any) {
+        return { name: e.name, code: e.code };
+      }
+    });
+    expect({ thrown, described }).toEqual({
+      thrown: Array(accessors.length).fill({ name: "TypeError", code: undefined }),
+      described: 0,
+    });
+  });
+
+  // This never returned. Each of the four getters threw an error whose message rendered the receiver, and rendering
+  // the receiver read the four getters again. A message renders a receiver only when its `constructor` is falsy.
+  // Serial: the runner kills the child of a test that times out only when that test runs alone.
+  test.serial("returns when the receiver has no constructor", async () => {
+    const code = /*js*/ `
+      const { MIMEType } = require("node:util");
+      const receiver = Object.create(MIMEType.prototype, { constructor: { value: null } });
+      for (const name of ${JSON.stringify(accessors)}) {
+        try {
+          console.log(name + ": " + receiver[name]);
+        } catch (e) {
+          console.log(name + ": " + e.name);
+        }
+      }
+      console.log(typeof Bun.inspect(receiver));
+    `;
+    // A child that never returns is killed, so that the test fails instead of waiting for it.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: ["type: TypeError", "subtype: TypeError", "essence: TypeError", "params: TypeError", "string"],
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
   });
 });
 

@@ -5104,6 +5104,207 @@ it("all(), values() and raw() return an empty array for a statement without colu
   expect(db.query("SELECT count(*) AS n FROM t").get()).toEqual({ n: 5 });
 });
 
+// SQLite ends every statement at SQLITE_DONE but an EXPLAIN: that one stays a statement in progress until it is reset.
+// sqlite3VdbeList() in sqlite3.c, https://www.sqlite.org/c3ref/stmt_busy.html
+describe("an EXPLAIN ends with the call that ran it", () => {
+  const invalidated = "This iterator was invalidated: its statement was run again";
+  const attempt = f => {
+    try {
+      return f();
+    } catch (error) {
+      return `${error.code}: ${error.message}`;
+    }
+  };
+
+  describe.each([
+    ["EXPLAIN of a write", "EXPLAIN DELETE FROM t WHERE a = 1"],
+    ["EXPLAIN QUERY PLAN of a write", "EXPLAIN QUERY PLAN DELETE FROM t WHERE a = 1"],
+    // This plan has no row, so get() comes to the end as well.
+    ["EXPLAIN QUERY PLAN of a write without a row", "EXPLAIN QUERY PLAN INSERT INTO t VALUES (7, 8)"],
+    ["EXPLAIN of a read", "EXPLAIN SELECT * FROM t WHERE a = 1"],
+    ["EXPLAIN QUERY PLAN of a read", "EXPLAIN QUERY PLAN SELECT * FROM t WHERE a = 1"],
+  ])("%s", (_, sql) => {
+    it.each([
+      ["all()", s => s.all()],
+      ["values()", s => s.values()],
+      ["raw()", s => s.raw()],
+      ["run()", s => s.run()],
+      ["get()", s => s.get()],
+      ["iterate()", s => [...s.iterate()]],
+      ["for..of", s => { for (const _row of s); }], // prettier-ignore
+    ])("%s leaves no statement in progress", (_, call) => {
+      for (const method of ["query", "prepare"]) {
+        using db = new Database(":memory:");
+        db.run("CREATE TABLE t (a, b)");
+        call(db[method](sql));
+        // COMMIT waits for every statement that can write, and DROP TABLE for every statement that reads.
+        db.transaction(() => db.run("DROP TABLE t"))();
+      }
+    });
+  });
+
+  describe.each([
+    ["a write", "EXPLAIN QUERY PLAN DELETE FROM t WHERE a = 1"],
+    ["a read", "EXPLAIN QUERY PLAN SELECT * FROM t WHERE a = 1"],
+  ])("after the plan of %s", (_, sql) => {
+    it("with a rollback journal, the next write is committed and the file is not locked", () => {
+      using dir = tempDir("sqlite-explain-journal", {});
+      const file = path.join(String(dir), "db.sqlite");
+      using db = new Database(file);
+      db.run("PRAGMA journal_mode = DELETE");
+      db.run("CREATE TABLE t (a, b)");
+      using other = new Database(file);
+      db.query(sql).all();
+
+      db.run("INSERT INTO t VALUES (1, 2)");
+      expect({
+        storedForAnother: other.query("SELECT * FROM t").values(),
+        transaction: attempt(() => db.transaction(() => db.run("INSERT INTO t VALUES (3, 4)").changes)()),
+        writeOfAnother: attempt(() => other.run("INSERT INTO t VALUES (5, 6)").changes),
+      }).toEqual({ storedForAnother: [[1, 2]], transaction: 1, writeOfAnother: 1 });
+    });
+
+    it("with a write-ahead log, the next reads are not all of one snapshot, and a write works", () => {
+      using dir = tempDir("sqlite-explain-wal", {});
+      const file = path.join(String(dir), "db.sqlite");
+      using db = new Database(file);
+      db.run("PRAGMA journal_mode = WAL");
+      db.run("CREATE TABLE t (a, b)");
+      using other = new Database(file);
+      db.query(sql).all();
+
+      expect(db.query("SELECT * FROM t").values()).toEqual([]);
+      other.run("INSERT INTO t VALUES (5, 6)");
+      expect({
+        read: db.query("SELECT * FROM t").values(),
+        write: attempt(() => db.run("INSERT INTO t VALUES (1, 2)").changes),
+      }).toEqual({ read: [[5, 6]], write: 1 });
+    });
+  });
+
+  // A close() without `true` leaves a db.prepare() statement open, and the connection with it.
+  it("with db.prepare(), the next write is in the file after db.close(), and the file is not locked", () => {
+    using dir = tempDir("sqlite-explain-close", {});
+    const file = path.join(String(dir), "db.sqlite");
+    const db = new Database(file);
+    db.run("CREATE TABLE t (a, b)");
+    using plan = db.prepare("EXPLAIN QUERY PLAN DELETE FROM t WHERE a = 1");
+    plan.all();
+    db.run("INSERT INTO t VALUES (1, 2)");
+    db.close();
+
+    using other = new Database(file);
+    expect({
+      stored: other.query("SELECT * FROM t").values(),
+      write: attempt(() => other.run("INSERT INTO t VALUES (5, 6)").changes),
+    }).toEqual({ stored: [[1, 2]], write: 1 });
+  });
+
+  it("changes() is what it is after db.run() of the same EXPLAIN", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a, b)");
+    const changes = db.prepare("SELECT changes() AS n");
+    const seen = {};
+    for (const [how, explain] of [
+      ["db.run()", sql => db.run(sql)],
+      ["all()", sql => db.query(sql).all()],
+    ]) {
+      db.run("INSERT INTO t VALUES (1, 2), (3, 4)");
+      explain("EXPLAIN DELETE FROM t");
+      seen[how] = changes.get().n;
+    }
+    expect(seen).toEqual({ "db.run()": 0, "all()": 0 });
+  });
+
+  it.each([
+    ["all()", s => s.all()],
+    ["values()", s => s.values()],
+    ["raw()", s => s.raw()],
+    ["run()", s => s.run()],
+  ])("%s in the body of a loop over the same EXPLAIN works, and the loop throws at its next row", (_, use) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a, b)");
+    const sql = "EXPLAIN SELECT * FROM t";
+    for (const s of [db.prepare(sql), db.query(sql)]) {
+      const seen = [];
+      expect(() => {
+        for (const row of s.iterate()) {
+          seen.push(row.opcode);
+          use(s);
+        }
+      }).toThrow(invalidated);
+      expect(seen).toEqual(["Init"]);
+    }
+  });
+
+  // While an iterator of an EXPLAIN of a write is on a row, SQLite keeps back the commit of the other writes. The end
+  // of the listing makes that commit.
+  it("a commit that fails at the end of the listing is thrown there", () => {
+    using db = new Database(":memory:");
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);
+    `);
+    const listing = db.prepare("EXPLAIN DELETE FROM child").iterate();
+    expect(listing.next().done).toBe(false);
+    // No parent 999 exists, and the check is deferred to the commit.
+    expect(db.run("INSERT INTO child VALUES (999)").changes).toBe(1);
+    expect(() => [...listing]).toThrow(
+      expect.objectContaining({
+        name: "SQLiteError",
+        code: "SQLITE_CONSTRAINT_FOREIGNKEY",
+        message: "FOREIGN KEY constraint failed",
+      }),
+    );
+    expect(db.query("SELECT count(*) AS n FROM child").get()).toEqual({ n: 0 });
+  });
+
+  it("leaves its values bound, and the cursor of another statement on its row", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a, b)");
+    const plan = db.prepare("EXPLAIN QUERY PLAN SELECT * FROM t WHERE a = ?");
+    plan.all(5);
+    plan.all();
+    expect(plan.toString()).toBe("EXPLAIN QUERY PLAN SELECT * FROM t WHERE a = 5");
+
+    const inserted = db.prepare("INSERT INTO t VALUES (1, 1), (2, 2), (3, 3) RETURNING a").iterate();
+    expect(inserted.next().value).toEqual({ a: 1 });
+    expect(db.query("EXPLAIN DELETE FROM t").all().length).toBeGreaterThan(0);
+    expect([...inserted]).toEqual([{ a: 2 }, { a: 3 }]);
+    expect(db.query("SELECT a FROM t").values()).toEqual([[1], [2], [3]]);
+  });
+
+  // Not fixed: an EXPLAIN never runs the check that makes every other statement prepare itself again after a schema
+  // change, so SQLite lists the names of a table or an index through pointers into the schema that it freed
+  // (sqlite3VdbeDisplayP4). ASAN reports a heap-use-after-free, and a release build exits with SIGSEGV or lists other
+  // bytes as p4. Before the EXPLAIN ended with its call, the DROP of the first and the third case threw SQLITE_LOCKED.
+  it.todo.each([
+    ["all(), DROP TABLE, all()", "EXPLAIN INSERT INTO t VALUES (1, 2)", `explain.all(); db.run("DROP TABLE t");`, "no such table: t"], // prettier-ignore
+    ["DROP TABLE, all()", "EXPLAIN INSERT INTO t VALUES (1, 2)", `db.run("DROP TABLE t");`, "no such table: t"],
+    ["all(), DROP INDEX, all()", "EXPLAIN DELETE FROM t WHERE a = 1", `explain.all(); db.run("DROP INDEX i");`, "[]"],
+  ])("an EXPLAIN that is kept lists the schema of its run: %s", async (_, sql, steps, expected) => {
+    const src = `
+      const { Database } = require("bun:sqlite");
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a, b)");
+      db.run("CREATE INDEX i ON t (b)");
+      const explain = db.prepare(${JSON.stringify(sql)});
+      ${steps}
+      // These take the memory that the schema change freed.
+      for (let i = 0; i < 50; i++) db.prepare("SELECT '" + Buffer.alloc(40 + i, "Z") + "', " + i).all();
+      try {
+        console.log(JSON.stringify(explain.all().filter(row => row.opcode === "IdxDelete").map(row => row.p4)));
+      } catch (error) {
+        console.log(error.message);
+      }
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("db.query() does not cache long SQL (#28911)", () => {
   const cachedCount = Symbol.for("Bun.Database.cache.count");
   const padTo = n => `SELECT '${Buffer.alloc(n - "SELECT ''".length, "x").toString()}'`;

@@ -553,6 +553,9 @@ fn build_worker_argv(
     if ctx.runtime_options.smol {
         argv.push(lit(b"--smol\0"));
     }
+    if bun_jsc::virtual_machine::Bun__Node__ExposeGC.load(core::sync::atomic::Ordering::Relaxed) {
+        argv.push(lit(b"--expose-gc\0"));
+    }
     if ctx.runtime_options.experimental_http2_fetch {
         argv.push(lit(b"--experimental-http2-fetch\0"));
     }

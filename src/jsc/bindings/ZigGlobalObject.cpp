@@ -3265,6 +3265,8 @@ void GlobalObject::finishCreation(VM& vm)
     if (!defaultGlobalObject())
         setDefaultGlobalObject(vm, this);
     JSC::AOT::hostDidCreateRealm(this);
+    // After hostDidCreateRealm(), which is told of the same realm with and without --expose-gc.
+    addGCFunctionIfExposed(vm);
 
 #if ENABLE(AOT)
     if (Zig::hasExternalSourceMap()) [[unlikely]] {
@@ -3715,34 +3717,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     }
 }
 
-// ===================== start conditional builtin globals =====================
-// These functions register globals based on runtime conditions (e.g. CLI flags,
-// environment variables, etc.). See `add_conditional_globals()` in
-// src/runtime/cli/run_command.rs for where these are called.
-
-/// `globalThis.gc()` is an alias for `Bun.gc(true)`
-/// Note that `vm` is a `VirtualMachine*`
-extern "C" size_t Bun__gc(void* vm, bool sync);
-JSC_DEFINE_HOST_FUNCTION(functionJsGc,
-    (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
-{
-    Zig::GlobalObject* globalObject = defaultGlobalObject(global);
-    Bun__gc(globalObject->bunVM(), true);
-    return JSValue::encode(jsUndefined());
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject)
 {
     return globalObject->jsDateNow();
 }
-
-// ====================== end conditional builtin globals ======================
 
 uint8_t GlobalObject::drainMicrotasks()
 {

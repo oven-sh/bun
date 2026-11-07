@@ -1427,19 +1427,10 @@ impl Run<'_> {
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
-    /// Wire `--eval`/`--print`
-    /// node-module globals and `--expose-gc` into the JSC global object.
+    /// Wire the `--eval`/`--print` node-module globals into the JSC global object.
     fn add_conditional_globals(global: &JSGlobalObject, ctx: &ContextData) {
-        unsafe extern "C" {
-            safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
-        }
-        let ro = &ctx.runtime_options;
-        if !ro.eval.script.is_empty() {
+        if !ctx.runtime_options.eval.script.is_empty() {
             bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
-        }
-        if ro.expose_gc {
-            bun_jsc::cpp::JSC__JSGlobalObject__addGc(global);
-            Bun__NodeVM__setNewContextsHaveGC(true);
         }
     }
 

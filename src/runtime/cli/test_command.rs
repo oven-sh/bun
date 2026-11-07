@@ -4215,6 +4215,8 @@ impl TestCommand {
             );
             vm.test_isolation_state.synthetic_allocation_limit =
                 Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
+            vm.test_isolation_state.expose_gc = bun_jsc::virtual_machine::Bun__Node__ExposeGC
+                .load(core::sync::atomic::Ordering::Relaxed);
         }
 
         if ctx.test_options.test_worker {

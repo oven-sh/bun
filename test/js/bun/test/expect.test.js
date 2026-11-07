@@ -2224,6 +2224,50 @@ describe("expect()", () => {
     expect([1, 2, 3, 4]).not.toEqual([1, 2, 3]);
   });
 
+  test_skipIf(!isBun)("toEqual() - the diff prints a namespace without an export that is not set yet", async () => {
+    const { tempDir } = require("harness");
+    const { join } = require("node:path");
+    // The module throws halfway through its body, so `later` stays in its temporal dead zone.
+    using dir = tempDir("expect-namespace-unset-export", {
+      "stops.mjs": `
+        import * as self from "./stops.mjs";
+        export function hoisted() {}
+        (() => {
+          throw Object.assign(new Error("stops here"), { namespace: self });
+        })();
+        export const later = 1;
+      `,
+    });
+    const namespace = await import(join(String(dir), "stops.mjs")).catch(error => error.namespace);
+    const firstLineAndDiff = (/** @type {() => void} */ assertion) => {
+      try {
+        assertion();
+      } catch (error) {
+        const lines = Bun.stripANSI(ANY(error).message).split("\n");
+        return [lines[0], ...lines.filter(line => /^[-+] /.test(line))];
+      }
+      return [];
+    };
+    expect(firstLineAndDiff(() => expect({ a: namespace }).toEqual({ a: 1 }))).toEqual([
+      "expect(received).toEqual(expected)",
+      '-   "a": 1,',
+      '+   "a": Module Module {',
+      '+     "hoisted": [Function: hoisted],',
+      "+   },",
+      "- Expected  - 1",
+      "+ Received  + 3",
+    ]);
+    expect(firstLineAndDiff(() => expect({ a: 1 }).toEqual({ a: expect.objectContaining(namespace) }))).toEqual([
+      "expect(received).toEqual(expected)",
+      '-   "a": ObjectContaining Module Module {',
+      '-     "hoisted": [Function: hoisted],',
+      "-   },",
+      '+   "a": 1,',
+      "- Expected  - 3",
+      "+ Received  + 1",
+    ]);
+  });
+
   test("toEqual() - private class fields", () => {
     class A {
       #three = 3;

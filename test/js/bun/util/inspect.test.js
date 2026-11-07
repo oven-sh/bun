@@ -832,6 +832,67 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
     const result = await runChild(["a.mjs"], String(dir));
     expect(result).toEqual({ stdout: "Module {\n  hoisted: [Function: hoisted],\n}\n", stderr: "", exitCode: 0 });
   });
+
+  it("skips a module namespace export that is in its temporal dead zone when the keys are sorted", async () => {
+    // Listing only the enumerable keys of a namespace reads every export, as Object.keys() does, and
+    // throws for one that is not set yet. The sorted walk listed the keys that way and rethrew.
+    using dir = tempDir("inspect-tdz-namespace-sorted", {
+      "a.mjs": `
+        import { printSorted } from "./b.mjs";
+        export const later = 1;
+        export let laterLet = 2;
+        export class LaterClass {}
+        export function hoisted() {}
+        printSorted();
+      `,
+      "b.mjs": `
+        import * as a from "./a.mjs";
+        export const printSorted = () => console.log(Bun.inspect(a, { sorted: true }));
+        printSorted();
+        for (const holder of [{ a }, [a], new Map([["k", a]]), new Proxy(a, {})])
+          console.log(Bun.inspect(holder, { sorted: true, compact: true }));
+        let enumerableKeys;
+        try {
+          enumerableKeys = Object.keys(a);
+        } catch (error) {
+          enumerableKeys = error.name;
+        }
+        console.log(enumerableKeys, Reflect.ownKeys(a).filter(key => typeof key === "string").join());
+      `,
+    });
+    const result = await runChild(["a.mjs"], String(dir));
+    expect(result).toEqual({
+      stdout: [
+        "Module {\n  hoisted: [Function: hoisted],\n}",
+        "{ a: Module { hoisted: [Function: hoisted] } }",
+        "[ Module { hoisted: [Function: hoisted] } ]",
+        'Map(1) { "k": Module { hoisted: [Function: hoisted] } }',
+        "Module { hoisted: [Function: hoisted] }",
+        "ReferenceError LaterClass,hoisted,later,laterLet",
+        "Module {\n  LaterClass: [class LaterClass],\n  hoisted: [Function: hoisted],\n  later: 1,\n  laterLet: 2,\n}",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("skips the unset exports of a node:vm module that is linked and not evaluated, sorted or not", async () => {
+    const module = new vm.SourceTextModule(
+      "export const later = 1; export let laterLet = 2; export function hoisted() {}",
+    );
+    await module.link(() => {});
+    const linked = [module.status, Bun.inspect(module.namespace), Bun.inspect(module.namespace, { sorted: true })];
+    await module.evaluate();
+    expect({ linked, evaluated: Bun.inspect(module.namespace, { sorted: true }) }).toEqual({
+      linked: [
+        "linked",
+        "Module {\n  hoisted: [Function: hoisted],\n}",
+        "Module {\n  hoisted: [Function: hoisted],\n}",
+      ],
+      evaluated: "Module {\n  hoisted: [Function: hoisted],\n  later: 1,\n  laterLet: 2,\n}",
+    });
+  });
 });
 
 describe("console.logging function displays async and generator names", async () => {
@@ -986,16 +1047,24 @@ it("ErrorEvent", () => {
     colno: 10,
     error: new Error("Test error"),
   });
-  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
+  const inspected = normalizeBunSnapshot(Bun.inspect(errorEvent));
+  // The preview's gutter is as wide as its largest line number. The caret indent is that width plus the column.
+  const gutter = /(?<=^|error: ) *\d+ \| /gm;
+  const gutterWidth = inspected.match(gutter)[0].length;
+  expect(
+    inspected
+      .replace(gutter, "NNN | ")
+      .replace(/^ +\^$/m, caret => "^".padStart(caret.length - gutterWidth + "NNN | ".length)),
+  ).toMatchInlineSnapshot(`
     "ErrorEvent {
       type: "error",
       message: "Something went wrong",
-      error: NNN |  const errorEvent = new ErrorEvent("error", {
-    NNN |    message: "Something went wrong",
-    NNN |    filename: "script.js",
-    NNN |    lineno: 42,
-    NNN |    colno: 10,
-    NNN |    error: new Error("Test error"),
+      error: NNN |   const errorEvent = new ErrorEvent("error", {
+    NNN |     message: "Something went wrong",
+    NNN |     filename: "script.js",
+    NNN |     lineno: 42,
+    NNN |     colno: 10,
+    NNN |     error: new Error("Test error"),
                          ^
     error: Test error
         at <anonymous> (file:NN:NN)
@@ -1468,6 +1537,23 @@ describe("own non-enumerable properties are not printed", () => {
 
   it("sorted", () => {
     expect(Bun.inspect(hide({ b: 1, a: 2 }, "c"), { sorted: true })).toBe("{\n  a: 2,\n  b: 1,\n}");
+  });
+
+  it("sorted, on a module namespace", () => {
+    // Script can define `__esModule` and symbol keys on the namespace that require() gives.
+    using dir = tempDir("inspect-namespace-hidden-keys", {
+      "esm.mjs": "export const b = 1;\nexport function a() {}\n",
+    });
+    const namespace = require(join(String(dir), "esm.mjs"));
+    hide(hide(namespace, "__esModule", { value: true }), Symbol("hidden"));
+    expect(Reflect.ownKeys(namespace).map(String)).toEqual([
+      "a",
+      "b",
+      "__esModule",
+      "Symbol(Symbol.toStringTag)",
+      "Symbol(hidden)",
+    ]);
+    expect(Bun.inspect(namespace, { sorted: true })).toBe("Module {\n  a: [Function: a],\n  b: 1,\n}");
   });
 
   it("hides the property of the prototype that it shadows", () => {

@@ -1,4 +1,5 @@
 // Plugin tests concern plugins in development mode.
+import { expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
@@ -270,6 +271,7 @@ devTest("a file a plugin's onLoad filter matches but leaves to the disk is watch
       plugins = ["./plugin.ts"]
     `,
     "plugin.ts": `
+      import { appendFileSync } from "node:fs";
       import * as path from "node:path";
       export default {
         name: "shared",
@@ -278,7 +280,9 @@ devTest("a file a plugin's onLoad filter matches but leaves to the disk is watch
             path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
           }));
           // Matches the path as written, and returns nothing: the file is read from the disk.
-          build.onLoad({ filter: /\\/shared\\.ts$/ }, () => undefined);
+          build.onLoad({ filter: /\\/shared\\.ts$/ }, () => {
+            appendFileSync(path.join(import.meta.dir, "loads.txt"), "load\\n");
+          });
         },
       };
     `,
@@ -294,6 +298,7 @@ devTest("a file a plugin's onLoad filter matches but leaves to the disk is watch
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("item s1");
+    expect(dev.read("loads.txt")).toBe("load\n");
     await dev.patch("shared.ts", { find: "s1", replace: "s2" });
     await c.expectMessage("item s2");
   },

@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use std::io::Write as _;
 
 use crate::bindgen::{JsLocal, JsScope};
@@ -23,7 +22,6 @@ impl LogKindJsc for bun_ast::Kind {
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
-    pub(crate) logged: Cell<bool>,
 }
 
 impl BuildMessage {
@@ -60,7 +58,6 @@ impl BuildMessage {
         let build_error = BuildMessage {
             msg,
             // resolve_result: resolve_result.*,
-            logged: Cell::new(false),
         };
 
         Ok(build_error.to_js(global))

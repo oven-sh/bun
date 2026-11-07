@@ -3,6 +3,7 @@
 
 #include "quic.h"
 #include "QueryParser.h"
+#include "Utilities.h"
 
 #include <cctype>
 #include <string_view>
@@ -42,9 +43,15 @@ struct Http3Request {
                  * delivers pseudo-headers first, so :authority (if any)
                  * always wins. */
                 authority = value;
+            } else if (name.size() == 14 && equalsIgnoreCase(name, "content-length")) {
+                if (contentLength != NO_CONTENT_LENGTH || (contentLength = parseContentLength(value)) == NO_CONTENT_LENGTH) malformed = true;
             }
         }
     }
+
+    /* The content-length is repeated or is not a length, so the body can't be checked against it. */
+    bool isMalformed() { return malformed; }
+    uint64_t getContentLength() { return contentLength; }
 
     bool getYield() { return yield; }
     void setYield(bool y) { yield = y; }
@@ -113,9 +120,11 @@ private:
     const us_quic_header_t *headers;
     unsigned int headerCount;
     std::string_view method, url, fullUrl, query, authority;
+    uint64_t contentLength = NO_CONTENT_LENGTH;
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];
     bool yield = false;
+    bool malformed = false;
 };
 
 }

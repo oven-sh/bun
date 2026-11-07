@@ -145,6 +145,12 @@ void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
 void us_quic_stream_reset_internal_error(us_quic_stream_t *s);
+void us_quic_stream_reset_message_error(us_quic_stream_t *s);
+/* lsquic_conn_status() of the stream's connection is LSCONN_ST_ERROR. lsquic sets that inside the
+ * read that finds a content-length, frame order or QPACK error, and a read on any stream of the
+ * connection can still end cleanly after it. An error that lsquic only queues in the read (a
+ * HEADERS frame of size 0) shows after the engine pass. */
+int us_quic_stream_connection_failed(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 /* RFC 9114 §8.1: the server did no application processing. */
 #define US_QUIC_H3_REQUEST_REJECTED 0x10B

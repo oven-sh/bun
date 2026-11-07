@@ -269,6 +269,16 @@ bun build <entry points>
   <code>Bun.unsafe.setJITPolicy</code>
 </ParamField>
 
+<ParamField path="--compile-env-options" type="boolean" default="true">
+  Read runtime environment options in the standalone executable
+</ParamField>
+
+<ParamField path="--no-compile-env-options" type="boolean">
+  Ignore <code>BUN_OPTIONS</code>, <code>BUN_BE_BUN</code>, <code>BUN_INSPECT</code>,{" "}
+  <code>BUN_INSPECT_CONNECT_TO</code>, and <code>BUN_INSPECT_PRELOAD</code> in the standalone executable. Requires the
+  default compilation target and cannot be combined with <code>--compile-executable-path</code>.
+</ParamField>
+
 <ParamField path="--compile-autoload-dotenv" type="boolean" default="true">
   Enable autoloading of <code>.env</code> files in the standalone executable
 </ParamField>

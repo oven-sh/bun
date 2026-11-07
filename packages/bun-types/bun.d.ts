@@ -3903,6 +3903,17 @@ declare module "bun" {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     /**
+     * Whether the standalone executable accepts `BUN_OPTIONS`, `BUN_BE_BUN`,
+     * `BUN_INSPECT`, `BUN_INSPECT_CONNECT_TO`, and `BUN_INSPECT_PRELOAD`.
+     * Flags embedded with `execArgv` still apply; other environment variables are unaffected.
+     * Disabling this requires the default compilation target and cannot be combined with `executablePath`.
+     *
+     * Equivalent CLI flags: `--compile-env-options`, `--no-compile-env-options`
+     *
+     * @default true
+     */
+    envOptions?: boolean | undefined;
+    /**
      * In the executable, `eval()` and the `Function` constructors throw an
      * `EvalError`, as with Node.js's `--disallow-code-generation-from-strings`.
      * `"strict"` also blocks every other way to run code from a string.

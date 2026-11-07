@@ -686,6 +686,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
+            "--compile-env-options            Enable runtime environment options in standalone executable (default: true)"
+        ),
+        parse_param!(
+            "--no-compile-env-options         Ignore BUN_OPTIONS, BUN_BE_BUN, and inspector environment options in standalone executable"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -1470,7 +1476,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");
             let preloads3 = args.options(b"--import");
-            let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
+            let preload4 = if bun_core::runtime_env_options() {
+                env_var::BUN_INSPECT_PRELOAD.get()
+            } else {
+                None
+            };
             if may_refuse_options && preload4.is_some() {
                 startup_options::reject_unusable_inspect_preload();
             }
@@ -2807,6 +2817,25 @@ fn parse_build_command_options(
                 Global::crash();
             }
             ctx.bundler_options.compile_assets = slice_to_owned(assets);
+        }
+    }
+
+    {
+        let has_positive = args.flag(b"--compile-env-options");
+        let has_negative = args.flag(b"--no-compile-env-options");
+        if has_positive || has_negative {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--compile-env-options requires --compile", ());
+                Global::crash();
+            }
+            if has_positive && has_negative {
+                Output::err_generic(
+                    "Cannot use both --compile-env-options and --no-compile-env-options",
+                    (),
+                );
+                Global::crash();
+            }
+            ctx.bundler_options.compile_env_options = has_positive;
         }
     }
 

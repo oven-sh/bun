@@ -75,8 +75,23 @@ pub(crate) fn print_css_number(raw: &[u8], out: &mut Vec<u8>) {
 }
 
 /// Matches `/(["'])(?:(?!\1)[^\\]|\\.)*\1/s` at the start of `text` and returns the match's length.
-fn string_len(text: &[u8]) -> Option<usize> {
+/// Calls go through one text from its start. `unclosed` has a bit for each kind of quote that had no match so far.
+fn string_len(text: &[u8], unclosed: &mut u8) -> Option<usize> {
     let &quote = text.first().filter(|b| matches!(b, b'"' | b'\''))?;
+    let bit = if quote == b'"' { 2 } else { 1 };
+    if *unclosed & bit != 0 {
+        return None;
+    }
+    let len = string_end(text, quote);
+    if len.is_none() {
+        // A later quote of this kind is one that this attempt skipped after a backslash: it reads on to the same end.
+        *unclosed |= bit;
+    }
+    len
+}
+
+/// The length of the string at the start of `text`, which starts with `quote`.
+fn string_end(text: &[u8], quote: u8) -> Option<usize> {
     let mut at = 1;
     loop {
         match *text.get(at)? {
@@ -117,8 +132,9 @@ pub(crate) fn adjust_strings(value: &[u8], single_quote: bool) -> Cow<'_, [u8]> 
     }
     let mut out = Vec::with_capacity(value.len());
     let mut at = 0;
+    let mut unclosed = 0;
     while let Some(&byte) = value.get(at) {
-        match string_len(&value[at..]) {
+        match string_len(&value[at..], &mut unclosed) {
             Some(len) => {
                 print_string(&value[at..at + len], single_quote, &mut out);
                 at += len;
@@ -179,8 +195,9 @@ pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
     };
     let mut out = Vec::with_capacity(value.len());
     let mut at = 0;
+    let mut unclosed = 0;
     while let Some(&byte) = value.get(at) {
-        if let Some(len) = string_len(&value[at..]) {
+        if let Some(len) = string_len(&value[at..], &mut unclosed) {
             out.extend_from_slice(&value[at..at + len]);
             at += len;
             continue;

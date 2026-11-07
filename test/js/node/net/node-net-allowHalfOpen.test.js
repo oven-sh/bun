@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunRun, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
+import { randomFillSync } from "node:crypto";
+import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -126,4 +128,47 @@ test.skipIf(isWindows)("allowHalfOpen: paused socket whose unix peer closed deli
     Array.from({ length: 4 }, (_, i) => [`tail-${i}`, { data: `tail-${i}\n`, ends: 1, closes: 1 }]),
   );
   expect(result).toEqual({ stdout: JSON.stringify(expected) + "\nidle", stderr: "", exitCode: 0, signalCode: null });
+});
+
+// The client sends its request and its FIN at once, then reads. The reply is larger than
+// the kernel takes in one send, so part of it waits in user space across the peer's FIN.
+describe.each([
+  { allowHalfOpen: true, replyOn: "end" },
+  { allowHalfOpen: true, replyOn: "data" },
+  { allowHalfOpen: false, replyOn: "data" },
+])("server with allowHalfOpen: $allowHalfOpen that replies on '$replyOn'", ({ allowHalfOpen, replyOn }) => {
+  test("sends the whole reply after the client's FIN", async () => {
+    const N = 8 * 1024 * 1024;
+    const payload = randomFillSync(Buffer.allocUnsafe(N));
+    const serverSide = Promise.withResolvers();
+    const server = net.createServer({ allowHalfOpen }, socket => {
+      socket.on("error", serverSide.reject);
+      socket.on("close", serverSide.resolve);
+      socket.on("data", () => {
+        if (replyOn === "data") socket.end(payload);
+      });
+      socket.on("end", () => {
+        if (replyOn === "end") socket.end(payload);
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const clientSide = Promise.withResolvers();
+      let got = 0;
+      let mismatchAt = -1;
+      const client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+      client.on("error", clientSide.reject);
+      client.on("connect", () => client.end("request\n"));
+      client.on("data", chunk => {
+        if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.length))) mismatchAt = got;
+        got += chunk.length;
+      });
+      client.on("close", clientSide.resolve);
+      await Promise.all([clientSide.promise, serverSide.promise]);
+      expect({ got, mismatchAt }).toEqual({ got: N, mismatchAt: -1 });
+    } finally {
+      server.close();
+    }
+  });
 });

@@ -1,0 +1,24 @@
+# the front end writes Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) as two calls of helpers of the compiler. Those two are native code with an entry and nothing else: no
+# object of the realm holds them and no function stands for them. `twin` has a guard, a fast version and a slow one. The slow one is walked without the mechanism that calls built-ins by their rows, named
+# the helper as a value, and the run time, which found no such function, handed out the one that refuses: "Cannot call %CompilerHelpers%.describeUnlessOrdinary because it was replaced, redefined or deleted".
+# A helper without a function of its own is called by its entry however the unit is walked: that is no optimization, there is no other way to call it.
+# f1 = twin
+# -- source: a-slow-version-calls-a-helper-that-has-no-function-of-its-own-by-its-entry.ts
+# class Tag { n = 1; m = 2; }
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# function twin(tag: Tag, source: object): string { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; const made = Object.defineProperties({ work }, Object.getOwnPropertyDescriptors(source)); return JSON.stringify(made); }
+# function ask(tag: Tag): string { try { return twin(tag, { a: 1, get b() { return 2; } }); } catch (error) { return (error as Error).name; } }
+# const real = new Tag(), liar = unseen({ n: 1, m: 2 });
+# print(ask(real));
+# print(ask(liar));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f1:SlowBody mechanisms=all
+# CHECK-LABEL: code f1:SlowBody
+# CHECK: [[described]]: {{*}} = CallBuiltin {{*}}overload=CompilerHelpersDescribeUnlessOrdinary/0
+# CHECK: = CallBuiltin {{*}}[[described]]{{*}}overload=CompilerHelpersDefinePropertiesFrom/0
+# RUN(NAMED): walk f1:SlowBody mechanisms=all
+# NAMED-NOT: = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: {"work":6,"a":1,"b":2}
+# ANSWERS-NEXT: {"work":6,"a":1,"b":2}

@@ -2,13 +2,12 @@
 // CHECK-LABEL: function {{*}}name="outer"
 // CHECK-NOT: NewClosure
 // CHECK: [[undefined]] = Undefined
-// CHECK: Branch {{*}}-> taken [[taken]](
+// CHECK: Branch {{*}}-> taken [[taken]](| 0), notTaken [[join]]([[undefined]])
 // CHECK: [[taken]](
-// CHECK: = NewClosure function=
-// CHECK: Jump -> next [[join]]([[undefined]])
+// CHECK: [[closure]] = NewClosure function=
+// CHECK-NEXT: Jump -> next [[join]]([[closure]])
 // CHECK-NEXT: [[join]]([[f]]):
-// CHECK-NEXT: [[callee]] = Convert [[f]] declared={type=undefined|null|f{{*}} flags=[IsExpected]}
-// CHECK-NEXT: = Call [[callee]] calleeName="f"
+// CHECK-NEXT: = Call [[f]] calleeName="f"
 
 module.exports = function outer(a) {
   if (a) function f() {}

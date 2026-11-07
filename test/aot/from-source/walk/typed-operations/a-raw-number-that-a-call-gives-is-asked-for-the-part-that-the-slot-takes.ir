@@ -1,0 +1,23 @@
+# A raw number that a direct call gives is typed by what Link says of the result of the callee. Its form tells "a number"; that it is whole is claimed. In front of a slot that takes whole numbers
+# it is asked as it lies, before that claim turns it into an integer.
+# f3 = take
+# -- source: a-raw-number-that-a-call-gives-is-asked-for-the-part-that-the-slot-takes.ts
+# declare function print(value: unknown): void;
+# function unsigned(n: number): number { return n >>> 0; }
+# class Gauge {
+#   size = 0;
+#   take(n: number): void { this.size = unsigned(n); }
+#   read(): number { return this.size; }
+# }
+# const gauge = new Gauge();
+# for (let i = 0; i < 4; i++) gauge.take(i - 2);
+# print(gauge.read());
+# -- end of source
+# RUN(ASKED): walk f3 mechanisms=all-Inlining
+# ASKED-LABEL: code f3:Body
+# ASKED: [[given]]: int @Double = CallDirect {{*}}function=f1
+# ASKED: CheckProof [[given]] checkedType=int typeWithoutProof=number source=Field
+# ASKED: = NumberToInteger [[given]]
+# RUN(RIGHT): run-in-shell
+# RIGHT: 1
+# RIGHT-NEXT: exited with 0

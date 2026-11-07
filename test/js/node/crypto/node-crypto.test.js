@@ -1917,6 +1917,90 @@ describe.each([
   });
 });
 
+// Node's getArrayBufferOrView() returns a detached buffer as it is, and a detached buffer has no bytes:
+// https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_util.h#L693-L721
+describe.each([
+  ["a detached ArrayBuffer", buffer => buffer],
+  ["a view on a detached ArrayBuffer", buffer => new Uint8Array(buffer)],
+])("%s is an empty buffer", (kind, wrap) => {
+  const detached = () => {
+    const buffer = new ArrayBuffer(8);
+    const value = wrap(buffer);
+    buffer.transfer();
+    return value;
+  };
+  const outcome = call => {
+    try {
+      const result = call();
+      return ArrayBuffer.isView(result) || result instanceof ArrayBuffer ? Buffer.from(result).toString("hex") : result;
+    } catch (e) {
+      return `${e.name} ${e.code}: ${e.message}`;
+    }
+  };
+
+  const dh = crypto.createDiffieHellman(64);
+  dh.generateKeys();
+  const ecdh = () => {
+    const ecdh = crypto.createECDH("prime256v1");
+    ecdh.generateKeys();
+    return ecdh;
+  };
+  const [key, iv, data] = [Buffer.alloc(16, 1), Buffer.alloc(12, 2), Buffer.from("data")];
+  const gcm = () => crypto.createCipheriv("aes-128-gcm", key, iv);
+  const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const cipher = { cipher: "aes-128-cbc", passphrase: "" };
+  const encrypted = ec.privateKey.export({ type: "pkcs8", format: "pem", ...cipher });
+
+  const places = [
+    ["createDiffieHellman(), as the prime", value => crypto.createDiffieHellman(value).getPrime()],
+    ["createDiffieHellman(), as the generator", value => crypto.createDiffieHellman(dh.getPrime(), value)],
+    ["dh.setPublicKey()", value => crypto.createDiffieHellman(dh.getPrime()).setPublicKey(value)],
+    ["dh.setPrivateKey()", value => crypto.createDiffieHellman(dh.getPrime()).setPrivateKey(value)],
+    ["dh.computeSecret()", value => dh.computeSecret(value)],
+    ["ecdh.setPrivateKey()", value => ecdh().setPrivateKey(value)],
+    ["ecdh.setPublicKey()", value => ecdh().setPublicKey(value)],
+    ["ecdh.computeSecret()", value => ecdh().computeSecret(value)],
+    ["ECDH.convertKey()", value => crypto.ECDH.convertKey(value, "prime256v1")],
+    ["generatePrime(), as add", value => crypto.generatePrimeSync(32, { add: value })],
+    ["generatePrime(), as rem", value => crypto.generatePrimeSync(32, { add: Buffer.alloc(0), rem: value })],
+    ["createCipheriv(), as the iv", value => crypto.createCipheriv("aes-128-gcm", key, value)],
+    ["createDecipheriv(), as the iv", value => crypto.createDecipheriv("aes-128-gcm", key, value)],
+    ["cipher.setAAD()", value => (cipher => (cipher.setAAD(value).final(), cipher.getAuthTag()))(gcm())],
+    ["decipher.setAAD()", value => crypto.createDecipheriv("aes-128-gcm", key, iv).setAAD(value).update(data)],
+    ["decipher.setAuthTag()", value => crypto.createDecipheriv("aes-128-gcm", key, iv).setAuthTag(value)],
+    [
+      "verify.verify(), as the signature",
+      value => crypto.createVerify("sha256").update(data).verify(ec.publicKey, value),
+    ],
+    [
+      "createPrivateKey(), as the passphrase",
+      value => crypto.createPrivateKey({ key: encrypted, passphrase: value }).equals(ec.privateKey),
+    ],
+    [
+      "sign.sign(), as the passphrase",
+      value => crypto.createSign("sha256").update(data).sign({ key: encrypted, passphrase: value }).length > 0,
+    ],
+    [
+      "keyObject.export(), as the passphrase",
+      value =>
+        crypto
+          .createPrivateKey({
+            key: ec.privateKey.export({ type: "pkcs8", format: "pem", ...cipher, passphrase: value }),
+            passphrase: "",
+          })
+          .equals(ec.privateKey),
+    ],
+    ["Certificate.verifySpkac()", value => crypto.Certificate.verifySpkac(value)],
+    ["Certificate.exportChallenge()", value => crypto.Certificate.exportChallenge(value)],
+    // update() takes no ArrayBuffer.
+    ...(kind === "a detached ArrayBuffer" ? [] : [["cipher.update()", value => gcm().update(value)]]),
+  ];
+
+  it.each(places)("to %s", (_, call) => {
+    expect(outcome(() => call(detached()))).toEqual(outcome(() => call(Buffer.alloc(0))));
+  });
+});
+
 describe("encodings of DiffieHellman and ECDH", () => {
   const dh = crypto.createDiffieHellman(64);
   dh.generateKeys();
@@ -2071,6 +2155,89 @@ describe("Sign and Verify", () => {
       );
     },
   );
+
+  // OpenSSL has a list of digests for an RSA signature, which BLAKE2b is not on, and asks it under every padding.
+  describe.each(["blake2b512", "BLAKE2B-512", "blake2b256"])("with %s, no digest for RSA signatures,", digest => {
+    const pss = { padding: crypto.constants.RSA_PKCS1_PSS_PADDING };
+    const invalidDigest = { name: "Error", code: "ERR_OSSL_EVP_INVALID_DIGEST_TYPE" };
+
+    // RFC 8017, 9.1.1, with a salt as long as the digest. Neither Node nor Bun makes this signature when asked.
+    const signByHand = digest => {
+      const hash = (...parts) => crypto.createHash(digest).update(Buffer.concat(parts)).digest();
+      const salt = Buffer.alloc(hash().length, 0x5a);
+      const h = hash(Buffer.alloc(8), hash(data), salt);
+      const db = Buffer.concat([Buffer.alloc(254 - 2 * h.length), Buffer.from([1]), salt]);
+      for (let i = 0, counter = 0; i < db.length; counter++) {
+        for (const byte of hash(h, Buffer.from([0, 0, 0, counter]))) if (i < db.length) db[i++] ^= byte;
+      }
+      db[0] &= 0x7f;
+      const block = Buffer.concat([db, h, Buffer.from([0xbc])]);
+      return crypto.privateEncrypt({ key: rsa.privateKey, padding: crypto.constants.RSA_NO_PADDING }, block);
+    };
+
+    it.each([
+      ["PKCS#1 v1.5", {}],
+      ["PSS", pss],
+    ])("sign() and verify() throw under %s", async (_, padding) => {
+      const privateKey = { key: rsa.privateKey, ...padding };
+      const publicKey = { key: rsa.publicKey, ...padding };
+      expect(() => crypto.sign(digest, data, privateKey)).toThrow(expect.objectContaining(invalidDigest));
+      expect(() => crypto.verify(digest, data, publicKey, rsaSignature)).toThrow(
+        expect.objectContaining(invalidDigest),
+      );
+      await expect(util.promisify(crypto.sign)(digest, data, privateKey)).rejects.toMatchObject(invalidDigest);
+      await expect(util.promisify(crypto.verify)(digest, data, publicKey, rsaSignature)).rejects.toMatchObject(
+        invalidDigest,
+      );
+
+      const sign = crypto.createSign(digest).update(data);
+      expect(() => sign.sign(privateKey)).toThrow(expect.objectContaining(invalidDigest));
+      // The call that was refused used the object.
+      expect(() => sign.sign(privateKey)).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE" }));
+    });
+
+    it("Verify is false for a signature that is one in every other way", () => {
+      const publicKey = { key: rsa.publicKey, ...pss };
+      expect(crypto.createVerify("sha256").update(data).verify(publicKey, signByHand("sha256"))).toBe(true);
+      expect(crypto.createVerify(digest).update(data).verify(publicKey, signByHand(digest))).toBe(false);
+      expect(crypto.createVerify(digest).update(data).verify(rsa.publicKey, rsaSignature)).toBe(false);
+    });
+
+    it("Sign refuses a padding that is not known first, and sign() the digest", () => {
+      const code = options => {
+        try {
+          crypto
+            .createSign(digest)
+            .update(data)
+            .sign({ key: rsa.privateKey, ...options });
+        } catch (e) {
+          return e.code;
+        }
+      };
+      expect([code({ padding: 99 }), code({ padding: crypto.constants.RSA_NO_PADDING })]).toEqual([
+        "ERR_OSSL_EVP_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE",
+        invalidDigest.code,
+      ]);
+      expect(() => crypto.sign(digest, data, { key: rsa.privateKey, padding: 99 })).toThrow(
+        expect.objectContaining(invalidDigest),
+      );
+    });
+  });
+
+  it("take every other digest for an RSA key under PSS", () => {
+    const padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+    const refused = [...crypto.getHashes(), "blake2b256"].filter(digest => {
+      try {
+        const signature = crypto.sign(digest, data, { key: rsa.privateKey, padding });
+        expect(crypto.verify(digest, data, { key: rsa.publicKey, padding }, signature)).toBe(true);
+        return false;
+      } catch (e) {
+        expect(e.code).toBe("ERR_OSSL_EVP_INVALID_DIGEST_TYPE");
+        return true;
+      }
+    });
+    expect(refused).toEqual(["blake2b-512", "blake2b512", "blake2b256"]);
+  });
 
   it("sign() returns a Buffer on an ArrayBuffer of its own length", () => {
     // The DER of a P-521 signature is always shorter than the most that BoringSSL allows for.
@@ -2245,5 +2412,132 @@ describe("crypto.diffieHellman()", () => {
     expect(() => crypto.createPublicKey({ key: 5, format: "jwk" })).toThrow(
       error("ERR_INVALID_ARG_TYPE", 'The "key.key" property must be of type object. Received type number (5)'),
     );
+  });
+});
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/keys.js#L645-L765
+describe("an error about a key names the argument that the key is", () => {
+  const x25519 = crypto.generateKeyPairSync("x25519");
+  const data = Buffer.from("data");
+  const der = x25519.privateKey.export({ type: "pkcs8", format: "der" });
+  const raw = x25519.publicKey.export({ format: "raw-public" });
+  const outcome = call => {
+    try {
+      call();
+      return "no error";
+    } catch (e) {
+      // Node 26.12.1 ends its lists of types with "or URL".
+      return `${e.name} ${e.code}: ${e.message.replace(/ or an instance of .*/, "")}`;
+    }
+  };
+
+  it.each([
+    ["sign()", "key", true, key => crypto.sign(null, data, key)],
+    ["verify()", "key", false, key => crypto.verify(null, data, key, Buffer.alloc(64))],
+    ["createSign().sign()", "privateKey", true, key => crypto.createSign("sha256").update(data).sign(key)],
+    ["createVerify().verify()", "key", false, key => crypto.createVerify("sha256").verify(key, Buffer.alloc(64))],
+    ["createPrivateKey()", "key", true, key => crypto.createPrivateKey(key)],
+    ["createPublicKey()", "key", false, key => crypto.createPublicKey(key)],
+    ["publicEncrypt()", "key", false, key => crypto.publicEncrypt(key, data)],
+    ["publicDecrypt()", "key", false, key => crypto.publicDecrypt(key, data)],
+    ["privateEncrypt()", "privateKey", true, key => crypto.privateEncrypt(key, data)],
+    ["privateDecrypt()", "privateKey", true, key => crypto.privateDecrypt(key, data)],
+    [
+      "diffieHellman(), for its private key,",
+      "options.privateKey",
+      true,
+      privateKey => crypto.diffieHellman({ privateKey, publicKey: x25519.publicKey }),
+    ],
+    [
+      "diffieHellman(), for its public key,",
+      "options.publicKey",
+      false,
+      publicKey => crypto.diffieHellman({ privateKey: x25519.privateKey, publicKey }),
+    ],
+  ])("%s calls it %s", (_, name, isPrivate, call) => {
+    const invalid = (property, received) =>
+      `TypeError ERR_INVALID_ARG_VALUE: The property '${name}.${property}' is invalid. Received ${received}`;
+    const wrongType = (property, type) =>
+      `TypeError ERR_INVALID_ARG_TYPE: The "${name}.${property}" property must be of type ${type}`;
+    const bare = `TypeError ERR_INVALID_ARG_TYPE: The "${name}" ${name.includes(".") ? "property" : "argument"} must be of type string`;
+    const keys = [
+      { key: "der", format: "der" },
+      { key: der, format: "der" },
+      { key: new Uint8Array(der).buffer, format: "der" },
+      { key: der, format: "der", type: "bogus" },
+      { key: "pem", format: "bogus" },
+      { key: "pem", passphrase: 5 },
+      { key: 5 },
+      { key: 5, format: "jwk" },
+      { key: raw, format: "raw-private" },
+      { key: raw, format: "raw-private", asymmetricKeyType: "ec" },
+      5,
+      // A function is no object of options, whatever it holds.
+      Object.assign(() => {}, { key: "pem" }),
+    ];
+    expect(keys.map(key => outcome(() => call(key)))).toEqual([
+      invalid("type", "undefined"),
+      invalid("type", "undefined"),
+      invalid("type", "undefined"),
+      invalid("type", "'bogus'"),
+      invalid("format", "'bogus'"),
+      invalid("passphrase", "5"),
+      wrongType("key", "string"),
+      wrongType("key", "object. Received type number (5)"),
+      wrongType("asymmetricKeyType", "string. Received undefined"),
+      wrongType("namedCurve", "string. Received undefined"),
+      bare,
+      bare,
+    ]);
+    if (isPrivate) {
+      const rawPublic = { key: raw, format: "raw-public", asymmetricKeyType: "x25519" };
+      expect(outcome(() => call(rawPublic))).toBe(invalid("format", "'raw-public'"));
+    }
+  });
+
+  it("and `options` for how a key is exported or generated", () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+    const invalid = (property, received) =>
+      `TypeError ERR_INVALID_ARG_VALUE: The property 'options.${property}' is invalid. Received ${received}`;
+    const calls = [
+      () => publicKey.export({ format: "der" }),
+      () => privateKey.export({ format: "der" }),
+      () => privateKey.export({ format: "bogus", type: "pkcs8" }),
+      () => privateKey.export({ format: "pem", type: "pkcs8", cipher: 5 }),
+      () => privateKey.export({ format: "pem", type: "pkcs8", cipher: "aes-128-cbc", passphrase: 5 }),
+      () => crypto.generateKeyPairSync("ed25519", { publicKeyEncoding: { format: "der" } }),
+      () => crypto.generateKeyPairSync("ed25519", { privateKeyEncoding: { format: "bogus", type: "pkcs8" } }),
+    ];
+    expect(calls.map(outcome)).toEqual([
+      invalid("type", "undefined"),
+      invalid("type", "undefined"),
+      invalid("format", "'bogus'"),
+      invalid("cipher", "5"),
+      invalid("passphrase", "5"),
+      invalid("publicKeyEncoding.type", "undefined"),
+      invalid("privateKeyEncoding.format", "'bogus'"),
+    ]);
+  });
+
+  it("diffieHellman() with a callback throws it, and reads its public key first", () => {
+    const privateKey = { key: der, format: "der" };
+    const never = () => expect.unreachable();
+    expect(outcome(() => crypto.diffieHellman({ privateKey, publicKey: x25519.publicKey }, never))).toBe(
+      "TypeError ERR_INVALID_ARG_VALUE: The property 'options.privateKey.type' is invalid. Received undefined",
+    );
+    expect(outcome(() => crypto.diffieHellman({ privateKey, publicKey: { key: "pem", format: "bogus" } }))).toBe(
+      "TypeError ERR_INVALID_ARG_VALUE: The property 'options.publicKey.format' is invalid. Received 'bogus'",
+    );
+  });
+
+  it("a KeyObject is taken as it is, and a key that is refused does not use up a Sign", () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const beside = { format: "bogus", type: "bogus", passphrase: 5 };
+    const signature = crypto.sign("sha256", data, { key: privateKey, ...beside });
+    expect(crypto.verify("sha256", data, { key: publicKey, ...beside }, signature)).toBe(true);
+
+    const sign = crypto.createSign("sha256").update(data);
+    expect(() => sign.sign({ key: 5 })).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(crypto.verify("sha256", data, publicKey, sign.sign(privateKey))).toBe(true);
   });
 });

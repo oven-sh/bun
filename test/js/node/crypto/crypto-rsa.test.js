@@ -346,6 +346,30 @@ test("RSA-OAEP with an mgf1Hash other than oaepHash", () => {
   );
 });
 
+test("RSA-OAEP takes BLAKE2b-512, which an RSA signature does not", () => {
+  const input = Buffer.from("Hello Node.js");
+  const both = { oaepHash: "blake2b512", mgf1Hash: "blake2b512" };
+
+  // publicEncrypt({ key: rsaPubPem, oaepHash: "blake2b512", mgf1Hash: "blake2b512" }, input) in Node.js v26.12.1.
+  const fromNode = Buffer.from(
+    "JRjssHa++i7YSa50Bn0UCOTr41FTzEwi06vRL4HyKZICoHTqJIDtZ3OjVZ9I32yrUqWOqTFIiHh2vdNNPWVuIl" +
+      "U+qgTwCPc95DeUgjxnNSCPNNAMXgOfvuYHrklYDH8JVQp5f2oP6f+siMgGwiEHfNt96snFAs+LPJTwrgwXZoJO" +
+      "ob6TA/LaA2yTGvPRo4XeuD0MivcYbw9Sn/jbbdnoyMIEWtXG3eB/zxJYFjkhwIHkS2WlDrre7AshmmALxt0sFm" +
+      "+h5dfZjPBnYv1FhqIW68pnMYzeiT6aKjjWg+SvnT5mt7OELQUYUfPQchAvNK++ds8WN8ttExGs0ujTZgLHww==",
+    "base64",
+  );
+  expect(crypto.privateDecrypt({ key: rsaKeyPem, ...both }, fromNode)).toEqual(input);
+  for (const options of [{ oaepHash: "blake2b512" }, { mgf1Hash: "BLAKE2B-512" }, both]) {
+    const encrypted = crypto.publicEncrypt({ key: rsaPubPem, ...options }, input);
+    expect(crypto.privateDecrypt({ key: rsaKeyPem, ...options }, encrypted)).toEqual(input);
+  }
+
+  const pss = { key: rsaKeyPem, padding: constants.RSA_PKCS1_PSS_PADDING };
+  expect(() => crypto.sign("blake2b512", input, pss)).toThrow(
+    expect.objectContaining({ code: "ERR_OSSL_EVP_INVALID_DIGEST_TYPE" }),
+  );
+});
+
 test("the OAEP options under another padding", () => {
   const options = { oaepHash: "sha256", mgf1Hash: "sha256", oaepLabel: Buffer.from("label") };
   const block = Buffer.alloc(rsaKeySize / 8, 1);

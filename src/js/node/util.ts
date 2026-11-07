@@ -83,7 +83,7 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-// Node semantics (includes the [[Prototype]] identity check Bun.deepEquals omits) plus the
+// Node semantics (the [[Prototype]] identity check, where strict Bun.deepEquals has Jest's constructor check) plus the
 // skipPrototype third argument, which is public API in node v26.3.0 (fn.length === 3).
 // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 const { isDeepStrictEqual } = require("internal/util/comparisons");

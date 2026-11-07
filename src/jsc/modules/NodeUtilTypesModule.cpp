@@ -879,7 +879,7 @@ extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSV
 extern "C" bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 
 // util.isDeepStrictEqual / assert.deepStrictEqual: node semantics including the [[Prototype]]
-// identity check Bun.deepEquals omits. argument(2) truthy = node's kStrictWithoutPrototypes.
+// identity check, where strict Bun.deepEquals has Jest's constructor check. argument(2) truthy = node's kStrictWithoutPrototypes.
 // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,

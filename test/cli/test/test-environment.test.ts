@@ -1458,6 +1458,19 @@ describe.concurrent("test environment with the real", () => {
       expect(new Request(location.href)).toBeInstanceOf(Request);
     });
 
+    test("toStrictEqual() across the realms and the classes of a window", () => {
+      const element = document.createElement("div");
+      element.className = "c";
+      // With --isolate the DOM package is of another realm. An array is an array there too, and a built-in is the same built-in.
+      expect(element.getAttributeNames()).toStrictEqual(["class"]);
+      expect({ names: [element.getAttributeNames()] }).toStrictEqual({ names: [["class"]] });
+      expect(new TextEncoder().encode("a")).toStrictEqual(new Uint8Array([97]));
+      // The URL of the window is a subclass of Bun's, and URL.parse() makes one of Bun's.
+      expect(URL.parse(location.href)).toEqual(new URL(location.href));
+      expect(URL.parse(location.href)).not.toStrictEqual(new URL(location.href));
+      expect(new URL(location.href)).toStrictEqual(new URL(location.href));
+    });
+
     afterAll(() => {
       expect(typeof document).toBe("object");
       console.log("afterAll");
@@ -1493,6 +1506,14 @@ describe.concurrent("test environment with the real", () => {
         document.body.addEventListener("click", () => clicks++, { signal: AbortSignal.abort() });
         document.body.click();
         expect(clicks).toBe(1);
+      });
+      test("toStrictEqual() of what jsdom and its Request make", () => {
+        const rect = { x: 0, y: 0, bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0 };
+        expect(document.createElement("div").getBoundingClientRect()).toStrictEqual(rect);
+        // The Request of the window is a subclass of Bun's, and clone() makes one of Bun's.
+        const request = new Request(location.href);
+        expect(request.clone()).toEqual(request);
+        expect(request.clone()).not.toStrictEqual(request);
       });
     `,
     "happy-dom": `
@@ -1530,7 +1551,7 @@ describe.concurrent("test environment with the real", () => {
     const { stdout, stderr, exitCode } = await bunTest(String(dir));
     expect(stderr).not.toContain("error:");
     expect(stdout).toEqual(["afterAll", "afterAll"]);
-    expect(summary(stderr)).toEqual([name === "jsdom" ? "18 pass" : "16 pass", "0 fail"]);
+    expect(summary(stderr)).toEqual([name === "jsdom" ? "22 pass" : "18 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 
@@ -1547,7 +1568,7 @@ describe.concurrent("test environment with the real", () => {
     const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
     expect(stderr).not.toContain("error:");
     expect(stdout).toEqual(["afterAll", "afterAll"]);
-    expect(summary(stderr)).toEqual(["17 pass", "0 fail"]);
+    expect(summary(stderr)).toEqual(["20 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 

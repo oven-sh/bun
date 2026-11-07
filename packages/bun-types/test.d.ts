@@ -2077,6 +2077,11 @@ declare module "bun:test" {
      * 1. It checks that the class is the same.
      * 2. It checks that `undefined` values match as well.
      *
+     * Two objects have the same class when they have the same `constructor`.
+     * Two arrays always have the same class. So does a built-in such as `Map`
+     * or `Uint8Array` from another realm, for example a `node:vm` context or a
+     * jsdom window.
+     *
      * @example
      * class Dog {
      *   type = "dog";
@@ -2084,6 +2089,12 @@ declare module "bun:test" {
      * const actual = new Dog();
      * expect(actual).toStrictEqual(new Dog());
      * expect(actual).toStrictEqual({ type: "dog" }); // fail
+     *
+     * @example
+     * class Tags extends Set {}
+     * expect(new Tags(["a"])).toStrictEqual(new Set(["a"])); // fail
+     * expect(Buffer.from("a")).toStrictEqual(new Uint8Array([97])); // fail
+     * expect(Object.create(null)).toStrictEqual({}); // fail
      *
      * @example
      * const actual = { value: 1, name: undefined };

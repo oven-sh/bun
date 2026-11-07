@@ -7,6 +7,7 @@
  */
 
 import { stripVTControlCharacters } from "node:util";
+import vm from "node:vm";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -518,6 +519,294 @@ describe("expect()", () => {
     expect([, "boo2"]).toEqual([undefined, "boo2"]);
     expect([, "boo"]).toEqual([, "boo"]);
     expect([, 1]).toEqual([undefined, 1]);
+  });
+
+  describe("toStrictEqual() compares classes", () => {
+    const typedArrays = [
+      "Int8Array",
+      "Uint8Array",
+      "Uint8ClampedArray",
+      "Int16Array",
+      "Uint16Array",
+      "Int32Array",
+      "Uint32Array",
+      "Float16Array",
+      "Float32Array",
+      "Float64Array",
+      "BigInt64Array",
+      "BigUint64Array",
+    ].filter(name => name in globalThis);
+    const temporal = ANY(globalThis).Temporal;
+    /** A built-in class, and how to make an instance of it or of a subclass of it. */
+    const builtins = /** @type {[string, any, (Class: any) => unknown][]} */ ([
+      ["Map", Map, Class => new Class([["a", 1]])],
+      ["Set", Set, Class => new Class([1])],
+      ["Date", Date, Class => new Class(5)],
+      ["RegExp", RegExp, Class => new Class("a", "g")],
+      ["Error", Error, Class => new Class("x")],
+      ["ArrayBuffer", ArrayBuffer, Class => new Class(2)],
+      ["SharedArrayBuffer", SharedArrayBuffer, Class => new Class(2)],
+      ...typedArrays.map(name => [name, ANY(globalThis)[name], Class => new Class(2)]),
+      ...(temporal
+        ? [
+            ["Temporal.Instant", temporal.Instant, Class => new Class(5n)],
+            ["Temporal.PlainDate", temporal.PlainDate, Class => new Class(2020, 1, 2)],
+            ["Temporal.PlainDateTime", temporal.PlainDateTime, Class => new Class(2020, 1, 2, 3)],
+            ["Temporal.PlainTime", temporal.PlainTime, Class => new Class(1, 2)],
+            ["Temporal.ZonedDateTime", temporal.ZonedDateTime, Class => new Class(5n, "UTC")],
+            ["Temporal.PlainYearMonth", temporal.PlainYearMonth, Class => new Class(2020, 1)],
+            ["Temporal.PlainMonthDay", temporal.PlainMonthDay, Class => new Class(1, 2)],
+            ["Temporal.Duration", temporal.Duration, Class => new Class(1)],
+          ]
+        : []),
+      ["URL", URL, Class => new Class("http://example.com/")],
+      ["Headers", Headers, Class => new Class({ a: "1" })],
+    ]);
+
+    test.each(builtins)("an instance of a subclass of %s does not equal an instance of it", (_, Base, make) => {
+      class Subclass extends Base {}
+      class Sibling extends Base {}
+      const Anonymous = (() => class extends Base {})();
+      const SameName = { [Base.name]: class extends Base {} }[Base.name];
+      expect(SameName.name).toBe(Base.name);
+      for (const Class of [Subclass, Anonymous, SameName]) {
+        for (const [a, b] of [
+          [make(Class), make(Base)],
+          [make(Base), make(Class)],
+        ]) {
+          expect(a).not.toStrictEqual(b);
+          expect({ value: a }).not.toStrictEqual({ value: b });
+          expect({ [Symbol.for("value")]: a }).not.toStrictEqual({ [Symbol.for("value")]: b });
+          expect([a]).not.toStrictEqual([b]);
+          expect(new Map([["key", a]])).not.toStrictEqual(new Map([["key", b]]));
+          expect(new Map([[a, "value"]])).not.toStrictEqual(new Map([[b, "value"]]));
+          expect(new Set([a])).not.toStrictEqual(new Set([b]));
+          // Jest compares neither the cause of an Error nor the properties that are added to one.
+          if (!isJest) {
+            expect(new Error("x", { cause: a })).not.toStrictEqual(new Error("x", { cause: b }));
+            expect(Object.assign(new Error("x"), { value: a })).not.toStrictEqual(
+              Object.assign(new Error("x"), { value: b }),
+            );
+          }
+          if (isBun) {
+            expect(Bun.deepEquals(a, b, true)).toBe(false);
+            expect(Bun.deepEquals({ value: a }, { value: b }, true)).toBe(false);
+          }
+        }
+      }
+      expect(make(Subclass)).not.toStrictEqual(make(Sibling));
+      expect(make(Subclass)).toStrictEqual(make(Subclass));
+      expect(make(Base)).toStrictEqual(make(Base));
+    });
+
+    test("two classes with one name are two classes, and so is a class with no name", () => {
+      const declare = () =>
+        class Point {
+          x = 1;
+        };
+      const [PointA, PointB] = [declare(), declare()];
+      expect(new PointA()).not.toStrictEqual(new PointB());
+      expect(new PointA()).toStrictEqual(new PointA());
+      expect(new PointA()).toEqual(new PointB());
+      // From the third class of one class expression on, the instances share a hidden class that leaves the prototype to each.
+      const [PointC, PointD] = [declare(), declare()];
+      expect(new PointC()).not.toStrictEqual(new PointD());
+      expect(new PointD()).toStrictEqual(new PointD());
+
+      const Anonymous = (() =>
+        class {
+          x = 1;
+        })();
+      expect(new Anonymous()).not.toStrictEqual({ x: 1 });
+      expect({ x: 1 }).not.toStrictEqual(new Anonymous());
+      expect(new Anonymous()).toStrictEqual(new Anonymous());
+
+      const mixin = (/** @type {any} */ Base) => class extends Base {};
+      expect(new (mixin(Map))()).not.toStrictEqual(new (mixin(Map))());
+      expect(new (mixin(Map))()).not.toStrictEqual(new Map());
+    });
+
+    test("two mock functions are two classes", () => {
+      const mockClass = () =>
+        jest.fn(function (/** @type {any} */ ...args) {
+          ANY(this).x = 1;
+        });
+      const [A, B] = [ANY(mockClass()), ANY(mockClass())];
+      expect(new A()).not.toStrictEqual(new B());
+      expect(new A()).toStrictEqual(new A());
+    });
+
+    test("an object with no prototype is not an object literal", () => {
+      const bare = () => Object.assign(Object.create(null), { a: 1 });
+      expect(bare()).not.toStrictEqual({ a: 1 });
+      expect({ a: 1 }).not.toStrictEqual(bare());
+      expect({ nested: bare() }).not.toStrictEqual({ nested: { a: 1 } });
+      expect(bare()).toStrictEqual(bare());
+      expect(bare()).toEqual({ a: 1 });
+      expect(ANY("a".match(/(?<x>a)/)).groups).not.toStrictEqual({ x: "a" });
+      expect(Object.setPrototypeOf(new Map(), null)).not.toStrictEqual(new Map());
+      expect(Object.setPrototypeOf(new Date(5), null)).not.toStrictEqual(new Date(5));
+    });
+
+    test("a Buffer is not a Uint8Array", () => {
+      expect(Buffer.from([1, 2])).not.toStrictEqual(new Uint8Array([1, 2]));
+      expect(new Uint8Array([1, 2])).not.toStrictEqual(Buffer.from([1, 2]));
+      expect(Buffer.from([1, 2])).toStrictEqual(Buffer.from([1, 2]));
+      // Vitest compares the constructors of typed arrays in toEqual() too.
+      if (!isVitest) expect(Buffer.from([1, 2])).toEqual(new Uint8Array([1, 2]));
+      // Buffer.from() makes a Buffer for a subclass too.
+      class MyBuffer extends Buffer {}
+      expect(MyBuffer.from([1, 2])).toStrictEqual(Buffer.from([1, 2]));
+    });
+
+    test("the class is what the constructor property says", () => {
+      // @sinonjs/fake-timers gives each fake Date an own constructor, the real Date.
+      class ClockDate extends Date {
+        constructor(/** @type {number} */ time) {
+          super(time);
+          Object.defineProperty(this, "constructor", { value: Date, enumerable: false });
+        }
+      }
+      expect(new ClockDate(5)).toStrictEqual(new Date(5));
+      expect(new Date(5)).toStrictEqual(new ClockDate(5));
+      expect(new ClockDate(5)).toStrictEqual(new ClockDate(5));
+
+      // The same on two objects of one shape.
+      const tagged = (/** @type {unknown} */ Class) =>
+        Object.defineProperty({ a: 1 }, "constructor", { value: Class, enumerable: false });
+      expect(tagged(Map)).not.toStrictEqual(tagged(Set));
+      expect(tagged(Map)).toStrictEqual(tagged(Map));
+
+      class Base {
+        a = 1;
+      }
+      class Derived extends Base {}
+      delete ANY(Derived.prototype).constructor;
+      expect(new Derived()).toStrictEqual(new Base());
+      expect(Object.assign(Object.create(Base.prototype), { a: 1 })).toStrictEqual(new Base());
+    });
+
+    test("a constructor key of plain data is data", () => {
+      expect({ constructor: "x" }).toStrictEqual({ constructor: "x" });
+      expect({ constructor: 1 }).not.toStrictEqual({ constructor: 2 });
+      expect({ constructor: 1 }).not.toStrictEqual({});
+      // Jest and Vitest compare the two values with ===.
+      if (isBun) {
+        const parse = () => JSON.parse('{"constructor":{"a":1},"nested":{"constructor":[1]}}');
+        expect(parse()).toStrictEqual(parse());
+        expect(parse()).not.toStrictEqual(Object.assign(Object.create(null), parse()));
+        const added = () => Object.defineProperty({ a: 1 }, "constructor", { value: NaN });
+        expect(added()).toStrictEqual(added());
+      }
+    });
+
+    // Vitest compares constructors alone. Jest before 30.4 did too, except for arrays.
+    test_skipIf(!isBun)("arrays are one class, and so is a built-in class of another realm", () => {
+      class MyArray extends Array {}
+      expect(MyArray.from([1])).toStrictEqual([1]);
+      expect([1]).toStrictEqual(MyArray.from([1]));
+
+      const realm = vm.createContext({});
+      const inRealm = (/** @type {string} */ code) => vm.runInContext(code, realm);
+      expect(inRealm("new Map([[1, 2]])")).toStrictEqual(new Map([[1, 2]]));
+      expect(inRealm("new Date(5)")).toStrictEqual(new Date(5));
+      expect(inRealm("new Uint8Array([1])")).toStrictEqual(new Uint8Array([1]));
+      expect(inRealm("new Error('x')")).toStrictEqual(new Error("x"));
+      expect(inRealm("({ a: [{ b: 1 }] })")).toStrictEqual({ a: [{ b: 1 }] });
+      expect(inRealm("new Uint8Array([1])")).not.toStrictEqual(Buffer.from([1]));
+      expect(inRealm("new (class MyMap extends Map {})()")).not.toStrictEqual(new Map());
+      class Point {
+        x = 1;
+      }
+      expect(inRealm("new (class Point { x = 1 })()")).not.toStrictEqual(new Point());
+    });
+
+    test("an asymmetric matcher answers before the classes are compared", () => {
+      class MyMap extends Map {}
+      expect(new MyMap()).toStrictEqual(expect.any(Map));
+      expect({ value: new MyMap() }).toStrictEqual({ value: expect.any(Map) });
+    });
+
+    test("where only a getter knows the class, the class names decide", () => {
+      let calls = 0;
+      // The shape of a system error of Node: a getter says that its constructor is Error.
+      class SystemError extends Error {
+        get ["constructor"]() {
+          calls++;
+          return Error;
+        }
+      }
+      class NetworkError extends Error {}
+      expect(new SystemError("x")).toStrictEqual(new Error("x"));
+      expect(new Error("x")).toStrictEqual(new SystemError("x"));
+      expect(new SystemError("x")).not.toStrictEqual(new NetworkError("x"));
+      expect(new NetworkError("x")).not.toStrictEqual(new SystemError("x"));
+
+      class Hidden {
+        a = 1;
+        get ["constructor"]() {
+          calls++;
+          return Hidden;
+        }
+      }
+      class Other {
+        a = 1;
+      }
+      expect(new Hidden()).toStrictEqual(new Hidden());
+      expect(new Hidden()).not.toStrictEqual(new Other());
+      // Jest and Vitest call the getter. Bun does not, and then the class name of a Hidden is Object.
+      if (isBun) {
+        expect(new Hidden()).toStrictEqual({ a: 1 });
+        expect(Bun.deepEquals(new SystemError("x"), new NetworkError("x"), true)).toBe(false);
+        expect(calls).toBe(0);
+      }
+    });
+
+    // Jest and Vitest read the constructor through the Proxy.
+    test_skipIf(!isBun)("a Proxy in the prototype chain is not asked for the class", () => {
+      /** @type {string[]} */
+      const traps = [];
+      const handler = new Proxy({}, { get: (_, trap) => void traps.push(String(trap)) });
+      const over = (/** @type {object} */ value, /** @type {object} */ prototype) =>
+        Object.setPrototypeOf(value, new Proxy(prototype, handler));
+      class A {
+        a = 1;
+      }
+      class MyMap extends Map {}
+      const pairs = /** @type {[unknown, unknown, boolean][]} */ ([
+        [over({ a: 1 }, A.prototype), over({ a: 1 }, A.prototype), true],
+        [over({ a: 1 }, A.prototype), { a: 1 }, true],
+        [over({ a: 1 }, A.prototype), new A(), false],
+        [over(new Map([[1, 2]]), MyMap.prototype), new Map([[1, 2]]), true],
+        [over(new Map([[1, 2]]), MyMap.prototype), new MyMap([[1, 2]]), false],
+        [over(new Date(5), Date.prototype), new Date(5), true],
+      ]);
+      traps.length = 0;
+      for (const [a, b, equal] of pairs) {
+        expect(Bun.deepEquals(a, b, true)).toBe(equal);
+        expect(Bun.deepEquals(b, a, true)).toBe(equal);
+      }
+      expect(traps).toEqual([]);
+    });
+
+    // Jest's and Vitest's equals() compares no classes unless it gets the tester that does.
+    test_skipIf(!isBun)("this.equals() with strictCheck compares classes, after its testers", () => {
+      class MyMap extends Map {}
+      /** @type {boolean[]} */
+      const results = [];
+      expect.extend({
+        toRecordStrictEquals(received, expected, testers) {
+          results.push(this.equals(received, expected, testers, true));
+          return { pass: true, message: () => "" };
+        },
+      });
+      const everyMapIsEqual = (/** @type {unknown} */ a, /** @type {unknown} */ b) =>
+        a instanceof Map && b instanceof Map ? true : undefined;
+      ANY(expect(new MyMap())).toRecordStrictEquals(new Map(), []);
+      ANY(expect(new MyMap())).toRecordStrictEquals(new MyMap(), []);
+      ANY(expect(new MyMap())).toRecordStrictEquals(new Map(), [everyMapIsEqual]);
+      expect(results).toEqual([false, true, true]);
+    });
   });
 
   describe("toEqual() with DOM types", () => {

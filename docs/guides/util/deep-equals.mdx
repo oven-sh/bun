@@ -34,7 +34,15 @@ class Foo {
   a = 1;
 }
 Bun.deepEquals(new Foo(), { a: 1 }, true); // false
+
+// objects of different classes
+class Tags extends Set {}
+Bun.deepEquals(new Tags(["a"]), new Set(["a"]), true); // false
+Bun.deepEquals(Buffer.from("a"), new Uint8Array([97]), true); // false
+Bun.deepEquals(Object.create(null), {}, true); // false
 ```
+
+Two objects have the same class when they have the same `constructor`. Two arrays always have the same class. So do two values of one built-in class from two realms, such as a `Map` from a `node:vm` context and a `Map` of the main realm.
 
 ---
 

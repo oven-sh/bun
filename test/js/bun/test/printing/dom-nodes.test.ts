@@ -867,6 +867,12 @@ describe("equality", () => {
     const sameName = () => elementOf(class HTMLElement extends Element {}, "I");
     expect(sameName()).toEqual(sameName());
     expect(sameName()).not.toStrictEqual(sameName());
+    // toStrictEqual() compares no classes for a Proxy. The comparison of two nodes does.
+    const proxied = () => new Proxy(sameName(), {});
+    expect(proxied()).toEqual(proxied());
+    expect(proxied()).not.toStrictEqual(proxied());
+    expect(proxied()).not.toStrictEqual(sameName());
+    expect(new Proxy(h("i"), {})).toStrictEqual(new Proxy(h("i"), {}));
   });
 
   test("a node behind a Proxy", () => {

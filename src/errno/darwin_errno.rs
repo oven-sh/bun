@@ -1,3 +1,4 @@
+#![allow(deprecated)] // the derives below name every variant
 // posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::E;
 pub use crate::posix::S;
@@ -118,6 +119,9 @@ pub enum SystemErrno {
     ENOSTR = 99,
     EPROTO = 100,
     ETIME = 101,
+    #[deprecated(
+        note = "Darwin reports a file-system operation it lacks as ENOTSUP (45), not EOPNOTSUPP (102): call bun_errno::is_not_supported"
+    )]
     EOPNOTSUPP = 102,
     ENOPOLICY = 103,
     ENOTRECOVERABLE = 104,

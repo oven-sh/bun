@@ -1793,7 +1793,9 @@ impl<'a> Installer<'a> {
                             };
                             backend = self.set_backend(match err.get_errno() {
                                 sys::Errno::EXDEV => InstallMethod::Copyfile,
-                                sys::Errno::EOPNOTSUPP => InstallMethod::Hardlink,
+                                errno if bun_errno::is_not_supported(errno) => {
+                                    InstallMethod::Hardlink
+                                }
                                 _ => break 'backend Err(err),
                             });
                             continue 'backend;

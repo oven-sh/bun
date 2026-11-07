@@ -46,7 +46,7 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// #[uws_callback] / #[uws_callback(export = "Name", no_catch, thunk = "name")]
+// #[uws_callback] / #[uws_callback(export = "Name", no_catch)]
 //
 // Wraps a `&self` / `&mut self` method in an `extern "C"` thunk suitable for
 // registration with uWS / uSockets / any C-ABI callback that round-trips a
@@ -75,7 +75,7 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
 // the caller passed to the C side, and any `(ptr, len)` pair describes a slice
 // valid for the duration of the callback.
 //
-// Generated thunk name defaults to `__<method>_c`; override with `thunk = "x"`.
+// The generated thunk is named `__<method>_c`.
 // `export = "Sym"` adds `#[unsafe(export_name = "Sym")]` for link-time
 // dispatch shims (cycle-break externs).
 // ──────────────────────────────────────────────────────────────────────────
@@ -83,7 +83,6 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[derive(Default)]
 struct UwsCallbackArgs {
     export: Option<LitStr>,
-    thunk: Option<LitStr>,
     no_catch: bool,
 }
 
@@ -97,10 +96,6 @@ impl Parse for UwsCallbackArgs {
                 "export" => {
                     input.parse::<Token![=]>()?;
                     out.export = Some(input.parse()?);
-                }
-                "thunk" => {
-                    input.parse::<Token![=]>()?;
-                    out.thunk = Some(input.parse()?);
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -222,10 +217,7 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
         syn::ReturnType::Type(_, t) => quote! { #t },
     };
 
-    let thunk_ident = match &args.thunk {
-        Some(l) => format_ident!("{}", l.value()),
-        None => format_ident!("__{}_c", fn_name),
-    };
+    let thunk_ident = format_ident!("__{}_c", fn_name);
     let export_attr = args.export.as_ref().map(|l| {
         quote! { #[unsafe(export_name = #l)] }
     });

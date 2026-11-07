@@ -282,15 +282,15 @@ describe.concurrent("--print of a promise that is pending when the event loop dr
     expect(await print(script)).toEqual({ stdout: "RESULT\nbeforeExit\nexit 0\n", stderr: "", exitCode: 0 });
   });
 
-  test("fulfilled late by a timer that starts a ref'd timer: both run before the value is printed", async () => {
+  test("fulfilled late by a timer that starts a ref'd timer: the value is printed, then that timer runs", async () => {
     const script = `
       ${exitListener}
       new Promise(resolve => {
-        setTimeout(() => { setTimeout(() => console.log("second timer ran"), 1); resolve("RESULT"); }, 1).unref();
+        setTimeout(() => { setTimeout(() => console.log("second timer ran"), 20); resolve("RESULT"); }, 1).unref();
         Bun.sleepSync(10);
       })`;
     expect(await print(script)).toEqual({
-      stdout: "second timer ran\nRESULT\nexit listener ran\n",
+      stdout: "RESULT\nsecond timer ran\nexit listener ran\n",
       stderr: "",
       exitCode: 0,
     });
@@ -301,6 +301,7 @@ describe.concurrent("--print of a promise that is pending when the event loop dr
   test.each([
     ["by its executor", settlesLate("reject", `"REASON"`)],
     ["from a then() callback", `${settlesLate("resolve", "1")}.then(() => { throw "REASON"; })`],
+    ["by a timer that also starts a ref'd timer", settlesLate("reject", `(setTimeout(() => {}, 1), "REASON")`)],
   ])("rejected late %s: the reason is printed and the exit code is 0", async (_, result) => {
     expect(await print(`${exitListener} ${result}`)).toEqual({
       stdout: "REASON\nexit listener ran\n",

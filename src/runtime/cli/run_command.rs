@@ -1760,16 +1760,19 @@ fn print_eval_result(vm: &mut VirtualMachine) {
         .value
         .get()
         .unwrap_or(JSValue::UNDEFINED);
+    let mut took_turn = false;
     let to_print = match result.as_any_promise() {
         None => result,
         Some(promise) => {
             // The loop drained on its own: one more turn runs the unref'd work that is already due.
             if promise.status() == PromiseStatus::Pending && vm.unhandled_error_counter == 0 {
-                vm.tick();
-                vm.auto_tick_active();
-                while vm.is_event_loop_alive() {
+                took_turn = true;
+                loop {
                     vm.tick();
                     vm.auto_tick_active();
+                    if promise.status() != PromiseStatus::Pending || !vm.is_event_loop_alive() {
+                        break;
+                    }
                 }
                 // The reason is printed as the result. Whether this turn ran must not decide the exit code.
                 if promise.status() == PromiseStatus::Rejected {
@@ -1791,6 +1794,11 @@ fn print_eval_result(vm: &mut VirtualMachine) {
             &[to_print],
         )
     }));
+    // The result is printed as soon as it settles. What settled it can have started work that runs before `beforeExit`.
+    while took_turn && vm.is_event_loop_alive() {
+        vm.tick();
+        vm.auto_tick_active();
+    }
 }
 
 /// Cold tail shared by the rejected-entry-point and load-failure paths in

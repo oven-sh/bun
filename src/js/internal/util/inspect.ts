@@ -182,14 +182,14 @@ class AssertionError extends Error {
   declare actual: unknown;
   declare expected: unknown;
 
-  constructor(message?: string, isForced = false) {
+  constructor(message?: string) {
     super(message);
     this.name = "AssertionError";
     this.code = "ERR_ASSERTION";
     this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
 }
 function assert(p: unknown, message?: string) {
@@ -207,9 +207,9 @@ const SymbolToPrimitive = Symbol.toPrimitive;
 const builtInObjects = new SafeSet([
   "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
   "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
-  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
-  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
-  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "FinalizationRegistry", "Float16Array", "Float32Array", "Float64Array", "Function",
+  "Infinity", "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON",
+  "Map", "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
   "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
   "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
   "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
@@ -316,7 +316,6 @@ const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
 const numberRegExp = /^(0|[1-9][0-9]*)$/;
 
 const coreModuleRegExp = /^ {4}at (?:[^/\\(]+ \(|)node:(.+):\d+:\d+\)?$/;
-const nodeModulesRegExp = /[/\\]node_modules[/\\](.+?)(?=[/\\])/g;
 
 const classRegExp = /^(\s+[^(]*?)\s*{/;
 const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*(.|\n)*?\*\/)/g;
@@ -1215,7 +1214,11 @@ function getPrefix(constructor: string | null, tag: string, fallback: string, si
     return `[${fallback}${size}: null prototype] `;
   }
 
-  if (tag !== "" && constructor !== tag) {
+  if (tag !== "") {
+    const dot = StringPrototypeLastIndexOf.$call(tag, ".");
+    if (constructor === (dot >= 1 ? StringPrototypeSlice.$call(tag, dot + 1) : tag)) {
+      return `${tag}${size} `;
+    }
     return `${constructor}${size} [${tag}] `;
   }
   return `${constructor}${size} `;
@@ -1356,7 +1359,14 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
     protoProps = undefined;
   }
 
-  let tag = value[SymbolToStringTag];
+  // A `var` has no temporal dead zone to set up, so the `try` adds no instruction when nothing throws.
+  var tag;
+  try {
+    tag = value[SymbolToStringTag];
+  } catch {
+    // Ignore error.
+  }
+
   // Only list the tag in case it's non-enumerable / not an own property.
   // Otherwise we'd print this twice.
   if (
@@ -1589,7 +1599,7 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -1811,8 +1821,18 @@ function identicalSequenceRange(a: string[], b: string[]) {
   return { len: 0, offset: 0 };
 }
 
-function getStackString(error: Error): string {
-  return error.stack ? String(error.stack) : ErrorPrototypeToString.$call(error);
+function getStackString(error: Error): string | undefined {
+  let stack: unknown;
+  try {
+    stack = error.stack;
+  } catch {
+    // If stack is a getter that throws, ignore it.
+  }
+  try {
+    return stack ? String(stack) : ErrorPrototypeToString.$call(error);
+  } catch {
+    // The stack, name or message cannot be a string: the callers get undefined.
+  }
 }
 
 function getStackFrames(ctx: Context, err: Error, stack: string) {
@@ -1828,7 +1848,7 @@ function getStackFrames(ctx: Context, err: Error, stack: string) {
   // Remove stack frames identical to frames in cause.
   if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
     const causeStack = getStackString(cause);
-    const causeStackStart = StringPrototypeIndexOf.$call(causeStack, "\n    at");
+    const causeStackStart = causeStack === undefined ? -1 : StringPrototypeIndexOf.$call(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit.$call(StringPrototypeSlice.$call(causeStack, causeStackStart + 1), "\n");
       const { len, offset } = identicalSequenceRange(frames, causeFrames);
@@ -1882,9 +1902,14 @@ function removeDuplicateErrorKeys(ctx: Context, keys: Key[], err: Error, stack: 
   if (!ctx.showHidden && keys.length !== 0) {
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf.$call(keys, name);
-      // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes.$call(stack, err[name])) {
-        ArrayPrototypeSplice.$call(keys, index, 1);
+      if (index === -1) continue;
+      try {
+        // Only hide the property in case it's part of the original stack
+        if (StringPrototypeIncludes.$call(stack, err[name])) {
+          ArrayPrototypeSplice.$call(keys, index, 1);
+        }
+      } catch {
+        // A getter that throws, or a value that cannot be a string, stays in the keys.
       }
     }
   }
@@ -1892,16 +1917,49 @@ function removeDuplicateErrorKeys(ctx: Context, keys: Key[], err: Error, stack: 
 
 function markNodeModules(ctx: Context, line: string) {
   let tempLine = "";
-  let nodeModule: RegExpExecArray | null;
-  let pos = 0;
-  while ((nodeModule = nodeModulesRegExp.exec(line)) !== null) {
-    // '/node_modules/'.length === 14
-    tempLine += StringPrototypeSlice.$call(line, pos, nodeModule.index + 14);
-    tempLine += ctx.stylize(nodeModule[1], "module");
-    pos = nodeModule.index + nodeModule[0].length;
+  let lastPos = 0;
+  let searchFrom = 0;
+
+  while (true) {
+    const nodeModulePosition = StringPrototypeIndexOf.$call(line, "node_modules", searchFrom);
+    if (nodeModulePosition === -1) {
+      break;
+    }
+
+    // Ensure it's a path segment: must have a path separator before and after
+    const separator = line[nodeModulePosition - 1];
+    const after = line[nodeModulePosition + 12]; // 'node_modules'.length === 12
+
+    if ((after !== "/" && after !== "\\") || (separator !== "/" && separator !== "\\")) {
+      searchFrom = nodeModulePosition + 1;
+      continue;
+    }
+
+    const moduleStart = nodeModulePosition + 13; // Include trailing separator
+
+    tempLine += StringPrototypeSlice.$call(line, lastPos, moduleStart);
+
+    let moduleEnd = StringPrototypeIndexOf.$call(line, separator, moduleStart);
+    if (moduleEnd === -1) {
+      // No trailing separator: the module name runs to the end of the line.
+      moduleEnd = line.length;
+    } else if (line[moduleStart] === "@") {
+      // Namespaced modules have an extra slash: @namespace/package
+      moduleEnd = StringPrototypeIndexOf.$call(line, separator, moduleEnd + 1);
+      if (moduleEnd === -1) {
+        moduleEnd = line.length;
+      }
+    }
+
+    const nodeModule = StringPrototypeSlice.$call(line, moduleStart, moduleEnd);
+    tempLine += ctx.stylize(nodeModule, "module");
+
+    lastPos = moduleEnd;
+    searchFrom = moduleEnd;
   }
-  if (pos !== 0) {
-    line = tempLine + StringPrototypeSlice.$call(line, pos);
+
+  if (lastPos !== 0) {
+    line = tempLine + StringPrototypeSlice.$call(line, lastPos);
   }
   return line;
 }
@@ -1943,28 +2001,70 @@ function safeGetCWD() {
 }
 
 function formatError(err, constructor: string | null, tag: string, ctx: Context, keys: Key[]) {
-  const name = err.name != null ? String(err.name) : "Error";
   let stack = getStackString(err);
+  if (stack === undefined) return ObjectPrototypeToString.$call(err);
+
+  let message;
+  let messageIsGetterThatThrows = false;
+  try {
+    message = err.message;
+  } catch {
+    messageIsGetterThatThrows = true;
+  }
+  let name = "Error";
+  try {
+    const value = err.name;
+    if (value != null) name = String(value);
+  } catch {
+    // If name is a getter that throws, or a value that cannot be a string, ignore it.
+  }
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
+  if (!messageIsGetterThatThrows && StringPrototypeStartsWith.$call(stack, "Error: ")) {
+    stack = `${name}${message ? ": " : ""}${StringPrototypeSlice.$call(stack, 7)}`;
+  }
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
-  if ("cause" in err && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "cause"))) {
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "cause") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "cause"))
+  ) {
     ArrayPrototypePush.$call(keys, "cause");
   }
 
   // Print errors aggregated into AggregateError
-  if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))) {
-    ArrayPrototypePush.$call(keys, "errors");
+  try {
+    if (
+      $isJSArray(err.errors) &&
+      ObjectPrototypeHasOwnProperty.$call(err, "errors") &&
+      (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))
+    ) {
+      ArrayPrototypePush.$call(keys, "errors");
+    }
+  } catch {
+    // If errors is a getter that throws, ignore it.
+  }
+
+  // Print the wrapped errors of a SuppressedError.
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "error") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "error"))
+  ) {
+    ArrayPrototypePush.$call(keys, "error");
+  }
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "suppressed") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "suppressed"))
+  ) {
+    ArrayPrototypePush.$call(keys, "suppressed");
   }
 
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.
-  let pos = (err.message && StringPrototypeIndexOf.$call(stack, err.message)) || -1;
-  if (pos !== -1) pos += err.message.length;
+  let pos = (typeof message === "string" && message && StringPrototypeIndexOf.$call(stack, message)) || -1;
+  if (pos !== -1) pos += message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf.$call(stack, "\n    at", pos);
   if (stackStart === -1) {
@@ -2138,28 +2238,32 @@ function addNumericSeparatorEnd(integerString: string) {
 const remainingText = (remaining: number) => `... ${remaining} more item${remaining > 1 ? "s" : ""}`;
 
 function formatNumber(fn: Stylize, number: number, numericSeparator: boolean) {
+  // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
+  if (ObjectIs(number, -0)) {
+    return fn("-0", "number");
+  }
   if (!numericSeparator) {
-    // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
-    if (ObjectIs(number, -0)) {
-      return fn("-0", "number");
-    }
     return fn(`${number}`, "number");
   }
+
+  const numberString = String(number);
   const integer = MathTrunc(number);
-  const string = String(integer);
+
   if (integer === number) {
-    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(string, "e")) {
-      return fn(string, "number");
+    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(numberString, "e")) {
+      return fn(numberString, "number");
     }
-    return fn(`${addNumericSeparator(string)}`, "number");
+    return fn(addNumericSeparator(numberString), "number");
   }
-  if (NumberIsNaN(number)) {
-    return fn(string, "number");
+  if (NumberIsNaN(number) || StringPrototypeIncludes.$call(numberString, "e")) {
+    return fn(numberString, "number");
   }
-  return fn(
-    `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice.$call(String(number), string.length + 1))}`,
-    "number",
-  );
+
+  const decimalIndex = StringPrototypeIndexOf.$call(numberString, ".");
+  const integerPart = StringPrototypeSlice.$call(numberString, 0, decimalIndex);
+  const fractionalPart = StringPrototypeSlice.$call(numberString, decimalIndex + 1);
+
+  return fn(`${addNumericSeparator(integerPart)}.${addNumericSeparatorEnd(fractionalPart)}`, "number");
 }
 
 function formatBigInt(fn: Stylize, bigint: bigint, numericSeparator: boolean) {
@@ -2471,8 +2575,10 @@ function formatPromise(ctx: Context, value, recurseTimes: number) {
 }
 
 function formatExtraProperties(ctx: Context, value, recurseTimes: number, key: string, typedArray?: boolean) {
+  // This read throws for a detached DataView and formatRaw() retries: do it before the indent.
+  const extraValue = value[key];
   ctx.indentationLvl += 2;
-  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  const str = formatValue(ctx, extraValue, recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
 
   // These entries are mainly getters. Should they be formatted like getters?
@@ -2512,22 +2618,28 @@ function formatProperty(
         (ctx.getters === "get" && desc.set === undefined) ||
         (ctx.getters === "set" && desc.set !== undefined))
     ) {
+      ctx.indentationLvl += 2;
       try {
         const tmp = descGet.$call(original);
-        ctx.indentationLvl += 2;
         if (tmp === null) {
           str = `${s(`[${label}:`, sp)} ${s("null", "null")}${s("]", sp)}`;
-        } else if (typeof tmp === "object") {
+        } else if (typeof tmp === "object" || typeof tmp === "function") {
           str = `${s(`[${label}]`, sp)} ${formatValue(ctx, tmp, recurseTimes)}`;
         } else {
           const primitive = formatPrimitive(s, tmp, ctx);
           str = `${s(`[${label}:`, sp)} ${primitive}${s("]", sp)}`;
         }
-        ctx.indentationLvl -= 2;
       } catch (err) {
-        const message = `<Inspection threw (${(err as Error).message})>`;
-        str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
+        // Node.js prints formatValue(ctx, err, recurseTimes) here. It needs https://github.com/oven-sh/bun/issues/37419
+        let thrown: string | undefined;
+        try {
+          thrown = `${err == null ? err : (err as Error).message}`;
+        } catch {
+          // The message cannot be read, or it cannot be a string.
+        }
+        str = `${s(`[${label}:`, sp)} <Inspection threw (${thrown})>${s("]", sp)}`;
       }
+      ctx.indentationLvl -= 2;
     } else {
       str = ctx.stylize(`[${label}]`, sp);
     }
@@ -2563,16 +2675,19 @@ function isBelowBreakLength(ctx: Context, output: string[], start: number, base:
   // TODO(BridgeAR): Add unicode support. Use the readline getStringWidth
   // function. Check the performance overhead and make it an opt-in in case it's
   // significant.
-  let totalLength = output.length + start;
-  if (totalLength + output.length > ctx.breakLength) return false;
-  for (let i = 0; i < output.length; i++) {
-    if (ctx.colors) {
-      totalLength += StringPrototypeReplaceAll.$call(output[i], /\u001B\[\d\d?m/g, "").length; // remove colors
-    } else {
-      totalLength += output[i].length;
-    }
-    if (totalLength > ctx.breakLength) {
-      return false;
+  const breakLength = ctx.breakLength;
+  if (breakLength !== Infinity) {
+    let totalLength = output.length + start;
+    if (totalLength + output.length > breakLength) return false;
+    for (let i = 0; i < output.length; i++) {
+      if (ctx.colors) {
+        totalLength += StringPrototypeReplaceAll.$call(output[i], /\u001B\[\d\d?m/g, "").length; // remove colors
+      } else {
+        totalLength += output[i].length;
+      }
+      if (totalLength > breakLength) {
+        return false;
+      }
     }
   }
   // Do not line up properties on the same line if `base` contains line breaks.
@@ -2637,7 +2752,11 @@ function reduceToSingleString(
   // Line up all entries on a single line in case the entries do not exceed
   // `breakLength`.
   if (isBelowBreakLength(ctx, output, 0, base)) {
-    return `${braces[0]}${base ? ` ${base}` : ""} ${ArrayPrototypeJoin.$call(output, ", ")} ` + braces[1];
+    const joinedOutput = ArrayPrototypeJoin.$call(output, ", ");
+    // Bug for bug with nodejs/node#64238: with breakLength: Infinity an entry that has "\n" rules out the single line.
+    if (ctx.breakLength !== Infinity || !StringPrototypeIncludes.$call(joinedOutput, "\n")) {
+      return `${braces[0]}${base ? ` ${base}` : ""} ${joinedOutput} ` + braces[1];
+    }
   }
   const indentation = StringPrototypeRepeat.$call(" ", ctx.indentationLvl);
   // If the opening "brace" is too large, like in the case of "Set {",

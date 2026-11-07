@@ -1,6 +1,7 @@
 // What a program can see of node:stream and node:events besides their answers: which properties of a stream they read and store, seen
 // from an object below a Proxy and from accessors, what an error says when a member of a stream is not a function, and when the
-// operators of Readable.prototype arrive. The expected files hold what each program printed before the modules were typed.
+// operators of Readable.prototype arrive. The expected files hold what each program prints under a release build: a debug build reads
+// more. A row that changes is a change of behavior: compare it with Node.js before the file is written again.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";

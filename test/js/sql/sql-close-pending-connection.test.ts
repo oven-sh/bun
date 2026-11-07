@@ -17,6 +17,7 @@
 // thing that can tear the connection down — without the fix these tests hang.
 
 import { SQL, type Socket } from "bun";
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { expect, mock, test } from "bun:test";
 import { blackholePortSource, bunEnv, bunExe, isMusl, isWindows, tls as tlsCert } from "harness";
 import net from "node:net";
@@ -238,6 +239,67 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       server.close();
     }
   });
+
+  // The connection learns that the kernel refused the send() of its ClientHello from the next writable event of its
+  // socket. A close() ahead of that event used to get the handshake back as failed with no reason.
+  // Not on Windows, like the other send-fault suites: it was not run there.
+  test.skipIf(!fault.available() || isWindows)(
+    `${name}: close() of a connection whose ClientHello the kernel refused`,
+    async () => {
+      const { greeting, answer } = startTls[name];
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const net = require("node:net");
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        async function refuseClientHello(giveUp) {
+          const server = net.createServer(socket => {
+            socket.unref();
+            socket.on("error", () => {});
+            // The server's last message before TLS. The client reads it in the next turn of the event loop and
+            // sends its ClientHello, behind its request for TLS if that is still to come. The end of that turn is
+            // behind the refused send() and ahead of the writable event.
+            const sayLast = () => {
+              socket.write(Buffer.from("${(answer ?? greeting)!.toString("hex")}", "hex"));
+              fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: ${answer ? 0 : 1} });
+              if (giveUp) setImmediate(() => setImmediate(() => sql.close({ timeout: 0 })));
+            };
+            if (${answer !== undefined}) socket.once("data", sayLast);
+            else sayLast();
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          server.unref();
+          const sql = new Bun.SQL({
+            url: "${scheme}127.0.0.1:" + server.address().port + "/db",
+            max: 1,
+            tls: { rejectUnauthorized: false },
+            connectionTimeout: 0,
+          });
+          console.log(await sql\`SELECT 1\`.catch(err => err.code));
+          await sql.close({ timeout: 0 });
+          fault.clear();
+        }
+        // Left alone, the connection reports the reset itself. The code of the query is the same for a close() that
+        // came ahead of the ClientHello: what the second line shows is that the close found no handshake without a cause.
+        await refuseClientHello(false);
+        await refuseClientHello(true);
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: `ECONNRESET\n${closedCode}\n`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 }
 
 // A FIN in the middle of the TLS handshake used to come back as a failed handshake with no reason,

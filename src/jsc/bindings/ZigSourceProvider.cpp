@@ -16,6 +16,7 @@
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
+#include <JavaScriptCore/ControlFlowProfiler.h>
 #include "BunBuiltinNames.h"
 
 namespace Zig {
@@ -41,13 +42,14 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
+extern "C" bool ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
-void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
+void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider, JSC::SourceProvider& wrapped)
 {
     if (!vm.controlFlowProfiler())
         return;
+    vm.controlFlowProfiler()->didReplaceSource(wrapped.asID(), provider.asID());
     BunString sourceURL = Bun::toString(provider.sourceURL());
     WTF::String sourceString = provider.source().toStringWithoutCopying();
     BunString source = Bun::toString(sourceString);
@@ -55,6 +57,7 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
+extern "C" bool BunTest__shouldReportCodeCoverage(const BunString* sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 
@@ -134,7 +137,9 @@ Ref<SourceProvider> SourceProvider::create(
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
         BunString providerSource = Bun::toString(providerSourceString);
-        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled);
+        // JSC does not know the branches of a function until it is called.
+        if (ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled) && BunTest__shouldReportCodeCoverage(&providerURL))
+            globalObject->vm().controlFlowProfiler()->generateBytecodeEagerly(provider->asID());
     }
 
     if (provider->m_alreadyBundled) {

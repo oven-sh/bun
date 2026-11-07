@@ -24,7 +24,7 @@ namespace Zig {
 class GlobalObject;
 
 // A provider that wraps another one has a SourceID of its own, which `bun test --coverage` has to learn of.
-void addCodeCoverageSourceID(JSC::VM&, JSC::SourceProvider& provider);
+void addCodeCoverageSourceID(JSC::VM&, JSC::SourceProvider& provider, JSC::SourceProvider& wrapped);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);

@@ -308,13 +308,16 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
 });
 
 describe("bun test --coverage", () => {
-  const reported = new Map<string, { functions: string; hits: Map<number, string> }>();
+  const reported = new Map<string, { functions: string; hits: Map<number, string>; branchNotTaken: number[] }>();
   for (const record of lcov.split("end_of_record\n")) {
     const file = record.match(/^SF:(.*)$/m)?.[1].replaceAll("\\", "/");
     if (!file) continue;
     reported.set(file, {
       functions: `${record.match(/^FNH:(\d+)$/m)![1]}/${record.match(/^FNF:(\d+)$/m)![1]}`,
       hits: new Map(Array.from(record.matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, count]) => [Number(line), count])),
+      branchNotTaken: [
+        ...new Set(Array.from(record.matchAll(/^BRDA:(\d+),\d+,\d+,0$/gm), ([, line]) => Number(line))),
+      ].sort((a, b) => a - b),
     });
   }
 
@@ -344,7 +347,7 @@ describe("bun test --coverage", () => {
     expect(wrong).toEqual([]);
   });
 
-  test("the table has the lines that did not run", () => {
+  test("the table has the lines that did not run, or if all ran, those with a branch that was not taken", () => {
     const wrong: Record<string, unknown> = {};
     for (const { file, counts, functions } of programs) {
       const row = table.split("\n").find(line =>
@@ -353,11 +356,13 @@ describe("bun test --coverage", () => {
           .trimStart()
           .startsWith(file + " "),
       );
+      const didNotRun = counts.flatMap((count, i) => (count === " 0" ? [i + 1] : []));
+      const listed = didNotRun.length ? didNotRun : reported.get(file)!.branchNotTaken;
       const ranges: string[] = [];
-      counts.forEach((count, i) => {
-        if (count !== " 0") return;
-        if (counts[i - 1] === " 0") ranges[ranges.length - 1] = `${ranges[ranges.length - 1].split("-")[0]}-${i + 1}`;
-        else ranges.push(String(i + 1));
+      listed.forEach((line, i) => {
+        if (listed[i - 1] === line - 1)
+          ranges[ranges.length - 1] = `${ranges[ranges.length - 1].split("-")[0]}-${line}`;
+        else ranges.push(String(line));
       });
       const executable = counts.filter(count => count !== " -");
       const [hit, found] = functions.split("/").map(Number);
@@ -369,10 +374,8 @@ describe("bun test --coverage", () => {
         ).toFixed(2),
         ranges.join(","),
       ];
-      const got = row
-        ?.split("|")
-        .slice(1)
-        .map(cell => cell.trim());
+      const cells = row?.split("|").map(cell => cell.trim());
+      const got = cells && [cells[1], cells[2], cells[4]];
       if (!Bun.deepEquals(got, want)) wrong[file] = { got, want };
     }
     expect(wrong).toEqual({});

@@ -7,28 +7,28 @@ Bun's test runner has built-in code coverage reporting. Use it to see how much o
 
 ## Enabling Coverage
 
-`bun:test` can report which lines of code your tests cover. Pass `--coverage` to print a coverage report to the console:
+`bun:test` can report which functions, lines and branches of your code your tests cover. Pass `--coverage` to print a coverage report to the console:
 
 ```bash terminal icon="terminal"
 bun test --coverage
 
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   38.89 |   42.11 |
- index-0.ts  |   33.33 |   36.84 | 10-15,19-24
- index-1.ts  |   33.33 |   36.84 | 10-15,19-24
- index-10.ts |   33.33 |   36.84 | 10-15,19-24
- index-2.ts  |   33.33 |   36.84 | 10-15,19-24
- index-3.ts  |   33.33 |   36.84 | 10-15,19-24
- index-4.ts  |   33.33 |   36.84 | 10-15,19-24
- index-5.ts  |   33.33 |   36.84 | 10-15,19-24
- index-6.ts  |   33.33 |   36.84 | 10-15,19-24
- index-7.ts  |   33.33 |   36.84 | 10-15,19-24
- index-8.ts  |   33.33 |   36.84 | 10-15,19-24
- index-9.ts  |   33.33 |   36.84 | 10-15,19-24
- index.ts    |  100.00 |  100.00 |
--------------|---------|---------|-------------------
+-------------|---------|---------|----------|-------------------
+File         | % Funcs | % Lines | % Branch | Uncovered Line #s
+-------------|---------|---------|----------|-------------------
+All files    |   38.89 |   42.11 |    31.25 |
+ index-0.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-1.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-10.ts |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-2.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-3.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-4.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-5.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-6.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-7.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-8.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-9.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index.ts    |  100.00 |  100.00 |   100.00 |
+-------------|---------|---------|----------|-------------------
 ```
 
 ### Enable by Default
@@ -64,11 +64,11 @@ coverageThreshold = 0.9
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-# To set different thresholds for lines and functions
-coverageThreshold = { lines = 0.9, functions = 0.9 }
+# To set different thresholds for lines, functions and branches
+coverageThreshold = { lines = 0.9, functions = 0.9, branches = 0.8 }
 ```
 
-Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold; a key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
+Setting any of these keys makes `bun test --coverage` exit with a non-zero exit code when the coverage of a file is below a threshold. If you omit `lines` or `functions`, it keeps the `0.9` default. Bun checks branch coverage only when you set `branches`: a single number, as in `coverageThreshold = 0.9`, applies to lines and functions. Bun accepts a `statements` key but does not currently enforce it. The check applies with any coverage reporter.
 
 ## Coverage Reporters
 
@@ -91,7 +91,7 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### LCOV Coverage Reporter
 
-The lcov reporter writes an `lcov.info` file to the coverage directory.
+The lcov reporter writes an `lcov.info` file to the coverage directory. For each file it has the function totals (`FNF`, `FNH`), how often each branch was taken (`BRDA`) and how often each line ran (`DA`).
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -293,20 +293,81 @@ test:coverage:
 ### Text Output Explanation
 
 ```
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   85.71 |   90.48 |
- src/        |   85.71 |   90.48 |
-  utils.ts   |  100.00 |  100.00 |
-  api.ts     |   75.00 |   85.71 | 15-18,25
-  main.ts    |   80.00 |   88.89 | 42,50-52
--------------|---------|---------|-------------------
+-------------|---------|---------|----------|-------------------
+File         | % Funcs | % Lines | % Branch | Uncovered Line #s
+-------------|---------|---------|----------|-------------------
+All files    |   85.00 |   91.53 |    77.78 |
+ src/        |   85.00 |   91.53 |    77.78 |
+  utils.ts   |  100.00 |  100.00 |   100.00 |
+  api.ts     |   75.00 |   85.71 |    66.67 | 15-18,25
+  main.ts    |   80.00 |   88.89 |    75.00 | 42,50-52
+-------------|---------|---------|----------|-------------------
 ```
 
 - **% Funcs**: Percentage of functions called during tests
 - **% Lines**: Percentage of executable lines run during tests
-- **Uncovered Line #s**: Line numbers that were never executed
+- **% Branch**: Percentage of branches taken during tests
+- **Uncovered Line #s**: Line numbers that were never executed. For a file where every line ran, the lines with a branch that was not taken
+
+In the `All files` row, `% Branch` is the percentage of all branches in all files. `% Funcs` and `% Lines` are the averages of the files' percentages.
+
+### Branches
+
+A line can run without your tests taking every path through it. In this function one test gives 100% line coverage, and branch coverage shows what is left:
+
+```ts title="greet.ts" icon="/icons/typescript.svg"
+export function greet(user?: { name?: string }) {
+  if (!user) return "Hello!";
+  return `Hello, ${user.name ?? "stranger"}!`;
+}
+```
+
+```ts title="greet.test.ts" icon="/icons/typescript.svg"
+import { expect, test } from "bun:test";
+import { greet } from "./greet";
+
+test("greets a user", () => {
+  expect(greet({ name: "Ada" })).toBe("Hello, Ada!");
+});
+```
+
+```
+-----------|---------|---------|----------|-------------------
+File       | % Funcs | % Lines | % Branch | Uncovered Line #s
+-----------|---------|---------|----------|-------------------
+All files  |  100.00 |  100.00 |    50.00 |
+ greet.ts  |  100.00 |  100.00 |    50.00 | 2-3
+-----------|---------|---------|----------|-------------------
+```
+
+`greet` has four branches, and the test takes two of them: `!user` is false, and `"stranger"` is skipped. The `lcov` reporter writes how often each branch was taken.
+
+Wherever the code can go one of several ways, each way is a branch, whether or not it has code of its own:
+
+| Code                                                          | Branches                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------- |
+| `if`, with or without `else`                                  | The condition is true, the condition is false                 |
+| `a ? b : c`                                                   | `b`, `c`                                                      |
+| `a && b`, `a \|\| b`, `a ?? b`                                | `b` is evaluated, `b` is skipped                              |
+| `a &&= b`, `a \|\|= b`, `a ??= b`                             | `b` is assigned, `b` is skipped                               |
+| `a?.b`, `a?.[b]`, `a?.()`                                     | The rest of the chain is evaluated, the rest is skipped       |
+| A default value, of a parameter or in a destructuring pattern | The default is used, the default is not used                  |
+| `switch`                                                      | Each `case`, `default`, and no match if there is no `default` |
+| `while`, `do`...`while`, and `for` with a condition           | The condition is true, the condition is false                 |
+| `for`...`in`, `for`...`of`                                    | The body runs                                                 |
+| `try`...`catch`                                               | An error is caught, no error is caught                        |
+
+A `for`...`in` or `for`...`of` loop has one branch. Bun does not count how often the loop runs out of items.
+
+In a `switch`, a `case` counts when it matches, not when the `case` before it falls through to it.
+
+A branch counts when the code takes it. If the condition of an `if` throws, neither of its branches counts.
+
+Bun does not report the branches of a file built with `bun build --target=bun` and a source map. It still reports its lines.
+
+#### Compared With Other Tools
+
+Tools do not agree on what a branch is, so the same tests give a different percentage in each. Bun lists both outcomes of `&&`, `||`, `??`, `?.`, the logical assignments, default values and loop conditions. A file therefore has more branches than in Istanbul, which Jest and nyc use. Set a `branches` threshold from what Bun reports for your project, not from the number another tool gave.
 
 ### What to Aim For
 

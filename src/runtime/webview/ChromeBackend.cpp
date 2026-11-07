@@ -897,7 +897,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // The title fetch (sendTitleFetch) chained from a commit.
         // result.result.value is the string. Set m_title, settle Navigate.
         auto inner = jsonField(result, { "result", 6 });
-        // Not a string: Chrome's error page answered, and its title is not the view's.
+        // Not a string: Chrome's error page answered, announced or not, and its title is not the view's.
         auto type = jsonString(jsonField(inner, { "type", 4 }));
         if (type.size() == 6 && memcmp(type.data(), "string", 6) == 0)
             view->m_title = WTF::String::fromUTF8(jsonString(jsonField(inner, { "value", 5 })));
@@ -1150,8 +1150,7 @@ static bool isMainFrame(JSWebView* view, std::span<const char> frameId)
     return memcmp(target.span8().data(), frameId.data(), frameId.size()) == 0;
 }
 
-// Runtime.evaluate of document.title: a PageTitle reply settles the Navigate slot, a PageTitleRefresh only sets m_title.
-// The document says itself when it is Chrome's error page, because Chrome holds the command over a navigation and does not announce every error page.
+// Runtime.evaluate of document.title, or of null on Chrome's error page: a PageTitle reply settles the Navigate slot, a PageTitleRefresh only sets m_title.
 void Transport::sendTitleFetch(JSWebView* view, Method method)
 {
     uint32_t tid = nextId();
@@ -1211,8 +1210,8 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     else
         view->m_chromeErrorPagesDue = 0;
     // A commit while a navigation is armed is its own, whatever the reply said (a <frameset>, a pushState() race): its load ends it.
-    // An error page that navigate() reported is not, except behind reload() or a traversal: Chrome can skip an error page that is counted, and theirs must not be taken for it.
     bool armed = view->m_chromeSettleOnSameDocument || view->m_chromeSettleOnLoad;
+    // Not an error page that navigate() reported, except behind reload() or a traversal: Chrome can skip a counted error page, and theirs must not be taken for it.
     bool own = armed && (!reported || view->m_chromeFailsByErrorPage);
     if (own) {
         view->m_chromeSettleOnSameDocument = false;

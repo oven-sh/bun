@@ -34,7 +34,7 @@ struct WayToDeclaration<'a> {
     asking_file: Option<FileId>,
     steps: Vec<Step>,
     path: Vec<FileId>,
-    files_on_path: FxHashSet<FileId>,
+    names_on_path: FxHashSet<(FileId, Atom)>,
     answers_to_stars: FxHashMap<(FileId, Atom), (bool, Option<usize>)>,
     rings_met: usize,
     stations_on_path: Vec<usize>,
@@ -42,7 +42,7 @@ struct WayToDeclaration<'a> {
 
 impl WayToDeclaration<'_> {
     fn ask(&mut self, file: FileId, name: Atom, asked_by: AskedBy) -> bool {
-        if self.files_on_path.contains(&file) {
+        if self.names_on_path.contains(&(file, name)) {
             self.rings_met += 1;
             return false;
         }
@@ -59,7 +59,7 @@ impl WayToDeclaration<'_> {
         let below = self.stations_on_path.last().copied();
         let asked_from = self.path.last().copied();
         self.path.push(file);
-        self.files_on_path.insert(file);
+        self.names_on_path.insert((file, name));
         let station = self.steps.len();
         if is_station {
             self.stations_on_path.push(station);
@@ -80,7 +80,7 @@ impl WayToDeclaration<'_> {
             *behind = end;
         }
         self.path.pop();
-        self.files_on_path.remove(&file);
+        self.names_on_path.remove(&(file, name));
         if is_kept && rings_met == self.rings_met {
             self.answers_to_stars
                 .insert((file, name), (is_found, below));
@@ -191,7 +191,7 @@ pub(super) fn find_way_to_declaration(
         asking_file,
         steps: Vec::new(),
         path: Vec::new(),
-        files_on_path: FxHashSet::default(),
+        names_on_path: FxHashSet::default(),
         answers_to_stars: FxHashMap::default(),
         rings_met: 0,
         stations_on_path: Vec::new(),

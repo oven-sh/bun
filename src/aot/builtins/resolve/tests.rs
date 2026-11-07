@@ -231,6 +231,8 @@ fn with_parts<R>(
         runtime: Some(RuntimeBindOptions {
             jsx_factory_root: jsx_factory_root.map(|root| atoms.intern(root.as_bytes())),
             jsx_fragment_root: None,
+            jsx_paths: [hir.jsx_pragmas.factory, hir.jsx_pragmas.fragment_factory]
+                .map(|written| written.is_some().then_some(written)),
             emits_decorator_metadata: setup.emits_decorator_metadata,
             hoists_top_level_variables: false,
             object_prototype_takes_names: false,

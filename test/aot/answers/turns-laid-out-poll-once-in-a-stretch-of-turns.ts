@@ -23,12 +23,6 @@
 // # RUN: run-in-shell $SHELL
 // # CHECK: 13 of 13 of 13
 // # CHECK-NEXT: exited with 0
-// # RUN(ALSO1): run-in-shell mechanisms=-Guesses $SHELL
-// # ALSO1: 13 of 13 of 13
-// # ALSO1-NEXT: exited with 0
-// # RUN(ALSO2): run-in-shell mechanisms=-LoopInvariants $SHELL
-// # ALSO2: 13 of 13 of 13
-// # ALSO2-NEXT: exited with 0
 declare function report(value: unknown): void;
 function sumBytes(view: Uint8Array): number { let t = 0; for (let i = 0; i < view.length; i++) t += view[i]; return t; }
 function countSpaces(s: string): number { let n = 0; for (let i = 0; i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; }

@@ -1528,6 +1528,10 @@
     "aot/a-spy-takes-an-accessor-under-an-index-of-an-object-of-compiled-code.test.ts",
     "aot/the-frame-around-a-disposal-that-throws-points-at-the-resource.test.ts",
     "aot/the-runner-points-where-what-is-thrown-ends.test.ts",
-    "aot/what-the-library-hands-out-looks-and-takes-stores-as-in-plain-bun-where-code-from-disk-is-allowed.test.ts"
+    "aot/what-the-library-hands-out-looks-and-takes-stores-as-in-plain-bun-where-code-from-disk-is-allowed.test.ts",
+    "aot/a-database-under-a-chosen-name-is-opened-where-the-program-runs.test.ts",
+    "aot/a-written-alternative-without-an-ending-whose-type-the-call-names-is-in-the-program.test.ts",
+    "aot/an-alternative-that-is-left-outside-does-not-take-the-written-files-with-it.test.ts",
+    "aot/the-functions-of-a-written-object-are-asked-once-whether-they-can-see-it.test.ts"
   ]
 }

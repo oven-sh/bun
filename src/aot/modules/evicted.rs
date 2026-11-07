@@ -13,8 +13,9 @@ use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
 use crate::load::contents::load_names::find_library_modules_stored_in_cache;
 use crate::load::sources::parsed_source;
-use crate::load::{EntryPointKind, SourceKind};
+use crate::load::{EntryPointKind, SourceKind, is_in_node_modules};
 use crate::test_run_report::say_files_that_may_run_again;
+use crate::test_runs::runs_unseen_code;
 use bun_sema::bind::{Bound, CodeUnit, FnOwner, Parent};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, ExprKind, FnId, PatId, PatKind, PropKey, StmtId, StmtKind};
@@ -129,7 +130,29 @@ pub(super) fn find_files_that_run_again(
     for &file in written_and_found.skip(input.written_entry_point_count) {
         is_found_by_load[file.idx()] = true;
     }
+    let (mut loads_out_of_sight, mut may_ask_for_any_file) = (false, false);
+    for &file in &modules.compiled_files {
+        let Some(source) = parsed_source(input.files, file) else {
+            continue;
+        };
+        if input.sources.kind(file) != SourceKind::Program {
+            continue;
+        }
+        let lets_loader_out = source.builtins.loads_unknown_modules()
+            || source.builtins.mentions_evaluator()
+            || runs_unseen_code(source);
+        loads_out_of_sight |= lets_loader_out;
+        may_ask_for_any_file |=
+            lets_loader_out && !is_in_node_modules(input.files.module(file).file_name());
+    }
     let (mut started, mut possible_loads) = (Vec::new(), Vec::new());
+    if input.runs_tests && may_ask_for_any_file {
+        possible_loads.push(PossibleLoad {
+            earliest_time: 0,
+            target: None,
+            may_be_caught: true,
+        });
+    }
     for entry_point in input.sources.entry_points() {
         let is_started = match entry_point.kind {
             EntryPointKind::Main => true,
@@ -146,7 +169,7 @@ pub(super) fn find_files_that_run_again(
             possible_loads.push(PossibleLoad {
                 earliest_time: 0,
                 target: Some(entry_point.file),
-                may_be_caught: input.entry_points_run_again,
+                may_be_caught: input.entry_points_run_again || loads_out_of_sight,
             });
         }
         if is_started && !started.is_empty() {

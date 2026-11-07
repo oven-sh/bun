@@ -65,6 +65,10 @@ impl Declarations<'_, '_> {
                 && let Some(var_symbol) = self.find_annex_b_var(f, start)
             {
                 record_binding_kind(self.bound, var_symbol, BindingKind::Var);
+                insert_bit(
+                    &mut self.bound.runtime.variables_stored_by_functions_of_blocks,
+                    var_symbol.idx(),
+                );
                 let hoisted = AnnexBFunction {
                     function: f,
                     block_symbol,
@@ -119,7 +123,12 @@ impl Declarations<'_, '_> {
         existing.flags.contains(SymFlags::PARAMETER)
             || existing.decls.iter().any(|&decl| {
                 let kind = declaration_kind(hir, bound, decl);
-                matches!(kind, DeclarationKind::Lexical | DeclarationKind::Import)
+                matches!(
+                    kind,
+                    DeclarationKind::Lexical
+                        | DeclarationKind::Import
+                        | DeclarationKind::ImportEquals
+                )
             })
     }
 

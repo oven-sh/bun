@@ -51,6 +51,9 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         };
         let written = SiteOfComputedLoad {
             folder: &folder_of_text,
+            opens_database: loader_attribute(hir, site)
+                .is_some_and(|it| atoms.bytes(it) == b"sqlite")
+                && !embed_attribute(hir, site).is_some_and(|it| atoms.bytes(it) == b"true"),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
         };
         let resolution = resolve_site(context, key, hir, site, alternatives, names, written);

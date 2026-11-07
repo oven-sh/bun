@@ -402,9 +402,14 @@ fn analyze<'s, 'r>(
         JsxRuntime::Classic => names.first().map(|name| atoms.intern(name)),
         JsxRuntime::Automatic => None,
     };
+    let written = |names: &[Vec<u8>]| match file_jsx.runtime {
+        JsxRuntime::Classic => Some(atoms.intern(&names.join(&b'.'))),
+        JsxRuntime::Automatic => None,
+    };
     let runtime = RuntimeBindOptions {
         jsx_factory_root: root(&file_jsx.factory),
         jsx_fragment_root: root(&file_jsx.fragment),
+        jsx_paths: [written(&file_jsx.factory), written(&file_jsx.fragment)],
         emits_decorator_metadata: settings.emits_decorator_metadata,
         hoists_top_level_variables: host.hoists_top_level_variables(path),
         object_prototype_takes_names: host.object_prototype_takes_names(),

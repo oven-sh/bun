@@ -24,8 +24,7 @@ $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
   // `filename` can be a user getter, so read it once, before the module is added to the require map.
   const parentFilename = this?.filename;
-  const paths = options ? options.paths : undefined;
-  const id = $resolveSync(originalId, parentFilename, false, undefined, paths, this, options);
+  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
   const requireMap: RequireMap = this?.$requireMap || $requireMap;
   if (id.startsWith("node:")) {

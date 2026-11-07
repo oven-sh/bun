@@ -16,6 +16,22 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-database-under-a-chosen-name-is-opened-where-the-program-runs.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-written-alternative-without-an-ending-whose-type-the-call-names-is-in-the-program.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/an-alternative-that-is-left-outside-does-not-take-the-written-files-with-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-functions-of-a-written-object-are-asked-once-whether-they-can-see-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/what-the-library-hands-out-looks-and-takes-stores-as-in-plain-bun-where-code-from-disk-is-allowed.test.ts": {
     "default": 60000,
     "asan": 240000

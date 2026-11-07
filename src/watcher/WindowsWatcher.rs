@@ -9,7 +9,6 @@ use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_ptr::{BackRef, RawSlice};
 
-use bun_collections::index_sort;
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;
 
@@ -493,33 +492,17 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
 
     // log("event_count: {d}\n", .{event_count});
 
-    let all_events = &mut this.watch_events[0..event_count];
-    index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
-
-    let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
-
-    for i in 0..all_events.len() {
-        if all_events[i].index == last_event_id {
-            // reshaped for borrowck — copy then merge to avoid two &mut into all_events.
-            let ev = all_events[i];
-            all_events[last_event_index].merge(ev);
-            continue;
-        }
-        last_event_index = i;
-        last_event_id = all_events[i].index;
-    }
-    if all_events.is_empty() {
-        return Ok(());
-    }
+    // Windows events carry no names.
+    let (event_count, _) =
+        WatchEvent::coalesce(&mut this.watch_events[..event_count], &[], &mut []);
 
     bun_core::scoped_log!(
         watcher,
         "calling onFileUpdate (all_events.len = {})",
-        last_event_index + 1
+        event_count
     );
 
-    this.dispatch_file_updates(last_event_index + 1, last_event_index + 1);
+    this.dispatch_file_updates(event_count, 0);
     Ok(())
 }
 

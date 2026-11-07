@@ -1076,9 +1076,23 @@ impl RadixInteger {
     }
 
     pub fn to_f64(self) -> f64 {
-        // The dropped digits only give a power of two and decide a tie: nothing else of them can be seen in 53 bits.
         let scale = 2f64.powi(i32::try_from(self.dropped_bits).unwrap_or(i32::MAX));
-        (self.leading | u64::from(self.is_inexact)) as f64 * scale
+        self.leading_as_f64() * scale
+    }
+
+    /// The integer times 2^`exponent`, as the nearest `f64`. A result below 2^-1022 is rounded a second time.
+    pub fn to_f64_scaled(self, exponent: i64) -> f64 {
+        // Two halves of at most 1023, because `powi` gives 0 for 2^-1024 and below. A larger power is 0 or infinite anyway.
+        let exponent = exponent
+            .saturating_add(i64::from(self.dropped_bits))
+            .clamp(-2046, 2046) as i32;
+        self.leading_as_f64() * 2f64.powi(exponent / 2) * 2f64.powi(exponent - exponent / 2)
+    }
+
+    /// `leading` as the nearest `f64`. The dropped digits only give a power of two and decide a tie: nothing else of them can be seen in 53 bits.
+    #[inline]
+    fn leading_as_f64(self) -> f64 {
+        (self.leading | u64::from(self.is_inexact)) as f64
     }
 }
 

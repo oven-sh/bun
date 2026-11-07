@@ -20,21 +20,31 @@ public:
     EventListener& callback() const { return m_callback; }
     bool isOnce() const { return m_isOnce; }
     bool wasRemoved() const { return m_wasRemoved; }
+    bool hasFired() const { return m_hasFired; }
 
     void markAsRemoved() { m_wasRemoved = true; }
+    void markAsFired() { m_hasFired = true; }
 
 private:
     SimpleRegisteredEventListener(Ref<EventListener>&& listener, bool once)
         : m_isOnce(once)
         , m_wasRemoved(false)
+        , m_hasFired(false)
         , m_callback(WTF::move(listener))
     {
     }
 
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
+    bool m_hasFired : 1;
     Ref<EventListener> m_callback;
 };
+
+struct SameSizeAsSimpleRegisteredEventListener : RefCounted<SameSizeAsSimpleRegisteredEventListener> {
+    bool flags;
+    void* callback;
+};
+static_assert(sizeof(SimpleRegisteredEventListener) == sizeof(SameSizeAsSimpleRegisteredEventListener), "every listener of every native EventEmitter has one of these");
 
 using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 2, CrashOnOverflow, 6>;
 using EntriesVector = Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>, 4, CrashOnOverflow, 8>;

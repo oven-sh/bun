@@ -782,30 +782,6 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-static JSC::JSValue parseJSONModuleSource(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& jsonSource, const WTF::String& path)
-{
-    JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
-    auto* exception = scope.exception();
-    if (!exception) [[likely]]
-        return value;
-
-    (void)scope.tryClearException();
-
-    WTF::String message;
-    if (auto* originalError = dynamicDowncast<JSC::ErrorInstance>(exception->value())) {
-        message = originalError->sanitizedMessageString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    if (message.isEmpty())
-        message = "JSON Parse error"_s;
-
-    auto* error = JSC::createSyntaxError(globalObject, makeString(path, ": "_s, message));
-    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(error); errorInstance && !path.isEmpty())
-        errorInstance->setSourceURL(path);
-    scope.throwException(globalObject, error);
-    return {};
-}
-
 // JSCommonJSModule::evaluate(ResolvedSource&) would cache plugin contents as the file's own source, so make and cache the provider here.
 static RefPtr<JSC::SourceProvider> commonJSProviderOfPluginContents(Zig::GlobalObject* globalObject, const String& key, const BunString* typeAttribute, const CodeString* pluginContents, ResolvedSource& source)
 {
@@ -1052,7 +1028,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
         WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = parseJSONModuleSource(globalObject, scope, jsonSource, specifierWtfString);
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
         RETURN_IF_EXCEPTION(scope, {});
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
@@ -1472,7 +1448,7 @@ static JSValue fetchESMSourceCode(
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
         WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = parseJSONModuleSource(globalObject, scope, jsonSource, specifier->toWTFString(BunString::ZeroCopy));
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             (void)scope.tryClearException();

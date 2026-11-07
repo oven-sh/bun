@@ -346,11 +346,7 @@ extern "C" fn Bun__getDefaultLoader(
                 }
             }
         };
-    match loader {
-        // `to_api` would turn it into `json`.
-        Loader::Jsonc => api::Loader::jsonc,
-        loader => loader.to_api(),
-    }
+    loader.to_api()
 }
 
 /// C++ entry point: `IsolatedModuleCache`'s key for plugin-supplied contents and their loader. Never 0.

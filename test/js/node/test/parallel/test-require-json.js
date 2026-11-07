@@ -28,5 +28,5 @@ assert.throws(function() {
   require(fixtures.path('invalid.json'));
 }, {
   name: 'SyntaxError',
-  message: /test[/\\]fixtures[/\\]invalid\.json: /,
+  message: 'JSON Parse error: Expected \'}\'',
 });

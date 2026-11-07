@@ -2281,8 +2281,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getUndefinedProperty`: `name?: undefined` with the declarations and the `readonly` of `prop`,
-    /// the sibling it stands in for (TypeScript 7.1, microsoft/TypeScript#64728).
+    /// `getUndefinedProperty`: `name?: undefined` with the declarations and the `readonly` of `prop`.
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
         // `undefinedOrMissingType`, which isn't widened again wherever it's copied to.
         let missing = if self.p.files.options.exact_optional_property_types {

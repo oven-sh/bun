@@ -187,7 +187,7 @@ root = "./__tests__"
 
 ### `test.preload`
 
-Same as the top-level `preload` field, but for `bun test`. Of the two fields, `bun test` reads only `test.preload`. `bun run` and `bun <file>` read only the top-level `preload`. To load a script for both, add it to both fields.
+Same as the top-level `preload` field, but for `bun test`. Of the two fields, `bun test` reads only `test.preload`, including when a `package.json` script runs it. `bun <file>` and `bun run <file>` read only the top-level `preload`. To load a script for both, add it to both fields.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

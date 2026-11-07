@@ -79,7 +79,7 @@ public:
     void dispatchCloseEvent();
 
     // Transfer machinery.
-    static ExceptionOr<Vector<TransferredMessagePort>> disentanglePorts(Vector<RefPtr<MessagePort>>&&);
+    static Vector<TransferredMessagePort> disentanglePorts(Vector<RefPtr<MessagePort>>&&);
     static Vector<RefPtr<MessagePort>> entanglePorts(ScriptExecutionContext&, Vector<TransferredMessagePort>&&);
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
     TransferredMessagePort disentangle();

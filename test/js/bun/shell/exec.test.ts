@@ -42,6 +42,11 @@ describe("bun exec", () => {
     )
     .runAsTest("write a lot of data");
 
+  TestBuilder.command`${BUN} exec ${`echo "[$(echo 'a ')]"`}`
+    .env(bunEnv)
+    .stdout("[a ]\n")
+    .runAsTest("quoted command substitution keeps a trailing space");
+
   describe("--help works", () => {
     // prettier-ignore
     const programs = [

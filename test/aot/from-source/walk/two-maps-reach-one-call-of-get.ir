@@ -1,0 +1,18 @@
+# -- source: main.cts
+# const rounds = Number(process.argv[2] ?? 3);
+# const box = JSON.parse("{}");
+# const theirs = new Map<string, string>();
+# theirs.set("a", "x");
+# box.theirs = theirs;
+# const mine = new Map<string, number>();
+# mine.set("a", 1);
+# function joined(this: Map<string, number>, keys: string[]): string { let text = ""; for (const key of keys) text = text + this.get(key); return text; }
+# let last = "";
+# for (let r = 0; r < rounds; r++) last = joined.call(mine, ["a", "a"]);
+# console.log(last, joined.call(box.theirs, ["a"]));
+# -- end of source
+# Two Maps reach the call of get(), one that holds whole numbers and one that holds texts: what one of them holds says nothing of what the receiver of this call holds, so the read is not typed by it.
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: CallInline {{*}} inlineBuiltin=MapGet
+# CHECK-NOT: kind=ProvenContents subjectKind=Operation type=i32

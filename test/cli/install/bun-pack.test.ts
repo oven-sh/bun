@@ -5189,6 +5189,37 @@ describe.concurrent("bins", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A NUL ends the path that the OS gets. `files` leaves everything but index.js out.
+  test.each([
+    { bin: "cli.js\u0000" },
+    { bin: { a: "cli.js\u0000.js", b: "bins/a.js\u0000" } },
+    { bin: "package.json\u0000" },
+    { bin: ".npmrc\u0000" },
+    { directories: { bin: "bins\u0000" } },
+    { directories: { bin: "..\u0000" } },
+  ])("%j is ignored", async fields => {
+    using dir = tempDir("pack-bins-nul", {
+      "above.js": indexJs,
+      "pkg/package.json": JSON.stringify({ name: "pack-bins-nul", version: "1.0.0", files: ["index.js"], ...fields }),
+      "pkg/index.js": indexJs,
+      "pkg/cli.js": indexJs,
+      "pkg/bins/a.js": indexJs,
+      "pkg/.npmrc": "registry=https://registry.example/",
+    });
+    const pkg = join(dir, "pkg");
+
+    const { err, exitCode } = await runPack(pkg);
+    expect(err).toBe("");
+    const tarball = readTarball(join(pkg, "pack-bins-nul-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/index.js", executable: false },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // longer than a directory entry can be
   const tooLong = Buffer.alloc(300, "a").toString();
   test.each([

@@ -4,7 +4,7 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./harness/commands";
+import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
@@ -66,7 +66,7 @@ describe.skipIf(!!unsupported)("what a promise of the host settles with", () => 
           exitCode: 0,
         });
         expect((await build("lied", LIE)).exitCode).toBe(0);
-        const lied = await spawned([executable("lied")], folder, env);
+        const lied = await spawned([executable("lied")], folder, { ...env, ...withoutCrashReport });
         expect(lied.stderr).toContain(stops);
         expect(lied.stdout).not.toContain("went on");
         expect(lied.exitCode).not.toBe(0);

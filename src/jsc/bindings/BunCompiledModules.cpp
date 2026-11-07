@@ -1138,7 +1138,7 @@ static std::optional<AOT::ModuleID> evaluatedFileOfProgram(Zig::GlobalObject* gl
         return std::nullopt;
     auto module = compiledModuleForPath(key);
     // `bun test` takes a file that imported a mock out of its loader with the mock, and loads it anew when a graph comes by.
-    if (!module || !AOT::isEvaluatedFile(globalObject, *module) || AOT::wasLetGoByLoader(globalObject, *module) || AOT::hasMockThatWaitsOrRuns(globalObject, *module))
+    if (!module || !AOT::isEvaluatedFile(globalObject, *module) || AOT::wasLetGoByLoader(globalObject, *module) || AOT::hasMockThatWaitsOrRuns(globalObject, *module) || AOT::isKeyOfMockInPlaceEmpty(globalObject, *module))
         return std::nullopt;
     return AOT::isLeftAloneByMock(globalObject, *module) && !AOT::hasMockInPlace(globalObject, *module) ? std::nullopt : module;
 }

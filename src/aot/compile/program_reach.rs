@@ -27,6 +27,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
 use super::removable::{ClassChecks, Removable};
+use crate::builtins::RuntimeModule;
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use crate::builtins::table::{self, BuiltinId, MemberLookup};
 use crate::ir::generated::{ImportPhase, ModuleRequestKind};
@@ -2173,6 +2174,7 @@ struct Found {
     deletions_from_module_cache: Vec<(FileId, ExprId)>,
     stores_loader_function: bool,
     files_that_computed_names_may_ask_for: Vec<FileId>,
+    readers_of_built_in_modules: Vec<(FileId, RuntimeModule)>,
 }
 
 impl Found {
@@ -2194,6 +2196,8 @@ impl Found {
         self.stores_loader_function |= other.stores_loader_function;
         self.files_that_computed_names_may_ask_for
             .append(&mut other.files_that_computed_names_may_ask_for);
+        self.readers_of_built_in_modules
+            .append(&mut other.readers_of_built_in_modules);
     }
 
     fn holds_what_waits(&self) -> bool {
@@ -2845,6 +2849,10 @@ impl Reacher<'_, '_, '_> {
             HandedOn::Namespace(module) => module,
         };
         self.note_statement_runs(importer, definer);
+        if let ModuleRef::Runtime(module) = definer {
+            let readers = &mut self.found.readers_of_built_in_modules;
+            readers.push((importer, module));
+        }
         if matches!(handed_on, HandedOn::Variable(defined) if defined.file == importer) {
             return;
         }
@@ -3858,6 +3866,7 @@ pub(crate) struct ReachedModules {
     pub found_by_name: Vec<ModuleRef>,
     pub data_found_by_name: Vec<ModuleRef>,
     pub left_out_inner_modules: Vec<ModuleRef>,
+    pub readers_of_built_in_modules: Vec<(FileId, ModuleRef)>,
     pub replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     pub deletions_from_module_cache: Vec<(FileId, ExprId)>,
     pub stores_loader_function: bool,
@@ -3943,6 +3952,9 @@ fn fingerprint(
     }
     for &(file, entry) in &reached.deletions_from_module_cache {
         add(10, file, u64::from(entry.0));
+    }
+    for &(file, module) in &reached.readers_of_built_in_modules {
+        add(15, file, FxBuildHasher.hash_one(module));
     }
     let mut sums: Vec<(&[FileId], u64)> = (files.compiled_files().chunks(FILES_OF_A_TASK))
         .map(|files| (files, 0))
@@ -4074,6 +4086,13 @@ pub(crate) fn find_left_out_code(
     reached_modules.found_by_name = in_order(loads.files_found);
     reached_modules.replaced_loader_hooks = found.replaced_loader_hooks;
     reached_modules.stores_loader_function = found.stores_loader_function;
+    let mut readers = found.readers_of_built_in_modules;
+    readers.sort_unstable_by_key(|&(file, module)| (file, module.registry_id()));
+    readers.dedup();
+    let readers = readers.into_iter();
+    reached_modules.readers_of_built_in_modules = readers
+        .map(|(file, module)| (file, ModuleRef::Runtime(module)))
+        .collect();
     reached_modules.deletions_from_module_cache = found.deletions_from_module_cache;
     reached_modules
         .deletions_from_module_cache

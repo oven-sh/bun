@@ -5,7 +5,7 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./harness/commands";
+import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
@@ -41,7 +41,7 @@ describe.skipIf(!!unsupported)("a value that the host computes", () => {
         exitCode: 0,
       });
       expect((await build("lied", "--aot-testing=NativeCodeAnswersNullish")).exitCode).toBe(0);
-      const lied = await spawned([executable("lied")], folder, env);
+      const lied = await spawned([executable("lied")], folder, { ...env, ...withoutCrashReport });
       expect(lied.stdout).toBe("");
       expect(lied.stderr).toContain(
         "AOT: process.pid (call) is declared as undefined | null, and native code answered with something else: number.",

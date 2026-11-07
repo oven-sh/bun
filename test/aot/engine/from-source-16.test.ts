@@ -1,3 +1,3 @@
 import { fromSourceTests } from "./answers";
 
-fromSourceTests(16, 16);
+fromSourceTests(16, 32);

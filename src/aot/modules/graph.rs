@@ -373,6 +373,20 @@ impl ModuleGraph {
         }
     }
 
+    pub fn add_imports(&mut self, imports: &[(FileId, ModuleRef)]) {
+        self.plan.reopen();
+        for &(importer, target) in imports {
+            let index = self.row_by_file[importer.idx()].expect("an importer has a row");
+            let requests = &mut self.rows[index as usize].requests;
+            let is_asked = |request: &ModuleRequest| {
+                request.target == target && request.kind == ModuleRequestKind::Import
+            };
+            if !requests.iter().any(is_asked) {
+                requests.push(ModuleRequest::import(target));
+            }
+        }
+    }
+
     pub fn leave_out_inner_modules(&mut self, modules: &[ModuleRef]) {
         let mut left_out: Vec<(FileId, FnId)> = modules
             .iter()

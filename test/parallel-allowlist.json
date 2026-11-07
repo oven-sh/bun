@@ -1643,6 +1643,7 @@
     "aot/a-database-under-a-written-path-made-of-the-own-folder-is-the-one-beside-the-file.test.ts",
     "aot/a-public-field-laid-by-the-bundlers-helper-sees-what-a-test-lays-above-every-object.test.ts",
     "aot/hello-world-keeps-few-families-of-operations.test.ts",
-    "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts"
+    "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts",
+    "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts"
   ]
 }

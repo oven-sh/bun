@@ -497,6 +497,8 @@ fn what_a_program_lays_under_a_name_that_some_runs_give_process_answers_native_c
         "Proxy.revocable(x, y);",
         "Reflect.construct(Proxy, [x, y]);",
         "const Made = Proxy; new Made(x, y);",
+        "Proxy instanceof x;",
+        "const Made = Proxy; Made instanceof x;",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(

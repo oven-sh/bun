@@ -50,6 +50,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     }
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
+    graph.add_imports(&reached.readers_of_built_in_modules);
 }
 
 fn warn_where_modules_are_reset(

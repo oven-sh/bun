@@ -169,6 +169,10 @@
     "windows": 10300,
     "windows-aarch64": 13900
   },
+  "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -3669,68 +3673,132 @@
     "asan": 139600
   },
   "aot/engine/from-source-1.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-2.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-3.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-4.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-5.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-6.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-7.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-8.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-9.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-10.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-11.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-12.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-13.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-14.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-15.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/from-source-16.test.ts": {
-    "default": 55000,
-    "asan": 250000
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-17.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-18.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-19.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-20.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-21.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-22.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-23.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-24.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-25.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-26.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-27.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-28.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-29.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-30.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-31.test.ts": {
+    "default": 28000,
+    "asan": 160000
+  },
+  "aot/engine/from-source-32.test.ts": {
+    "default": 28000,
+    "asan": 160000
   },
   "aot/engine/ir-1.test.ts": {
     "default": 11000,

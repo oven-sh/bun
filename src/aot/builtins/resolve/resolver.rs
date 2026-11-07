@@ -936,7 +936,8 @@ impl<'a, 's> Resolver<'a, 's> {
                         .iter()
                         .any(|&id| is_evaluator(table::canonical_id(id)))));
         let may_make_proxy = input.dialect == SourceDialect::Program
-            && (output.called.iter()).any(|&id| table::root_of(id) == BuiltinId::Proxy);
+            && (output.called.iter().chain(handed_to_hooks))
+                .any(|&id| table::root_of(id) == BuiltinId::Proxy);
         let reaches_module_cache =
             input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache;
         let mut ids = mentioned.iter();

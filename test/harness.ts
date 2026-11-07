@@ -2577,18 +2577,14 @@ export const rss: () => number = process.memoryUsage.rss;
  */
 export function testThatMeasuresOwnMemory(file: string): typeof test {
   if (!isASAN || process.env.ASAN_OPTIONS?.includes("quarantine_size_mb=0")) return test;
-  test(
-    "in a child without ASAN's quarantine",
-    async () => {
-      await using child = Bun.spawn({
-        cmd: [bunExe(), "test", "--timeout=270000", file],
-        env: withoutAsanQuarantine(bunEnv),
-        stdio: ["ignore", "inherit", "inherit"],
-      });
-      expect(await child.exited).toBe(0);
-    },
-    270_000,
-  );
+  test("in a child without ASAN's quarantine", async () => {
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "test", "--timeout=270000", file],
+      env: withoutAsanQuarantine(bunEnv),
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    expect(await child.exited).toBe(0);
+  }, 270_000);
   return test.skip as typeof test;
 }
 

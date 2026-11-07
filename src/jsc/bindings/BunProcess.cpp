@@ -604,7 +604,21 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
     Bun::NodeExeImports::Scope nodeExeImports;
-    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+    DWORD errorId = 0;
+    WTF::String unresolvedImport;
+    auto loaded = Bun::DLHandleMap::singleton().load(*globalObject, [&]() -> HMODULE {
+        HMODULE library = Bun__LoadLibraryBunString(&filename_str);
+        if (!library) {
+            errorId = GetLastError();
+            return nullptr;
+        }
+        unresolvedImport = nodeExeImports.unresolvedImportError(library);
+        if (unresolvedImport.isNull())
+            return library;
+        // Closed here, inside load(), so that no other thread gets the handle of a library that failed this check.
+        closeDLHandle(library);
+        return nullptr;
+    });
 #else
 #if OS(LINUX)
     // A glibc-linked addon loaded into a musl process segfaults inside the
@@ -626,12 +640,21 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #endif
     // Keep the addon's name in crash reports until this call returns, because its init functions run after dlopen().
     auto endDlOpenAction = WTF::makeScopeExit([guard = CrashHandler__beginDlOpenAction(utf8.legacyCStringPointer())] { CrashHandler__endDlOpenAction(guard); });
-    void* handle = dlopen(utf8.legacyCStringPointer(), RTLD_LAZY);
+    WTF::String loadError;
+    auto loaded = Bun::DLHandleMap::singleton().load(*globalObject, [&]() -> void* {
+        void* library = dlopen(utf8.legacyCStringPointer(), RTLD_LAZY);
+        if (!library)
+            loadError = WTF::String::fromUTF8(dlerror());
+        return library;
+    });
 #endif
+    auto handle = loaded.handle;
 
     if (!handle) {
 #if OS(WINDOWS)
-        DWORD errorId = GetLastError();
+        if (!unresolvedImport.isNull())
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": "_s, unresolvedImport));
+
         LPWSTR messageBuffer = nullptr;
         DWORD charCount = FormatMessageW(
             FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, // Prevents automatic line breaks
@@ -662,43 +685,23 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         if (messageBuffer)
             LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
 #else
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        WTF::String msg = loadError;
 #endif
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
 
-#if OS(WINDOWS)
-    if (WTF::String unresolved = nodeExeImports.unresolvedImportError(handle); !unresolved.isNull()) {
-        closeDLHandle(handle);
-        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": "_s, unresolved));
-    }
-#endif
+    using LoadedKind = Bun::DLHandleMap::Loaded::Kind;
 
-    if (globalObject->napiModuleRegisterCallCount != 0) {
+    if (loaded.kind == LoadedKind::SelfRegistered) {
         // Module self-registered via static constructor(s).
-        // Move pending registrations into locals before iterating: an
-        // nm_register_func can itself call napi_module_register(), which
-        // appends to m_pendingNapiModules. Appending to a WTF::Vector while
-        // range-for iterating it reallocates the buffer and leaves the
-        // iterator dangling.
-        auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
-        auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
-
-        if (handle) {
-            // Save all NAPI module registrations
-            for (auto& mod : pendingNapiModules) {
-                auto* heapModule = new napi_module(mod);
-                Bun::DLHandleMap::singleton().add(handle, heapModule);
-            }
-
-            // Save all V8 C++ module registrations
-            for (auto* mod : pendingV8Modules) {
-                Bun::DLHandleMap::singleton().add(handle, mod, vm);
-            }
-        }
+        // load() moved the pending registrations out of the global object
+        // before iterating: an nm_register_func can itself call
+        // napi_module_register(), which appends to m_pendingNapiModules.
+        // Appending to a WTF::Vector while range-for iterating it reallocates
+        // the buffer and leaves the iterator dangling.
 
         // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
-        for (auto* mod : pendingV8Modules) {
+        for (auto* mod : loaded.v8Modules) {
             node::executePendingV8Module(globalObject, mod, strongModule.get());
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -707,29 +710,29 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
         // drain those too once the current batch is done.
         for (;;) {
-            for (auto& mod : pendingNapiModules) {
+            for (auto& mod : loaded.napiModules) {
                 Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
             }
             if (globalObject->m_pendingNapiModules.isEmpty())
                 break;
-            pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+            loaded.napiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
         return JSValue::encode(jsUndefined());
     }
 
-    // Module didn't self-register on this load. Check if we have cached registrations.
-    if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
-        if (!Bun::DLHandleMap::singleton().claimForVM(handle, vm)) {
-            closeDLHandle(handle);
-            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                makeString("Module did not self-register: '"_s, filename, "'."_s));
-        }
+    if (loaded.kind == LoadedKind::OwnedByAnotherVM) {
+        closeDLHandle(handle);
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+            makeString("Module did not self-register: '"_s, filename, "'."_s));
+    }
 
+    // Module didn't self-register on this load. Check if we have cached registrations.
+    if (loaded.kind == LoadedKind::Replay) {
         // Replay all registrations from this handle. napi ones only queue into
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
-        for (auto& registration : *cachedModules) {
+        for (auto& registration : loaded.registrations) {
             if (auto* v8Module = std::get_if<Bun::V8ModuleRegistration>(&registration)) {
                 node::executePendingV8Module(globalObject, v8Module->module, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});

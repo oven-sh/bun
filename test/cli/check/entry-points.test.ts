@@ -307,6 +307,28 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   });
 });
 
+// A server's import of a page is typed by the `*.html` declaration. The manifest module the bundler makes for the
+// page has the page's path: with `allowJs`, the checker must not take it for the page's text.
+test("an HTML page a server imports is typed by its declaration, with allowJs", async () => {
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true, allowJs: true }),
+    "html.d.ts": html,
+    "index.html": page("./client.ts"),
+    "client.ts": `export const n: number = 1;\n`,
+    "server.ts": `/// <reference path="./html.d.ts" />\nimport page from "./index.html";\nexport const p: unknown = page;\n`,
+  });
+  await using proc = spawn({
+    timeout: longLimit,
+    cmd: [bunExe(), "build", "--check", "--target=bun", "server.ts", "--outdir", "out"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ codes: [...new Set((stdout + stderr).match(/\bTS\d+/g))], exitCode }).toEqual({ codes: [], exitCode: 0 });
+});
+
 // Only the beginning of a line longer than 1,000 bytes is stored with an error, because a one-line bundle can have
 // thousands of errors.
 test("Bun.build reports the position of an error far into a long line, without the line's text", async () => {

@@ -2392,6 +2392,8 @@ pub mod parse_worker {
             contents_is_recycled: false,
             ..Default::default()
         });
+        // `bump` frees `source` without dropping it.
+        let _release = bun_ast::ReleasePositionIndex(&source.position_index);
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(entry_contents)

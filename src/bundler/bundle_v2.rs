@@ -4148,6 +4148,7 @@ pub mod bv2_impl {
                 contents_is_recycled: new_source.contents_is_recycled,
                 identifier_name: new_source.identifier_name.clone(),
                 index: new_source.index,
+                position_index: Default::default(),
             };
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: new_source,
@@ -5408,6 +5409,7 @@ pub mod bv2_impl {
             // arena; non-asset plugin bytes are owned by `free_list`), so this loop
             // is N×branch with no work for plugin-free bundles.
             for s in self.graph.input_files.items_source_mut() {
+                s.position_index.release();
                 if matches!(s.contents, std::borrow::Cow::Owned(_)) {
                     s.contents = std::borrow::Cow::Borrowed(b"");
                 }

@@ -1051,6 +1051,7 @@ impl PackageJSON {
             contents_is_recycled: json_source.contents_is_recycled,
             identifier_name: json_source.identifier_name.clone(),
             index: json_source.index,
+            position_index: Default::default(),
         };
         // See SAFETY note on `contents_static` above — move ownership of the
         // backing buffer into the returned struct (replaces the prior

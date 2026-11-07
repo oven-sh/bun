@@ -6464,6 +6464,236 @@ describe("parse error flood", () => {
     expect(stdout).toContain("DONE");
     expect(exitCode).toBe(0);
   }, 90_000);
+
+  // A comment of 16 MB makes one walk over the source cost about 20 ms on a release build.
+  // With 10,000 diagnostics, a walk for each of them takes minutes. One walk for all of them takes a second or two.
+  const FILLER = `"/*" + Buffer.alloc(16 << 20, "x").toString() + "*/"`;
+  const DIAGNOSTICS = 10_000;
+  const NAMES = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const position = `({ message, position: p }) => [message, p.line, p.column]`;
+  const summary = `errors => JSON.stringify({
+    count: errors.length,
+    first: [(${position})(errors[0]), (${position})(errors[0].notes[0])],
+    last: [(${position})(errors.at(-1)), (${position})(errors.at(-1).notes[0])],
+    lineText: errors.at(-1).notes[0].position.lineText,
+  })`;
+
+  async function flood(cmd, options = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+      ...options,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const transformSync = input => `
+    let thrown;
+    try {
+      new Bun.Transpiler({ loader: "js" }).transformSync(${input});
+    } catch (e) {
+      thrown = e;
+    }
+    console.log((${summary})(thrown.errors));
+  `;
+
+  it.concurrent(
+    "finds positions in linear time when the notes are at more places than there are cursors",
+    async () => {
+      // Eight names are declared after the comment. Then each one is declared again, in turn.
+      const declarations = NAMES.map(name => `let ${name};\n`).join("");
+      const rounds = DIAGNOSTICS / NAMES.length + 1;
+      const result = await flood([
+        "-e",
+        transformSync(
+          `${FILLER} + "\\n" + Buffer.alloc(${declarations.length * rounds}, ${JSON.stringify(declarations)}).toString()`,
+        ),
+      ]);
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: 256,
+          first: [
+            ['"a" has already been declared', 10, 5],
+            ['"a" was originally declared here', 2, 5],
+          ],
+          last: [
+            ['"h" has already been declared', 265, 5],
+            ['"h" was originally declared here', 9, 5],
+          ],
+          lineText: "let h;",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time when the parser builds the note outside the Log",
+    async () => {
+      // The error of each hoisted `var` is at the `let`. Its note is at the `var`, further on than the last one.
+      const result = await flood([
+        "-e",
+        transformSync(`${FILLER} + "\\nlet x;\\n" + Buffer.alloc(${9 * DIAGNOSTICS}, "{var x;}\\n").toString()`),
+      ]);
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: 256,
+          first: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 3, 6],
+          ],
+          last: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 258, 6],
+          ],
+          lineText: "{var x;}",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time at the start of one long line",
+    async () => {
+      // The shape of a minified bundle that was cut short: the errors are at the start of a line that goes on for 16 MB.
+      const declarations = NAMES.map(name => `let ${name};`).join("");
+      const rounds = DIAGNOSTICS / NAMES.length + 1;
+      const result = await flood([
+        "-e",
+        transformSync(
+          `Buffer.alloc(${declarations.length * rounds}, ${JSON.stringify(declarations)}).toString() + ${FILLER}`,
+        ),
+      ]);
+      const line = declarations.repeat(4);
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: 256,
+          first: [
+            ['"a" has already been declared', 1, declarations.length + 5],
+            ['"a" was originally declared here', 1, 5],
+          ],
+          last: [
+            ['"h" has already been declared', 1, declarations.length + 255 * 6 + 5],
+            ['"h" was originally declared here', 1, 47],
+          ],
+          // 40 bytes before the note and 80 bytes after it.
+          lineText: line.slice(46 - 40, 46 + 80),
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time for `bun run`",
+    async () => {
+      using dir = tempDir("parse-error-flood-run", {});
+      const path = join(String(dir), "flood.js");
+      await Bun.write(
+        path,
+        "/*" +
+          Buffer.alloc(16 << 20, "x").toString() +
+          "*/\nlet x;\n" +
+          Buffer.alloc(9 * DIAGNOSTICS, "{var x;}\n").toString(),
+      );
+      const { stdout, stderr, exitCode } = await flood(["run", path]);
+      // `bun run` prints the first 256 errors.
+      expect({
+        stdout,
+        errors: stderr.split("error: x has already been declared").length - 1,
+        firstNote: stderr.includes("flood.js:3:6"),
+        lastNote: stderr.includes("flood.js:258:6"),
+        exitCode,
+      }).toEqual({ stdout: "", errors: 256, firstNote: true, lastNote: true, exitCode: 1 });
+    },
+    90_000,
+  );
+
+  const build = options => `
+    const result = await Bun.build({ ...${JSON.stringify(options)}, throw: false });
+    console.log((${summary})(result.logs));
+  `;
+
+  it.concurrent(
+    "finds positions in linear time for `Bun.build`",
+    async () => {
+      using dir = tempDir("parse-error-flood-build", {});
+      await Bun.write(
+        join(String(dir), "flood.js"),
+        "/*" +
+          Buffer.alloc(16 << 20, "x").toString() +
+          "*/\nlet x;\n" +
+          Buffer.alloc(9 * DIAGNOSTICS, "{var x;}\n").toString(),
+      );
+      const result = await flood(["-e", build({ entrypoints: ["./flood.js"] })], { cwd: String(dir) });
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: DIAGNOSTICS,
+          first: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 3, 6],
+          ],
+          last: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", DIAGNOSTICS + 2, 6],
+          ],
+          lineText: "{var x;}",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time when the note is in another file",
+    async () => {
+      // Each `require()` of a file with a top-level await is an error, with a note at the `await`.
+      using dir = tempDir("parse-error-flood-link", {});
+      const call = "require('./awaits.js');\n";
+      await Bun.write(join(String(dir), "entry.js"), Buffer.alloc(call.length * DIAGNOSTICS, call).toString());
+      await Bun.write(
+        join(String(dir), "awaits.js"),
+        "/*" + Buffer.alloc(16 << 20, "x").toString() + "*/\nawait 0;\nexport {};\n",
+      );
+      const result = await flood(["-e", build({ entrypoints: ["./entry.js"], target: "bun" })], {
+        cwd: String(dir),
+      });
+      const error =
+        'This require call is not allowed because the transitive dependency "awaits.js" contains a top-level await';
+      const note = "The top-level await in awaits.js is here:";
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: DIAGNOSTICS,
+          first: [
+            [error, 1, 9],
+            [note, 2, 1],
+          ],
+          last: [
+            [error, DIAGNOSTICS, 9],
+            [note, 2, 1],
+          ],
+          lineText: "await 0;",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
 });
 
 describe("multi-line comment scanning", () => {

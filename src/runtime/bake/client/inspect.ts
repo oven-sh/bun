@@ -247,6 +247,9 @@ function formatObject(ctx: InspectContext, value: any, recurseTimes: number) {
   return output;
 }
 
+// Hoisted so that the test of each own key in formatArray allocates nothing.
+const arrayIndexKey = /^(?:0|[1-9]\d*)$/;
+
 /**
  * Format an array
  * @param {Object} ctx - Context object
@@ -275,14 +278,12 @@ function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
   }
 
   // Add array properties that aren't indices
-  const keys = Object.keys(value).filter(key => {
-    return !(Number(key) >= 0 && Number(key) < value.length && Number(key) === +key);
-  });
-
-  if (keys.length > 0) {
-    for (const key of keys) {
-      output.push(`${key}: ${formatValue(ctx, value[key], recurseTimes)}`);
-    }
+  const length = value.length;
+  const keys = Object.keys(value);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (arrayIndexKey.test(key) && +key < length) continue;
+    output.push(`${formatPropertyKey(key)}: ${formatValue(ctx, value[key], recurseTimes)}`);
   }
 
   return `[ ${output.join(", ")} ]`;

@@ -275,7 +275,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_INVALID_ARRAY", Error, "RedisError"],
   ["ERR_REDIS_INVALID_BULK_STRING", Error, "RedisError"],
   ["ERR_REDIS_INVALID_COMMAND", Error, "RedisError"],
-  ["ERR_REDIS_INVALID_DATABASE", Error, "RedisError"],
   ["ERR_REDIS_INVALID_ERROR_STRING", Error, "RedisError"],
   ["ERR_REDIS_INVALID_INTEGER", Error, "RedisError"],
   ["ERR_REDIS_INVALID_PASSWORD", Error, "RedisError"],

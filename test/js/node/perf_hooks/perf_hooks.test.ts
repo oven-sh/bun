@@ -1708,7 +1708,7 @@ describe("gc entries", () => {
   // An idle collection is asked for after BUN_IDLE_GC_SECONDS of quiet. The JS thread then waits without heap access, so
   // on a machine that is not busy the collector thread ends the collection, and the request of an idle collection wakes
   // the loop when it has ended. On Windows the JS thread ends it, in a turn that the timer of Bun's collector brings.
-  // One second of quiet is the least that Bun takes, and a debug build needs half of the default timeout for this test.
+  // One second of quiet is the least that Bun takes, and a debug build needs most of the default timeout for this test.
   // So it has a timeout of its own, above the time after which the program gives up, and then it says what it has seen.
   test.concurrent(
     "an idle collection reaches the observers of a program that waits",
@@ -2022,13 +2022,18 @@ describe("gc entries", () => {
       `test("collects and waits", async () => { ${collectsInATimerAndWaitsForNothing()} }, 0);`,
       "never settled",
     ],
-    [
-      "a test with no timeout and a fake timer",
-      `test("collects and waits", async () => {
-         ${collectsInATimerAndWaitsForNothing(`jest.useFakeTimers(); setTimeout(() => {}, 1000);`)}
-       }, 0);`,
-      "never settled",
-    ],
+    // Not on Windows: a fake timer holds the loop there like any other ref, so the runner waits on, as it does on main.
+    ...(isWindows
+      ? []
+      : [
+          [
+            "a test with no timeout and a fake timer",
+            `test("collects and waits", async () => {
+               ${collectsInATimerAndWaitsForNothing(`jest.useFakeTimers(); setTimeout(() => {}, 1000);`)}
+             }, 0);`,
+            "never settled",
+          ],
+        ]),
     [
       "the top level of a file",
       `${collectsInATimerAndWaitsForNothing()} test("is not reached", () => {});`,

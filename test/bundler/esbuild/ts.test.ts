@@ -665,7 +665,7 @@ describe("bundler", () => {
             this.hello = 3;
           }
         };
-        const {Foo} = await import('./entry.js');
+        const {Foo} = await import('./out.js');
         import assert from 'assert';
         const instance = new Foo();
         console.log(instance.foo, instance.bar, instance.hello);

@@ -64,7 +64,12 @@ impl SplitBundlerOptions {
         let plugin: NonNull<Plugin> = match self.plugin {
             Some(p) => p,
             None => {
-                let p = Plugin::create(global, crate::api::js_bundler::BunPluginTarget::Bun);
+                let p = Plugin::create(
+                    global,
+                    crate::api::js_bundler::BunPluginTarget::Bun,
+                    // Nothing tombstones a dev server's plugin object when the server stops (#39488), so a context kept here would never be released.
+                    crate::api::js_bundler::PluginAsyncContext::None,
+                );
                 let p = NonNull::new(p)
                     .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
                 self.plugin = Some(p);

@@ -266,10 +266,17 @@ describe("heapStats() mimalloc integration", () => {
         stdout: "pipe",
         stderr: "inherit",
       });
+      // the line with the port, which can come in more than one chunk
       const reader = proc.stdout.getReader();
-      const { value } = await reader.read();
+      const decoder = new TextDecoder();
+      let line = "";
+      while (!line.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`the server exited before it printed its port: ${JSON.stringify(line)}`);
+        line += decoder.decode(value, { stream: true });
+      }
       reader.releaseLock();
-      const port = Number(new TextDecoder().decode(value).trim());
+      const port = Number(line.slice(0, line.indexOf("\n")));
       expect(port).toBeGreaterThan(0);
       // the minor faults of the server so far: the tenth field, and the second one can have spaces in it
       const faults = async () => {

@@ -81,8 +81,6 @@ pub(crate) struct WrappedDefault {
 
 /// A diagnostic that the flavor's own lowering records and Bun's doesn't.
 pub(crate) enum Recorded {
-    /// A read of a function's implicit `arguments`.
-    ImplicitArguments(Span),
     /// The `import` in `import(..)`.
     DynamicImport(Span),
     /// JSX as the default of a parameter or in a pattern. Bun's lowering sees a call, which can be
@@ -366,12 +364,7 @@ impl<'a> Converter<'a, '_> {
     fn ref_of_identifier(&mut self, expr: Expr<'a>, name: Name<'a>) -> Ref {
         match expr.symbol() {
             Some(symbol) => self.ref_of_symbol(symbol),
-            None => {
-                if name.is("arguments") && self.flavor == Flavor::Oxlint {
-                    self.recorded.push(Recorded::ImplicitArguments(expr.span()));
-                }
-                self.ref_of_name(Named::Global, name)
-            }
+            None => self.ref_of_name(Named::Global, name),
         }
     }
 

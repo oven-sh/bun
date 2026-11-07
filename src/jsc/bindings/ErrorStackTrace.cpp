@@ -20,6 +20,9 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSRemoteFunction.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/VMEntryRecord.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/ScopedLambda.h>
@@ -140,11 +143,24 @@ static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
     return false;
 }
 
+// V8 searches the stack for a JSFunction only. A bound function, a function that a ShadowRealm wraps, a Proxy and a value that is not callable select no frame.
+static JSC::JSObject* functionToFindOnStack(JSC::JSValue caller)
+{
+    if (!caller.isCallable() || caller.inherits<JSC::JSBoundFunction>() || caller.inherits<JSC::JSRemoteFunction>() || caller.inherits<JSC::ProxyObject>())
+        return nullptr;
+    JSC::JSObject* function = caller.getObject();
+#if ENABLE(AOT)
+    if (JSC::AOT::CompiledCallee::isCompiledCallee(function) && JSC::AOT::CompiledCallee::isBoundFunction(function))
+        return nullptr;
+#endif
+    return function;
+}
+
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
 
-    JSC::JSObject* callerObject = caller.getObject();
+    JSC::JSObject* callerObject = functionToFindOnStack(caller);
     // Made at the first frame that is not the caller's by identity.
     std::optional<WTF::String> nameOfCaller;
 
@@ -234,6 +250,15 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             return;
         }
 
+        // JSC puts the frames of suspended async functions in front of a caller that is behind a drain of microtasks. The trace starts behind the caller, as in V8.
+        if (callerObject) {
+            size_t framesInFrontOfCaller = 0;
+            while (stackTrace[framesInFrontOfCaller].isAsyncFrame())
+                framesInFrontOfCaller++;
+            if (framesInFrontOfCaller) [[unlikely]]
+                stackTrace.removeAt(0, framesInFrontOfCaller);
+        }
+
         bool hasEveryFrame = stackTrace.size() < framesToCollect;
         if (hasEveryFrame)
             break;
@@ -255,13 +280,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     });
 
     // Match V8: remove all frames up to and including the caller.
-    if (callerObject) {
-        if (stackTrace.first().isAsyncFrame()) {
-            stackTrace.shrink(0);
-            return;
-        }
+    if (callerObject)
         stackTrace.removeAt(0);
-    }
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);

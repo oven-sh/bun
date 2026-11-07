@@ -74,7 +74,7 @@ test("wat", async () => {
 }, 500); // test must run in <500ms
 ```
 
-When a test reaches its timeout, Bun marks the test as failed and moves on to the next test. Bun does not stop the test function or throw an error inside it. Code after a pending `await` still runs when the promise settles, which can be during a later test. The timeout takes effect only after synchronous code finishes, so a loop that never ends is never timed out. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
+When a test reaches its timeout, Bun marks the test as failed and moves on to the next test. Bun does not stop the test function or throw an error inside it. An `async` test function resumes when its pending `await` settles, which can be during a later test. Bun cannot interrupt synchronous code, so a loop that never ends is never timed out. Bun also kills the child processes that the test started before the timeout, so they don't linger as zombie processes.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 

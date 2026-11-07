@@ -507,6 +507,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                            |
 | `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                          |
 | Hook registered while a test runs                         | an error, or runs after that test    | never runs                                                           |
+| [When the count is checked](#when-the-count-is-checked)   | after the test's hooks               | when the test callback ends                                          |
 | `.not.toMatchObject()` with a value that isn't an object  | an error                             | passes                                                               |
 | `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
 | `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
@@ -643,6 +644,20 @@ test("exactly two assertions", () => {
 ```
 
 `expect.assertions(count)` helps ensure all your assertions run, especially in complex async code with multiple code paths.
+
+### When the count is checked
+
+Bun checks the count of a test from `"bun:test"` after its `afterEach` hooks and after the callbacks of `onTestFinished` from `"bun:test"`. An assertion that one of them makes counts for the test, and they can still call `expect.assertions()` or `expect.hasAssertions()`.
+
+These run after that check, and read its result in `task.result.state`:
+
+- a function that a `beforeEach` hook from `"vitest"` returns
+- `onTestFinished` and `onTestFailed` callbacks from `"vitest"` or the [test context](#test-context)
+- the part of an [`aroundEach`](/test/lifecycle#wrapping-tests) hook after `runTest()`
+
+An assertion that runs after the check doesn't count for it, wherever it's written: it can't complete the count, and it can't exceed it. This includes an assertion of the test callback that runs while one of these callbacks waits. If one of these callbacks calls `expect.assertions()` or `expect.hasAssertions()`, Bun checks the new count when that callback is done.
+
+A test from [`"vitest"`](#importing-from-vitest), `test.extend()` or `test.for()` is checked when its callback ends, as in Vitest. An assertion in `afterEach`, in the teardown of a fixture or in one of the callbacks above doesn't count for a count that the test set.
 
 ## Custom Equality
 

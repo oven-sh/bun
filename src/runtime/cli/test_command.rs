@@ -2298,7 +2298,7 @@ impl TestFailure {
     /// Returns the failure to report for a result that has no thrown error, like a timeout.
     pub(crate) fn from_result(
         result: bun_test::Execution::Result,
-        assertions: u32,
+        count_failure: Option<(bun_test::ExpectAssertions, u32)>,
     ) -> Option<TestFailure> {
         use bun_test::Execution::Result as R;
         let message: Vec<u8> = match result {
@@ -2308,6 +2308,7 @@ impl TestFailure {
             }
             R::FailBecauseFailsTestPassed => b"test marked with .fails() did not fail".to_vec(),
             R::FailBecauseExpectedAssertionCount => {
+                let assertions = count_failure.map_or(0, |(_, assertions)| assertions);
                 format!("Expected more assertions, but only received {assertions}").into_bytes()
             }
             R::FailBecauseTodoPassed => b"TODO passed".to_vec(),
@@ -2876,8 +2877,7 @@ impl JunitReporter {
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                let described = TestFailure::from_result(status, assertions);
-                self.write_failure(indent, b"failure", described.as_ref().or(failure))?;
+                self.write_failure(indent, b"failure", failure)?;
                 for earlier in &t.earlier_failures {
                     self.write_failure(indent, b"rerunFailure", Some(earlier))?;
                 }
@@ -3093,6 +3093,37 @@ pub(crate) struct ReportersConfig {
 }
 
 impl CommandLineReporter {
+    /// A user who saw an assertion run needs to know why it is not in the count that failed the test, and where to make it.
+    fn note_late_assertions(sequence: &bun_test::Execution::ExecutionSequence) {
+        let Some((_, counted)) = sequence.count_failure else {
+            return;
+        };
+        let late = sequence.expect_call_count.saturating_sub(counted);
+        if late == 0 {
+            return;
+        }
+        let (s, was) = if late == 1 {
+            ("", "was")
+        } else {
+            ("s", "were")
+        };
+        if sequence.is_called_as_in_vitest() {
+            bun_core::note!(
+                "{} assertion{} ran after the test callback and {} not counted. A test from \"vitest\", test.extend() or test.for() checks the count when its callback ends. Make the assertion in the test callback.",
+                late,
+                s,
+                was,
+            );
+        } else {
+            bun_core::note!(
+                "{} assertion{} ran after the count was checked and {} not counted. The check is after the afterEach hooks. Make the assertion in the test or in an afterEach hook.",
+                late,
+                s,
+                was,
+            );
+        }
+    }
+
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
         sequence: &mut bun_test::Execution::ExecutionSequence,
@@ -3129,27 +3160,22 @@ impl CommandLineReporter {
             match status {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
                     // not sent to writer so it doesn't get printed twice
-                    let expected_count =
-                        if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
-                            n
-                        } else {
-                            12345
-                        };
-                    Output::err(
-                        crate::Error::AssertionError,
-                        "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
-                        (
-                            expected_count,
-                            if expected_count == 1 { "" } else { "s" },
-                            sequence.expect_call_count,
-                            if sequence.expect_call_count == 1 {
-                                ""
-                            } else {
-                                "s"
-                            },
-                        ),
-                    );
-                    Output::flush();
+                    if let Some((bun_test::ExpectAssertions::Exact(expected_count), call_count)) =
+                        sequence.count_failure
+                    {
+                        Output::err(
+                            crate::Error::AssertionError,
+                            "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
+                            (
+                                expected_count,
+                                if expected_count == 1 { "" } else { "s" },
+                                call_count,
+                                if call_count == 1 { "" } else { "s" },
+                            ),
+                        );
+                        Self::note_late_assertions(sequence);
+                        Output::flush();
+                    }
                 }
                 bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
                     Output::err(
@@ -3157,6 +3183,7 @@ impl CommandLineReporter {
                         "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n",
                         (),
                     );
+                    Self::note_late_assertions(sequence);
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout
@@ -3484,7 +3511,9 @@ impl CommandLineReporter {
         // Under `--parallel` the flag is forwarded to workers, whose records
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
-            let failure = sequence.failure.take();
+            let thrown = sequence.failure.take();
+            // Described here and not by the writer, which under `--parallel` is in another process and has no sequence.
+            let failure = TestFailure::from_result(result, sequence.count_failure).or(thrown);
             let earlier = core::mem::take(&mut sequence.earlier_failures);
             Self::test_case_report(
                 result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,

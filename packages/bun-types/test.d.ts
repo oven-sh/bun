@@ -894,6 +894,8 @@ declare module "bun:test" {
    * - The test fails if the hook throws, or if it finishes without calling `runTest()`. A second `runTest()` call rejects.
    * - The timeout applies to the time before `runTest()` is called, and again to the time after its promise resolves.
    *   The time in between isn't counted.
+   * - A count that the test set with `expect.assertions()` or `expect.hasAssertions()` is checked before `runTest()`
+   *   resolves. An assertion after that doesn't count for it.
    *
    * @example
    * ```ts
@@ -936,6 +938,10 @@ declare module "bun:test" {
    * Runs a function after the test finishes, once all `afterEach` hooks have completed.
    *
    * Can only be called inside a test, not in `describe` blocks.
+   *
+   * `fn` runs before `expect.assertions()` and `expect.hasAssertions()` are checked, so an assertion in `fn` counts for
+   * them. In a test from `test.extend()` or `test.for()`, a count that the test callback set is checked when that
+   * callback ends. The `onTestFinished()` of the test context and of `"vitest"` runs after the check.
    *
    * @example
    * ```ts
@@ -1257,7 +1263,13 @@ declare module "bun:test" {
     skip(note?: string): never;
     /** Stops the test and reports it as skipped, unless `condition` is `false`. */
     skip(condition: boolean, note?: string): void;
-    /** Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first. */
+    /**
+     * Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first.
+     *
+     * A count that the test set with `expect.assertions()` or `expect.hasAssertions()` is checked before `fn` runs, so
+     * an assertion in `fn` doesn't count for it. In a test from `"bun:test"`, the `onTestFinished()` export of
+     * `"bun:test"` runs before that check.
+     */
     onTestFinished(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
     /** Like `onTestFinished()`, but only runs if the test failed. */
     onTestFailed(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
@@ -1646,11 +1658,17 @@ declare module "bun:test" {
 
     /**
      * Ensures that an assertion is made
+     *
+     * Bun checks it after the test's `afterEach` hooks and its `onTestFinished()` callbacks from `"bun:test"`. A test
+     * from `"vitest"`, `test.extend()` or `test.for()` is checked when its callback ends.
      */
     hasAssertions(): void;
 
     /**
      * Ensures that a specific number of assertions are made
+     *
+     * Bun checks it after the test's `afterEach` hooks and its `onTestFinished()` callbacks from `"bun:test"`. A test
+     * from `"vitest"`, `test.extend()` or `test.for()` is checked when its callback ends.
      */
     assertions(neededAssertions: number): void;
 

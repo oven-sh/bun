@@ -127,7 +127,7 @@ test("inserts a user", async () => {
 });
 ```
 
-`runTest()` runs the `beforeEach` hooks, the test, the `afterEach` hooks and the `onTestFinished` callbacks. The promise it returns resolves when they're done, even if the test fails.
+`runTest()` runs the `beforeEach` hooks, the test, the `afterEach` hooks and the `onTestFinished` callbacks. The promise it returns resolves when they're done, even if the test fails. By then Bun has [checked a count that the test set](/test/writing-tests#when-the-count-is-checked), so an assertion after `runTest()` doesn't count for it.
 
 `aroundAll` does the same for a whole file or `describe` block. Its `runSuite()` runs the block's `beforeAll` hooks, its tests and nested blocks, and its `afterAll` hooks.
 

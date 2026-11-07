@@ -167,6 +167,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
+    /// The expectation and the number of expect() calls that the check which failed this attempt compared.
+    pub(crate) count_failure: Option<(ExpectAssertions, u32)>,
     pub(crate) maybe_skip: bool,
     pub(crate) context: Option<Strong>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
@@ -201,6 +203,7 @@ impl ExecutionSequence {
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
+            count_failure: None,
             maybe_skip: false,
             context: None,
             pending_matchers: 0,
@@ -286,10 +289,7 @@ impl ExecutionSequence {
 
     /// For `test.failing`, `Result::Pass` means the callback threw, which is a failed attempt here.
     fn attempt_failed(&self) -> bool {
-        match self.entry_mode() {
-            ScopeMode::Failing => self.result == Result::Pass,
-            _ => self.result.is_fail(),
-        }
+        self.result.is_fail() || (self.entry_mode() == ScopeMode::Failing && self.result == Result::Pass)
     }
 
     /// Vitest's `task.result.state`
@@ -335,7 +335,14 @@ impl ExecutionSequence {
         };
         if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
             self.result = failure;
+            self.count_failure = Some((self.expect_assertions, self.expect_call_count));
         }
+    }
+
+    /// A test that is called as in Vitest has its count checked when its callback ends.
+    pub(crate) fn is_called_as_in_vitest(&self) -> bool {
+        // SAFETY: arena-owned entry
+        self.test_entry.is_some_and(|test| unsafe { test.as_ref() }.calling.is_vitest())
     }
 }
 
@@ -680,6 +687,10 @@ impl Execution {
         }
 
         if sequence.active_entry.is_none() {
+            // A deferred callback reads the result, so a test that is not called as in Vitest is checked before each one.
+            if !sequence.is_called_as_in_vitest() {
+                sequence.check_expect_assertions();
+            }
             sequence.active_entry = sequence.take_deferred();
         }
 
@@ -864,10 +875,7 @@ impl Execution {
                 .failure
                 .take()
                 .or_else(|| {
-                    test_command::TestFailure::from_result(
-                        sequence.result,
-                        sequence.expect_call_count,
-                    )
+                    test_command::TestFailure::from_result(sequence.result, sequence.count_failure)
                 })
                 .unwrap_or_default();
             sequence.earlier_failures.push(failure);

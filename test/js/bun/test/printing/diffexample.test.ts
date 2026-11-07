@@ -1171,6 +1171,50 @@ test("does not print the accessors of a value that is not a native event", () =>
   expect(calls).toBe(0);
 });
 
+test("prints an event that inherits through a Proxy with every name that for-in gives", () => {
+  const event: MessageEvent = Object.setPrototypeOf(
+    new MessageEvent("message", { data: 1 }),
+    new Proxy(MessageEvent.prototype, {}),
+  );
+  const printed = printedInFailure(event);
+  // The Proxy hides which names are methods and constants, so those print too.
+  const names: string[] = [];
+  for (const name in event) names.push(name);
+  expect(printed.slice(2, -1).map(line => /^  "(\w+)": /.exec(line)?.[1])).toEqual(names.sort());
+  expect(printed).toContain('  "data": 1,');
+  expect(printed).toContain('  "type": "message",');
+  expect(printed).toContain('  "NONE": 0,');
+});
+
+test("prints null for a getter of a prototype that throws, when the value is not an event", () => {
+  // The getter of 0 removes the own 1. The name 1 then leads to a getter of the prototype.
+  const make = () => {
+    const prototype = Object.defineProperty({}, "1", {
+      get() {
+        throw new Error("from the prototype");
+      },
+      enumerable: true,
+    });
+    return Object.defineProperties(Object.create(prototype), {
+      0: {
+        get() {
+          delete this[1];
+          return "first";
+        },
+        enumerable: true,
+      },
+      1: { value: "own", enumerable: true, configurable: true },
+    });
+  };
+  expect(printedInFailure(make())).toEqual(["{", '  "0": "first",', '  "1": null,', "}"]);
+  expect(make()).toMatchInlineSnapshot(`
+    {
+      "0": "first",
+      "1": null,
+    }
+  `);
+});
+
 test("keeps the text of an event in a snapshot", () => {
   expect([
     new Event("foo"),

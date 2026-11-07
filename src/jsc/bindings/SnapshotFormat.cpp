@@ -380,10 +380,12 @@ void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, Prope
             PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
             bool hasOwn = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
             RETURN_IF_EXCEPTION(scope, );
-            if (!hasOwn)
+            // A Proxy does not tell this lookup what it holds. The name stays, and the walk reads it through the Proxy as deepEquals does.
+            bool isBehindProxy = slot.isTaintedByOpaqueObject();
+            if (!hasOwn && !isBehindProxy)
                 continue;
-            bool isAccessor = (slot.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)) != 0;
-            if (holder == event || isAccessor)
+            bool isAccessor = hasOwn && (slot.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)) != 0;
+            if (holder == event || isBehindProxy || isAccessor)
                 names.add(name);
             break;
         }

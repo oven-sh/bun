@@ -300,7 +300,7 @@ fn has_non_void_return(func: &HirFunction) -> bool {
         if let Terminal::Return { return_variant, .. } = &block.terminal {
             if matches!(
                 return_variant,
-                ReturnVariant::Explicit | ReturnVariant::Implicit
+                ReturnVariant::Explicit | ReturnVariant::ExplicitVoid | ReturnVariant::Implicit
             ) {
                 return true;
             }

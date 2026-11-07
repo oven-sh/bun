@@ -1739,6 +1739,28 @@ describe("bundler", () => {
     },
   });
 
+  // A return or throw merged into the expression statement before it still
+  // ends the control flow: the statements after it are dead.
+  itBundled("minify/MergedReturnEndsControlFlow", {
+    files: {
+      "/entry.js": /* js */ `
+        export function ret(x) { foo(); return x; dead(); }
+        export function thr(x) { foo(); throw x; dead(); }
+        export async function* gen() { foo(); return undefined; dead(); }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/ret\(x\) \{\s*return foo\(\), x;\s*\}/);
+      expect(code).toMatch(/thr\(x\) \{\s*throw foo\(\), x;\s*\}/);
+      // Inside an async generator the operand of `return undefined` is kept.
+      expect(code).toMatch(/gen\(\) \{\s*return foo\(\), void 0;\s*\}/);
+      expect(code).not.toContain("dead()");
+    },
+  });
+
   // https://github.com/oven-sh/bun/issues/14586
   // Enough top-level bindings to exhaust every single-char name. With `$`
   // unreferenced it sorts last in the head alphabet, so it is the 54th name

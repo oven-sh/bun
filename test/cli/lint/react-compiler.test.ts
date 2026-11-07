@@ -402,6 +402,28 @@ ${chain}
     expect([0, 1]).toContain(exit);
   });
 
+  // A bare `return;` is a return statement, as upstream sees it, even though
+  // the HIR keeps it apart from `return undefined;`.
+  test("a useMemo callback with a bare return is not a void one", async () => {
+    const { diagnostics, files, exit } = await report({
+      ".oxlintrc.json": rc(["react/void-use-memo"]),
+      "bare.jsx": `import { useMemo } from "react";
+        export function Component({ a }) {
+          const value = useMemo(() => { return; }, [a]);
+          return <div>{value}</div>;
+        }`,
+      "void.jsx": `import { useMemo } from "react";
+        export function Component({ a }) {
+          const value = useMemo(() => { a; }, [a]);
+          return <div>{value}</div>;
+        }`,
+    });
+    expect(Object.keys(diagnostics)).toEqual(["void.jsx"]);
+    expect(rulesIn(diagnostics)).toEqual(["react(void-use-memo)"]);
+    expect(files).toBe(2);
+    expect(exit).toBe(1);
+  });
+
   test("reports nothing for a path that contains node_modules", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);

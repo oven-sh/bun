@@ -1311,6 +1311,7 @@ pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
     pub(crate) is_inside_switch: bool,
     pub(crate) is_outside_fn_or_arrow: bool,
+    pub(crate) is_async_generator: bool,
 
     /// This is used to silence unresolvable imports due to "require" calls inside
     /// a try/catch statement. The assumption is that the try/catch statement is

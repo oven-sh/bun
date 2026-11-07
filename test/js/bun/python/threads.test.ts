@@ -1323,3 +1323,326 @@ process.execve("/bin/echo", ["echo", "the new program"], {});
   );
   expect(results).toEqual(Array(8).fill({ stdout: "the new program\n", exitCode: 0, signalCode: null }));
 });
+
+// A thread that gives up the interpreter takes what it has in every runtime of the VM along. There was room for four.
+const stateOfAThread = `
+import contextvars, ctypes, gc, os, queue, sys, threading, time, weakref
+
+class Marker:
+    def __init__(self, number): self.number = number
+
+variable = contextvars.ContextVar("variable")
+local = threading.local()
+references = []
+calls = []
+
+# What the thread has in this runtime, and nothing else refers to.
+def put(number):
+    for where, marker in ((variable.set, Marker(number)), (lambda m: setattr(local, "value", m), Marker(-number))):
+        where(marker)
+        references.append(weakref.ref(marker))
+
+def look():
+    return f"{variable.get().number} {local.value.number} {[r() is not None for r in references]}"
+
+def collect():
+    for _ in range(3):
+        gc.collect()
+        [bytearray(1000) for _ in range(2000)]
+
+# Whoever calls waits, without the interpreter, while another thread collects.
+def collect_in_a_thread():
+    thread = threading.Thread(target=collect)
+    thread.start()
+    thread.join()
+
+# The other thread gives the one that waits a profile function, which then is nowhere but in what that one has taken along.
+def profile_from_a_thread():
+    def work():
+        class Profile:
+            def __init__(self): self.marker = Marker(7)
+            def __call__(self, frame, event, argument):
+                if event == "call" and frame.f_code.co_name == "profiled": calls.append(self.marker.number)
+        threading.setprofile_all_threads(Profile())
+        sys.setprofile(None)
+        collect()
+    thread = threading.Thread(target=work)
+    thread.start()
+    thread.join()
+    def profiled(): pass
+    profiled()
+    sys.setprofile(None)
+    return str(calls)
+
+# What a thread finds in a runtime where it has never been.
+def fresh():
+    return f"{variable.get(None)} {hasattr(local, 'value')}"
+
+# A thread of this runtime's that waits, without the interpreter, to be told which of these functions to call.
+jobs, results = queue.SimpleQueue(), queue.SimpleQueue()
+done, is_done = os.pipe()
+def serve():
+    while True:
+        name, arguments = jobs.get()
+        results.put(str(globals()[name](*arguments)))
+        os.write(is_done, b".")
+def start_servant():
+    threading.Thread(target=serve, daemon=True).start()
+def ask(name, *arguments):
+    jobs.put((name, arguments))
+    os.read(done, 1)
+    return results.get()
+# Whoever calls waits in C, where nothing wakes it and it asks for nothing. So it is the thread that makes every call that comes to be owed meanwhile.
+def ask_and_wait_in_c(name, *arguments):
+    jobs.put((name, arguments))
+    ctypes.CDLL(None).read(done, ctypes.create_string_buffer(1), 1)
+    return results.get()
+
+# What other threads read in, or take out of, what a thread that waits has taken along.
+def exception_of_a_thread_that_waits():
+    handling, go = threading.Event(), threading.Event()
+    def work():
+        try: raise ValueError("handled by the thread")
+        except ValueError:
+            handling.set()
+            go.wait()
+    thread = threading.Thread(target=work)
+    thread.start()
+    handling.wait()
+    result = repr(sys._current_exceptions()[thread.ident])
+    go.set()
+    thread.join()
+    return result
+
+def traceback_seen_by_a_thread():
+    def raises(): raise ValueError("raised by the one that waits")
+    seen = []
+    try: raises()
+    except ValueError as e:
+        def work():
+            names, traceback = [], e.__traceback__
+            while traceback:
+                names.append(traceback.tb_frame.f_code.co_name)
+                traceback = traceback.tb_next
+            seen.append(names)
+            collect()
+        thread = threading.Thread(target=work)
+        thread.start()
+        thread.join()
+    return str(seen)
+
+def trace_from_a_thread():
+    events = []
+    def work():
+        def trace(frame, event, argument):
+            if frame.f_code.co_name == "traced": events.append(event)
+            return trace
+        threading.settrace_all_threads(trace)
+        sys.settrace(None)
+        collect()
+    thread = threading.Thread(target=work)
+    thread.start()
+    thread.join()
+    def traced(): pass
+    traced()
+    sys.settrace(None)
+    return str(events)
+
+# What a thread makes is finalized by that thread. (Whichever thread runs or is woken tells of a collection: the main one, if one comes by itself before it waits.)
+finalized, made = [], []
+class Finalized:
+    def __init__(self): self.maker = threading.current_thread().name
+    def __del__(self): finalized.append((self.maker, threading.current_thread().name))
+def make_garbage_after_collections():
+    def callback(phase, info):
+        if phase == "stop" and not made and threading.current_thread().name != "MainThread":
+            made.append(1)
+            cycle = Finalized()
+            cycle.me = cycle
+    gc.callbacks.append(callback)
+def what_was_finalized():
+    return str(finalized)
+`;
+
+it("a thread waits while seven runtimes are alive in the VM, and finds in each what it had there", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "state.py": stateOfAThread,
+      "main.js": `
+const realms = [];
+for (let i = 0; i < 6; i++) {
+  const realm = new ShadowRealm(), functions = {};
+  for (const name of ["put", "look", "collect_in_a_thread", "profile_from_a_thread", "exception_of_a_thread_that_waits", "traceback_seen_by_a_thread", "trace_from_a_thread"])
+    functions[name] = await realm.importValue("./state.py", name);
+  realms.push(functions);
+}
+realms.push(await import("./state.py"));
+realms.forEach((realm, i) => realm.put(i + 1));
+for (const realm of realms) {
+  realm.collect_in_a_thread();
+  console.log(realms.map(other => String(other.look())).join(" | "));
+}
+console.log(realms.map(realm => String(realm.profile_from_a_thread()) + " " + String(realm.look())).join(" | "));
+for (const realm of realms) console.log(String(realm.exception_of_a_thread_that_waits()), String(realm.traceback_seen_by_a_thread()), String(realm.trace_from_a_thread()));
+`,
+    },
+    "main.js",
+  );
+  const all = [1, 2, 3, 4, 5, 6, 7];
+  const states = all.map(i => `${i} -${i} [True, True]`).join(" | ") + "\n";
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    all.map(() => states).join("") +
+      all.map(i => `[7] ${i} -${i} [True, True]`).join(" | ") +
+      "\n" +
+      "ValueError('handled by the thread') [['traceback_seen_by_a_thread', 'raises']] ['call', 'line', 'return']\n".repeat(7),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Only the main thread can make one. Each of the others has taken along as many states as there were runtimes when it last gave up the interpreter.
+it("runtimes are made while threads wait, three of them and then six more", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "state.py": stateOfAThread,
+      "main.js": `
+const realms = [];
+async function make(hasThread = true) {
+  const realm = new ShadowRealm(), functions = {};
+  for (const name of ["put", "look", "collect", "collect_in_a_thread", "start_servant", "ask"]) functions[name] = await realm.importValue("./state.py", name);
+  if (!hasThread) return;
+  realms.push(functions);
+  functions.put(realms.length);
+  functions.start_servant();
+  console.log(String(functions.ask("fresh")));
+  functions.ask("put", 10 * realms.length);
+}
+const look = () => console.log(realms.map(realm => String(realm.ask("look")) + ", " + String(realm.look())).join(" | "));
+for (let i = 0; i < 3; i++) await make();
+for (let i = 0; i < 6; i++) {
+  await make();
+  realms.at(-1).collect();
+  Bun.gc(true);
+  look();
+}
+realms[0].collect_in_a_thread();
+look();
+// Two that nothing keeps. Each thread has its turn, so that it waits with an entry for them, and then they go.
+const globalObjects = () => require("bun:jsc").heapStats().objectTypeCounts.GlobalObject;
+const before = globalObjects();
+await make(false);
+await make(false);
+console.log(globalObjects() - before);
+look();
+for (let round = 0; round < 100 && globalObjects() > before; round++) {
+  Bun.gc(true);
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.log(globalObjects() - before);
+look();
+// Collections that come by themselves.
+let junk;
+for (let i = 0; i < 100000; i++) junk = new Array(64).fill({ i });
+look();
+process.exit(0);
+`,
+    },
+    "main.js",
+  );
+  const states = (count: number) =>
+    Array.from({ length: count }, (_, i) => `${10 * (i + 1)} -${10 * (i + 1)} [True, True, True, True], ${i + 1} -${i + 1} [True, True, True, True]`).join(" | ") + "\n";
+  expect(stderr).toBe("");
+  expect(stdout).toBe("None False\n".repeat(3) + [4, 5, 6, 7, 8, 9].map(count => "None False\n" + states(count)).join("") + states(9) + "2\n" + states(9) + "0\n" + states(9).repeat(2));
+  expect(exitCode).toBe(0);
+});
+
+// The calls that are owed are made in every runtime of the VM by whichever thread runs.
+it.each(["before the thread is started", "while the thread waits"])("a thread is known by its number in a runtime that is made %s", async when => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "state.py": stateOfAThread,
+      "main.js": `
+async function make() {
+  const realm = new ShadowRealm(), functions = {};
+  for (const name of ["start_servant", "ask", "ask_and_wait_in_c", "make_garbage_after_collections", "what_was_finalized"]) functions[name] = await realm.importValue("./state.py", name);
+  return functions;
+}
+const first = await make();
+const early = ${when.startsWith("before")} ? await make() : null;
+first.start_servant();
+first.ask("fresh");
+const second = early ?? (await make());
+second.make_garbage_after_collections();
+first.ask_and_wait_in_c("collect");
+console.log(String(second.what_was_finalized()));
+process.exit(0);
+`,
+    },
+    "main.js",
+  );
+  expect({ stdout, stderr }).toEqual({ stdout: "[('Dummy-1', 'Dummy-1')]\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+it("a worker with seven runtimes and a thread that waits in each is terminated, exits, comes to its end", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "state.py": stateOfAThread,
+      "main.js": `
+const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+if (isMainThread) {
+  for (const how of ["terminate", "exit", "return"]) {
+    const worker = new Worker(__filename, { workerData: how });
+    const closed = new Promise(resolve => worker.once("exit", resolve));
+    await new Promise(resolve => worker.once("message", resolve));
+    if (how === "terminate") worker.terminate();
+    console.log(how, await closed);
+  }
+} else {
+  for (let i = 0; i < 7; i++) {
+    const realm = new ShadowRealm(), functions = {};
+    for (const name of ["put", "start_servant", "ask", "collect"]) functions[name] = await realm.importValue("./state.py", name);
+    functions.put(i + 1);
+    functions.start_servant();
+    functions.ask("put", 10 * (i + 1));
+    functions.collect();
+  }
+  parentPort.postMessage("ready");
+  if (workerData === "exit") process.exit(3);
+  if (workerData === "terminate") setInterval(() => {}, 1000);
+}
+`,
+    },
+    "main.js",
+  );
+  expect({ stdout, stderr }).toEqual({ stdout: "terminate 1\nexit 3\nreturn 0\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+it("bun test --isolate: a thread in each of six files", async () => {
+  const files: Record<string, string> = {
+    "thread.py": `
+import threading
+def thread():
+    t = threading.Thread(target=lambda: None); t.start(); t.join(); return "joined"
+`,
+  };
+  for (let i = 1; i <= 6; i++)
+    files[`t${i}.test.mjs`] = `
+import { test, expect } from "bun:test";
+const m = await import("./thread.py");
+test("a thread", () => { expect(String(m.thread())).toBe("joined") });
+`;
+  using dir = tempDir("python-threads-isolate", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 6 pass\n");
+  expect(stderr).toContain(" 0 fail\n");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});

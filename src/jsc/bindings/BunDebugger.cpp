@@ -989,7 +989,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 
     JSC::VM& vm = debuggerGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue defaultValue = BUN_REQUIRE_INTERNAL_MODULE(debuggerGlobalObject, InternalDebugger, "node:inspector", "default"_s);
+    JSValue defaultValue = BUN_REQUIRE_INTERNAL_MODULE(debuggerGlobalObject, InternalDebugger, "node:inspector");
     scope.assertNoException();
     JSFunction* debuggerDefaultFn = uncheckedDowncast<JSFunction>(defaultValue.asCell());
 

@@ -48,16 +48,21 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$/, "it blocks, starts a process or opens a socket"],
   [/^Atomics\.wait$/, "it blocks the thread"],
   [/^native:Bindgen:event_loop\.bind\.ts:runNestedUntilSettled$|^%NativeFunctions%\.Event_loopBindTsRunNestedUntilSettled$/, "it stays away until its operand settles, and a promise of the test may never"],
+  [/^%AsyncFromSyncIterator%\.prototype\.(next|return|throw)$/, "no program can hold it or the object that it works on: the engine alone calls it, behind `for await` and `yield*` over an iterator that is not async, and native code takes `this` on trust"],
   [/^%NodeJSFS%\.prototype\.(close|ftruncate)(Sync|Cb)?$|^native:Bindgen:(udp_socket\.bind\.ts:dgram(Close|Adopt|Bind|Listen)Fd|node_cluster_binding\.bind\.ts:clusterCloseHandle)$|^%NativeFunctions%\.(Udp_socketBindTsDgram(Close|Adopt|Bind|Listen)Fd|Node_cluster_bindingBindTsClusterCloseHandle)$/, "it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too"],
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
   [/^native:Bindgen:(node_cluster_binding\.bind\.ts:clusterRawBind|udp_socket\.bind\.ts:connect)$/, "it asks the name servers about every string that is no address, and waits for them"],
   [/^bun:(ffi|test|test\/vitest|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
-  [/^Bun\.FFI\.(read\.\w+|toArrayBuffer|toBuffer)$/, "it dereferences an arbitrary pointer"],
+  [/^Bun\.FFI\.(read\.\w+|toArrayBuffer|toBuffer|CString)$/, "it dereferences an arbitrary pointer"],
   [/^native:Bindgen:bake_plugins\.bind\.ts:setPages$/, "it changes how modules are loaded"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
   [/^%CompilerHelpers%\.plainQuery(Entries|Keys|Values)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
-  [/^%CompilerHelpers%\..*_inRanges$/, "the compiler hands it bounds that it has clamped itself, and takes them on trust"],
+  [/^%CompilerHelpers%\.(appendIterable|takeFromIterable)$/, "it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those"],
+  [/^%PrivateGlobals%\.requireCommonJS$/, "only `require` of the library calls it, with a module object that it has just made, and native code takes that on trust"],
+  [/^MessagePort\.prototype\.close$/, "node:worker_threads lays a function of its own over it, and this realm has that one"],
+  [/declared_results_testing\.?bind\.?ts:?declaredAsString/i, "a helper of Bun's own tests that answers outside the type it declares, on purpose"],
   [/^%CompilerHelpers%\.importRejectedByLoader$/, "it is written with the intrinsics that make and settle promises, and only compiled code has those"],
+  [/^%CompilerHelpers%\.askRunOfTestFile$/, "it is written with the intrinsic that names a native function, and only compiled code has that: the native function has an entry of its own"],
   [/^%PrivateGlobals%\.(makeErrorWithCode|inherits)$/, "a call spells out a number, and by it native code takes the other operands on trust: the table does not say which"],
 ]);
 
@@ -378,7 +383,7 @@ function combinationsOf({ receiver, base }: Product, outcomes: Outcomes): Operan
 }
 
 // A length between these makes the built-in allocate and fill gigabytes.
-const allocatesByLength = /^(%CompilerHelpers%\.(\w+Array|array\w+)|%TypedArray%|\w+Array|ArrayBuffer|SharedArrayBuffer|Buffer(\.\w+)?|String\.prototype\.(repeat|padStart|padEnd)|Bun\.allocUnsafe|\w*ArrayBuffer\.prototype\.\w+)$/;
+const allocatesByLength = /^(%CompilerHelpers%\.(\w+Array|array\w+)|%TypedArray%|\w+Array|ArrayBuffer|SharedArrayBuffer|Buffer(\.\w+)?|String\.prototype\.(repeat|padStart|padEnd)|Bun\.allocUnsafe|node:buffer\.SlowBuffer|\w*ArrayBuffer\.prototype\.\w+)$/;
 const smallestHugeLength = 2 ** 24;
 const largestHugeLength = 2 ** 40;
 

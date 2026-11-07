@@ -1,0 +1,39 @@
+# `isListed(shape.tag)`, nothing proven of `shape`: the read is a guess, and the callee is copied to where it is called. The typed run has the copy and the closed arm calls (Walker::walkInline()).
+# Where the arms met in front of the call the copy was handed a box of which nothing is known, and its Switch asked the box for its tag. The stretch goes on over the call:
+# the copy takes the int32 as the typed run has loaded it, and the closed arm hands what it has read to the function itself.
+# f1 = isListed, f2 = ask
+# -- source: listed.ts
+# const enum Tag { MinusOne = -1, Zero, One, Two, Three, Seven = 7, Far = 33 }
+# class Shape {
+#   tag: Tag;
+#   weight: number;
+#   constructor(tag: Tag, weight: number) { this.tag = tag; this.weight = weight; }
+# }
+# function isListed(tag: Tag): boolean {
+#   switch (tag) {
+#     case Tag.Zero: case Tag.Two: case Tag.Three: case Tag.Seven: case Tag.Far: return true;
+#     default: return false;
+#   }
+# }
+# function ask(shape: Shape): string {
+#   return isListed(shape.tag) ? "listed" : "none";
+# }
+# (globalThis as any).ask = ask;
+# let said = "";
+# for (let tag = -2; tag < 9; tag++) {
+#   const shape = new Shape(tag, tag * 2);
+#   (globalThis as any).kept = shape;
+#   said += ask(shape);
+# }
+# console.log(said);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK: [[raw]]: {{*}}@Int32 = GetSlot {{*}}key="tag"
+# CHECK-NEXT: Switch [[raw]] cases=[0, 2, 3, 7, 33]
+# CHECK: [[closed]]: {{*}} = PropGet {{*}}key="tag"
+# CHECK-NEXT: = CallDirect [[closed]] function=f1
+# RUN(WITHHELD): walk f2 mechanisms=-Inlining
+# REQUIRES(WITHHELD): entries-of-bun
+# WITHHELD-NOT: Switch

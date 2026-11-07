@@ -1,4 +1,3 @@
-// STATISTIC: SwitchesTestedByWindow >= 6
 // Equalities joined by or and switches within 64 values.
 function withoutGap(kind: number): boolean {
   return kind === 243 || kind === 244 || kind === 245 || kind === 246 || kind === 247;

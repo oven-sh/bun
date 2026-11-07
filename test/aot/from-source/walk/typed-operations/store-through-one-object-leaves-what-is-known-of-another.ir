@@ -1,0 +1,25 @@
+# a field of one object is read, a field of the same name is stored through an object of another class, and the first is read again: in no run are the two one object, so the second read is the first
+# where both are of one class they may be one object, and the field is read again
+# the objects come out of variables of the module that unseen code may have read, so none of them is fresh
+# f1 = apart, f2 = alike
+# -- source: store-through-one-object-leaves-what-is-known-of-another.ts
+# declare function sink(...values: unknown[]): void;
+# class P { c = 1; }
+# class Q { c = 2; }
+# const p = new P();
+# const other = new P();
+# const q = new Q();
+# function apart() { const before = p.c; q.c = 5; return before + p.c; }
+# function alike() { const before = p.c; other.c = 5; return before + p.c; }
+# sink(apart, alike);
+# -- end of source
+# RUN: walk f1 mechanisms=none+Folding+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="c"
+# CHECK: PutSlot {{*}}key="c"
+# CHECK-NOT: = GetSlot {{*}}key="c"
+# RUN(OTHER): walk f2 mechanisms=none+Folding+TypedOperations
+# OTHER-LABEL: code f2:Body
+# OTHER: = GetSlot {{*}}key="c"
+# OTHER: PutSlot {{*}}key="c"
+# OTHER: = GetSlot {{*}}key="c"

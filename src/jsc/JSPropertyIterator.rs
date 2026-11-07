@@ -167,6 +167,7 @@ impl<'a> JSPropertyIterator<'a> {
     /// The name borrows the C++ iterator's storage (no ref) and is valid until
     /// `self` drops, hence `&self`: a yielded name may be held across later
     /// calls. The value is `JSValue::ZERO` unless `options.include_value`.
+    /// Without `options.include_symbols` a name is empty or a JSC atom (`String::atom_address`).
     pub fn next(&self) -> JsResult<Option<(bun_core::StringView<'_>, JSValue)>> {
         loop {
             let i: usize = self.iter_i.get() as usize;
@@ -222,6 +223,9 @@ impl<'a> JSPropertyIterator<'a> {
             if name.is_dead() {
                 continue;
             }
+            debug_assert!(
+                self.options.include_symbols || name.is_empty() || name.atom_address().is_some()
+            );
 
             if self.options.skip_empty_name && name.is_empty() {
                 continue;

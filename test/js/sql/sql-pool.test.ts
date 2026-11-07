@@ -13,6 +13,7 @@ import {
   pgAuthenticationOk,
   pgCommandComplete,
   pgErrorResponse,
+  pgMockServer,
   pgReadyForQuery,
   pgScramServer,
 } from "./wire-frames";
@@ -867,6 +868,133 @@ describeWithContainer("postgres_plain", { image: "postgres_plain" }, container =
       jest.useRealTimers();
     }
   });
+
+  describe("the server ends the sessions while queries wait behind the one each runs", () => {
+    const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+
+    /** Inserts that each wait for an advisory lock. Once `blocked` sessions wait for it, all are ended. */
+    async function endSessionsUnder(
+      options: Bun.SQL.Options,
+      blocked: number,
+      run: (sql: SQL, insert: (on: Tag, i: number) => Promise<unknown>) => Promise<string>[],
+    ) {
+      await container.ready;
+      const app = `bun_requeue_${Bun.randomUUIDv7("hex").slice(-12)}`;
+      const table = app;
+      const key = (Math.random() * 2 ** 31) | 0;
+      await using admin = new SQL({ url: url(), max: 1 });
+      await using holder = new SQL({ url: url(), max: 1 });
+      await using sql = new SQL({ url: url(), ...options, connection: { application_name: app } });
+      await admin.unsafe(`create table ${table} (i int)`);
+      try {
+        await holder.unsafe(`select pg_advisory_lock(${key})`);
+        await sql`select 1`;
+        const insert = (on: Tag, i: number) =>
+          on.unsafe(`insert into ${table} select $1::int from (select pg_advisory_xact_lock($2::bigint)) l`, [i, key]);
+        const outcomes = run(sql, insert);
+        const sessions = async () =>
+          (
+            await admin.unsafe(
+              `select count(*)::int as n from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
+              [app],
+            )
+          )[0].n;
+        while ((await sessions()) < blocked) {}
+        await admin.unsafe(`select pg_terminate_backend(pid) from pg_stat_activity where application_name = $1`, [app]);
+        await holder.unsafe(`select pg_advisory_unlock(${key})`);
+        const results = await Promise.all(outcomes);
+        const [{ n: rows }] = await admin.unsafe(`select count(*)::int as n from ${table}`);
+        return { results, rows };
+      } finally {
+        await admin.unsafe(`drop table ${table}`);
+      }
+    }
+
+    const tally = (results: string[]) => {
+      const counts: Record<string, number> = {};
+      for (const result of results) counts[result] = (counts[result] ?? 0) + 1;
+      return counts;
+    };
+
+    // Prepared, the queries behind the one that runs are written. Unnamed, they wait to be.
+    test.each([{ prepare: true }, { prepare: false }])(
+      "the queries that never ran are sent again on new connections, %o",
+      async ({ prepare }) => {
+        const count = 40;
+        const { results, rows } = await endSessionsUnder({ max: 4, prepare }, 4, (sql, insert) =>
+          Array.from({ length: count }, (_, i) => outcome(insert(sql, i))),
+        );
+        // One per session: the query that it was at work on.
+        expect({ outcomes: tally(results), rows }).toEqual({
+          outcomes: { resolved: count - 4, ERR_POSTGRES_SERVER_ERROR: 4 },
+          rows: count - 4,
+        });
+      },
+    );
+
+    test("max: 1: they are not sent again, and fail with an error that says they never ran", async () => {
+      const errors: any[] = [];
+      const { results, rows } = await endSessionsUnder({ max: 1 }, 1, (sql, insert) =>
+        Array.from({ length: 4 }, (_, i) =>
+          outcome(
+            insert(sql, i).catch(err => {
+              errors[i] = err;
+              throw err;
+            }),
+          ),
+        ),
+      );
+      expect({ results, rows }).toEqual({
+        results: [
+          "ERR_POSTGRES_SERVER_ERROR",
+          "ERR_POSTGRES_CONNECTION_CLOSED",
+          "ERR_POSTGRES_CONNECTION_CLOSED",
+          "ERR_POSTGRES_CONNECTION_CLOSED",
+        ],
+        rows: 0,
+      });
+      expect(errors.slice(1).map(err => [err.message, err.cause?.errno])).toEqual(
+        Array(3).fill(["Connection closed before the query ran", "57P01"]),
+      );
+    });
+
+    test.each([
+      ["a transaction", (sql: SQL, run: (on: Tag) => Promise<unknown>) => sql.begin(run)],
+      ["a reserved connection", async (sql: SQL, run: (on: Tag) => Promise<unknown>) => run(await sql.reserve())],
+    ] as const)("%s: its queries are not sent again, and fail with the error that ended it", async (_, scope) => {
+      let queries: Promise<string>[] = [];
+      const { rows } = await endSessionsUnder({ max: 2 }, 1, (sql, insert) => [
+        outcome(
+          scope(sql, on => {
+            queries = [0, 1, 2].map(i => outcome(insert(on, i)));
+            return Promise.all(queries);
+          }),
+        ),
+      ]);
+      expect({ queries: await Promise.all(queries), rows }).toEqual({
+        queries: Array(3).fill("ERR_POSTGRES_SERVER_ERROR"),
+        rows: 0,
+      });
+    });
+  });
+});
+
+test("postgres: a socket that closes fails the query that was written, and says the ones behind it never ran", async () => {
+  // Simple queries: one is written at a time.
+  const { port, server } = await pgMockServer((type, _, socket) => void (type === "Q" && socket.destroy()));
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1 });
+    const failures = await Promise.all(
+      [1, 2, 3].map(() => sql.unsafe("select 1").then(String, (err: any) => [err.code, err.message])),
+    );
+    expect(failures).toEqual([
+      ["ERR_POSTGRES_CONNECTION_CLOSED", "Connection closed"],
+      ["ERR_POSTGRES_CONNECTION_CLOSED", "Connection closed before the query ran"],
+      ["ERR_POSTGRES_CONNECTION_CLOSED", "Connection closed before the query ran"],
+    ]);
+  } finally {
+    server.close();
+  }
 });
 
 // A real server does not say how many logins it refused. Not concurrent: a login is 4096 rounds of PBKDF2 on this thread.

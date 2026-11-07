@@ -463,6 +463,11 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn fail_with_js_value(&self, value: JSValue) {
+        self.end_session(value, false);
+    }
+
+    /// `server_ended`: the server ended the session with an ErrorResponse, see `clean_up_requests`.
+    fn end_session(&self, value: JSValue, server_ended: bool) {
         self.timers.stop();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();
@@ -492,7 +497,7 @@ impl PostgresSQLConnection {
             // rejected below whatever `onclose` did.
             run_callback(self.global(), on_close, &[js_error]);
         }
-        self.clean_up_requests(Some(value));
+        self.clean_up_requests(Some(value), server_ended);
         self.update_has_pending_activity();
         if let Some(target) = self.cancel_target.take() {
             target
@@ -1306,20 +1311,30 @@ impl PostgresSQLConnection {
         self.close();
     }
 
-    fn clean_up_requests(&self, js_reason: Option<JSValue>) {
+    /// The head may have run. Behind it, a request that was never written did not, nor did any when
+    /// `server_ended`: the server reads nothing after the request that it was at work on.
+    fn clean_up_requests(&self, js_reason: Option<JSValue>, server_ended: bool) {
+        let mut behind_head = false;
         while let Some(request) = self.current() {
             if !matches!(
                 request.status.get(),
                 QueryStatus::Success | QueryStatus::Fail
             ) {
+                let never_ran = behind_head
+                    && (server_ended || request.flags.get().counter == RequestCounter::Pending);
                 self.count(&request, RequestCounter::None);
                 let global = self.global();
                 let reason = js_reason.unwrap_or_else(|| {
                     postgres_error_to_js(global, None, AnyPostgresError::ConnectionClosed)
                 });
-                request.on_js_error(reason, global);
+                if never_ran {
+                    request.on_never_ran(reason, global);
+                } else {
+                    request.on_js_error(reason, global);
+                }
             }
             self.discard_request(&request);
+            behind_head = true;
         }
     }
 
@@ -1346,7 +1361,7 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Connected {
             self.status.set(Status::Disconnected);
             self.close_socket();
-            self.clean_up_requests(None);
+            self.clean_up_requests(None, false);
         }
     }
 
@@ -2693,7 +2708,7 @@ impl PostgresSQLConnection {
                     let v =
                         crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                     drop(err);
-                    self.fail_with_js_value(v);
+                    self.end_session(v, true);
                     return Ok(());
                 };
                 let js_err =

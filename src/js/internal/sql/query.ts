@@ -234,6 +234,27 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
+  /// The server never ran it, and its connection is gone. It goes through its handler again, which finds it another
+  /// connection, or refuses it when the begin() or reserve() it belongs to has ended. `false`: the caller rejects it.
+  requeue(): boolean {
+    // Its stream stays with the handle it was attached to.
+    if (this[_flags] & SQLQueryFlags.copy) {
+      return false;
+    }
+    // releases the connection
+    this.#settling();
+    this[_settled] = null;
+    const handle = this.#createHandle();
+    if (handle !== null) {
+      try {
+        this[_handler](this, handle);
+      } catch (err) {
+        this.reject(err as Error);
+      }
+    }
+    return true;
+  }
+
   /// then() rejects what these throw.
   #runTagged() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
@@ -374,5 +395,6 @@ export default {
     _results,
     _waiter,
     _copy,
+    _adapter,
   },
 };

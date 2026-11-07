@@ -196,9 +196,19 @@ impl PostgresSQLQuery {
 
     /// For a request that is owed no `ReadyForQuery`: its caller takes it out of the queue.
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.end_with_error(err, global_object, false);
+    }
+
+    /// As `on_js_error`, for a request that the server never ran: the pool may
+    /// send it again on another connection.
+    pub(crate) fn on_never_ran(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.end_with_error(err, global_object, true);
+    }
+
+    fn end_with_error(&self, err: JSValue, global_object: &JSGlobalObject, never_ran: bool) {
         let err = self.kept_error().unwrap_or(err);
         self.status.set(Status::Fail);
-        self.reject(err, global_object);
+        self.reject_with(err, global_object, never_ran);
     }
 
     /// Rejects now. `status`, the counter and the queue head stay until its `ReadyForQuery`.
@@ -243,6 +253,10 @@ impl PostgresSQLQuery {
     }
 
     fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.reject_with(err, global_object, false);
+    }
+
+    fn reject_with(&self, err: JSValue, global_object: &JSGlobalObject, never_ran: bool) {
         let _guard = self.ref_guard();
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -262,7 +276,11 @@ impl PostgresSQLQuery {
             function,
             global_object,
             this_value,
-            &[target_value, err.to_error().unwrap_or(err)],
+            &[
+                target_value,
+                err.to_error().unwrap_or(err),
+                JSValue::from(never_ran),
+            ],
         );
     }
 

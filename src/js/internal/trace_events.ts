@@ -654,8 +654,9 @@ function wrapFsCallbackMethod(original: Wrapped, names: string[]) {
   return function (this: unknown, callback: Wrapped, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, arguments);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
+    let aborted;
     try {
-      return original.$call(
+      aborted = original.$call(
         this,
         function () {
           emitFsAsyncEnd(names);
@@ -667,6 +668,9 @@ function wrapFsCallbackMethod(original: Wrapped, names: string[]) {
       emitFsAsyncEnd(names);
       throw err;
     }
+    // The binding returns the error of a signal that is already aborted, and then nothing calls back.
+    if (aborted !== undefined) emitFsAsyncEnd(names);
+    return aborted;
   };
 }
 

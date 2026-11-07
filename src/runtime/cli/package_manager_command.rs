@@ -343,7 +343,9 @@ impl PackageManagerCommand {
                 Fs::FileSystem::get().top_level_dir(),
                 pm.options.bin_path.as_bytes(),
             );
-            bun_core::prettyln!("{}", bstr::BStr::new(output_path));
+            // Scripts run this path. Formatting it would replace each byte that is not UTF-8.
+            Output::print_bytes(output_path);
+            Output::print_bytes(b"\n");
             if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
                 bun_core::prettyln!("\n");
             }

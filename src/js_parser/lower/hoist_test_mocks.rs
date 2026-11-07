@@ -342,9 +342,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// A mock updates a loaded project file in place. Only an import that can be in a package has to load behind the call that names it.
     fn loads_behind_hoisted_mock(&self, path: &[u8]) -> bool {
-        let can_be_in_package = bun_paths::is_package_path(path)
-            || strings::contains(path, b"node_modules")
-            || strings::contains(self.source.path.text, b"node_modules");
+        let can_be_in_package =
+            bun_paths::is_package_path(path) || strings::contains(path, b"node_modules");
         can_be_in_package
             && self
                 .hoisted_mock_paths

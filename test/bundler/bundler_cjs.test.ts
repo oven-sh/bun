@@ -1235,4 +1235,245 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // Only the entry point tail calls the wrapper (__commonJS or __esm) of an
+  // entry point. The iife format had no tail: it defined the wrapper and never
+  // called it, so none of the entry point's code ran.
+  // ============================================================================
+
+  for (const backend of ["cli", "api"] as const) {
+    // Test 63: CommonJS entry point. The call is indented like the iife body.
+    itBundled(`cjs/__commonJS_entry_point_called_in_iife_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          console.log("entry ran");
+          module.exports = { a: 1 };
+        `,
+      },
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toEndWith("\n  });\n  require_entry();\n})();\n");
+      },
+      run: {
+        stdout: "entry ran",
+      },
+    });
+
+    // Test 64: an ESM entry point gets an __esm wrapper when a dependency
+    // require()s it back
+    itBundled(`cjs/__esm_entry_point_called_in_iife_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import "./a.js";
+          console.log("entry ran");
+          export const foo = 1;
+        `,
+        "/a.js": /* js */ `
+          const entry = require("./entry.js");
+          console.log("a ran", typeof entry);
+        `,
+      },
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toEndWith("\n  });\n  init_entry();\n})();\n");
+      },
+      run: {
+        stdout: "a ran object\nentry ran",
+      },
+    });
+  }
+
+  // Test 65: no CommonJS in the build. Another entry point import()s this
+  // entry point, and that wraps it in __esm.
+  itBundled("cjs/__esm_entry_point_called_in_iife_imported_by_other_entry_point", {
+    files: {
+      "/a.js": /* js */ `
+        import { tag } from "./shared.js";
+        console.log("a ran", tag);
+      `,
+      "/b.js": /* js */ `
+        import("./a.js").then(() => console.log("b loaded a"));
+      `,
+      "/shared.js": /* js */ `
+        export const tag = "shared";
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toEndWith("\n  });\n  init_a();\n})();\n");
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a ran shared" },
+      { file: "/out/b.js", stdout: "a ran shared\nb loaded a" },
+    ],
+  });
+
+  // Test 66: no CommonJS in the build. The entry point import()s a file that
+  // imports a binding back from it.
+  itBundled("cjs/__esm_entry_point_called_in_iife_dynamic_import_cycle", {
+    files: {
+      "/entry.js": /* js */ `
+        export const store = { n: 1 };
+        console.log("entry ran");
+        import("./route.js").then(m => m.show());
+      `,
+      "/route.js": /* js */ `
+        import { store } from "./entry.js";
+        export function show() {
+          console.log("route sees", store.n);
+        }
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEndWith("\n  });\n  init_entry();\n})();\n");
+    },
+    run: {
+      stdout: "entry ran\nroute sees 1",
+    },
+  });
+
+  // Test 67: the entry point is only CommonJS because it require()s a bundled
+  // ESM file
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_require_esm", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("./re.mjs");
+        console.log("entry ran", m.x);
+      `,
+      "/re.mjs": /* js */ `
+        export const x = 1;
+      `,
+    },
+    format: "iife",
+    run: {
+      stdout: "entry ran 1",
+    },
+  });
+
+  // Test 68: the tail goes through the chunk's renamer, so the call names the
+  // wrapper after identifiers are minified
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_minified", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry ran");
+        module.exports = { a: 1 };
+      `,
+    },
+    format: "iife",
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/\bvar ([\w$]+)=[\w$]+\(.*\);\1\(\);\}\)\(\);\n$/s);
+    },
+    run: {
+      stdout: "entry ran",
+    },
+  });
+
+  // Test 69: every entry point gets the tail of its own chunk
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_multiple_entry_points", {
+    files: {
+      "/a.js": /* js */ `
+        console.log("a ran");
+        module.exports = "a";
+      `,
+      "/b.js": /* js */ `
+        console.log("b ran");
+        module.exports = "b";
+      `,
+      // Wrapped in __esm (dep.js require()s it back), but every top-level
+      // statement can be hoisted, so the parser creates no wrapper symbol.
+      // A call of the missing symbol prints as `__INVALID__REF__();`.
+      "/hoisted.js": /* js */ `
+        export function load() {
+          return import("./dep.js");
+        }
+      `,
+      "/dep.js": /* js */ `
+        const entry = require("./hoisted.js");
+        console.log("dep ran", typeof entry.load);
+      `,
+      // Not wrapped: the code runs as the body of the iife
+      "/plain.js": /* js */ `
+        console.log("plain ran");
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js", "/hoisted.js", "/plain.js"],
+    outdir: "/out",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toEndWith("\n  });\n  require_a();\n})();\n");
+      api.expectFile("/out/b.js").toEndWith("\n  });\n  require_b();\n})();\n");
+      api.expectFile("/out/hoisted.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out/plain.js").toBe('(() => {\n  // plain.js\n  console.log("plain ran");\n})();\n');
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a ran" },
+      { file: "/out/b.js", stdout: "b ran" },
+      { file: "/out/hoisted.js", stdout: "" },
+      { file: "/out/plain.js", stdout: "plain ran" },
+    ],
+  });
+
+  // Test 70: target=bun puts the `// @bun` pragma in front of the iife
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_target_bun", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var x = 40 + 2;
+        console.log(JSON.stringify(["alive", x]));
+        module.exports = { x };
+        process.exitCode = 3;
+      `,
+    },
+    target: "bun",
+    format: "iife",
+    run: {
+      stdout: '["alive",42]',
+      exitCode: 3,
+    },
+  });
+
+  // Test 71: a standalone executable runs the same chunk
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_compile", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.cjs": /* js */ `
+        var x = 40 + 2;
+        console.log(JSON.stringify(["alive", x]));
+        module.exports = { x };
+        process.exitCode = 3;
+      `,
+    },
+    format: "iife",
+    run: {
+      stdout: '["alive",42]',
+      exitCode: 3,
+    },
+  });
+
+  // Test 72: an entry point with a lazy export (JSON, text, ...) is CommonJS
+  // in iife output (`HAS_LAZY_EXPORT` in LinkerContext.rs), so the linker
+  // wraps it and the tail calls it
+  itBundled("cjs/__commonJS_lazy_export_entry_point_called_in_iife", {
+    files: {
+      "/data.json": `{ "a": 1 }`,
+    },
+    entryPoints: ["/data.json"],
+    outfile: "/out.js",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEndWith("\n  });\n  require_data();\n})();\n");
+    },
+    run: {
+      stdout: "",
+    },
+  });
 });

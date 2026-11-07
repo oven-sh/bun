@@ -1355,29 +1355,16 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
 }
 
 fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    // NOTE (layering): `RareData::s3_default_client` body lives in
-    // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
-    // That can't compile in `bun_jsc`, so port the body here where the S3
-    // types are in scope and store the cached value through the public
-    // `RareData.s3_default_client: Strong` field.
     use crate::webcore::s3_client::S3Client;
-    use bun_jsc::StrongOptional;
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_this.bun_vm().as_mut();
-    // NOTE: reshaped for borrowck — capture the raw env loader pointer
-    // before `rare_data()` takes the long-lived `&mut` of `vm`.
-    let env_ptr = vm.transpiler.env;
-    let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get() {
-        return Ok(v);
-    }
-    // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
-    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
-    // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
-    // from `rare_data` storage.
-    let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+    // `Bun.s3` is the realm's: JSC keeps what this returns on the realm's `Bun` object.
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(
+        global_this
+            .bun_vm()
+            .as_mut()
+            .transpiler
+            .env_mut()
+            .get_s3_credentials(),
+    );
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1399,10 +1386,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         storage_class: aws_options.storage_class,
         request_payer: aws_options.request_payer,
     };
-    let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
-    js_client.ensure_still_alive();
-    rare.s3_default_client = StrongOptional::create(js_client, global_this);
-    Ok(js_client)
+    Ok(<S3Client as bun_jsc::JsClass>::to_js(client, global_this))
 }
 
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

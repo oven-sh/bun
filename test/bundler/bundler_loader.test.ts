@@ -244,14 +244,28 @@ describe("bundler", async () => {
       },
       onAfterBundle(api) {
         const code = api.readFile("/out.js");
-        expect(code).toContain('as "a b"');
-        expect(code).toContain('as "foo-bar"');
-        expect(code).toContain('as ""');
-        expect(code).toContain('as "123"');
-        // The emoji is written as escapes in ASCII-only output.
-        expect(code).toMatch(/as "(🔥|\\uD83D\\uDD25)"/);
-        expect(code).toContain("as if");
-        expect(code).toContain("as default");
+        // One specifier per key plus `default`. The output is ASCII only, so a
+        // name that is not ASCII is written with escapes.
+        expect(code.slice(code.indexOf("export {"))).toBe(
+          [
+            "export {",
+            '  _ as "",',
+            '  _123 as "123",',
+            '  _1e3 as "1e3",',
+            '  a_b as "a b",',
+            "  a_b2 as a_b,",
+            "  caf\\u{e9},",
+            "  class2 as class,",
+            "  data_default as default,",
+            '  foo_bar as "foo-bar",',
+            "  if2 as if,",
+            "  _let as let,",
+            "  \\u{65e5}\\u{672c},",
+            '  __ as "\\uD83D\\uDD25"',
+            "};",
+            "",
+          ].join("\n"),
+        );
       },
     });
 

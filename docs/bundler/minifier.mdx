@@ -96,6 +96,12 @@ Renames local variables and function names to shorter identifiers using frequenc
 
 ## All Transformations
 
+To get the Output of a section, save its Input as `input.ts` and run `bun build ./input.ts` with the flags on the **Mode** line. `Always active` means that the transformation needs no flag.
+
+`bun build` bundles the Input, so a `let` or `const` at the top level of the file becomes `var`. Unless you minify whitespace, Bun also writes a comment such as `// input.ts` above the code of each source file. The Output blocks leave that comment out.
+
+{/* scripts/minifier-docs.ts generates the Output blocks. After you change a section, run: bun bd scripts/minifier-docs.ts --write */}
+
 ### Boolean literal shortening
 
 **Mode:** `--minify-syntax`
@@ -103,13 +109,13 @@ Renames local variables and function names to shorter identifiers using frequenc
 Converts boolean literals to shorter expressions.
 
 ```ts Input
-true
-false
+console.log(true);
+console.log(false);
 ```
 
 ```js Output
-!0
-!1
+console.log(!0);
+console.log(!1);
 ```
 
 ### Boolean algebra optimizations
@@ -119,19 +125,22 @@ false
 Simplifies boolean expressions using logical rules.
 
 ```ts Input
-if (!!x) y;
-if (x && true) y;
-if (x || false) y;
-!true
-!false
+if (!!x) y();
+if (x && true) y();
+if (x || false) y();
+console.log(!(a == b));
+console.log(!(a !== b));
 ```
 
 ```js Output
-if(x)y;
-if(x)y;
-if(x)y;
-!1
-!0
+if (x)
+  y();
+if (x)
+  y();
+if (x)
+  y();
+console.log(a != b);
+console.log(a === b);
 ```
 
 ### Undefined shortening
@@ -141,13 +150,11 @@ if(x)y;
 Replaces `undefined` with shorter equivalent.
 
 ```ts Input
-undefined
-let x = undefined;
+console.log(undefined);
 ```
 
 ```js Output
-void 0
-let x=void 0;
+console.log(void 0);
 ```
 
 ### Undefined equality optimization
@@ -157,13 +164,13 @@ let x=void 0;
 Optimizes loose equality checks with undefined.
 
 ```ts Input
-x == undefined
-x != undefined
+console.log(x == undefined);
+console.log(x != undefined);
 ```
 
 ```js Output
-x == null
-x != null
+console.log(x == null);
+console.log(x != null);
 ```
 
 ### Infinity shortening
@@ -173,63 +180,73 @@ x != null
 Converts Infinity to mathematical expressions.
 
 ```ts Input
-Infinity
--Infinity
+console.log(Infinity);
+console.log(-Infinity);
 ```
 
 ```js Output
-1/0
--1/0
+console.log(1 / 0);
+console.log(-1 / 0);
 ```
 
 ### Typeof optimizations
 
 **Mode:** `--minify-syntax`
 
-Optimizes typeof comparisons and evaluates constant typeof expressions.
+Shortens a comparison of `typeof` with `"undefined"`.
 
 ```ts Input
-typeof x === 'undefined'
-typeof x !== 'undefined'
-typeof require
-typeof null
-typeof true
-typeof 123
-typeof "str"
-typeof 123n
+console.log(typeof x === "undefined");
+console.log(typeof x !== "undefined");
 ```
 
 ```js Output
-typeof x>'u'
-typeof x<'u'
-"function"
-"object"
-"boolean"
-"number"
-"string"
-"bigint"
+console.log(typeof x > "u");
+console.log(typeof x < "u");
+```
+
+### Typeof constant folding
+
+**Mode:** Always active
+
+Evaluates `typeof` of a literal at compile time.
+
+```ts Input
+console.log(typeof null);
+console.log(typeof true);
+console.log(typeof 123);
+console.log(typeof "str");
+console.log(typeof 123n);
+```
+
+```js Output
+console.log("object");
+console.log("boolean");
+console.log("number");
+console.log("string");
+console.log("bigint");
 ```
 
 ### Number formatting
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
-Formats numbers in the most compact representation.
+Prints a power of ten from `1e4` to `1e9` with an exponent, and a whole number without its fraction.
 
 ```ts Input
-10000
-100000
-1000000
-1.0
--42.0
+console.log(10000);
+console.log(100000);
+console.log(1000000);
+console.log(1.0);
+console.log(-42.0);
 ```
 
 ```js Output
-1e4
-1e5
-1e6
-1
--42
+console.log(1e4);
+console.log(1e5);
+console.log(1e6);
+console.log(1);
+console.log(-42);
 ```
 
 ### Arithmetic constant folding
@@ -239,21 +256,21 @@ Formats numbers in the most compact representation.
 Evaluates arithmetic operations at compile time.
 
 ```ts Input
-1 + 2
-10 - 5
-3 * 4
-10 / 2
-10 % 3
-2 ** 3
+console.log(1 + 2);
+console.log(10 - 5);
+console.log(3 * 4);
+console.log(10 / 2);
+console.log(10 % 3);
+console.log(2 ** 3);
 ```
 
 ```js Output
-3
-5
-12
-5
-1
-8
+console.log(3);
+console.log(5);
+console.log(12);
+console.log(5);
+console.log(1);
+console.log(8);
 ```
 
 ### Bitwise constant folding
@@ -263,21 +280,21 @@ Evaluates arithmetic operations at compile time.
 Evaluates bitwise operations at compile time.
 
 ```ts Input
-5 & 3
-5 | 3
-5 ^ 3
-8 << 2
-32 >> 2
-~5
+console.log(5 & 3);
+console.log(5 | 3);
+console.log(5 ^ 3);
+console.log(8 << 2);
+console.log(32 >> 2);
+console.log(~5);
 ```
 
 ```js Output
-1
-7
-6
-32
-8
--6
+console.log(1);
+console.log(7);
+console.log(6);
+console.log(32);
+console.log(8);
+console.log(-6);
 ```
 
 ### String concatenation
@@ -287,15 +304,15 @@ Evaluates bitwise operations at compile time.
 Combines string literals at compile time.
 
 ```ts Input
-"a" + "b"
-"x" + 123
-"foo" + "bar" + "baz"
+console.log("a" + "b");
+console.log("x" + 123);
+console.log("foo" + "bar" + "baz");
 ```
 
 ```js Output
-"ab"
-"x123"
-"foobarbaz"
+console.log("ab");
+console.log("x123");
+console.log("foobarbaz");
 ```
 
 ### String indexing
@@ -305,13 +322,13 @@ Combines string literals at compile time.
 Evaluates string character access at compile time.
 
 ```ts Input
-"foo"[2]
-"hello"[0]
+console.log("foo"[2]);
+console.log("hello"[0]);
 ```
 
 ```js Output
-"o"
-"h"
+console.log("o");
+console.log("h");
 ```
 
 ### Template literal folding
@@ -321,48 +338,47 @@ Evaluates string character access at compile time.
 Evaluates template literals with constant expressions.
 
 ```ts Input
-`a${123}b`
-`result: ${5 + 10}`
+console.log(`a${123}b`);
+console.log(`result: ${5 + 10}`);
 ```
 
 ```js Output
-"a123b"
-"result: 15"
+console.log("a123b");
+console.log("result: 15");
 ```
 
 ### Template literal to string conversion
 
 **Mode:** `--minify-syntax`
 
-Converts template literals with no substitutions to regular strings.
+Converts template literals with no substitutions to regular strings. Bun keeps a template literal that has a line break, because the line break needs no escape there.
 
 ```ts Input
-`Hello World`
-`Line 1
-Line 2`
+console.log(`Hello World`);
+console.log(`Line 1
+Line 2`);
 ```
 
 ```js Output
-"Hello World"
-"Line 1\nLine 2"
+console.log("Hello World");
+console.log(`Line 1
+Line 2`);
 ```
 
 ### String quote optimization
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
-Chooses the optimal quote character to minimize escapes.
+Chooses the quote character that needs the fewest escapes.
 
 ```ts Input
-"It's a string"
-'He said "hello"'
-`Simple string`
+console.log('It\'s a string');
+console.log("He said \"hello\"");
 ```
 
 ```js Output
-"It's a string"
-'He said "hello"'
-"Simple string"
+console.log("It's a string");
+console.log('He said "hello"');
 ```
 
 ### Array spread inlining
@@ -372,13 +388,13 @@ Chooses the optimal quote character to minimize escapes.
 Inlines array spread operations with constant arrays.
 
 ```ts Input
-[1, ...[2, 3], 4]
-[...[a, b]]
+console.log([1, ...[2, 3], 4]);
+console.log([...[a, b]]);
 ```
 
 ```js Output
-[1,2,3,4]
-[a,b]
+console.log([1, 2, 3, 4]);
+console.log([a, b]);
 ```
 
 ### Array indexing
@@ -388,15 +404,15 @@ Inlines array spread operations with constant arrays.
 Evaluates constant array access at compile time.
 
 ```ts Input
-[x][0]
-['a', 'b', 'c'][1]
-['a', , 'c'][1]
+console.log([x][0]);
+console.log(["a", "b", "c"][1]);
+console.log(["a", , "c"][1]);
 ```
 
 ```js Output
-x
-'b'
-void 0
+console.log(x);
+console.log("b");
+console.log(void 0);
 ```
 
 ### Property access optimization
@@ -406,17 +422,17 @@ void 0
 Converts bracket notation to dot notation when possible.
 
 ```ts Input
-obj["property"]
-obj["validName"]
-obj["123"]
-obj["invalid-name"]
+console.log(obj["property"]);
+console.log(obj["validName"]);
+console.log(obj["123"]);
+console.log(obj["invalid-name"]);
 ```
 
 ```js Output
-obj.property
-obj.validName
-obj["123"]
-obj["invalid-name"]
+console.log(obj.property);
+console.log(obj.validName);
+console.log(obj["123"]);
+console.log(obj["invalid-name"]);
 ```
 
 ### Comparison folding
@@ -426,57 +442,57 @@ obj["invalid-name"]
 Evaluates constant comparisons at compile time.
 
 ```ts Input
-3 < 5
-5 > 3
-3 <= 3
-5 >= 6
-"a" < "b"
+console.log(3 < 5);
+console.log(5 > 3);
+console.log(3 <= 3);
+console.log(5 >= 6);
+console.log("a" < "b");
 ```
 
 ```js Output
-!0
-!0
-!0
-!1
-!0
+console.log(!0);
+console.log(!0);
+console.log(!0);
+console.log(!1);
+console.log(!0);
 ```
 
 ### Logical operation folding
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
 Simplifies logical operations with constant values.
 
 ```ts Input
-true && x
-false && x
-true || x
-false || x
+console.log(true && x);
+console.log(false && x);
+console.log(true || x);
+console.log(false || x);
 ```
 
 ```js Output
-x
-!1
-!0
-x
+console.log(x);
+console.log(false);
+console.log(true);
+console.log(x);
 ```
 
 ### Nullish coalescing folding
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
 Evaluates nullish coalescing with known values.
 
 ```ts Input
-null ?? x
-undefined ?? x
-42 ?? x
+console.log(null ?? x);
+console.log(undefined ?? x);
+console.log(42 ?? x);
 ```
 
 ```js Output
-x
-x
-42
+console.log(x);
+console.log(x);
+console.log(42);
 ```
 
 ### Comma expression simplification
@@ -486,55 +502,45 @@ x
 Removes side-effect-free expressions from comma sequences.
 
 ```ts Input
-(0, x)
-(123, "str", x)
+console.log((0, x));
+console.log((123, "str", x));
 ```
 
 ```js Output
-x
-x
+console.log(x);
+console.log(x);
 ```
 
 ### Ternary conditional folding
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
 Evaluates conditional expressions with constant conditions.
 
 ```ts Input
-true ? a : b
-false ? a : b
-x ? true : false
-x ? false : true
+console.log(true ? a : b);
+console.log(false ? a : b);
 ```
 
 ```js Output
-a
-b
-x ? !0 : !1
-x ? !1 : !0
+console.log(a);
+console.log(b);
 ```
 
 ### Unary expression folding
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
 Simplifies unary operations.
 
 ```ts Input
-+123
-+"123"
--(-x)
-~~x
-!!x
+console.log(+123);
+console.log(+"123");
 ```
 
 ```js Output
-123
-123
-- -x
-~~x
-!!x
+console.log(123);
+console.log(123);
 ```
 
 ### Double negation removal
@@ -544,13 +550,14 @@ Simplifies unary operations.
 Removes unnecessary double negations.
 
 ```ts Input
-if (!!x) y;
-!!!x
+if (!!x) y();
+console.log(!!!x);
 ```
 
 ```js Output
-if(x)y;
-!x
+if (x)
+  y();
+console.log(!x);
 ```
 
 ### If statement optimization
@@ -560,24 +567,19 @@ if(x)y;
 Optimizes if statements with constant conditions.
 
 ```ts Input
-if (true) x;
-if (false) x;
-if (x) { a; }
-if (x) {} else y;
+if (true) a();
+if (false) b();
 ```
 
 ```js Output
-x;
-// removed
-if(x)a;
-if(!x)y;
+a();
 ```
 
 ### Dead code elimination
 
 **Mode:** `--minify-syntax`
 
-Removes unreachable code and code without side effects.
+Removes code that can never run: an `if (false)` statement, and the statements after a `return`.
 
 ```ts Input
 if (false) {
@@ -587,26 +589,14 @@ function foo() {
   return x;
   deadCode();
 }
+console.log(foo());
 ```
 
 ```js Output
-function foo(){return x}
-```
-
-### Unreachable branch removal
-
-**Mode:** `--minify-syntax`
-
-Removes branches that can never execute.
-
-```ts Input
-while (false) {
-  neverRuns();
+function foo() {
+  return x;
 }
-```
-
-```js Output
-// removed entirely
+console.log(foo());
 ```
 
 ### Empty block removal
@@ -621,8 +611,8 @@ if (x) { }
 ```
 
 ```js Output
-;
-// removed
+if (x)
+  ;
 ```
 
 ### Single statement block unwrapping
@@ -638,22 +628,23 @@ if (condition) {
 ```
 
 ```js Output
-if(condition)doSomething();
+if (condition)
+  doSomething();
 ```
 
 ### TypeScript enum inlining
 
-**Mode:** `--minify-syntax`
+**Mode:** Always active
 
 Inlines TypeScript enum values at compile time.
 
 ```ts Input
 enum Color { Red, Green, Blue }
-const x = Color.Red;
+console.log(Color.Red);
 ```
 
 ```js Output
-const x=0;
+console.log(0 /* Red */);
 ```
 
 ### Pure annotation support
@@ -663,12 +654,14 @@ const x=0;
 Respects `/*@__PURE__*/` annotations for tree shaking (removing unused code).
 
 ```ts Input
-const x = /*@__PURE__*/ expensive();
-// If x is unused...
+const unused = /*@__PURE__*/ expensive();
+const used = /*@__PURE__*/ expensive();
+console.log(used);
 ```
 
 ```js Output
-// removed entirely
+var used = /* @__PURE__ */ expensive();
+console.log(used);
 ```
 
 ### Identifier renaming
@@ -682,15 +675,20 @@ function calculateSum(firstNumber, secondNumber) {
   const result = firstNumber + secondNumber;
   return result;
 }
+console.log(calculateSum(1, 2));
 ```
 
 ```js Output
-function n(t,u){const c=t+u;return c}
+function o(c, l) {
+  const n = c + l;
+  return n;
+}
+console.log(o(1, 2));
 ```
 
 **Naming strategy:**
 
-- Most frequently used identifiers get the shortest names; Bun orders the alphabet by how often each character appears in the source, so the first names are usually letters like t, e and n rather than a, b, c
+- Most frequently used identifiers get the shortest names; Bun orders the alphabet by how often each character appears in the source, so the names depend on the source
 - Single characters: a-z, A-Z and `_` (53 names; `$` alone is reserved)
 - Two characters: the second character can also be a digit (up to 3,456 names)
 - Three characters and beyond as needed
@@ -712,27 +710,30 @@ Removes all unnecessary whitespace.
 function add(a, b) {
     return a + b;
 }
-let x = 10;
+console.log(add(1, 2));
 ```
 
 ```js Output
-function add(a,b){return a+b}let x=10;
+function add(a,b){return a+b}console.log(add(1,2));
 ```
 
 ### Semicolon optimization
 
 **Mode:** `--minify-whitespace`
 
-Inserts semicolons only when necessary.
+Prints no semicolon after the last statement of a block.
 
 ```ts Input
-let a = 1;
-let b = 2;
-return a + b;
+function sum() {
+    let a = 1;
+    let b = 2;
+    return a + b;
+}
+console.log(sum());
 ```
 
 ```js Output
-let a=1;let b=2;return a+b
+function sum(){let a=1;let b=2;return a+b}console.log(sum());
 ```
 
 ### Operator spacing removal
@@ -742,33 +743,33 @@ let a=1;let b=2;return a+b
 Removes spaces around operators.
 
 ```ts Input
-a + b
-x = y * z
-foo && bar || baz
+console.log(a + b);
+x = y * z;
+console.log(foo && bar || baz);
 ```
 
 ```js Output
-a+b
-x=y*z
-foo&&bar||baz
+console.log(a+b);x=y*z;console.log(foo&&bar||baz);
 ```
 
 ### Comment removal
 
-**Mode:** `--minify-whitespace`
+**Mode:** Always active
 
-Removes comments except important license comments.
+Removes comments. Bun keeps a comment that starts with `/*!` or `//!`.
 
 ```ts Input
 // This comment is removed
 /* So is this */
 /*! But this license comment is kept */
 function test() { /* inline comment */ }
+test();
 ```
 
 ```js Output
 /*! But this license comment is kept */
-function test(){}
+function test() {}
+test();
 ```
 
 ### Object and array formatting
@@ -778,15 +779,15 @@ function test(){}
 Removes whitespace in object and array literals.
 
 ```ts Input
-const obj = {
+console.log({
     name: "John",
     age: 30
-};
-const arr = [1, 2, 3];
+});
+console.log([1, 2, 3]);
 ```
 
 ```js Output
-const obj={name:"John",age:30};const arr=[1,2,3];
+console.log({name:"John",age:30});console.log([1,2,3]);
 ```
 
 ### Control flow formatting
@@ -805,7 +806,7 @@ for (let i = 0; i < 10; i++) {
 ```
 
 ```js Output
-if(condition)doSomething();for(let i=0;i<10;i++)console.log(i);
+if(condition){doSomething()}for(let i=0;i<10;i++){console.log(i)}
 ```
 
 ### Function formatting
@@ -818,11 +819,11 @@ Removes whitespace in function declarations.
 function myFunction(param1, param2) {
     return param1 + param2;
 }
-const arrow = (a, b) => a + b;
+console.log(myFunction, (a, b) => a + b);
 ```
 
 ```js Output
-function myFunction(param1,param2){return param1+param2}const arrow=(a,b)=>a+b;
+function myFunction(param1,param2){return param1+param2}console.log(myFunction,(a,b)=>a+b);
 ```
 
 ### Parentheses minimization
@@ -832,15 +833,15 @@ function myFunction(param1,param2){return param1+param2}const arrow=(a,b)=>a+b;
 Only adds parentheses when necessary for operator precedence.
 
 ```ts Input
-(a + b) * c
-a + (b * c)
-((x))
+console.log((a + b) * c);
+console.log(a + (b * c));
+console.log(((x)));
 ```
 
 ```js Output
-(a+b)*c
-a+b*c
-x
+console.log((a + b) * c);
+console.log(a + b * c);
+console.log(x);
 ```
 
 ### Template literal value folding
@@ -850,19 +851,19 @@ x
 Converts non-string interpolated values to strings and folds them into the template.
 
 ```ts Input
-`hello ${123}`
-`value: ${true}`
-`result: ${null}`
-`status: ${undefined}`
-`big: ${10n}`
+console.log(`hello ${123}`);
+console.log(`value: ${true}`);
+console.log(`result: ${null}`);
+console.log(`status: ${undefined}`);
+console.log(`big: ${10n}`);
 ```
 
 ```js Output
-"hello 123"
-"value: true"
-"result: null"
-"status: undefined"
-"big: 10"
+console.log("hello 123");
+console.log("value: true");
+console.log("result: null");
+console.log("status: undefined");
+console.log("big: 10");
 ```
 
 ### String length constant folding
@@ -872,13 +873,13 @@ Converts non-string interpolated values to strings and folds them into the templ
 Evaluates `.length` property on string literals at compile time.
 
 ```ts Input
-"hello world".length
-"test".length
+console.log("hello world".length);
+console.log("test".length);
 ```
 
 ```js Output
-11
-4
+console.log(11);
+console.log(4);
 ```
 
 ### Constructor call simplification
@@ -888,19 +889,22 @@ Evaluates `.length` property on string literals at compile time.
 Simplifies constructor calls for built-in types.
 
 ```ts Input
-new Object()
-new Object(null)
-new Object({a: 1})
-new Array()
-new Array(x, y)
+console.log(new Object());
+console.log(new Object(null));
+console.log(new Object({ a: 1 }));
+console.log(new Array());
+console.log(new Array(x, y));
 ```
 
 ```js Output
-{}
-{}
-{a:1}
-[]
-[x,y]
+console.log({});
+console.log({});
+console.log({ a: 1 });
+console.log([]);
+console.log([
+  x,
+  y
+]);
 ```
 
 ### Single property object inlining
@@ -910,11 +914,11 @@ new Array(x, y)
 Inlines property access for objects with a single property.
 
 ```ts Input
-({fn: () => console.log('hi')}).fn
+console.log({ fn: () => console.log("hi") }.fn);
 ```
 
 ```js Output
-() => console.log('hi')
+console.log(() => console.log("hi"));
 ```
 
 ### String charCodeAt constant folding
@@ -924,13 +928,13 @@ Inlines property access for objects with a single property.
 Evaluates `charCodeAt()` on string literals for ASCII characters.
 
 ```ts Input
-"hello".charCodeAt(1)
-"A".charCodeAt(0)
+console.log("hello".charCodeAt(1));
+console.log("A".charCodeAt(0));
 ```
 
 ```js Output
-101
-65
+console.log(101);
+console.log(65);
 ```
 
 ### Void 0 equality to null equality
@@ -940,13 +944,13 @@ Evaluates `charCodeAt()` on string literals for ASCII characters.
 Converts loose equality checks with `void 0` to `null` since they're equivalent.
 
 ```ts Input
-x == void 0
-x != void 0
+console.log(x == void 0);
+console.log(x != void 0);
 ```
 
 ```js Output
-x == null
-x != null
+console.log(x == null);
+console.log(x != null);
 ```
 
 ### Negation operator optimization
@@ -956,33 +960,13 @@ x != null
 Moves negation operator through comma expressions.
 
 ```ts Input
--(a, b)
--(x, y, z)
+console.log(-(a, b));
+console.log(-(x, y, z));
 ```
 
 ```js Output
-a,-b
-x,y,-z
-```
-
-### Import.meta property inlining
-
-**Mode:** Bundle mode
-
-Inlines `import.meta` properties at build time when values are known.
-
-```ts Input
-import.meta.dir
-import.meta.file
-import.meta.path
-import.meta.url
-```
-
-```js Output
-"/path/to/directory"
-"filename.js"
-"/full/path/to/file.js"
-"file:///full/path/to/file.js"
+console.log((a, -b));
+console.log((x, y, -z));
 ```
 
 ### Variable declaration merging
@@ -994,29 +978,35 @@ Merges adjacent variable declarations of the same type.
 ```ts Input
 let a = 1;
 let b = 2;
-const c = 3;
-const d = 4;
+let c = 3;
+console.log(a, b, c);
 ```
 
 ```js Output
-let a=1,b=2;
-const c=3,d=4;
+var a = 1, b = 2, c = 3;
+console.log(a, b, c);
 ```
 
 ### Expression statement merging
 
 **Mode:** `--minify-syntax`
 
-Merges adjacent expression statements using comma operator.
+Merges adjacent expression statements in a function body or a block using the comma operator. Statements at the top level of a file stay separate.
 
 ```ts Input
-console.log(1);
-console.log(2);
-console.log(3);
+function log() {
+  console.log(1);
+  console.log(2);
+  console.log(3);
+}
+log();
 ```
 
 ```js Output
-console.log(1),console.log(2),console.log(3);
+function log() {
+  console.log(1), console.log(2), console.log(3);
+}
+log();
 ```
 
 ### Return statement merging
@@ -1026,12 +1016,18 @@ console.log(1),console.log(2),console.log(3);
 Merges expressions before return with comma operator.
 
 ```ts Input
-console.log(x);
-return y;
+function f() {
+  console.log(x);
+  return y;
+}
+f();
 ```
 
 ```js Output
-return console.log(x),y;
+function f() {
+  return console.log(x), y;
+}
+f();
 ```
 
 ### Throw statement merging
@@ -1041,46 +1037,56 @@ return console.log(x),y;
 Merges expressions before throw with comma operator.
 
 ```ts Input
-console.log(x);
-throw new Error();
+function f() {
+  console.log(x);
+  throw err;
+}
+f();
 ```
 
 ```js Output
-throw(console.log(x),new Error());
+function f() {
+  throw console.log(x), err;
+}
+f();
 ```
 
 ### TypeScript enum cross-module inlining
 
-**Mode:** `--minify-syntax` (bundle mode)
+**Mode:** Always active
 
 Inlines enum values across module boundaries.
 
-```ts Input 
-// lib.ts
+```ts lib.ts
 export enum Color { Red, Green, Blue }
+```
 
-// Input (main.ts)
-import { Color } from './lib';
-const x = Color.Red;
+```ts Input
+import { Color } from "./lib";
+console.log(Color.Red);
 ```
 
 ```js Output
-const x=0;
+console.log(0 /* Red */);
 ```
 
 ### Computed property enum inlining
 
 **Mode:** `--minify-syntax`
 
-Inlines enum values used as computed object properties.
+Turns a computed key that is a member of an imported enum into a plain key.
+
+```ts keys.ts
+export enum Keys { FOO = "foo" }
+```
 
 ```ts Input
-enum Keys { FOO = 'foo' }
-const obj = { [Keys.FOO]: value }
+import { Keys } from "./keys";
+console.log({ [Keys.FOO]: value });
 ```
 
 ```js Output
-const obj={foo:value}
+console.log({ foo: value });
 ```
 
 ### Arrow function body shortening
@@ -1090,13 +1096,13 @@ const obj={foo:value}
 Uses expression body syntax when an arrow function only returns a value.
 
 ```ts Input
-() => { return x; }
-(a) => { return a + 1; }
+console.log(() => { return x; });
+console.log((a) => { return a + 1; });
 ```
 
 ```js Output
-() => x
-a => a + 1
+console.log(() => x);
+console.log((a) => a + 1);
 ```
 
 ### Object property shorthand
@@ -1106,13 +1112,13 @@ a => a + 1
 Uses shorthand syntax when property name and value identifier match.
 
 ```ts Input
-{ x: x, y: y }
-{ name: name, age: age }
+console.log({ x: x, y: y });
+console.log({ name: name, age: age });
 ```
 
 ```js Output
-{ x, y }
-{ name, age }
+console.log({ x, y });
+console.log({ name, age });
 ```
 
 ### Drop debugger statements
@@ -1126,17 +1132,21 @@ function test() {
   debugger;
   return x;
 }
+console.log(test());
 ```
 
 ```js Output
-function test(){return x}
+function test() {
+  return x;
+}
+console.log(test());
 ```
 
 ### Drop console calls
 
 **Mode:** `--drop=console`
 
-Removes all `console.*` method calls from code.
+Removes all `console.*` method calls from code. If your code uses the value of a call, Bun puts `undefined` in its place.
 
 ```ts Input
 console.log("debug");
@@ -1145,25 +1155,23 @@ x = console.error("error");
 ```
 
 ```js Output
-void 0;
-void 0;
-x=void 0;
+x = undefined;
 ```
 
 ### Drop custom function calls
 
-**Mode:** `--drop=<name>`
+**Mode:** `--drop=assert`
 
-Removes calls to specified global functions and their methods.
+`--drop=<name>` removes calls to the global function `<name>` and to its methods. If your code uses the value of a call, Bun puts `undefined` in its place.
 
 ```ts Input
 assert(condition);
 assert.equal(a, b);
+x = assert(condition);
 ```
 
-```js Output with --drop=assert
-void 0;
-void 0;
+```js Output
+x = undefined;
 ```
 
 ## Keep Names
@@ -1191,9 +1199,11 @@ await Bun.build({
 
 ## Combined Example
 
+**Mode:** `--minify`
+
 Using all three minification modes together:
 
-```ts input.ts (176 bytes)
+```ts Input
 const myVariable = 42;
 
 const myFunction = () => {
@@ -1205,8 +1215,7 @@ const myFunction = () => {
 const output = myFunction();
 ```
 
-```js output.js
-// Output with --minify (20 bytes, 89% reduction)
+```js Output
 var t=()=>42,e=t();
 ```
 

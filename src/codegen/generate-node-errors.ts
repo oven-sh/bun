@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import NodeErrors from "../jsc/bindings/ErrorCode.ts";
+import NodeErrors, { plainErrorCodes } from "../jsc/bindings/ErrorCode.ts";
 import { writeIfNotChanged } from "./helpers.ts";
 const outputDir = process.argv[2];
 const typesDir = process.argv[3];
@@ -19,6 +19,11 @@ if (count > 1 << 16) {
   throw new Error(`NodeError can't fit ${count} codes in a u16`);
 }
 
+// A name that is not the name of the row's constructor is a property of the error itself, as in Node's AbortError and UnhandledPromiseRejection: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L985-L986 and https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/promises.js#L47-L48
+const ownNames = [
+  ...new Set(NodeErrors.flatMap(([, constructor, name]) => (name != null && name !== constructor.name ? [name] : []))),
+].sort();
+
 let enumHeader = ``;
 let listHeader = ``;
 let rustConsts = ``;
@@ -35,6 +40,7 @@ enumHeader = `
 
 namespace Bun {
   static constexpr size_t NODE_ERROR_COUNT = ${count};
+  static constexpr size_t NODE_ERROR_OWN_NAME_COUNT = ${ownNames.length};
   enum class ErrorCode : uint16_t {
 `;
 
@@ -45,13 +51,25 @@ listHeader = `
 
 #include <JavaScriptCore/ErrorType.h>
 
+enum class ErrorOwnName : uint8_t { None, ${ownNames.join(", ")} };
+
 struct ErrorCodeData {
     JSC::ErrorType type;
+    // Not None: an error of this row gets \`name\` as a property of its own.
+    ErrorOwnName ownName;
+    // The prototype of the code has the \`name [code]: message\` toString() of Node's NodeError. Without it the error inherits Error.prototype.toString.
+    bool hasNodeErrorToString;
     WTF::ASCIILiteral name;
     WTF::ASCIILiteral code;
 };
-static constexpr ErrorCodeData errors[${count}] = {
+
+const ErrorCodeData& ErrorCodeCache::dataFor(ErrorCode code)
+{
+    static constexpr ErrorCodeData errors[${count}] = {
 `;
+
+// Every code that Node registers for makeNodeErrorWithCode starts with ERR_.
+const hasNodeErrorToString = (code: string) => code.startsWith("ERR_") && !plainErrorCodes.has(code);
 
 let i = 0;
 for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
@@ -61,7 +79,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   const codeWithoutPrefix = code === "ERR_MODULE_NOT_FOUND" ? code : code.replace(/^ERR_/, "");
 
   enumHeader += `    ${code} = ${i},\n`;
-  listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
+  listHeader += `        { JSC::ErrorType::${constructor.name}, ErrorOwnName::${name === constructor.name ? "None" : name}, ${hasNodeErrorToString(code)}, "${name}"_s, "${code}"_s },\n`;
   rustConsts += `    /// \`${code}\` (instanceof ${constructor.name})\n`;
   rustConsts += `    pub const ${codeWithoutPrefix}: ErrorCode = ErrorCode(${i});\n`;
   if (codeWithoutPrefix !== code) {
@@ -74,7 +92,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
     if (con == null) continue;
     if (name == null) name = con.name;
     enumHeader += `    ${code}_${con.name} = ${i},\n`;
-    listHeader += `    { JSC::ErrorType::${con.name}, "${con.name}"_s, "${code}"_s },\n`;
+    listHeader += `        { JSC::ErrorType::${con.name}, ErrorOwnName::None, ${hasNodeErrorToString(code)}, "${con.name}"_s, "${code}"_s },\n`;
     rustConsts += `    /// \`${code}\` (instanceof ${con.name})\n`;
     rustConsts += `    pub const ${codeWithoutPrefix}_${con.name}: ErrorCode = ErrorCode(${i});\n`;
     rustCodeStr += `    "${code}",\n`;
@@ -87,8 +105,9 @@ enumHeader += `
 } // namespace Bun
 `;
 
-listHeader += `
-};
+listHeader += `    };
+    return errors[static_cast<size_t>(code)];
+}
 `;
 
 const rustSource = `\

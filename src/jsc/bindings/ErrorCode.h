@@ -57,9 +57,12 @@ private:
 // For a message built with `tryMakeString`: a null `message` did not fit, and is thrown as `RangeError: Out of memory`.
 void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject*, JSC::ThrowScope&, const WTF::String& message);
 
-class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
+struct ErrorCodeData;
+
+// Field `code` holds the Structure of the errors of that code, and field `NODE_ERROR_COUNT + code` the string each of them gets as its own `code`. The last fields hold the names that an error can get as its own `name`.
+class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<2 * NODE_ERROR_COUNT + NODE_ERROR_OWN_NAME_COUNT> {
 public:
-    using Base = JSInternalFieldObjectImpl<NODE_ERROR_COUNT>;
+    using Base = JSInternalFieldObjectImpl<2 * NODE_ERROR_COUNT + NODE_ERROR_OWN_NAME_COUNT>;
     using Field = ErrorCode;
 
     DECLARE_EXPORT_INFO;
@@ -75,12 +78,18 @@ public:
     static ErrorCodeCache* create(VM& vm, Structure* structure);
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject);
 
+    // The one place that makes an error from the table. It runs no JavaScript. A null `message` makes an error with no own `message`, an empty `cause` one with no own `cause`.
+    JSObject* createInstance(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message, JSValue cause);
+    // Converts `message` to a string and reads `options.cause` first. What either of them throws is returned in place of the error.
     JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
 
 private:
     JS_EXPORT_PRIVATE ErrorCodeCache(VM&, Structure*);
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
     void finishCreation(VM&);
+    // Private, so that createInstance() stays the only reader of the table and the only maker of the prototype of a code.
+    static const ErrorCodeData& dataFor(ErrorCode);
+    static JSObject* createPrototype(VM&, JSGlobalObject*, const ErrorCodeData&, JSString* code);
 };
 
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);

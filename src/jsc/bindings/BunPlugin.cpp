@@ -492,13 +492,13 @@ public:
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
+    // Which instance of the original a spy mock is made from, counted from 1. 0 until dependencyKeyOfModuleMock() has picked one.
+    uint16_t instanceOfOriginal { 0 };
     State state { State::NotCalled };
     ModuleMockFunction function;
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
     bool spy { false };
-    // The instance that this spy mock was made from is still registered, because the mock's own module had yet to run. See forgetSpiedModule().
-    bool keepsSpiedModule { false };
     bool isFromPreload { false };
     // unmockModule() registers that module under its own key again.
     bool hasSetLoadedModuleAside { false };
@@ -716,15 +716,18 @@ static String originalModuleKey(const String& specifier)
     return makeString(specifier, specifier.contains('?') ? '&' : '?', "actual"_s);
 }
 
-// Removes what originalModuleKey() and friends append ("?actual", any number of "&actual", "&spy"), leaving the file path.
+// Removes what originalModuleKey() and friends append ("?actual", any number of "&actual" and "&spy"), leaving the file path.
 static String withoutOriginalModuleQuery(const String& key)
 {
     String path = key;
-    if (path.endsWith("&spy"_s))
-        path = path.left(path.length() - "&spy"_s.length());
-    while (path.endsWith("?actual"_s) || path.endsWith("&actual"_s))
-        path = path.left(path.length() - "?actual"_s.length());
-    return path;
+    while (true) {
+        if (path.endsWith("&spy"_s))
+            path = path.left(path.length() - "&spy"_s.length());
+        else if (path.endsWith("?actual"_s) || path.endsWith("&actual"_s))
+            path = path.left(path.length() - "?actual"_s.length());
+        else
+            return path;
+    }
 }
 
 // A second module for a mock: it has the mock's exports and waits for nothing. For what a factory loads while the mock's own module waits for that factory.
@@ -998,6 +1001,36 @@ static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad:
     }
 }
 
+// Whether a spy mock has replaced the methods of the module that is registered under `key`.
+static bool isSpiedModule(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& spiedModules = globalObject->onLoadPlugins.spiedModules;
+    auto spied = spiedModules.find(key);
+    if (spied == spiedModules.end())
+        return false;
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    auto identifier = JSC::Identifier::fromString(globalObject->vm(), key);
+    using Type = JSC::ScriptFetchParameters::Type;
+    for (Type type : { Type::JavaScript, Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::CSS, Type::None }) {
+        auto* entry = loader->getRegisteredMayBeNull(identifier, type);
+        if (entry && entry->record() && entry->record() == spied->value.get())
+            return true;
+    }
+    // That module has left the registry, so the key is free again.
+    spiedModules.remove(spied);
+    return false;
+}
+
+// Each instance of the original that a spy mock can be made from has one more "&spy" than the one before.
+static String keyOfInstanceToSpyOn(const String& specifier, uint16_t instance)
+{
+    StringBuilder key;
+    key.append(originalModuleKey(specifier));
+    for (uint16_t i = 0; i < instance; ++i)
+        key.append("&spy"_s);
+    return key.toString();
+}
+
 static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1006,8 +1039,16 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
         RELEASE_AND_RETURN(scope, asString(manualMock)->value(globalObject));
     String specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // Spying mutates the objects nested in the exports, so it gets its own instance of the original.
-    return mock->spy ? makeString(originalModuleKey(specifier), "&spy"_s) : originalModuleKey(specifier);
+    if (!mock->spy)
+        return originalModuleKey(specifier);
+    // Spying mutates the objects nested in the exports, so it gets its own instance of the original: the first one that no mock has spied on.
+    if (!mock->instanceOfOriginal) {
+        auto* zigGlobalObject = defaultGlobalObject(globalObject);
+        do
+            mock->instanceOfOriginal++;
+        while (mock->instanceOfOriginal < std::numeric_limits<uint16_t>::max() && isSpiedModule(zigGlobalObject, keyOfInstanceToSpyOn(specifier, mock->instanceOfOriginal)));
+    }
+    return keyOfInstanceToSpyOn(specifier, mock->instanceOfOriginal);
 }
 
 static JSC::JSPromise* thenWithContext(Zig::GlobalObject*, JSC::JSPromise*, JSC::NativeFunction onFulfilled, JSC::NativeFunction onRejected, JSValue context);
@@ -1015,7 +1056,6 @@ static JSC::JSPromise* importOriginalModule(Zig::GlobalObject*, JSModuleMock*, b
 static String keyOfModuleThatDoesNotWait(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& key, const String& mocked);
 static void returnTurn(Zig::GlobalObject*, JSModuleMock*);
 static bool isExternalizedByVitest(Zig::GlobalObject*, const String& key);
-static JSC::JSPromise* pendingLoadOf(JSC::JSGlobalObject*, JSC::ModuleRegistryEntry*);
 
 // Asks `functor` about the modules that evaluating `start` would evaluate too, or find in the middle of it, until it returns true.
 template<typename Functor>
@@ -1034,21 +1074,6 @@ static bool anyUnevaluatedImport(JSC::AbstractModuleRecord* start, const Functor
         }
     }
     return false;
-}
-
-// A spy mock takes the instance it was made from out of the registry (forgetSpiedModule()), and the mock's own module stays linked to it.
-// Until that instance has finished, whatever walks the unfinished modules of the registry has to find it through `mockModule`.
-template<typename Functor>
-static void forEachUnfinishedImportThatLeftRegistry(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* mockModule, const Functor& functor)
-{
-    if (!mockModule->hasLiveExports())
-        return;
-    auto* loader = Bun::testFileModuleLoader(globalObject);
-    for (auto& loaded : mockModule->loadedModules().values()) {
-        auto* instance = dynamicDowncast<JSC::CyclicModuleRecord>(loaded.m_module.get());
-        if (instance && instance != mockModule && !instance->isSCCEvaluated() && !loader->registryEntry(instance->moduleKey()))
-            functor(instance);
-    }
 }
 
 // Whether the module that `mock` patches in place hasn't run its body to the end, so some of its exports have no value yet.
@@ -1240,37 +1265,15 @@ static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const 
     RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy));
 }
 
-// A spy mock changes the objects of the instance it is made from, so no other mock may be made from that instance: it leaves the module cache.
-// The mock's own module stays linked to it. A package that Vitest externalizes is one instance for the whole run, so that one stays.
-static void forgetSpiedModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& key, JSC::JSModuleNamespaceObject* dependency)
+// No other mock may be made from a module whose methods a spy mock has replaced: see dependencyKeyOfModuleMock(). The module stays
+// registered, because the mock's own module is linked to it. A package that Vitest externalizes is one instance for the whole run,
+// so the mocks of it share that instance.
+static void didSpyOnModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AbstractModuleRecord* record)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::testFileModuleLoader(globalObject);
-
-    // What a factory was given while it ran is a copy of the instance, under a key of its own.
-    auto identifier = dependency ? dependency->moduleRecord()->moduleKey() : JSC::Identifier::fromString(vm, key);
-    mock->keepsSpiedModule = false;
-    if (mock->isOfVitest() && isExternalizedByVitest(globalObject, identifier.string()))
+    const String& key = record->moduleKey().string();
+    if (mock->isOfVitest() && isExternalizedByVitest(globalObject, key))
         return;
-    if (auto* entry = loader->registryEntry(identifier)) {
-        if ((dependency && entry->record() != dependency->moduleRecord()) || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed)
-            return;
-        // require() made the mock while import() was loading the mock's own module, which imports the instance. The loader asks for the
-        // entries of a module that is still loading again, and would evaluate a second instance. It leaves once that module has run, or with the mock.
-        String specifier = mock->specifier->tryGetValue().data;
-        auto* ownEntry = loader->registryEntry(JSC::Identifier::fromString(vm, specifier));
-        auto* ownModule = ownEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(ownEntry->record()) : nullptr;
-        // JSC registers what import() asked for once its fetch has settled.
-        bool isOwnModuleLoading = ownEntry ? !ownEntry->record() || (ownModule && ownModule->status() < JSC::CyclicModuleRecord::Status::Evaluating) : globalObject->onLoadPlugins.fetchesOfModulesAskedFor.contains(specifier);
-        if (isOwnModuleLoading || pendingLoadOf(globalObject, entry)) {
-            mock->keepsSpiedModule = true;
-            return;
-        }
-        loader->removeEntry(identifier);
-        globalObject->onLoadPlugins.ranksAreStale = true;
-    }
-    RELEASE_AND_RETURN(scope, void(JSC__JSMap__remove(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(jsString(vm, identifier.string())))));
+    globalObject->onLoadPlugins.spiedModules.set(key, JSC::Weak<JSC::JSCell> { record });
 }
 
 static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSValue moduleNamespace)
@@ -1290,18 +1293,9 @@ static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObje
     RETURN_IF_EXCEPTION(scope, nullptr);
     bool isCommonJS = false;
     JSValue mocked = mockExportsOfLoadedModule(globalObject, key, moduleNamespace, mock->spy, isCommonJS);
-    if (mock->spy) {
-        // Also when a getter threw halfway: what the pass already spied on stays spied.
-        auto* exception = scope.exception();
-        if (exception && !scope.tryClearException())
-            return nullptr;
-        forgetSpiedModule(globalObject, mock, key, dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleNamespace));
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (exception) {
-            scope.throwException(globalObject, exception);
-            return nullptr;
-        }
-    }
+    // Also when a getter threw halfway: what the pass already spied on stays spied.
+    if (auto* dependency = mock->spy ? dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleNamespace) : nullptr)
+        didSpyOnModule(globalObject, mock, dependency->moduleRecord());
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!isCommonJS)
         return mocked.getObject();
@@ -1803,12 +1797,6 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
                     if (auto* import = importOf(record, request))
                         imported.add(import);
                 }
-                forEachUnfinishedImportThatLeftRegistry(globalObject, record, [&](JSC::CyclicModuleRecord* instance) {
-                    for (auto& request : instance->requestedModules()) {
-                        if (auto* import = importOf(instance, request))
-                            imported.add(import);
-                    }
-                });
             }
             loads.removeAllMatching([&](auto* key) { return imported.contains(key); }, load);
         }
@@ -2724,9 +2712,12 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
-    if (std::exchange(mock->keepsSpiedModule, false)) {
-        evict.modules.append(dependencyKeyOfModuleMock(globalObject, mock));
+    // The module that a spy mock spied on goes with the mock.
+    if (mock->instanceOfOriginal) {
+        String spied = dependencyKeyOfModuleMock(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, );
+        if (globalObject->onLoadPlugins.spiedModules.contains(spied))
+            evict.modules.append(spied);
     }
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
@@ -3754,6 +3745,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
 
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())
         evict.modules.append(module);
+    // A mock that was replaced in place, or dropped by Bun.plugin.clearAll(), was never unmocked, so what it spied on is still registered.
+    for (auto& spied : plugins.spiedModules.keys()) {
+        auto* mock = plugins.testFileOfModule.get(spied) ? registeredModuleMock(globalObject, withoutOriginalModuleQuery(spied)) : nullptr;
+        if (plugins.testFileOfModule.get(spied) && !(mock && mock->instanceOfOriginal && keyOfInstanceToSpyOn(mock->specifier->tryGetValue().data, mock->instanceOfOriginal) == spied))
+            evict.modules.append(spied);
+    }
     evict.isEndOfTestFile = plugins.hasVirtualModules();
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     if (scope.exception()) [[unlikely]]
@@ -3980,10 +3977,6 @@ __attribute__((minsize)) static JSValue evaluateModuleMock(Zig::GlobalObject* gl
     }
     if (pending)
         return thenWithContext(globalObject, pending, jsFunctionModuleMockDidEvaluate, jsFunctionModuleMockDidNotEvaluate, moduleMockWith(globalObject, mock, record));
-    if (mock->keepsSpiedModule) {
-        forgetSpiedModule(globalObject, mock, wanted, isModuleOrCopyOfIt(dependencyKey, wanted) ? dependency : nullptr);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
     didEvaluateModuleMock(globalObject, mock, record);
     return jsUndefined();
 }
@@ -4031,28 +4024,10 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         unfinished.append(key);
     };
 
-    auto recordThatLeftRegistry = [&](const String& key) -> JSC::AbstractModuleRecord* {
-        JSC::AbstractModuleRecord* found = nullptr;
-        auto importers = importersOf.find(key);
-        if (importers == importersOf.end())
-            return nullptr;
-        for (auto& importer : importers->value) {
-            if (auto* record = recordOf(importer)) {
-                forEachUnfinishedImportThatLeftRegistry(globalObject, record, [&](JSC::CyclicModuleRecord* instance) {
-                    if (instance->moduleKey().string() == key)
-                        found = instance;
-                });
-            }
-        }
-        return found;
-    };
-
     add(start);
     for (size_t i = 0; i < unfinished.size(); ++i) {
         String importer = unfinished[i];
         auto* record = recordOf(importer);
-        if (!record)
-            record = recordThatLeftRegistry(importer);
         if (!record)
             continue;
         // An import only shows up in loadedModules() once its own imports have loaded, so walk resolvedRequests() too.

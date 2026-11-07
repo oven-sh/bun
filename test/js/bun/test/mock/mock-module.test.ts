@@ -1801,8 +1801,89 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
     );
   });
 
+  // The mock is then made over the module that the earlier file loaded, as for any module that is already loaded.
+  test("in test files that run after one that imported the module itself", async () => {
+    const mocksDep = `
+      import { expect, test, vi } from "bun:test";
+      import { own, fn } from "./dep";
+      vi.mock("./dep", { spy: true });
+      test("every spy calls through", () => {
+        expect([own.method(), fn(), vi.isMockFunction(own.method)]).toEqual(["original", "original", true]);
+        own.method.mockReturnValue("configured");
+        fn.mockReturnValue("configured");
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": original("dep"),
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { own } from "./dep";
+          test("imports the module itself", () => expect(own.method()).toBe("original"));
+        `,
+        "b.test.ts": mocksDep,
+        "c.test.ts": mocksDep,
+      },
+      3,
+      ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    );
+  });
+
+  // Nothing unmocks a mock that is replaced in place or dropped, so the module it spied on is still registered when the file ends.
+  test.each([
+    ["jest.doMock() with a factory", `jest.doMock("./dep", () => ({ own: { method: () => "of the factory" } }));`],
+    ["mock.module()", `mock.module("./dep", () => ({ own: { method: () => "of the factory" } }));`],
+    ["Bun.plugin.clearAll()", `Bun.plugin.clearAll();`],
+  ])("in the next test file, after %s took the place of the mock", async (_, replace) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": original("dep"),
+        "a.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          test("require() makes the mock while import() of it is still loading", async () => {
+            vi.doMock("./dep", { spy: true });
+            const loading = import("./dep");
+            const { own } = require("./dep");
+            own.method.mockReturnValue("configured");
+            globalThis.ofA = own;
+            ${replace}
+            await loading.catch(() => {});
+            expect(globalThis.loads.dep).toBe(1);
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { own } from "./dep";
+          vi.mock("./dep", { spy: true });
+          test("the mock of this file", () => {
+            expect([own.method(), own === ofA, globalThis.loads.dep]).toEqual(["original", false, 2]);
+          });
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          test("no module that a mock spied on is still registered", () => {
+            expect(Object.keys(require.cache).filter(key => key.endsWith("&spy"))).toEqual([]);
+          });
+        `,
+      },
+      3,
+      ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    );
+  });
+
   test("when the module is mocked again in the same file", async () => {
-    const names = ["unmocked", "replaced", "factory", "automock", "disposed", "patched", "awaited", "never"];
+    const names = [
+      "unmocked",
+      "replaced",
+      "factory",
+      "automock",
+      "disposed",
+      "patched",
+      "awaited",
+      "required",
+      "typed",
+      "never",
+    ];
     await expectFixturesToPass(
       {
         ...Object.fromEntries(names.map(name => [`${name}.ts`, original(name)])),
@@ -1884,7 +1965,7 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
             const mocked = configure(await import("./patched"));
             const { own } = mocked;
             jest.doMock("./patched", { spy: true });
-            while (mocked.own === own) await new Promise(resolve => setImmediate(resolve));
+            for (let turns = 0; turns < 1000 && mocked.own === own; turns++) await new Promise(resolve => setImmediate(resolve));
             expect(read(mocked, { own })).toEqual(ofNewInstance);
             expect(loads("patched")).toBe(2);
           });
@@ -1896,6 +1977,27 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
             await vi["mock"]("./awaited", { spy: true });
             expect(read(mocked, { own })).toEqual(ofNewInstance);
             expect(loads("awaited")).toBe(2);
+          });
+
+          test("a mock that require() made, of a path that import() loaded before, replaced by jest.doMock()", async () => {
+            vi.doMock("./required", { spy: true });
+            await import("./required");
+            vi.doUnmock("./required");
+            vi.doMock("./required", { spy: true });
+            const { own } = configure(require("./required"));
+            jest.doMock("./required", { spy: true });
+            for (let turns = 0; turns < 1000 && require("./required").own === own; turns++) await new Promise(resolve => setImmediate(resolve));
+            expect(read(require("./required"), { own })).toEqual(ofNewInstance);
+            expect(loads("required")).toBe(3);
+          });
+
+          test("imported with a type attribute", async () => {
+            vi.doMock("./typed.ts", { spy: true });
+            const first = configure(await import("./typed.ts", { with: { type: "ts" } }));
+            vi.doUnmock("./typed.ts");
+            vi.doMock("./typed.ts", { spy: true });
+            expect(read(await import("./typed.ts", { with: { type: "ts" } }), first)).toEqual(ofNewInstance);
+            expect(loads("typed")).toBe(2);
           });
 
           test("a CommonJS original", async () => {
@@ -1914,6 +2016,7 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
             vi.doMock("./throws", { spy: true });
             await expect(import("./throws")).rejects.toThrow("thrown by the getter");
             globalThis.getterThrows = false;
+            vi.doMock("./throws", { spy: true });
             const { before, after } = await import("./throws");
             expect([before.method, after.method].map(vi.isMockFunction)).toEqual([true, true]);
             expect(loads("throws")).toBe(2);
@@ -1927,7 +2030,7 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
           });
         `,
       },
-      10,
+      12,
     );
   });
 
@@ -2018,32 +2121,50 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
             expect([own.method(), own === ofPreload, globalThis.loads.dep]).toEqual(["of the preload", true, 2]);
           });
         `,
+        "c.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { own } from "./dep";
+          vi.mock("./dep", { spy: true });
+          test("another file's own mock", () => {
+            expect([own.method(), own === ofPreload, globalThis.loads.dep]).toEqual(["original", false, 3]);
+          });
+        `,
       },
-      2,
-      ["--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"],
+      3,
+      ["--preload", "./preload.ts", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
     );
   });
 
-  test("a package keeps one instance, as in Vitest", async () => {
+  // Vitest leaves a package to Node, which loads it once. It loads ES module syntax in a ".js" file without "type": "module" like the project's own files.
+  test.each([
+    ["vi", "an ES module package", { type: "module" }, "export const", ["configured", true, 1]],
+    ["vi", "a CommonJS package", {}, "exports.", ["configured", true, 1]],
+    ["vi", "a package that Vitest loads like the project's files", {}, "export const", ["original", false, 2]],
+    ["jest", "an ES module package", { type: "module" }, "export const", ["original", false, 2]],
+    ["jest", "a CommonJS package", {}, "exports.", ["original", false, 2]],
+  ] as const)("%s.doMock() twice of %s", async (api, _, packageJson, declare, expected) => {
     await expectFixturesToPass(
       {
         "node_modules/counted-pkg/package.json": JSON.stringify({
           name: "counted-pkg",
-          type: "module",
           main: "./index.js",
+          ...packageJson,
         }),
-        "node_modules/counted-pkg/index.js": original("pkg"),
+        "node_modules/counted-pkg/index.js": `
+          globalThis.loads = (globalThis.loads ?? 0) + 1;
+          ${declare} own = { method() { return "original"; } };
+        `,
         "package.test.ts": `
-          import { expect, test, vi } from "bun:test";
+          import { expect, jest, test, vi } from "bun:test";
 
-          test("vi.doMock() twice", async () => {
-            vi.doMock("counted-pkg", { spy: true });
+          test("the second mock", async () => {
+            ${api}.doMock("counted-pkg", { spy: true });
             const first = await import("counted-pkg");
             first.own.method.mockReturnValue("configured");
-            vi.doUnmock("counted-pkg");
-            vi.doMock("counted-pkg", { spy: true });
+            ${api === "vi" ? "vi.doUnmock" : "jest.dontMock"}("counted-pkg");
+            ${api}.doMock("counted-pkg", { spy: true });
             const second = await import("counted-pkg");
-            expect([second.own.method(), second.own === first.own, globalThis.loads.pkg]).toEqual(["configured", true, 1]);
+            expect([second.own.method(), second.own === first.own, globalThis.loads]).toEqual(${JSON.stringify(expected)});
           });
         `,
       },
@@ -2096,6 +2217,55 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
         );
       },
     );
+
+    test("and the module is mocked again before its import cycle has finished", async () => {
+      await expectFixturesToPass(
+        {
+          "dep.ts": `
+            import { a } from "./a";
+            globalThis.loads = (globalThis.loads ?? 0) + 1;
+            export const own = { method() { return "original"; } };
+            export const readA = () => a;
+          `,
+          "a.ts": `
+            import { own } from "./dep";
+            import "./mocks-again";
+            import { mocked } from "./mocked";
+            await new Promise(resolve => setImmediate(resolve));
+            export const a = "a";
+            export const seen = () => [own.method(), mocked];
+          `,
+          "mocks-again.ts": `
+            import { vi } from "bun:test";
+            vi.doMock("./dep", { spy: true });
+          `,
+          "mocked.ts": `
+            import { own } from "./dep";
+            export const mocked = "real";
+            export const readOwn = () => own;
+          `,
+          "x.ts": `
+            import { own } from "./dep";
+            export const x = () => own;
+          `,
+          "cycle.test.ts": `
+            import { expect, test, vi } from "bun:test";
+
+            test("the load settles", async () => {
+              vi.doMock("./dep", { spy: true });
+              vi.doMock("./mocked", async importOriginal => {
+                const original = await importOriginal();
+                const { x } = await import("./x");
+                return { ...original, mocked: "mock", x };
+              });
+              const a = await import("./a");
+              expect([a.seen(), vi.isMockFunction((await import("./dep")).own.method)]).toEqual([["original", "mock"], true]);
+            });
+          `,
+        },
+        1,
+      );
+    });
 
     test("the factories of one load still run one at a time", async () => {
       const factory = (name: string) => `

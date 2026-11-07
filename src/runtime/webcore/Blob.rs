@@ -125,7 +125,9 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
+/// 5: The layout of 4, written only for a view of a File (`name_detached`). An older Bun reads it as 4.
 const SERIALIZATION_VERSION: u8 = 4;
+const SERIALIZATION_VERSION_NAME_DETACHED: u8 = 5;
 
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
 use crate::generated_bindgen::blob::{
@@ -638,7 +640,11 @@ impl BlobExt for Blob {
             false
         };
 
-        writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
+        writer.write_int_le::<u8>(if self.name_detached.get() {
+            SERIALIZATION_VERSION_NAME_DETACHED
+        } else {
+            SERIALIZATION_VERSION
+        })?;
         writer.write_int_le::<u64>(if is_memory_backed {
             0
         } else {
@@ -1751,7 +1757,7 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        if let Some(path) = self.store_path() {
+        if let Some(path) = self.store_name() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());
         }
@@ -1788,7 +1794,8 @@ impl BlobExt for Blob {
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
-        if let Some(filename) = self.get_file_name() {
+        // FormData names an unnamed Blob entry "blob". That name is not a hint for the loader.
+        if let Some(filename) = self.get_file_name().filter(|name| **name != *b"blob") {
             let current_path = bun_resolver::fs::Path::init(&filename);
             return Some(
                 current_path
@@ -2895,6 +2902,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    name_detached: Cell::new(blob.name_detached.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3678,6 +3686,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         if version == 3 {
             break 'versions;
         }
+
+        blob.name_detached
+            .set(version == SERIALIZATION_VERSION_NAME_DETACHED);
     }
 
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
@@ -3765,9 +3776,10 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) 
     }
 }
 
+/// A FormData entry and the value `get()` returns keep the `File` identity.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
+    Blob::new(this.dupe_with_identity())
 }
 
 #[unsafe(no_mangle)]

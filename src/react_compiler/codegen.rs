@@ -401,8 +401,6 @@ struct Context<'a, 'h> {
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,
-    /// Inside an `async function*`, `return undefined` awaits its operand and
-    /// `return;` does not, so the two are not interchangeable there.
     is_async_generator: bool,
 }
 

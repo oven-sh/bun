@@ -543,9 +543,7 @@ pub enum ReturnVariant {
     Implicit,
     /// A return statement with an operand: `return foo;`.
     Explicit,
-    /// A return statement with no operand: `return;`. Upstream folds this into
-    /// `Explicit`. Inside an async generator `return undefined;` awaits its
-    /// operand and `return;` does not, so codegen has to keep them apart.
+    /// A return statement with no operand: `return;`. Upstream folds it into `Explicit`.
     ExplicitVoid,
 }
 

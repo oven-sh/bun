@@ -1100,6 +1100,16 @@ test("b", () => {
   expect(covered(1)).toBe(2);
 });
 `,
+    "original.test.ts": `
+import { expect, test, vi } from "bun:test";
+
+vi.mock("./plugin-loaded.ts", () => ({ covered: () => "mock" }));
+
+test("original", async () => {
+  const original = await vi.importActual<typeof import("./plugin-loaded.ts")>("./plugin-loaded.ts");
+  expect(original.covered(1)).toBe(2);
+});
+`,
   };
 
   type Row = { functions: string; lines: string; uncovered: string };
@@ -1132,11 +1142,15 @@ test("b", () => {
   let loaded: Awaited<ReturnType<typeof run>>;
   let oneLoad: Awaited<ReturnType<typeof run>>;
   let pluginUnderIsolate: Awaited<ReturnType<typeof run>>;
+  let pluginOriginal: Awaited<ReturnType<typeof run>>;
+  let pluginOriginalUnderIsolate: Awaited<ReturnType<typeof run>>;
   beforeAll(async () => {
-    [loaded, oneLoad, pluginUnderIsolate] = await Promise.all([
+    [loaded, oneLoad, pluginUnderIsolate, pluginOriginal, pluginOriginalUnderIsolate] = await Promise.all([
       run(files, ["./loads.test.ts"]),
       run(files, ["./loads.test.ts"], { ONE_LOAD: "1" }),
       run(pluginFiles, ["--isolate", "./a.test.ts", "./b.test.ts"]),
+      run(pluginFiles, ["./original.test.ts", "./a.test.ts"]),
+      run(pluginFiles, ["--isolate", "./original.test.ts", "./a.test.ts"]),
     ]);
   });
 
@@ -1157,6 +1171,16 @@ test("b", () => {
 
   test("from a plugin's onLoad, by two test files under --isolate", () => {
     expect(pluginUnderIsolate.rows["plugin-loaded.ts"]).toEqual(fullyCovered);
+  });
+
+  // The original of a mocked module has the key "plugin-loaded.ts?actual". It is a load of the file "plugin-loaded.ts".
+  test.each([
+    ["", () => pluginOriginal],
+    [" under --isolate", () => pluginOriginalUnderIsolate],
+  ])("from a plugin's onLoad, as the original of a mocked module and as the module%s", (_, result) => {
+    const { rows, lcov } = result();
+    expect(Object.keys(lcov).filter(file => file.startsWith("plugin-loaded"))).toEqual(["plugin-loaded.ts"]);
+    expect(rows["plugin-loaded.ts"]).toEqual(fullyCovered);
   });
 
   test("lcov has the functions and the lines of both loads (#35345)", () => {

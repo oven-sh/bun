@@ -263,14 +263,28 @@ static EncodedSlice contentsFromBytes(const void* data, size_t length)
     return { reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(data) | (static_cast<uint64_t>(1) << 61)), length };
 }
 
-static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock)
+// Reads what a plugin returned for `key` as the file `contents->path` if that is set, as `key` if not. Takes what Bun__transpileVirtualModule takes.
+static NEVER_INLINE bool transpilePluginContents(JSC::JSGlobalObject* globalObject, const BunString* key, const BunString* referrer, const CodeString* contents, BunLoaderType loader, ErrorableResolvedSource* res)
+{
+    if (contents->path.isDead())
+        return JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, Bun__transpileVirtualModule>(globalObject, key, referrer, &contents->string, loader, res);
+    bool transpiled = JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, Bun__transpileVirtualModule>(globalObject, &contents->path, referrer, &contents->string, loader, res);
+    // An import() in the module names its importer by the source origin, and a module is known by its key.
+    if (res->success)
+        res->result.value.origin_path = Bun::toStringRef(key->toWTFString(BunString::ZeroCopy));
+    return transpiled;
+}
+
+// `shownPath` is the `path` an onLoad callback got, for what it returned.
+static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock, JSC::JSString* shownPath)
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
     auto& vm = JSC::getVM(globalObject);
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier, typeAttribute);
+    BunLoaderType loader = BunLoaderTypeNone;
+    bool namesLoader = false;
 
     if (JSC::Exception* exception = dynamicDowncast<JSC::Exception>(objectValue)) {
         result.value.error = exception->value();
@@ -302,7 +316,7 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
     if (loaderValue) {
         if (!loaderValue.isUndefinedOrNull()) {
             // If a loader is passed, we must validate it
-            loader = BunLoaderTypeNone;
+            namesLoader = true;
 
             JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject);
             if (auto ex = scope.exception()) [[unlikely]] {
@@ -346,6 +360,21 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
         }
     }
 
+    // onLoad is shown the original of a mocked module, "tax.ts?actual", as "tax.ts", and answers for that file. Its name is the key without that tail, which keeps a namespace: "ns:tax.ts".
+    BunString path = { BunStringTag::Dead, {} };
+    if (shownPath) {
+        String key = specifier->toWTFString(BunString::ZeroCopy);
+        if (shownPath->length() < key.length()) {
+            String file = Bun::withoutOriginalModuleQuery(key);
+            if (file.length() < key.length()) {
+                result.sourceTextPath = WTF::move(file);
+                path = Bun::toString(result.sourceTextPath);
+            }
+        }
+    }
+    if (!namesLoader)
+        loader = Bun__getDefaultLoader(globalObject, path.isDead() ? specifier : &path, typeAttribute);
+
     if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"text\", \"md\", or \"css\""_s));
         result.value.error = scope.exception();
@@ -356,6 +385,7 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
     result.value.sourceText.loader = loader;
     result.value.sourceText.value = JSValue {};
     result.value.sourceText.string = {};
+    result.value.sourceText.path = path;
 
     auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
     if (scope.exception()) [[unlikely]] {
@@ -406,7 +436,7 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
     return result;
 }
 
-static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock)
+static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, const BunString* typeAttribute, bool wasModuleMock, JSC::JSString* shownPath)
 {
     if (dynamicDowncast<JSC::JSPromise>(objectValue)) {
         OnLoadResult result = {};
@@ -416,7 +446,7 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
         return result;
     }
 
-    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock);
+    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock, shownPath);
 }
 
 // Returns empty when require() should return the module namespace object instead.
@@ -470,7 +500,7 @@ static JSValue handleVirtualModuleResult(
         if (pending)
             virtualModuleResult = pending;
     }
-    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, fetch.typeAttribute, wasModuleMock);
+    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, fetch.typeAttribute, wasModuleMock, fetch.onLoad.path);
     RETURN_IF_EXCEPTION(scope, {});
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
@@ -992,7 +1022,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
         RETURN_IF_EXCEPTION(scope, {});
         if (cached)
             return cached;
-        JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, Bun__transpileVirtualModule>(globalObject, specifier, referrer, &pluginContents->string, pluginContents->loader, res);
+        transpilePluginContents(globalObject, specifier, referrer, pluginContents, pluginContents->loader, res);
     } else {
         Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     }
@@ -1396,7 +1426,7 @@ static JSValue fetchESMSourceCode(
         // As in fetchCommonJSModuleNonBuiltin.
         if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
             RELEASE_AND_RETURN(scope, reject(Bun::createCodeGenerationFromStringsError(globalObject)));
-        JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, Bun__transpileVirtualModule>(globalObject, specifier, referrer, &pluginContents->string, pluginContents->loader, res);
+        transpilePluginContents(globalObject, specifier, referrer, pluginContents, pluginContents->loader, res);
     } else if constexpr (allowPromise) {
         auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone, graph ? JSValue::encode(graph->loader()) : JSC::EncodedJSValue {});
         if (pendingCtx) {

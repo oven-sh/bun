@@ -212,11 +212,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     SourceCode code = WTF::move(moduleObject->sourceCode);
     // JSC's code cache has the unlinked code of a source it has seen. Optimized JIT code belongs to a linked
     // CodeBlock, and evaluating the source again links another wrapper. So a graph calls the wrapper that
-    // an earlier graph of its shape linked, if the text is still the same.
+    // an earlier graph of its shape linked, if the text is still the same. The wrapper has the source origin
+    // of the module it was linked for, which import() names its importer by, so the origin is in the key.
     String sharedWrapperKey;
     FunctionExecutable* sharedWrapper = nullptr;
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
-        sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
+        sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceOrigin().string(), ' ', code.provider()->sourceURL());
         if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
             auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
             if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {

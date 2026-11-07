@@ -109,7 +109,7 @@ public:
     // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
     // for another name set while code compiled under the first may still be cached.
     WTF::HashMap<WTF::String, unsigned> overlayShapes;
-    // <overlay shape>:<URL> -> the linked wrapper function of that CommonJS module. It owns the executables of the
+    // <overlay shape>:<source origin> <URL> -> the linked wrapper function of that CommonJS module. It owns the executables of the
     // functions in the module, so a graph that calls the same wrapper runs their JIT code. Weak: alive while
     // a graph that evaluated the module is.
     JSC::WeakGCMap<WTF::String, JSC::CodeBlock> commonJSWrappers;

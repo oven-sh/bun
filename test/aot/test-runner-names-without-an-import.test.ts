@@ -133,7 +133,9 @@ describe("the names of the test runner without an import", () => {
   const withPreload = testFiles.filter(name => name.includes("-of-a-preload."));
   const withHook = testFiles.filter(name => name.includes("-of-a-hook."));
   const rows = [
-    ...testFiles.filter(file => !withPreload.includes(file) && !withHook.includes(file)).map(file => [file, []] as const),
+    ...testFiles
+      .filter(file => !withPreload.includes(file) && !withHook.includes(file))
+      .map(file => [file, []] as const),
     ["names-of-one-runner.test.js", ["--globals=vitest"]] as const,
     ...withPreload.map(file => [file, ["--preload=./defines-expect.js"]] as const),
     ...withHook.map(file => [file, ["--preload=./defines-expect-in-a-hook.js"]] as const),

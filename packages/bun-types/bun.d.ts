@@ -10468,6 +10468,12 @@ declare module "bun" {
      * at its center point (not obscured). Once actionable, a native click
      * fires at the center coordinates.
      *
+     * An animation that the page has just created holds its element still
+     * until the browser starts it. The check waits up to 8 more frames for
+     * one to start, anywhere in the document. It does not wait for an
+     * `animation-delay`, a `transition-delay`, or a movement that a script
+     * begins later.
+     *
      * @example
      * ```ts
      * // Waits for the button to appear and stop animating, then clicks.

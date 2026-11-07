@@ -13,3 +13,4 @@ workspace = true
 strum.workspace = true
 bstr.workspace = true
 bun_core.workspace = true
+bun_http1.workspace = true

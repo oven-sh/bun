@@ -193,6 +193,12 @@ source lint bans the `core::arch` intrinsics. A new kernel goes in
 `src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
 `noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`.
 
+The one exception is `bun_http1` (`src/http1`). Its `response::index_of` is plain
+Rust that LLVM vectorizes, 16 bytes at a time. A search in a response head ends
+after 15 to 50 bytes, where a loop inlined into the parser is faster than a call
+through Highway's dispatch, and a crate without dependencies runs under
+`cargo test`, under Miri and in a fuzzer.
+
 ```rust
 use bun_core::strings;
 

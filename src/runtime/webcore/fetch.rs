@@ -36,6 +36,9 @@ pub(crate) mod compress_body;
 pub(crate) mod fetch_session;
 pub(crate) use self::fetch_session::FetchSession;
 
+#[path = "fetch/http1_testing.rs"]
+pub(crate) mod http1_testing;
+
 #[path = "fetch/proxy_testing.rs"]
 pub(crate) mod proxy_testing;
 

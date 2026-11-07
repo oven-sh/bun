@@ -92,65 +92,57 @@ for (let k = 0; k < makers.length; k++) awaiting(makers[k](k + 2)).then((v) => {
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b9():
+// CHECK-NEXT: b2() handler=b6():
 // CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b7():
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b4(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b4(v2) handler=b7():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() frequency=Unlikely handler=b7():
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="count"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b6(v4) handler=b7():
-// CHECK-NEXT: v5 = PropGet v0 key="count"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: v7 = PropGet v0 key="total"
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_8]]}
-// CHECK-NEXT: v9 = String string=":"
-// CHECK-NEXT: v10 = Add v6, v9
-// CHECK-NEXT: v11 = Add v10, v8
-// CHECK-NEXT: v12 = String string=":"
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = PropGet v0 key="count"
-// CHECK-NEXT: v15 = Add v13, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b8(v16)
-// CHECK-NEXT: b7() role=CatchHandler handler=b9():
-// CHECK-NEXT: v17 = CatchValue
-// CHECK-NEXT: v18 = String string="caught "
-// CHECK-NEXT: v19 = Convert v17 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v20 = PropGet v19 key="message"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string site=[[w_9]]} illTypedCause=Assertion
-// CHECK-NEXT: v22 = Add v18, v21
-// CHECK-NEXT: v23 = String string=" "
-// CHECK-NEXT: v24 = Add v22, v23
-// CHECK-NEXT: v25 = PropGet v0 key="name"
-// CHECK-NEXT: v26 = Add v24, v25
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b8(v27)
-// CHECK-NEXT: b8(v28):
-// CHECK-NEXT: v29 = Integer
-// CHECK-NEXT: v30 = Undefined
-// CHECK-NEXT: Jump -> next b10(v29, v28, v30)
-// CHECK-NEXT: b9() role=CleanupHandler:
-// CHECK-NEXT: v31 = CatchValue
-// CHECK-NEXT: v32 = Integer integer=1
-// CHECK-NEXT: v33 = Undefined
-// CHECK-NEXT: Jump -> next b10(v32, v33, v31)
-// CHECK-NEXT: b10(v34, v35, v36):
-// CHECK-NEXT: v37 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v38 = CheckInitialized v37 name="log"
-// CHECK-NEXT: v39 = PropGet v38 key="push"
-// CHECK-NEXT: v40 = String string="f"
-// CHECK-NEXT: v41 = Call v39, v38, v40 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v42 = Convert v41 declared={type=number site=[[w_11]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Switch v34 cases=[0] -> case b11(), otherwise b12()
-// CHECK-NEXT: b11():
-// CHECK-NEXT: v43 = Convert v35 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v43
-// CHECK-NEXT: b12():
-// CHECK-NEXT: Throw v36
+// CHECK-NEXT: b3() handler=b4():
+// CHECK-NEXT: v1 = PropGet v0 key="count"
+// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_7]]}
+// CHECK-NEXT: v3 = PropGet v0 key="total"
+// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_8]]}
+// CHECK-NEXT: v5 = String string=":"
+// CHECK-NEXT: v6 = Add v2, v5
+// CHECK-NEXT: v7 = Add v6, v4
+// CHECK-NEXT: v8 = String string=":"
+// CHECK-NEXT: v9 = Add v7, v8
+// CHECK-NEXT: v10 = PropGet v0 key="count"
+// CHECK-NEXT: v11 = Add v9, v10
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Jump -> next b5(v12)
+// CHECK-NEXT: b4() role=CatchHandler handler=b6():
+// CHECK-NEXT: v13 = CatchValue
+// CHECK-NEXT: v14 = String string="caught "
+// CHECK-NEXT: v15 = Convert v13 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v16 = PropGet v15 key="message"
+// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string site=[[w_9]]} illTypedCause=Assertion
+// CHECK-NEXT: v18 = Add v14, v17
+// CHECK-NEXT: v19 = String string=" "
+// CHECK-NEXT: v20 = Add v18, v19
+// CHECK-NEXT: v21 = PropGet v0 key="name"
+// CHECK-NEXT: v22 = Add v20, v21
+// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Jump -> next b5(v23)
+// CHECK-NEXT: b5(v24):
+// CHECK-NEXT: v25 = Integer
+// CHECK-NEXT: v26 = Undefined
+// CHECK-NEXT: Jump -> next b7(v25, v24, v26)
+// CHECK-NEXT: b6() role=CleanupHandler:
+// CHECK-NEXT: v27 = CatchValue
+// CHECK-NEXT: v28 = Integer integer=1
+// CHECK-NEXT: v29 = Undefined
+// CHECK-NEXT: Jump -> next b7(v28, v29, v27)
+// CHECK-NEXT: b7(v30, v31, v32):
+// CHECK-NEXT: v33 = GetModuleVariable variable=[[g_10]]
+// CHECK-NEXT: v34 = CheckInitialized v33 name="log"
+// CHECK-NEXT: v35 = PropGet v34 key="push"
+// CHECK-NEXT: v36 = String string="f"
+// CHECK-NEXT: v37 = Call v35, v34, v36 calleeKey="push" calleeName="log.push"
+// CHECK-NEXT: v38 = Convert v37 declared={type=number site=[[w_11]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Switch v30 cases=[0] -> case b8(), otherwise b9()
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v39 = Convert v31 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Return v39
+// CHECK-NEXT: b9():
+// CHECK-NEXT: Throw v32
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaiting"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {

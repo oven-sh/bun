@@ -637,32 +637,110 @@ describe("bundler", () => {
   const sameTargetRedeclaredFiles = {
     "/entry.js": /* js */ `
       const L = { v: 0, next: { v: 1, next: { v: 2, next: null } } };
+      const M = { o: { o: { o: "deep" } } };
       function param(n) { var n = n.next, n = n.next; return n.v; }
+      function chainParam(o) { var o = o.o, o = o.o, o = o.o; return o; }
       function redecl() { var n = L; var n = n.next, n = n.next; return n.v; }
+      function oneStmt() { var n = L, n = n.next, n = n.next; return n.v; }
+      function chain3() { var o = M; var o = o.o, o = o.o, o = o.o; return o; }
+      const arrow = n => { var n = n.next, n = n.next; return n.v; };
+      const object = { method(n) { var n = n.next, n = n.next; return n.v; } };
+      function forHead() { for (var n = L, n = n.next, n = n.next; ; ) return n.v; }
+      function catchParam() { try { throw L; } catch (n) { var n = n.next, n = n.next; return n.v; } }
       function later(n) { var n = n.next, v = n.v; var n; return v; }
-      function mixed(n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b].join(""); }
-      console.log(param(L), redecl(), later(L), mixed(L));
+      function mixed(n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b]; }
+      function assign() { var n = L; n = n.next, n = n.next; return n.v; }
+      function distinct(n) { var a = n.v, b = n.next; return [a, b.v]; }
+      function distinctLocal() { var n = L; var a = n.v, b = n.next; return [a, b.v]; }
+      function forLoop(n) { for (var a = n.v, b = n.next; ; ) return [a, b.v]; }
+      console.log(
+        JSON.stringify({
+          param: param(L),
+          chainParam: chainParam(M),
+          redecl: redecl(),
+          oneStmt: oneStmt(),
+          chain3: chain3(),
+          arrow: arrow(L),
+          method: object.method(L),
+          forHead: forHead(),
+          catchParam: catchParam(),
+          later: later(L),
+          mixed: mixed(L),
+          assign: assign(),
+          distinct: distinct(L),
+          distinctLocal: distinctLocal(),
+          forLoop: forLoop(L),
+        }),
+      );
     `,
   };
+  const sameTargetRedeclaredStdout = JSON.stringify({
+    param: 2,
+    chainParam: "deep",
+    redecl: 2,
+    oneStmt: 2,
+    chain3: "deep",
+    arrow: 2,
+    method: 2,
+    forHead: 2,
+    catchParam: 2,
+    later: 1,
+    mixed: [1, 1, 1],
+    assign: 2,
+    distinct: [0, 1],
+    distinctLocal: [0, 1],
+    forLoop: [0, 1],
+  });
   itBundled("minify/SameTargetDestructuringSkipsRedeclaredTarget", {
     files: sameTargetRedeclaredFiles,
     minifySyntax: true,
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("var n = n.next, n = n.next");
-      api.expectFile("/out.js").toContain("var n = L, n = n.next, n = n.next");
-      api.expectFile("/out.js").toContain("var n = n.next, v = n.v, n;");
-      api.expectFile("/out.js").toContain("var { next: a, next: n } = n, b = n.v");
+      const out = api.expectFile("/out.js");
+      out.toContain("function param(n) {\n  var n = n.next, n = n.next;");
+      out.toContain("function chainParam(o) {\n  var o = o.o, o = o.o, o = o.o;");
+      // `--minify-syntax` merges the adjacent `var` statements first.
+      out.toContain("function redecl() {\n  var n = L, n = n.next, n = n.next;");
+      out.toContain("function chain3() {\n  var o = M, o = o.o, o = o.o, o = o.o;");
+      out.toContain("for (var n = L, n = n.next, n = n.next;; )");
+      out.toContain("} catch (n) {\n    var n = n.next, n = n.next;");
+      out.toContain("function later(n) {\n  var n = n.next, v = n.v, n;");
+      out.toContain("function mixed(n) {\n  var { next: a, next: n } = n, b = n.v;");
+      out.toContain("function distinct(n) {\n  var { v: a, next: b } = n;");
+      out.toContain("function distinctLocal() {\n  var n = L, { v: a, next: b } = n;");
+      out.toContain("function forLoop(n) {\n  for (var { v: a, next: b } = n;; )");
     },
-    run: { stdout: "2 2 1 111" },
+    run: { stdout: sameTargetRedeclaredStdout },
   });
-  itBundled("minify/SameTargetDestructuringSkipsRedeclaredTargetWithoutMinify", {
+  // The fold is a syntax minification: without it a bundle prints the
+  // declarators as they are written.
+  itBundled("minify/SameTargetDestructuringNotWithoutMinifySyntax", {
     files: sameTargetRedeclaredFiles,
+    minifySyntax: false,
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("var n = n.next, n = n.next");
-      api.expectFile("/out.js").toContain("var n = n.next, v = n.v;");
-      api.expectFile("/out.js").toContain("var { next: a, next: n } = n, b = n.v");
+      const out = api.expectFile("/out.js");
+      out.toContain("function mixed(n) {\n  var a = n.next, n = n.next, b = n.v;");
+      out.toContain("function distinct(n) {\n  var a = n.v, b = n.next;");
+      out.toContain("function distinctLocal() {\n  var n = L;\n  var a = n.v, b = n.next;");
+      out.toContain("function forLoop(n) {\n  for (var a = n.v, b = n.next;; )");
     },
-    run: { stdout: "2 2 1 111" },
+    run: { stdout: sameTargetRedeclaredStdout },
+  });
+  // Minifying syntax without bundling is what the runtime transpiler does
+  // (`bun run`, `bun test`): it forces minify-syntax on for bun targets and
+  // never bundles. A pattern there throws "Cannot destructure property" where
+  // the file reads a member, and `Function.prototype.toString()` shows it.
+  itBundled("minify/SameTargetDestructuringNotWhenNotBundling", {
+    files: sameTargetRedeclaredFiles,
+    bundling: false,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.expectFile("/out.js");
+      out.toContain("function mixed(n) {\n  var a = n.next, n = n.next, b = n.v;");
+      out.toContain("function distinct(n) {\n  var a = n.v, b = n.next;");
+      out.toContain("function distinctLocal() {\n  var n = L, a = n.v, b = n.next;");
+      out.toContain("function forLoop(n) {\n  for (var a = n.v, b = n.next;; )");
+    },
+    run: { stdout: sameTargetRedeclaredStdout },
   });
   // The pattern reads its target once where the declarators read it once
   // each. An unbound global may be an accessor on globalThis, and a getter on
@@ -680,6 +758,7 @@ describe("bundler", () => {
           },
           configurable: true,
         });
+        const N = { a: "a2", b: "b2" };
         function globalHead() {
           reads = 0;
           var h = CFG.host, p = CFG.port;
@@ -695,6 +774,32 @@ describe("bundler", () => {
           var x = cur.a, y = cur.b;
           return x + y;
         }
+        function closureAssigns() {
+          var held = { get a() { swap(); return "a1"; }, b: "b1" };
+          var swap = () => { held = N; };
+          var e = held.a, f = held.b;
+          return e + f;
+        }
+        function assignedLater(later) {
+          var g = later.a, i = later.b;
+          later = N;
+          return g + i + later.a;
+        }
+        function updated(count) {
+          var j = count.a, k = count.b;
+          count++;
+          return j + k;
+        }
+        function assignedByPattern(taken) {
+          var l = taken.a, m = taken.b;
+          [taken] = [N];
+          return l + m + taken.a;
+        }
+        function assignedByLoop(each) {
+          var q = each.a, r = each.b;
+          for (each of [N]);
+          return q + r + each.a;
+        }
         function blockHoisted() {
           var swap;
           { var o; swap = () => { o = { a: "a2", b: "b2" }; }; }
@@ -702,34 +807,223 @@ describe("bundler", () => {
           var a = o.a, b = o.b;
           return a + b;
         }
+        function evalInFunction() {
+          var seen = { get a() { run(); return "a1"; }, b: "b1" };
+          var run = () => eval("seen = N");
+          var s = seen.a, t = seen.b;
+          return s + t;
+        }
+        // A class body is strict, a parameter with a default has no mapped
+        // arguments object, and a nested function has its own.
+        class Strict {
+          method(own) {
+            var set = () => { arguments[0] = N; };
+            var u = own.a, v = own.b;
+            return u + v;
+          }
+        }
+        function defaultParameter(given = 1) {
+          var set = () => { arguments[0] = N; };
+          var w = given.a, aa = given.b;
+          return w + aa;
+        }
+        function nestedArguments(outer) {
+          function set() { arguments[0] = N; }
+          var bb = outer.a, cc = outer.b;
+          return bb + cc;
+        }
         function stable(param) {
           var local = { a: "a1", b: "b1" };
           var a = local.a, b = local.b;
           var c = param.a, d = param.b;
+          const fixed = param;
+          var dd = fixed.a, ee = fixed.b;
           var cos = Math.cos, sin = Math.sin;
-          return [a + b, c + d, typeof cos(0), typeof sin(0)];
+          return [a + b, c + d, dd + ee, typeof cos(0), typeof sin(0)];
         }
         var top = { get a() { swapTop(); return "a1"; }, b: "b1" };
         var swapTop = () => eval("top = { a: 'a2', b: 'b2' }");
         var ta = top.a, tb = top.b;
-        console.log(JSON.stringify([globalHead(), globalMid(), getterReassigns(), blockHoisted(), stable({ a: "a2", b: "b2" }), ta + tb]));
+        const one = { a: "a1", b: "b1" };
+        console.log(
+          JSON.stringify({
+            globalHead: globalHead(),
+            globalMid: globalMid(),
+            getterReassigns: getterReassigns(),
+            closureAssigns: closureAssigns(),
+            assignedLater: assignedLater(one),
+            updated: updated(one),
+            assignedByPattern: assignedByPattern(one),
+            assignedByLoop: assignedByLoop(one),
+            blockHoisted: blockHoisted(),
+            evalInFunction: evalInFunction(),
+            strictMethod: new Strict().method(one),
+            defaultParameter: defaultParameter(one),
+            nestedArguments: nestedArguments(one),
+            stable: stable({ a: "a2", b: "b2" }),
+            top: ta + tb,
+          }),
+        );
       `,
     },
     minifySyntax: true,
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("var h = CFG.host, p = CFG.port");
-      api.expectFile("/out.js").toContain("var z = 0, h = CFG.host, p = CFG.port");
+      const out = api.expectFile("/out.js");
+      out.toContain("var h = CFG.host, p = CFG.port");
+      out.toContain("var z = 0, h = CFG.host, p = CFG.port");
       // `--minify-syntax` merges the adjacent `var` statements, so these runs
       // start mid-list.
-      api.expectFile("/out.js").toContain(", x = cur.a, y = cur.b;");
-      api.expectFile("/out.js").toContain(", a = o.a, b = o.b;");
-      api.expectFile("/out.js").toContain("{ a, b } = local");
-      api.expectFile("/out.js").toContain("{ a: c, b: d } = param");
-      api.expectFile("/out.js").toContain("{ cos, sin } = Math");
+      out.toContain(", x = cur.a, y = cur.b;");
+      out.toContain(", e = held.a, f = held.b;");
+      out.toContain("var g = later.a, i = later.b;");
+      out.toContain("var j = count.a, k = count.b;");
+      out.toContain("var l = taken.a, m = taken.b;");
+      out.toContain("var q = each.a, r = each.b;");
+      out.toContain(", a = o.a, b = o.b;");
+      out.toContain(", s = seen.a, t = seen.b;");
+      out.toContain("{ a: u, b: v } = own");
+      out.toContain("{ a: w, b: aa } = given");
+      out.toContain("{ a: bb, b: cc } = outer");
+      out.toContain("{ a, b } = local");
+      out.toContain("{ a: c, b: d } = param");
+      out.toContain("{ a: dd, b: ee } = fixed");
+      out.toContain("{ cos, sin } = Math");
       // The direct eval can assign any top-level variable.
-      api.expectFile("/out.js").toContain(", ta = top.a, tb = top.b;");
+      out.toContain(", ta = top.a, tb = top.b,");
     },
-    run: { stdout: '[["h",1,2],[0,"h",1,2],"a1b2","a1b2",["a1b1","a2b2","number","number"],"a1b2"]' },
+    run: {
+      stdout: JSON.stringify({
+        globalHead: ["h", 1, 2],
+        globalMid: [0, "h", 1, 2],
+        getterReassigns: "a1b2",
+        closureAssigns: "a1b2",
+        assignedLater: "a1b1a2",
+        updated: "a1b1",
+        assignedByPattern: "a1b1a2",
+        assignedByLoop: "a1b1a2",
+        blockHoisted: "a1b2",
+        evalInFunction: "a1b2",
+        strictMethod: "a1b1",
+        defaultParameter: "a1b1",
+        nestedArguments: "a1b1",
+        stable: ["a1b1", "a2b2", "a2b2", "number", "number"],
+        top: "a1b2",
+      }),
+    },
+  });
+  // In sloppy code a `with` object answers for a name on every read, and the
+  // `arguments` object of a function with plain parameters writes to them.
+  itBundled("minify/SameTargetDestructuringSkipsSloppyTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        const N = { a: "a2", b: "b2" };
+        function withUnbound(scope) {
+          with (scope) { var a = o.a, b = o.b; }
+          return a + b;
+        }
+        function withLocal(scope) {
+          var o = { a: "a1", b: "b1" };
+          with (scope) { var a = o.a, b = o.b; }
+          return a + b;
+        }
+        function withMath(scope) {
+          with (scope) { var a = Math.cos, b = Math.sin; }
+          return [typeof a, typeof b];
+        }
+        function withProxy() {
+          var has = 0;
+          var scope = new Proxy({ o: { a: "a", b: "b" } }, { has(t, k) { if (k === "o") has++; return k in t; } });
+          with (scope) { var a = o.a, b = o.b; }
+          return [a, b, has];
+        }
+        var hook;
+        function argumentsAlias(first) {
+          hook = () => { arguments[0] = N; };
+          var c = first.a, d = first.b;
+          return c + d;
+        }
+        function argumentsLength(only) {
+          var n = arguments.length;
+          var e = only.a, f = only.b;
+          return e + f + n;
+        }
+        console.log(
+          JSON.stringify({
+            withUnbound: withUnbound({ o: { a: "a1", b: "b1" } }),
+            withLocal: withLocal({ o: N }),
+            withMath: withMath({}),
+            withProxy: withProxy(),
+            argumentsAlias: argumentsAlias({ get a() { hook(); return "a1"; }, b: "b1" }),
+            argumentsLength: argumentsLength({ a: "a1", b: "b1" }),
+          }),
+        );
+      `,
+    },
+    format: "cjs",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.expectFile("/out.js");
+      out.toContain("function withUnbound(scope) {\n  with (scope)\n    var a = o.a, b = o.b;\n  return a + b;");
+      out.toContain('var o = { a: "a1", b: "b1" };\n  with (scope)\n    var a = o.a, b = o.b;');
+      out.toContain("with (scope)\n    var a = Math.cos, b = Math.sin;");
+      out.toContain("with (scope)\n    var a = o.a, b = o.b;\n  return [a, b, has];");
+      out.toContain("var c = first.a, d = first.b;");
+      out.toContain("var n = arguments.length, e = only.a, f = only.b;");
+    },
+    run: {
+      stdout: JSON.stringify({
+        withUnbound: "a1b1",
+        withLocal: "a2b2",
+        withMath: ["function", "function"],
+        withProxy: ["a", "b", 2],
+        argumentsAlias: "a1b2",
+        argumentsLength: "a1b11",
+      }),
+    },
+  });
+  // A top-level `var` of a file, with the statements merged first. A direct
+  // eval anywhere in the file can assign it. `Math` stays a pure global.
+  itBundled("minify/SameTargetDestructuringTopLevelTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./globals.js";
+        import "./assigned.js";
+        import "./eval-in-arrow.js";
+        import "./eval-in-function.js";
+        import "./stable.js";
+        import "./math-beside-eval.js";
+      `,
+      "/globals.js": /* js */ `
+        globalThis.M = { a: "a1", b: "b1" };
+        globalThis.N = { a: "a2", b: "b2" };
+        globalThis.s = "0";
+      `,
+      "/assigned.js": /* js */ `
+        var assigned = M; var a1 = assigned.a, b1 = assigned.b; assigned = N; console.log(a1, b1, assigned.a);
+      `,
+      "/eval-in-arrow.js": /* js */ `
+        var reached = M; var g = () => eval(s); var a2 = reached.a, b2 = reached.b; console.log(a2, b2, g());
+      `,
+      "/eval-in-function.js": /* js */ `
+        var reached2 = M; function g2() { return eval(s); } var a3 = reached2.a, b3 = reached2.b; console.log(a3, b3, g2());
+      `,
+      "/stable.js": /* js */ `
+        var stable = M; var a4 = stable.a, b4 = stable.b; console.log(a4, b4, typeof Math.cos, typeof Math.sin);
+      `,
+      "/math-beside-eval.js": /* js */ `
+        var unused = M; var cos = Math.cos, sin = Math.sin; eval(s); console.log(typeof cos, typeof sin);
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.expectFile("/out.js");
+      out.toContain("var assigned = M, a1 = assigned.a, b1 = assigned.b;");
+      out.toContain("var reached = M, g = () => eval(s), a2 = reached.a, b2 = reached.b;");
+      out.toContain("var a3 = reached2.a, b3 = reached2.b;");
+      out.toContain("var stable = M, { a: a4, b: b4 } = stable;");
+      out.toContain("var unused = M, { cos, sin } = Math;");
+    },
+    run: { stdout: "a1 b1 a2\na1 b1 0\na1 b1 0\na1 b1 function function\nfunction function" },
   });
   // A `using` declaration admits only identifier bindings, so the transform
   // must not rewrite its declarators into an object pattern.

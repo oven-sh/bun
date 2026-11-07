@@ -566,6 +566,24 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // A minified bundle prints the two reads as one pattern, `let { first, second } = props`. A pattern throws
+    // "Cannot destructure property", and the text of the function shows it. A line typed here runs as written.
+    test("declarators that read members of one object throw and print as they are written", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "function read(props) { const first = props.first, second = props.second; return [first, second] }",
+        "read()",
+        "read.toString().replace(/\\s+/g, ' ')",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "TypeError: undefined is not an object (evaluating 'props.first')",
+        '"function read(props) { const first = props.first, second = props.second; return [first, second]; }"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("a throwing inspect hook does not crash the loop", async () => {
       // format2 catches custom-inspect throws internally, but we verify no exception
       // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.

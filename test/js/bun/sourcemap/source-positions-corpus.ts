@@ -5,6 +5,7 @@
 // runtime says `e` was thrown, which has to be the first "text" of the file. Neither position is written down anywhere:
 // the test looks for the call in the text. A call in tail position has no caller to report, so `at()` is never returned.
 // `ran()` only counts its calls, for the initializer of a field: JSC keeps the function it is in out of stack traces.
+// `caught(e, "text", { minified: "other" })` is at "other" in a minified bundle. `fails.value` throws in another file.
 
 export type Case = {
   /** Functions that ran / functions in the file. */
@@ -1045,6 +1046,40 @@ export const cases: Record<string, Case> = {
  1|try { tooEarly; let tooEarly = 1; } catch (e) { caught(e, "tooEarly"); }
  1|try { throw new RangeError("thrown"); } catch (e) { caught(e, "RangeError"); }
  1|try { null!.ofNull; } catch (e) { caught(e, "null!"); }
+`,
+  },
+  // Declarations in a row that read members of one object: each read is where it is written. A minified bundle prints
+  // them as one pattern, `let { z: c, w: d } = nothing`. The engine has no position for what a pattern reads, so all
+  // of it is where the object of the pattern is printed, which is the object of the second declaration.
+  "declarations.ts": {
+    functions: "0/0",
+    lines: `
+ 1|const nothing: any = [][0];
+ 1|const reads: any = fails;
+ 1|try {
+ 1|  const a = nothing.x;
+ 1|  const b = nothing.y;
+ 1|} catch (e) {
+ 1|  caught(e, "nothing.x", { minified: "nothing.y" });
+ -|}
+ 1|try {
+ 1|  const c = nothing.z,
+ 1|    d = nothing.w;
+ 1|} catch (e) {
+ 1|  caught(e, "nothing.z", { minified: "nothing.w" });
+ -|}
+ 1|try {
+ 1|  for (let g = nothing.u, h = nothing.v; ; ) break;
+ 1|} catch (e) {
+ 1|  caught(e, "nothing.u", { minified: "nothing.v" });
+ -|}
+ 1|try {
+ 1|  const p = reads.first,
+ 1|    q = reads.second,
+ 1|    r = reads.value;
+ 1|} catch (e) {
+ 1|  caught(e, "reads.value", { minified: "reads.second" });
+ -|}
 `,
   },
   "common.cjs": {

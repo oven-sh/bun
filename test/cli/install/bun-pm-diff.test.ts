@@ -1989,6 +1989,11 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
         `exports.f = function (a, b) {\n  if (b) return 2;\n  if (a) return 1;\n};\n`,
       ],
       "twice.js": [`start();\npay(card);\nend();\n`, `start();\npay( card );\npay(card);\nend();\n`],
+      // Two reads of one object, or a pattern that reads it once and throws another error.
+      "reads-or-pattern.js": [
+        `exports.f = function (o) {\n  const a = o.x, b = o.y;\n  return [a, b];\n};\n`,
+        `exports.f = function (o) {\n  const { x: a, y: b } = o;\n  return [a, b];\n};\n`,
+      ],
       // Line ends that only JavaScript counts.
       "separator-comment.js": [`/* a   b */\n` + body(""), `/* a   b */\n` + body(`run("a");\n`)],
       "separator-string.js": [`const s = " ";\n` + body(""), `const s = " ";\n` + body(`run("a");\n`)],

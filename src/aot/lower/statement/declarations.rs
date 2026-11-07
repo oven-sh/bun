@@ -9,7 +9,7 @@ use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{BlockFrequency, RuntimeErrorKind, TypeSiteKind};
+use crate::ir::generated::{BlockFrequency, TypeSiteKind};
 use crate::ir::{BlockId, ValueId, VariableKey};
 use crate::lower::call::emit_call;
 use crate::lower::expression::{Evaluation, Tail, TailCast};
@@ -103,7 +103,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 };
                 let name = self.file.recorded_binding_position(decl.pat);
                 self.record_store_ahead_of_value(binding, name);
-                self.test_object_of_printed_pattern(initializer);
                 let records = self.builder.number_of_records();
                 let value = self.lower_expression_in(initializer, evaluation);
                 let recorded = self.builder.last_recorded_position();
@@ -137,30 +136,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.bind_pattern(decl.pat, value, Some(initializer), mapped);
             }
         }
-    }
-
-    // Bun's transpiler prints `const a = o.x; const b = o.y;` as `const { x: a, y: b } = o;`, and a pattern tests its value by itself, ahead of the reads.
-    fn test_object_of_printed_pattern(&mut self, initializer: ExprId) {
-        let hir = self.file.hir;
-        let ExprKind::Dot { obj, name, .. } = hir[self.file.skip_type_syntax(initializer)].kind
-        else {
-            return;
-        };
-        let object = self.file.skip_type_syntax(obj);
-        let transpiled = self.file.transpiled.as_ref();
-        let joined = transpiled.and_then(|it| it.find_joined_declarator_at(hir[object].pos));
-        let Some(joined) = joined.filter(|joined| joined.is_first) else {
-            return;
-        };
-        let value = self.lower_expression(object);
-        self.set_position(joined.printed_object);
-        let name = self.file.intern_atom(name);
-        let nullish = self.create_unlikely_block();
-        self.branch_if_nullish(value, nullish);
-        let resume = self.builder.current_block();
-        self.continue_in(nullish);
-        self.emit_throw_runtime_error(RuntimeErrorKind::NotDestructurable, Some(name));
-        self.builder.switch_to(resume);
     }
 
     // `const a = require(K)`, where every use of `a` is bound to what the module exports.

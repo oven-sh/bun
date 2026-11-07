@@ -10,8 +10,8 @@ use bun_ast::flags::Property as PropertyFlag;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::symbol::follow_symbols;
 use bun_ast::{
-    ASTMemoryAllocator, Ast, Binding, E, Expr, G, Kind, Loader, Loc, Log, OpCode, Ref, S, Source,
-    Stmt, StmtOrExpr, Symbol, SymbolKind,
+    ASTMemoryAllocator, Ast, Binding, E, Expr, G, Kind, Loader, Loc, Log, OpCode, S, Source, Stmt,
+    StmtOrExpr, Symbol, SymbolKind,
 };
 use bun_collections::StringSet;
 use bun_core::handle_oom;
@@ -20,9 +20,7 @@ use bun_js_parser::{Define, Parser, ParserOptions, Result as Parsed};
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::hir::{self, ExprId, FnId};
-use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
-use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree, Rewrites};
 pub(super) use self::alignment::{Rewrite, find_written_literal};
@@ -205,7 +203,6 @@ impl RuntimeTranspiler<'_> {
             accessed_constructions: walker.accessed_constructions,
             regexp_literals: walker.regexp_literals,
             require_main_positions: walker.require_main_positions,
-            joined_declarators: walker.joined_declarators,
             classes_that_assign_fields: walker.classes_that_assign_fields,
             quoted_brackets_over_lines: walker.quoted_brackets_over_lines,
             printed_functions: Vec::new(),
@@ -311,14 +308,6 @@ impl PositionSet {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct JoinedDeclarator {
-    object: u32,
-    /// The `o` that is printed behind the pattern.
-    pub(super) printed_object: u32,
-    pub(super) is_first: bool,
-}
-
 /// Source positions of the nodes that are left in the AST the transpiler prints. The lists are sorted.
 pub(super) struct TranspiledFile {
     identifiers: PositionSet,
@@ -328,8 +317,6 @@ pub(super) struct TranspiledFile {
     accessed_constructions: Vec<u32>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
-    // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
-    joined_declarators: Vec<JoinedDeclarator>,
     // The `class` of each class whose instance fields are printed as assignments in its constructor.
     classes_that_assign_fields: Vec<u32>,
     // The `[` or `{` of each list and object that is printed over several lines and lies in what an error may quote. With how often its line is indented.
@@ -382,13 +369,6 @@ impl TranspiledFile {
 
     pub(super) fn has_require_main_at(&self, position: u32) -> bool {
         self.require_main_positions.binary_search(&position).is_ok()
-    }
-
-    /// For the object of one of several declarators that are printed as one pattern.
-    pub(super) fn find_joined_declarator_at(&self, object: u32) -> Option<JoinedDeclarator> {
-        let joined = &self.joined_declarators;
-        let index = joined.binary_search_by_key(&object, |declarator| declarator.object);
-        index.ok().map(|index| joined[index])
     }
 
     pub(super) fn quoted_brackets_over_lines(&self) -> &[(u32, u32)] {
@@ -446,7 +426,6 @@ struct Walker<'a> {
     accessed_constructions: Vec<u32>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
-    joined_declarators: Vec<JoinedDeclarator>,
     classes_that_assign_fields: Vec<u32>,
     quoted_brackets_over_lines: Vec<(u32, u32)>,
     quoted_functions: Vec<QuotedFunction>,
@@ -488,21 +467,6 @@ fn push_position(positions: &mut Vec<u32>, position: Loc) {
     }
 }
 
-/// `name = object.member`, without an optional chain: the name and the object.
-fn find_member_declarator(declarator: &G::Decl) -> Option<(Ref, E::Identifier, Loc)> {
-    let B::BIdentifier(binding) = &declarator.binding.data else {
-        return None;
-    };
-    let ExprData::EDot(member) = &declarator.value.as_ref()?.data else {
-        return None;
-    };
-    let ExprData::EIdentifier(object) = &member.target.data else {
-        return None;
-    };
-    let is_plain = member.optional_chain.is_none();
-    is_plain.then(|| (binding.r#ref, *object, member.target.loc))
-}
-
 impl<'a> Walker<'a> {
     fn new(text_length: usize, symbols: &'a [Symbol]) -> Walker<'a> {
         Walker {
@@ -512,7 +476,6 @@ impl<'a> Walker<'a> {
             accessed_constructions: Vec::new(),
             regexp_literals: Vec::new(),
             require_main_positions: Vec::new(),
-            joined_declarators: Vec::new(),
             classes_that_assign_fields: Vec::new(),
             quoted_brackets_over_lines: Vec::new(),
             quoted_functions: Vec::new(),
@@ -646,7 +609,6 @@ impl<'a> Walker<'a> {
         self.accessed_constructions.sort_unstable();
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
-        self.joined_declarators.shared_sort_unstable();
         self.classes_that_assign_fields.sort_unstable();
         self.statements.sort_unstable_by_key(|entry| entry.0);
         self.initializers.sort_unstable_by_key(|entry| entry.0);
@@ -663,16 +625,14 @@ impl<'a> Walker<'a> {
             return (Vec::new(), Vec::new());
         }
         let variables = &Variables::of_file(self.symbols, parts);
-        let joined = &self.joined_declarators;
         let find = |class: &G::Class| {
-            let position =
-                find_first_recorded_position_of_class(self.symbols, joined, variables, class)?;
+            let position = find_first_recorded_position_of_class(self.symbols, variables, class)?;
             Some((u32::try_from(class.class_keyword.loc.start).ok()?, position))
         };
         // The tree does not say which of the two a function is.
         let find_in_function = |function: &G::Fn| {
             let positions = [true, false].map(|is_strict| {
-                find_first_recorded_position(self.symbols, joined, variables, function, is_strict)
+                find_first_recorded_position(self.symbols, variables, function, is_strict)
             });
             let parameters = u32::try_from(function.open_parens_loc.start).ok()?;
             (positions != [None, None]).then_some((parameters, positions))
@@ -734,66 +694,6 @@ impl<'a> Walker<'a> {
             .collect();
         declarations.sort_unstable();
         declarations
-    }
-
-    // `is_stable_destructuring_target` of js_printer.
-    fn is_stable_object(&self, object: E::Identifier, followed: Ref) -> bool {
-        let symbol = &self.symbols[followed.inner_index() as usize];
-        if object.must_keep_due_to_with_stmt()
-            || symbol.has_been_assigned_to()
-            || symbol.namespace_alias.is_some()
-        {
-            return false;
-        }
-        match symbol.kind {
-            SymbolKind::Unbound => object.can_be_removed_if_unused(),
-            _ => !symbol.must_not_be_renamed(),
-        }
-    }
-
-    // The runs that `print_decls` of js_printer joins.
-    fn find_joined_declarators(&mut self, mut declarators: &[G::Decl]) {
-        let symbols = self.symbols;
-        while let [first, second, ..] = declarators {
-            declarators = &declarators[1..];
-            let Some((first_name, object, first_position)) = find_member_declarator(first) else {
-                continue;
-            };
-            let followed = follow_symbols(symbols, object.ref_);
-            let names_object = |name: Ref| follow_symbols(symbols, name) == followed;
-            if !self.is_stable_object(object, followed) || names_object(first_name) {
-                continue;
-            }
-            let reads_object = |declarator: &G::Decl| {
-                let (name, object, position) = find_member_declarator(declarator)?;
-                names_object(object.ref_).then_some((name, position))
-            };
-            let Some((mut last_name, printed_position)) = reads_object(second) else {
-                continue;
-            };
-            let mut objects: SmallVec<[Loc; 8]> = smallvec![first_position, printed_position];
-            declarators = &declarators[1..];
-            // A declarator that binds the object itself is the last of its run.
-            while !names_object(last_name)
-                && let Some((name, position)) = declarators.first().and_then(reads_object)
-            {
-                last_name = name;
-                objects.push(position);
-                declarators = &declarators[1..];
-            }
-            let Ok(printed_object) = u32::try_from(printed_position.start) else {
-                continue;
-            };
-            let objects = objects.iter().enumerate();
-            self.joined_declarators
-                .extend(objects.filter_map(|(index, object)| {
-                    Some(JoinedDeclarator {
-                        object: u32::try_from(object.start).ok()?,
-                        printed_object,
-                        is_first: index == 0,
-                    })
-                }));
-        }
     }
 
     fn push_initializer(&mut self, binding: Binding, initializer: Option<Expr>) {
@@ -1154,9 +1054,6 @@ impl<'a> Walker<'a> {
             StmtData::SBlock(block) => self.push_block(block.stmts.slice()),
             StmtData::SExpr(statement) => self.pending_expressions.push(statement.value),
             StmtData::SLocal(local) => {
-                if !local.kind.is_using() {
-                    self.find_joined_declarators(&local.decls);
-                }
                 for declaration in local.decls.iter() {
                     self.pending_bindings.push(declaration.binding);
                     self.pending_expressions.extend(declaration.value);

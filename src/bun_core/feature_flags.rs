@@ -29,8 +29,6 @@ pub(crate) const USE_SIMDUTF: bool = env::IS_NATIVE;
 
 pub const INLINE_PROPERTIES_IN_TRANSPILER: bool = true;
 
-pub const SAME_TARGET_BECOMES_DESTRUCTURING: bool = true;
-
 pub const HELP_CATCH_MEMORY_ISSUES: bool = env::ENABLE_ASAN || env::IS_DEBUG;
 
 /// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs

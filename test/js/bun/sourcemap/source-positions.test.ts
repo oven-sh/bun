@@ -32,7 +32,9 @@ const variants: Record<string, Variant> = {
   below: { above: 100 },
 };
 
-type Probe = { id: number; file: string; line: number; column: number; text: string };
+type Place = { line: number; column: number; text: string };
+/** `minified`: where a minified bundle has it. */
+type Probe = Place & { id: number; file: string; minified?: Place };
 type Program = { file: string; source: string; functions: string; counts: string[]; texts: string[] };
 const probes: Probe[] = [];
 const programs: Program[] = [];
@@ -52,19 +54,22 @@ for (const [variantName, { before = "", above = 0, eol = "\n", bom = false, fina
       texts.push(count === " -" || /^[^/]*\*\//.test(text) ? text : before + text);
     }
 
-    const wanted: { id: number; text: string }[] = [];
+    const wanted: { id: number; text: string; minified?: string }[] = [];
     const source = (texts.join(eol) + (finalNewline ? eol : "")).replace(
-      /\b(at|ran)(\?\.)?\(\)|\bcaught\(e, "([^"]+)"\)/g,
-      (_, name, optional = "", thrownAt) => {
+      /\b(at|ran)(\?\.)?\(\)|\bcaught\(e, "([^"]+)"(?:, \{ minified: "([^"]+)" \})?\)/g,
+      (_, name, optional = "", thrownAt, minified) => {
         const id = probes.length + wanted.length;
-        wanted.push({ id, text: thrownAt ?? `${name}${optional}(${id})` });
+        wanted.push({ id, text: thrownAt ?? `${name}${optional}(${id})`, minified });
         return thrownAt ? `caught(${id}, e)` : `${name}${optional}(${id})`;
       },
     );
-    for (const { id, text } of wanted) {
+    const placeOf = (text: string): Place => {
       const index = source.indexOf(text);
       const lineStart = source.lastIndexOf("\n", index) + 1;
-      probes.push({ id, file, text, line: source.slice(0, index).split("\n").length, column: index - lineStart + 1 });
+      return { text, line: source.slice(0, index).split("\n").length, column: index - lineStart + 1 };
+    };
+    for (const { id, text, minified } of wanted) {
+      probes.push({ id, file, ...placeOf(text), ...(minified && { minified: placeOf(minified) }) });
     }
     programs.push({ file, source: (bom ? "\uFEFF" : "") + source, functions, counts, texts: source.split(eol) });
   }
@@ -110,6 +115,9 @@ globalThis.at = function at(id) {
 };
 globalThis.ran = id => void (records[id] ??= { count: 0 }).count++;
 globalThis.caught = (id, error) => void record(id, error);
+globalThis.fails = {
+  get value() { throw new Error("read"); },
+};
 globalThis.load = specifiers =>
   specifiers.reduce(
     (previous, specifier) => previous.then(() => import(specifier)).catch(e => void (records.failed[specifier] = String(e))),
@@ -279,7 +287,9 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
   test.each(Object.keys(variants))("%s: where a call or an error is", variantName => {
     const wrong: Record<string, unknown> = {};
     let checked = 0;
-    for (const { id, file, line, column, text } of probes) {
+    for (const probe of probes) {
+      const { id, file } = probe;
+      const { line, column, text } = (laneName === "minified" && probe.minified) || probe;
       if (!file.startsWith(variantName + "/")) continue;
       const said = lanes[laneName][id];
       if (!said?.stack) continue;
@@ -304,6 +314,39 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
     }
     expect(wrong).toEqual({});
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// `declarations.ts`. Only a minified bundle prints the declarations as one pattern, which throws as a pattern does.
+test("members of one object that declarations in a row read throw as they are written", () => {
+  const said = (lane: string, text: string) => {
+    const { id } = probes.find(probe => probe.file === "plain/declarations.ts" && probe.text === text)!;
+    const message = lanes[lane][id].stack!.split("\n")[0];
+    // A bundle can give the object another name.
+    return lane === "test" || lane === "run" ? message : message.replace(/'[\w$]+\./, "'nothing.");
+  };
+  const read = (member: string) => `TypeError: undefined is not an object (evaluating 'nothing.${member}')`;
+  const pattern = (member: string) => `TypeError: Cannot destructure property '${member}' from null or undefined value`;
+  const asWritten = { twoStatements: read("x"), oneStatement: read("z"), forInitializer: read("u") };
+  expect(
+    Object.fromEntries(
+      ["test", "run", ...bundles, "compiled"].map(lane => [
+        lane,
+        {
+          twoStatements: said(lane, "nothing.x"),
+          oneStatement: said(lane, "nothing.z"),
+          forInitializer: said(lane, "nothing.u"),
+        },
+      ]),
+    ),
+  ).toEqual({
+    test: asWritten,
+    run: asWritten,
+    linked: asWritten,
+    inline: asWritten,
+    minified: { twoStatements: pattern("x"), oneStatement: pattern("z"), forInitializer: pattern("u") },
+    split: asWritten,
+    compiled: asWritten,
   });
 });
 

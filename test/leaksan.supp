@@ -151,11 +151,3 @@ leak:TemporalCore::withTimeZone
 # one of the op lambdas withCalendar runs would still be reported
 # (withTimeZone has no builder frame; its ucal_open is inline).
 leak:TemporalCore::buildCalendarTemplate
-# test/bundler/transpiler/macro-test.test.ts — `bun build` runs macros on a
-# VM that `Macro::init` creates on a parse thread and that lives until
-# `Global::exit`; nothing tears it down. That VM's `SavedSourceMap` table
-# holds its `Arc<ParsedSourceMap>` entries (made by `get_with_content` when an
-# error printed through it remaps a stack frame) behind a tagged pointer
-# whose high 15 bits are the type tag, which LSAN cannot follow. A VM that is
-# torn down (`bun run`, workers) drops the table and releases every entry.
-leak:bun_jsc::saved_source_map::SavedSourceMap>::get_with_content

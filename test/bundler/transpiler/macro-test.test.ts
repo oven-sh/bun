@@ -651,13 +651,18 @@ describe.concurrent("a macro that fails is reported once per failure", () => {
     return { stdout: output, stderr, exitCode };
   }
 
+  // Runs under `bun run`, where the VM is torn down at exit. `bun build` runs
+  // macros on a VM that lives until the process exits, and printing this
+  // Error's stack frame adds a source map entry to it that LSAN reports as a
+  // leak (the table holds it behind a tagged pointer), which aborts the
+  // process on the ASAN lane.
   test("a promise that rejects with an Error", async () => {
     const { stdout, stderr, exitCode } = await run(
       {
         "macro.ts": `export async function m() {\n  await Promise.resolve();\n  throw new Error("macro rejected");\n}\n`,
         "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
       },
-      "build",
+      "run",
       "./entry.ts",
     );
     expect({

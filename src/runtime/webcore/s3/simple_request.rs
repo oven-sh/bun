@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
+use std::borrow::Cow;
 
 use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
@@ -128,9 +129,7 @@ pub(crate) struct S3HttpSimpleTask {
     /// The resolved proxy, empty for none. Owned: an env-derived slice can be
     /// freed by a process.env.HTTP_PROXY write while the HTTP thread is in flight.
     pub(crate) proxy_url: Box<[u8]>,
-    /// Owned copy of the request body. The HTTP thread reads the body slice
-    /// concurrently for the lifetime of the request, so the task owns its own
-    /// copy instead of borrowing caller memory.
+    /// Owned: the HTTP thread reads the body for the lifetime of the request.
     pub(crate) body: Box<[u8]>,
     pub poll_ref: KeepAlive,
     /// The HTTP client's abort flag: set when the request's context stops so a
@@ -525,7 +524,8 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) content_encoding: Option<&'a [u8]>,
 
     // http request options
-    pub(crate) body: &'a [u8],
+    /// The request owns its body: a borrowed one is copied, an owned one is moved in.
+    pub(crate) body: Cow<'a, [u8]>,
     /// See [`resolve_proxy`].
     pub(crate) proxy_url: Option<&'a [u8]>,
     /// Owned; ownership transfers to the spawned task (or is dropped on sign error).
@@ -544,7 +544,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             content_type: None,
             content_disposition: None,
             content_encoding: None,
-            body: b"",
+            body: Cow::Borrowed(b""),
             proxy_url: None,
             range: None,
             acl: None,
@@ -671,7 +671,7 @@ pub(crate) fn execute_simple_s3_request(
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
         proxy_url,
-        body: Box::<[u8]>::from(options.body),
+        body: options.body.into_owned().into_boxed_slice(),
         poll_ref,
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),

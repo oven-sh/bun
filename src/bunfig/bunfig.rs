@@ -405,6 +405,15 @@ impl<'a> Parser<'a, '_> {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
         }
 
+        // Read before anything in the file can fail: nothing but `true` leaves crash reports on.
+        let telemetry = match self.counts {
+            Counts::Everything | Counts::OnlyForTheTool => json.get(b"telemetry"),
+            Counts::OnlyInstall => None,
+        };
+        if telemetry.is_some_and(|expr| expr.as_bool() != Some(true)) {
+            bun_analytics::opt_out_by_config();
+        }
+
         if self.counts == Counts::OnlyForTheTool {
             return self.read_for_tool(&json);
         }
@@ -453,13 +462,8 @@ impl<'a> Parser<'a, '_> {
                 self.load_preload(&expr)?;
             }
 
-            if let Some(expr) = json.get(b"telemetry") {
+            if let Some(expr) = telemetry {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                bun_analytics::set_enabled(if expr.as_bool().expect("infallible: type checked") {
-                    bun_analytics::TriState::Yes
-                } else {
-                    bun_analytics::TriState::No
-                });
             }
         }
 

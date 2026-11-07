@@ -1699,7 +1699,9 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
-    signal = optionsOrEncoding?.signal ?? null;
+    // As the binding has it for a string or a Buffer: undefined, null and "" are no signal. Node takes only undefined for none.
+    const given = optionsOrEncoding?.signal;
+    signal = given === "" ? null : (given ?? null);
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
     flag ??= "w";
@@ -1711,8 +1713,6 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw new TypeError(`Unknown encoding: ${encoding}`);
   }
 
-  // As the binding has it for a string or a Buffer: undefined, null and "" are no signal. Node takes only undefined for none.
-  if (signal === "") signal = null;
   if (signal !== null) validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
     throw $makeAbortError(undefined, { cause: signal.reason });

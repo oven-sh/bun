@@ -217,6 +217,26 @@ impl<'a, 's> TreeWriter<'a, 's> {
         self.file.ty(kind, position, position)
     }
 
+    /// `T | undefined`
+    pub(super) fn or_undefined(&mut self, annotation: TypeNodeId) -> TypeNodeId {
+        let (pos, end) = (self.file[annotation].pos, self.file[annotation].end);
+        let undefined = TypeNodeKind::Keyword(Keyword::Undefined);
+        let undefined = self.file.ty(undefined, end, end);
+        let members = self.file.list(&[annotation, undefined]);
+        self.file.ty(TypeNodeKind::Union(members), pos, end)
+    }
+
+    /// `expression as any`
+    pub(super) fn as_any(&mut self, expression: ExprId) -> ExprId {
+        let (pos, end) = (self.file[expression].pos, self.file[expression].end);
+        let ty = self.any_type(end);
+        let kind = ExprKind::As {
+            expr: expression,
+            ty,
+        };
+        self.file.expr(kind, pos, end)
+    }
+
     fn source_range_of(&mut self, loc: Loc, shape: NodeShape) -> Option<(u32, u32)> {
         let start = u32::try_from(loc.start).ok()?;
         let ranges = self.source_ranges.starting_at(start, shape);

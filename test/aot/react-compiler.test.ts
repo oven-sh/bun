@@ -22,6 +22,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "names-that-only-types-in-a-component-use",
     "outside-variables-that-a-component-only-assigns",
     "list-of-two-spreads-in-a-component",
+    "default-parameters-in-a-component-file",
   ])(
     "%s",
     name =>

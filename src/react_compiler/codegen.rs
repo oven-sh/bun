@@ -37,8 +37,8 @@ use crate::hir::reactive::{
     ReactiveValue,
 };
 use crate::hir::{
-    ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
-    IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
+    ArrayElement, ArrayPattern, BlockId, DeclarationId, EvaluationOrder, FunctionExpressionType,
+    HirVec, IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
     LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
     ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
     PropertyLiteral, ScopeId,
@@ -454,6 +454,22 @@ impl<'a, 'h> Context<'a, 'h> {
         validated
     }
 
+    /// The symbol of a new local. Nothing that the function declares or reads has its name.
+    fn new_temporary(&mut self) -> Ref {
+        use std::fmt::Write;
+        let mut name = String::new();
+        for index in 0u32.. {
+            name.clear();
+            write!(name, "t{index}").unwrap();
+            if !self.unique_identifiers.contains(&name) {
+                break;
+            }
+        }
+        let symbol = self.cg.ref_for_local(store_str(name.as_bytes()));
+        self.unique_identifiers.insert(name);
+        symbol
+    }
+
     fn record_error(&mut self, detail: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(detail)
     }
@@ -490,9 +506,19 @@ fn codegen_reactive_function(
 
     let mut has_rest_arg = false;
     let mut params: Vec<G::Arg> = Vec::with_capacity(func.params.len());
-    for p in &func.params {
-        params.push(convert_parameter(cx, p, &mut has_rest_arg)?);
+    for (index, p) in func.params.iter().enumerate() {
+        let has_initializer = func.first_initializer == Some(index as u32);
+        params.push(convert_parameter(
+            cx,
+            p,
+            has_initializer,
+            &mut has_rest_arg,
+        )?);
     }
+    let mut captured_params = match func.first_initializer {
+        Some(_) => declare_captured_parameters_in_body(cx, func, &mut params),
+        None => Vec::new(),
+    };
 
     let mut body = codegen_block(cx, &func.body)?;
 
@@ -505,6 +531,7 @@ fn codegen_reactive_function(
             Loc::EMPTY,
         ));
     }
+    directives.append(&mut captured_params);
     if !directives.is_empty() {
         directives.append(&mut body);
         body = directives;
@@ -542,6 +569,7 @@ fn codegen_reactive_function(
 fn convert_parameter(
     cx: &mut Context,
     param: &ParamPattern,
+    has_initializer: bool,
     has_rest: &mut bool,
 ) -> Result<G::Arg, CompilerError> {
     match param {
@@ -549,7 +577,8 @@ fn convert_parameter(
             let (r, loc) = convert_identifier(cx, place.identifier)?;
             Ok(G::Arg {
                 binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, loc),
-                default: None,
+                // Not in upstream: see `HirFunction::first_initializer`.
+                default: has_initializer.then(|| Expr::init(E::Undefined {}, loc)),
                 ..Default::default()
             })
         }
@@ -561,6 +590,74 @@ fn convert_parameter(
                 default: None,
                 ..Default::default()
             })
+        }
+    }
+}
+
+/// Not in upstream: see `HirFunction::first_initializer`. JavaScriptCore and V8 give a parameter list
+/// that has an initializer a scope of its own, and allocate it on each call if a closure reads a
+/// parameter. So a parameter that a closure reads gets a new name, and the body declares the name
+/// that the closure reads: `(x, t0 = undefined) => {..}` is `(t1, t0 = undefined) => { let x = t1; ..}`.
+fn declare_captured_parameters_in_body(
+    cx: &mut Context,
+    func: &ReactiveFunction,
+    params: &mut [G::Arg],
+) -> Vec<Stmt> {
+    let mut captured: HashSet<DeclarationId> = HashSet::default();
+    visit_reactive_function(func, &CapturedVisitor { env: cx.env }, &mut captured);
+    let mut declarations: Vec<Stmt> = Vec::new();
+    for (param, arg) in func.params.iter().zip(params) {
+        let identifier = &cx.env.identifiers[param.place().identifier.0 as usize];
+        if !captured.contains(&identifier.declaration_id) {
+            continue;
+        }
+        let (name, loc) = (arg.binding, arg.binding.loc);
+        let temporary = cx.new_temporary();
+        arg.binding = Binding::alloc(cx.cg.arena, b::Identifier { r#ref: temporary }, loc);
+        cx.cg.host.record_usage(temporary);
+        declarations.push(Stmt::alloc(
+            S::Local {
+                kind: S::Kind::KLet,
+                decls: decl_list([G::Decl {
+                    binding: name,
+                    value: Some(Expr::init_identifier(temporary, loc)),
+                }]),
+                ..Default::default()
+            },
+            loc,
+        ));
+    }
+    declarations
+}
+
+/// Collects what the functions nested in a function read or write of it.
+struct CapturedVisitor<'a> {
+    env: &'a Environment,
+}
+
+impl ReactiveFunctionVisitor for CapturedVisitor<'_> {
+    type State = HashSet<DeclarationId>;
+
+    fn env(&self) -> &Environment {
+        self.env
+    }
+
+    fn visit_value(
+        &self,
+        id: EvaluationOrder,
+        value: &ReactiveValue,
+        state: &mut HashSet<DeclarationId>,
+    ) {
+        self.traverse_value(id, value, state);
+        if let ReactiveValue::Instruction(
+            InstructionValue::FunctionExpression { lowered_func, .. }
+            | InstructionValue::ObjectMethod { lowered_func, .. },
+        ) = value
+        {
+            for place in &self.env.functions[lowered_func.func.0 as usize].context {
+                let identifier = &self.env.identifiers[place.identifier.0 as usize];
+                state.insert(identifier.declaration_id);
+            }
         }
     }
 }

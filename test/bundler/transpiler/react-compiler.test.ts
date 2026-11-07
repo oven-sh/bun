@@ -3973,6 +3973,207 @@ describe("bundler", () => {
     });
   }
 
+  // The compiler moves each default of a parameter into the body of its function:
+  // `(x, y = n) => x` was `(x, t0) => { t0 === undefined ? n : t0; return x; }`, with
+  // a `length` of 2 where the source has 1. `length` counts the parameters ahead of
+  // the first one that has a default or is a rest parameter, so the parameter that
+  // had the first default now prints as `t0 = undefined`.
+  // Each row has the `length` of an exported function and what it returns. A
+  // component returns the `length` of the function in it, and what that function
+  // returns for a default that is omitted, undefined, null or passed.
+  const defaultParameterOutput = `
+    Arrow length=1 [1,[1,7],[1,7],[1,null],[1,2]]
+    Bound length=1 [1,[1,2,7],[1,2,3]]
+    ClosureOverAParameter length=1 [1,[1,7],[1,2],1,[2,7],[2,2]]
+    Component length=1 [7,null]
+    ComponentWithDefaultProps length=0 7
+    DefaultOfUndefined length=0 [1,[1,"undefined"],[1,2]]
+    FirstParameter length=1 [0,[7,"undefined"],[1,2],0,[7,"undefined"],[1,2]]
+    Forwarded length=1 [7,null]
+    FunctionDeclaration length=1 [1,[1,7,0],[1,2,1]]
+    FunctionExpression length=1 [1,[1,7],[1,2]]
+    NoDefault length=1 [2,1,2,[1,2],[1,2,7],[1,2]]
+    ObjectMethod length=1 [1,[1,7],[1,2]]
+    OutlinedArrow length=0 [1,[1,3],[1,2]]
+    ReaderOfLength length=1 ["value","value","value"]
+    TwoDefaults length=1 [1,[1,7,7],[1,2,2],[1,2,3]]
+    useClosureOverAParameter length=1 ["a",{}] ["a",{}] ["a","b"]
+    useDefault length=1 ["a",2] ["a",2] ["a","b"]
+    useDefaultAndRest length=1 ["a",2,0] ["a",2,0] ["a","b",1]
+  `;
+  const defaultParameterForms = {
+    "/entry.js": /* js */ `
+      import * as forms from "./forms";
+      const show = value => JSON.stringify(value, (key, it) => (it === undefined ? "undefined" : it));
+      const lines = [];
+      for (const [name, form] of Object.entries(forms)) {
+        const length = (form.render ?? form).length;
+        const values = name.startsWith("use") ? [form("a"), form("a", undefined), form("a", "b", "c")] : [form({ n: 7 }).p.v];
+        lines.push(name + " length=" + length + " " + values.map(show).join(" "));
+      }
+      console.log(lines.join("\\n"));
+    `,
+    "/forms.jsx": /* jsx */ `
+      import { forwardRef, useEffect } from "react";
+
+      // What a library does that reads the number of parameters of a callback.
+      const call = f => (f.length === 2 ? f(null, "value") : f("value"));
+
+      export function Arrow({ n }) {
+        const f = (x, y = n) => [x, y];
+        return <b v={[f.length, f(1), f(1, undefined), f(1, null), f(1, 2)]} />;
+      }
+      export function OutlinedArrow() {
+        const f = (x, y = 3) => [x, y];
+        return <b v={[f.length, f(1), f(1, 2)]} />;
+      }
+      export function FunctionExpression({ n }) {
+        const f = function (x, y = n) {
+          return [x, y];
+        };
+        return <b v={[f.length, f(1), f(1, 2)]} />;
+      }
+      export function FunctionDeclaration({ n }) {
+        function f(x, y = n, ...rest) {
+          return [x, y, rest.length];
+        }
+        return <b v={[f.length, f(1), f(1, 2, 3)]} />;
+      }
+      export function ObjectMethod({ n }) {
+        const o = {
+          f(x, y = n) {
+            return [x, y];
+          },
+        };
+        return <b v={[o.f.length, o.f(1), o.f(1, 2)]} />;
+      }
+      export function FirstParameter({ n }) {
+        const f = (x = n, y) => [x, y];
+        const g = ({ a } = { a: n }, y) => [a, y];
+        return <b v={[f.length, f(), f(1, 2), g.length, g(), g({ a: 1 }, 2)]} />;
+      }
+      export function TwoDefaults({ n }) {
+        const f = (x, y = n, z = y) => [x, y, z];
+        return <b v={[f.length, f(1), f(1, 2), f(1, 2, 3)]} />;
+      }
+      export function DefaultOfUndefined() {
+        const f = (x, y = undefined) => [x, y];
+        return <b v={[f.length, f(1), f(1, 2)]} />;
+      }
+      export function Bound({ n }) {
+        const f = ((x, y, z = n) => [x, y, z]).bind(null, 1);
+        return <b v={[f.length, f(2), f(2, 3)]} />;
+      }
+      export function ReaderOfLength({ n }) {
+        return <b v={[call((value, more = n) => value), call((error, value) => value), call((value = n) => value)]} />;
+      }
+      // A closure reads a parameter that stands beside the default.
+      export function ClosureOverAParameter({ n }) {
+        const f = (x, y = n) => () => [x, y];
+        const g = (x, y = n) => {
+          x = x + 1;
+          return () => [x, y];
+        };
+        return <b v={[f.length, f(1)(), f(1, 2)(), g.length, g(1)(), g(1, 2)()]} />;
+      }
+      export function NoDefault({ n }) {
+        const f = (x, y) => [x, y];
+        const g = (x, ...y) => [x, y.length, n];
+        const h = ({ a }, [b]) => [a, b];
+        return <b v={[f.length, g.length, h.length, f(1, 2), g(1, 2, 3), h({ a: 1 }, [2])]} />;
+      }
+      export function Component({ n }, ref = null) {
+        return <b v={[n, ref]} />;
+      }
+      export function ComponentWithDefaultProps(props = { n: 5 }) {
+        return <b v={props.n} />;
+      }
+      export const Forwarded = forwardRef((props, ref = null) => <b v={[props.n, ref]} />);
+      export function useDefault(a, b = 2) {
+        useEffect(() => {});
+        return [a, b];
+      }
+      export function useDefaultAndRest(a, b = 2, ...rest) {
+        useEffect(() => {});
+        return [a, b, rest.length];
+      }
+      export function useClosureOverAParameter(url, options = {}) {
+        useEffect(() => {
+          fetch(url, options);
+        }, [url, options]);
+        const read = () => [url, options];
+        return read();
+      }
+    `,
+    ...stubReact,
+    "/node_modules/react/index.js": /* js */ `
+      exports.useEffect = () => {};
+      exports.forwardRef = render => Object.assign(props => render(props, props.ref), { render });
+    `,
+  };
+  for (const [name, reactCompiler, target, backend] of [
+    ["plain", false, "browser", "cli"],
+    ["client", true, "browser", "cli"],
+    ["ssr", true, "bun", "api"],
+  ] as const) {
+    itBundled(`react-compiler/FunctionWithADefaultParameterKeepsItsLength-${name}`, {
+      files: defaultParameterForms,
+      reactCompiler,
+      backend,
+      target,
+      run: { stdout: defaultParameterOutput },
+      onAfterBundle(api) {
+        if (name !== "client") return;
+        // Every form is compiled: each one starts with its memo cache.
+        const compiled = api.readFile("/out.js").match(/let \$ = \S*c\(\d+\);/g);
+        expect(compiled).toHaveLength(defaultParameterOutput.trim().split("\n").length);
+      },
+    });
+  }
+
+  // JavaScriptCore and V8 give a parameter list that has a default a scope of its
+  // own, and allocate that scope on each call if a closure reads a parameter. So
+  // `= undefined` alone would cost a call of `f` below one scope more than it costs
+  // without the compiler. The compiled `f` declares `x` in its body.
+  test("react-compiler: a closure over a parameter beside a default allocates no scope more than the source", async () => {
+    using dir = tempDir("react-compiler-parameter-scope", {
+      "entry.jsx": /* jsx */ `
+        import { heapStats } from "bun:jsc";
+        function Card({ n }) {
+          const f = (x, y = n) => () => x + y;
+          return <b f={f} />;
+        }
+        const f = Card({ n: 1 }).p.f;
+        const scopes = () => (Bun.gc(true), heapStats().objectTypeCounts.JSLexicalEnvironment ?? 0);
+        const kept = new Array(1000);
+        const before = scopes();
+        for (let i = 0; i < kept.length; i++) kept[i] = f(i);
+        const perCall = Math.round((scopes() - before) / kept.length);
+        console.log(JSON.stringify({ length: f.length, result: kept[2](), perCall }));
+      `,
+      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (t, p) => ({ t, p });`,
+      "node_modules/react/jsx-runtime.js": `export const jsx = (t, p) => ({ t, p }), jsxs = jsx;`,
+      "node_modules/react/compiler-runtime.js": `export const c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "node_modules/react/package.json": `{"name":"react","type":"module"}`,
+    });
+    const run = async (reactCompiler: boolean) => {
+      const outdir = join(String(dir), reactCompiler ? "compiled" : "plain");
+      const entrypoints = [join(String(dir), "entry.jsx")];
+      await Bun.build({ entrypoints, outdir, target: "bun", reactCompiler } as Bun.BuildConfig);
+      await using proc = Bun.spawn({ cmd: [bunExe(), join(outdir, "entry.js")], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout) as { length: number; result: number; perCall: number };
+    };
+    const [plain, compiled] = [await run(false), await run(true)];
+    expect(plain).toEqual({ length: 1, result: 3, perCall: expect.any(Number) });
+    expect({ ...compiled, perCall: compiled.perCall <= plain.perCall }).toEqual({
+      length: 1,
+      result: 3,
+      perCall: true,
+    });
+  });
+
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `

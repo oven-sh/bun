@@ -203,6 +203,10 @@ pub struct HirFunction {
     pub name_hint: Option<StoreStr>,
     pub fn_type: ReactFunctionType,
     pub params: HirVec<ParamPattern>,
+    /// Not in upstream: the index in `params` of the first parameter that has an initializer in the
+    /// source. Lowering moves each initializer into the body. Codegen prints `= undefined` at this
+    /// index, so that the function keeps its `length`.
+    pub first_initializer: Option<u32>,
     pub return_type_annotation: Option<StoreStr>,
     pub returns: Place,
     pub context: HirVec<Place>,

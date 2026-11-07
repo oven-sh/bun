@@ -64,12 +64,19 @@ impl TreeWriter<'_, '_> {
             return Err(UnsupportedNode("TypeScript parameter"));
         }
         let pat = self.write_binding(&parameter.binding)?;
-        let default = self.write_expression_or_none(parameter.default.as_ref())?;
+        // The compiler moves every default into the body. Where the first one was it leaves `= undefined`, which
+        // keeps the `length` of the function.
+        let undefined = self.write_expression_or_none(parameter.default.as_ref())?;
         let (start, binding_end) = self.range_of(parameter.binding.loc);
         let is_identifier = matches!(parameter.binding.data, BindingData::BIdentifier(_));
-        let can_be_optional = is_identifier && !is_rest && default.is_none();
+        let can_be_optional = is_identifier && !is_rest && undefined.is_none();
         let (ty, mut flags) =
-            self.annotate_parameter(replaced, default, can_be_optional, binding_end);
+            self.annotate_parameter(replaced, undefined.is_some(), can_be_optional, binding_end);
+        // A parameter without an annotation has the type of its default.
+        let default = match (ty.some(), undefined.some()) {
+            (None, Some(undefined)) => self.as_any(undefined),
+            _ => undefined,
+        };
         flags.set(Flags::REST, is_rest);
         let type_end = ty.some().map_or(binding_end, |ty| self.file[ty].end);
         Ok(Param {
@@ -88,7 +95,7 @@ impl TreeWriter<'_, '_> {
     fn annotate_parameter(
         &mut self,
         replaced: Option<(Param, bool)>,
-        default: ExprId,
+        has_default: bool,
         can_be_optional: bool,
         position: u32,
     ) -> (TypeNodeId, Flags) {
@@ -102,18 +109,21 @@ impl TreeWriter<'_, '_> {
             };
         };
         let flags = parameter.flags & PRESERVED_PARAMETER_FLAGS;
-        // The compiler moves a default into the body: `(a = 1)` becomes `(t0)`, which a caller may still omit.
-        let has_default_in_body = parameter.default.is_some() && default.is_none();
-        if !has_default_in_body {
+        if parameter.default.is_none() {
             return (parameter.ty, flags);
         }
-        let is_optional = can_be_optional && !is_before_required;
-        let reuses_annotation = !is_typescript || is_optional && parameter.ty.is_some();
-        let ty = match reuses_annotation {
-            true => parameter.ty,
-            false => self.any_type(position),
+        // The compiler moves a default into the body: `(a = 1)` becomes `(t0)`, or `(t0 = undefined)` for the first
+        // one. A caller may still omit it.
+        let is_optional = (can_be_optional || has_default) && !is_before_required;
+        let annotation = (parameter.ty.some()).filter(|_| !is_typescript || is_optional);
+        let ty = match (annotation, is_optional && has_default) {
+            // `?` and a default exclude each other.
+            (Some(annotation), true) => self.or_undefined(annotation),
+            (Some(annotation), false) => annotation,
+            (None, _) if is_typescript => self.any_type(position),
+            (None, _) => TypeNodeId::NONE,
         };
-        match is_optional {
+        match is_optional && !has_default {
             true => (ty, flags | Flags::OPTIONAL),
             false => (ty, flags),
         }

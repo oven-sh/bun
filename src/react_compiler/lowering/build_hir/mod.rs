@@ -168,6 +168,7 @@ pub(super) fn lower_inner<'h>(
 
     // Process parameters
     let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();
+    let mut first_initializer: Option<u32> = None;
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
@@ -231,6 +232,9 @@ pub(super) fn lower_inner<'h>(
                 }
             }
             _ => {
+                if param.default.is_some() {
+                    first_initializer.get_or_insert(hir_params.len() as u32);
+                }
                 let place = build_temporary_place(&mut builder, param_loc);
                 promote_temporary(&mut builder, place.identifier);
                 hir_params.push(ParamPattern::Place(place.clone()));
@@ -323,6 +327,7 @@ pub(super) fn lower_inner<'h>(
                 ReactFunctionType::Other
             },
             params: hir_params,
+            first_initializer,
             return_type_annotation: None,
             returns,
             context,

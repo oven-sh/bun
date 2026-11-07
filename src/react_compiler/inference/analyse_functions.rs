@@ -206,6 +206,7 @@ fn placeholder_function() -> HirFunction {
         name_hint: None,
         fn_type: ReactFunctionType::Other,
         params: AstAlloc::vec(),
+        first_initializer: None,
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),

@@ -5,7 +5,9 @@ use super::namespace_exports::is_block_binding;
 use super::queries::{find_symbol, is_among_parameters};
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
 use crate::atom::{Atom, known};
-use crate::bind::{BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
+use crate::bind::{
+    BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId, bit_of_nested_name,
+};
 use crate::hir::*;
 use crate::module_format::{ModuleFormat, find_marked_format};
 
@@ -24,6 +26,7 @@ pub(super) struct Lookup<'a, 's> {
     pub dynamic: DynamicScopes,
 }
 
+#[derive(Copy, Clone)]
 pub(super) struct Found {
     pub binding: Binding,
     pub scope: ScopeId,
@@ -31,21 +34,84 @@ pub(super) struct Found {
     pub dynamic_scope: ScopeId,
 }
 
+pub(super) struct RecentLookups {
+    is_position_ignored: bool,
+    entries: [Option<(ScopeId, Atom, Found)>; 256],
+}
+
+impl RecentLookups {
+    pub(super) fn new(lookup: &Lookup<'_, '_>) -> RecentLookups {
+        let dynamic = &lookup.dynamic;
+        RecentLookups {
+            is_position_ignored: dynamic.scopes.is_empty()
+                && dynamic.parameter_eval_scopes.is_empty(),
+            entries: [None; 256],
+        }
+    }
+
+    #[inline]
+    pub(super) fn find(
+        &mut self,
+        lookup: &Lookup<'_, '_>,
+        start: ScopeId,
+        name: Atom,
+        pos: u32,
+    ) -> Found {
+        if !self.is_position_ignored {
+            return lookup.find(start, name, pos);
+        }
+        let key = u64::from(start.0) << 32 | u64::from(name.0);
+        let entry = &mut self.entries[(key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as usize];
+        match *entry {
+            Some((scope, found_name, found)) if scope == start && found_name == name => found,
+            _ => {
+                let found = lookup.find(start, name, pos);
+                *entry = Some((start, name, found));
+                found
+            }
+        }
+    }
+}
+
 impl Lookup<'_, '_> {
     pub(super) fn find_binding(&self, start: ScopeId, name: Atom) -> Binding {
         self.find(start, name, u32::MAX).binding
     }
 
-    /// `pos` is the position of the mention of `name`.
     pub(super) fn find(&self, start: ScopeId, name: Atom, pos: u32) -> Found {
         let (mut at, mut from, mut dynamic_scope) = (start, ScopeKind::Block, ScopeId::NONE);
         let mut inner = ScopeId::NONE;
+        let dynamic = &self.dynamic;
+        let has_eval_scopes =
+            !dynamic.scopes.is_empty() || !dynamic.parameter_eval_scopes.is_empty();
+        let may_be_appended = may_hold_name(&self.scopes.appended_names, name);
+        if !has_eval_scopes
+            && !may_be_appended
+            && name != known::arguments
+            && !may_hold_name(&self.bound.nested_names, name)
+        {
+            while at.is_some() {
+                let scope = &self.bound.scopes[at.idx()];
+                if scope.symbol.is_some() || scope.parent.is_none() {
+                    break;
+                }
+                if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
+                    dynamic_scope = at;
+                }
+                from = scope.kind;
+                inner = at;
+                at = match scope.kind {
+                    ScopeKind::ClassDecorators(_) => self.bound.runtime_parent_scope(self.hir, at),
+                    _ => scope.parent,
+                };
+            }
+        }
         while at.is_some() {
             let scope = &self.bound.scopes[at.idx()];
             if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
                 dynamic_scope = at;
             }
-            if let Some(binding) = self.find_in_scope(at, from, name) {
+            if let Some(binding) = self.find_in_scope(at, scope, from, name, may_be_appended) {
                 return Found {
                     binding,
                     scope: at,
@@ -53,8 +119,10 @@ impl Lookup<'_, '_> {
                     dynamic_scope,
                 };
             }
-            if dynamic_scope.is_none() && self.has_visible_eval_variables(at, from, pos) {
-                // The scope of a parameter says on which side the lookup enters the function.
+            if has_eval_scopes
+                && dynamic_scope.is_none()
+                && self.has_visible_eval_variables(at, from, pos)
+            {
                 dynamic_scope = match from {
                     ScopeKind::Param(_) => inner,
                     _ => at,
@@ -62,7 +130,10 @@ impl Lookup<'_, '_> {
             }
             from = scope.kind;
             inner = at;
-            at = self.bound.runtime_parent_scope(self.hir, at);
+            at = match scope.kind {
+                ScopeKind::ClassDecorators(_) => self.bound.runtime_parent_scope(self.hir, at),
+                _ => scope.parent,
+            };
         }
         Found {
             binding: Binding::Free,
@@ -72,7 +143,25 @@ impl Lookup<'_, '_> {
         }
     }
 
-    // Code among the parameters of a function does not see the variables of text evaluated in the body. Code in the body sees the variables of both texts.
+    pub(super) fn find_container(&self, binding: Binding) -> Option<SymbolId> {
+        let Binding::Symbol(symbol) = binding else {
+            return None;
+        };
+        let parent = self.bound.symbols[symbol.idx()].parent.some();
+        parent.filter(|&parent| parent != self.bound.file_symbol)
+    }
+
+    pub(super) fn find_with_inside(&self, start: ScopeId, body: ScopeId) -> ScopeId {
+        let mut at = start;
+        while at.is_some() && at != body {
+            if matches!(self.bound.scopes[at.idx()].kind, ScopeKind::With(_)) {
+                return at;
+            }
+            at = self.bound.runtime_parent_scope(self.hir, at);
+        }
+        ScopeId::NONE
+    }
+
     fn has_visible_eval_variables(&self, at: ScopeId, from: ScopeKind, pos: u32) -> bool {
         if has_bit(&self.dynamic.parameter_eval_scopes, at.idx()) {
             return true;
@@ -82,7 +171,6 @@ impl Lookup<'_, '_> {
                 if is_among_parameters(self.hir, function, from, pos))
     }
 
-    // Text evaluated in the body of a function declares its variables in the environment of the body's variables.
     pub(super) fn is_behind_eval_variables(&self, found: &Found, pos: u32) -> bool {
         if !has_bit(&self.dynamic.scopes, found.scope.idx()) {
             return false;
@@ -94,15 +182,23 @@ impl Lookup<'_, '_> {
             && !is_among_parameters(self.hir, function, found.entered_from, pos)
     }
 
-    fn find_in_scope(&self, at: ScopeId, from: ScopeKind, name: Atom) -> Option<Binding> {
+    #[inline]
+    fn find_in_scope(
+        &self,
+        at: ScopeId,
+        scope: &Scope,
+        from: ScopeKind,
+        name: Atom,
+        may_be_appended: bool,
+    ) -> Option<Binding> {
         let bound = self.bound;
-        let scope = &bound.scopes[at.idx()];
         if let Some(local) = bound.find_in_table(scope.locals, name)
             && let Some(binding) = self.local_binding(scope.kind, from, name, local)
         {
             return Some(binding);
         }
-        if is_appended_visible(from)
+        if may_be_appended
+            && is_appended_visible(from)
             && let Some(&(appended, _)) = self.scopes.appended_bindings.get(&(at, name))
         {
             return Some(Binding::Symbol(appended));
@@ -110,17 +206,23 @@ impl Lookup<'_, '_> {
         if let Some(member) = self.find_exported_member(at, scope, name) {
             return Some(Binding::Symbol(member));
         }
+        if let ScopeKind::Enum(it) = scope.kind
+            && self.hir[it].name == name
+            && let Some(parameter) =
+                find_symbol(&bound.runtime.declarations.container_parameters, at)
+        {
+            return Some(Binding::Symbol(parameter));
+        }
         if name == known::arguments
             && let Some(binding) = self.find_arguments_object(scope.kind)
         {
             return Some(binding);
         }
-        if scope.kind != ScopeKind::File {
+        if !matches!(scope.kind, ScopeKind::File) {
             return None;
         }
         let mut variables = COMMONJS_VARIABLES.into_iter();
         let variable = variables.find(|variable| variable.name() == name)?;
-        // Bun's transpiler gives an ES module what it reads of the five. A module that the engine gets as written has none.
         let is_written_module = find_marked_format(&self.hir.text) == Some(ModuleFormat::Esm);
         (!is_written_module).then_some(Binding::CommonJs(variable))
     }
@@ -143,7 +245,9 @@ impl Lookup<'_, '_> {
         {
             return None;
         }
-        let symbol = if is_block_binding(bound, kind, local) {
+        let is_of_block =
+            matches!(kind, ScopeKind::Module(_)) && is_block_binding(bound, kind, local);
+        let symbol = if is_of_block {
             local
         } else {
             bound.export_symbol_of_value_symbol_if_exported(local)
@@ -212,4 +316,13 @@ impl Lookup<'_, '_> {
 
 pub(super) fn is_appended_visible(from: ScopeKind) -> bool {
     !matches!(from, ScopeKind::Param(_))
+}
+
+#[inline]
+fn may_hold_name(names: &[u64], name: Atom) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let (word, bit) = bit_of_nested_name(names.len(), name);
+    names[word] & bit != 0
 }

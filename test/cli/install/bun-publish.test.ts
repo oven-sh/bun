@@ -3200,6 +3200,9 @@ describe.concurrent("bin in the published manifest", () => {
     [{ bin: {}, directories: { bin: "bins" } }, { "a.js": "bins/a.js" }],
     [{ bin: "", directories: { bin: "missing" } }, {}],
     [{ bin: "cli.js", directories: { bin: "bins" } }, { "bin-pkg": "cli.js" }],
+    [{ bin: "cli.js\u0000" }, {}],
+    [{ bin: { x: "cli.js", y: "cli.js\u0000", z: "..\u0000" } }, { x: "cli.js" }],
+    [{ directories: { bin: "bins\u0000" } }, undefined],
   ])("%j", async (fields, expected) => {
     let captured: any = null;
     using mock = Bun.serve({

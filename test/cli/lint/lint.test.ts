@@ -10,7 +10,9 @@ import {
   isMusl,
   isWindows,
   normalizeBunSnapshot,
+  runCommandMaxRSS,
   tempDir,
+  withoutAsanQuarantine,
 } from "harness";
 import {
   chmodSync,
@@ -6673,15 +6675,19 @@ maybe(() => { return f; });
       ".eslintrc.json": JSON.stringify({ root: true, rules: { "no-extra-boolean-cast": "error" } }),
       "a.js": `x = ${"!".repeat(45_000)}a;\n`,
     });
-    await using proc = spawn({ cmd: [...command, "--threads", "1", "a.js"], env, cwd: String(dir), stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Started by a process of its own: on Linux a child's peak RSS starts at its parent's peak, which for this test
+    // file is whatever it has run so far.
+    const { stdout, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [...command, "--threads", "1", "a.js"],
+      cwd: String(dir),
+      env: withoutAsanQuarantine(env),
+    });
     // Where the stack is smaller or the frames are larger, the file is rejected instead.
     if (!stdout.includes("The code is nested too deeply")) {
       expect(stdout).toContain(" errors and 0 warnings potentially fixable with the `--fix` option.");
     }
     expect(exitCode).toBe(1);
-    // On Linux a child's peak RSS starts at its parent's peak, which is about 300 MB for this test file.
-    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
+    expect(maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
   });
 
   // The matcher for `include` patterns used to recurse for each `**`, and to try every number of directories for each

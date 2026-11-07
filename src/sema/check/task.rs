@@ -53,19 +53,44 @@ impl Stored {
 #[derive(Copy, Clone)]
 pub struct Open;
 
-/// Which of the checker's queries in progress are in `Task::cycle_members`.
+/// To which of the checker's queries in progress something has been done that is done to all of them from a position up:
+/// they are in `Task::cycle_members`, or they have a mark.
 ///
 /// A walk through n functions that call one another comes back around at most of its steps, and nearly every member of
-/// one cycle is a member of the cycle before. Adding all of them each time costs n^2, in time and in memory.
+/// one cycle is a member of the cycle before. Going through all of them each time costs n^2, in time and in memory.
 #[derive(Default)]
-struct MembersInProgress {
+pub(super) struct RangesInProgress {
     /// Ranges of positions on `Checker::stack`, in ascending order, with a gap between any two.
     ranges: Vec<Range<usize>>,
     /// `QueryFrame::serial` of the innermost query when `ranges` last changed. A query pushed since has a higher one.
     innermost: u64,
 }
 
-impl MembersInProgress {
+impl RangesInProgress {
+    /// `add`, for the frames from `from` up.
+    pub(super) fn add_from(
+        &mut self,
+        frames: &[QueryFrame],
+        from: usize,
+        add: impl FnMut(Range<usize>),
+    ) {
+        let kept = frames.partition_point(|frame| frame.serial <= self.innermost);
+        let innermost = frames.last().map_or(0, |frame| frame.serial);
+        self.add(from..frames.len(), kept, innermost, add);
+    }
+
+    /// Forgets the positions of the queries that have left the stack since `ranges` last changed. `kept`, `innermost`: see `add`.
+    fn forget_popped(&mut self, kept: usize, innermost: u64) {
+        while let Some(last) = self.ranges.last_mut() {
+            if last.start < kept {
+                last.end = last.end.min(kept);
+                break;
+            }
+            self.ranges.pop();
+        }
+        self.innermost = innermost;
+    }
+
     /// Adds `positions`, which end at the top of the stack. Calls `add` with each part of them that's new.
     ///
     /// `kept`: how many queries at the bottom of the stack have a serial number up to `self.innermost`. The rest were
@@ -77,14 +102,7 @@ impl MembersInProgress {
         innermost: u64,
         mut add: impl FnMut(Range<usize>),
     ) {
-        while let Some(last) = self.ranges.last_mut() {
-            if last.start < kept {
-                last.end = last.end.min(kept);
-                break;
-            }
-            self.ranges.pop();
-        }
-        self.innermost = innermost;
+        self.forget_popped(kept, innermost);
         if positions.is_empty() {
             return;
         }
@@ -103,7 +121,7 @@ impl MembersInProgress {
         self.ranges.push(done_from..positions.end);
     }
 
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.ranges.clear();
         self.innermost = 0;
     }
@@ -145,7 +163,7 @@ pub struct Task<'s> {
     is_first_in_component: Cell<bool>,
     /// See `take_cycle_members`.
     cycle_members: RefCell<Vec<u64>>,
-    members_in_progress: RefCell<MembersInProgress>,
+    members_in_progress: RefCell<RangesInProgress>,
     /// How many hashes were added to `cycle_members`.
     cycle_members_added: Cell<u64>,
     /// How often `close_cycle` was called.
@@ -345,6 +363,10 @@ impl<'s> Task<'s> {
         (self.is_first_in_component).set(is_first_in_component);
     }
 
+    pub(super) fn is_trusted_about_every_cycle(&self) -> bool {
+        self.is_first_in_order.get() || self.is_trusted
+    }
+
     /// The task has re-entered a query that's in progress, and the results of that cycle's members depend on where the
     /// cycle was entered. tsc enters it from the first file in program order that reaches it. That's this task if every
     /// earlier file is final: none of them reached the cycle, or the task would have hit the members' results. Any
@@ -372,9 +394,7 @@ impl<'s> Task<'s> {
     ) {
         self.close_cycle_of(is_reachable_only_by_importers, from, |all| {
             let mut in_progress = self.members_in_progress.borrow_mut();
-            let kept = frames.partition_point(|frame| frame.serial <= in_progress.innermost);
-            let innermost = frames.last().map_or(0, |frame| frame.serial);
-            in_progress.add(from..stack.len(), kept, innermost, |new| {
+            in_progress.add_from(frames, from, |new| {
                 all.extend(stack[new].iter().map(crate::util::fx_hash));
             });
         });
@@ -559,12 +579,25 @@ impl<'s> Task<'s> {
         }
     }
 
+    #[inline]
+    pub(super) fn cycles_end_below(&self, height: usize) -> bool {
+        self.cycle_ends_below.get() < height
+    }
+
+    #[inline]
     fn end_log_range_of_cycles(&self) {
-        if let Some(from) = self.cycle_since_idle.take() {
-            let logged = self.buffer().log_lengths();
-            self.logged_at_cycles.borrow_mut().push([from, logged]);
+        if let Some(from) = self.cycle_since_idle.get() {
+            self.end_log_range_of_cycles_since(from);
         }
         self.cycle_ends_below.set(0);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn end_log_range_of_cycles_since(&self, from: [usize; 2]) {
+        self.cycle_since_idle.set(None);
+        let logged = self.buffer().log_lengths();
+        self.logged_at_cycles.borrow_mut().push([from, logged]);
     }
 
     /// The keys the task has stored under since it was last idle, except for its immediate writes.

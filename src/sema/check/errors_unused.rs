@@ -1770,7 +1770,10 @@ impl Checker<'_, '_> {
         for (i, scope) in bound.scopes.iter().enumerate() {
             let checks_locals = match scope.kind {
                 // `checkSourceFile`: `IsExternalOrCommonJSModule`
-                ScopeKind::File => hir.has_module_syntax || bound.commonjs_indicator.is_some(),
+                ScopeKind::File => {
+                    hir.has_module_syntax && !hir.is_script_for_project
+                        || bound.commonjs_indicator.is_some()
+                }
                 // `checkModuleDeclaration`: `!IsGlobalScopeAugmentation(node)`
                 ScopeKind::Module(m) => {
                     hir[m].name != ModuleName::Global && !u.is_never_checked(hir[m].name_pos)

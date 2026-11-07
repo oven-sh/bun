@@ -91,8 +91,8 @@ struct ParseSettings<'a> {
     compiles: bool,
     /// `Options::reads_as_bun_run`
     reads_as_bun_run: bool,
-    /// `Options::keeps_function_directives`
-    keeps_function_directives: bool,
+    /// `Options::ignores_pure_comments`
+    ignores_pure_comments: bool,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
@@ -272,7 +272,7 @@ fn parse_file_as(
         is_before_typescript_7_1: how.is_before_typescript_7_1,
         compiles: how.compiles,
         reads_as_bun_run: how.reads_as_bun_run,
-        keeps_function_directives: how.keeps_function_directives,
+        ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
     };
@@ -457,7 +457,7 @@ pub fn summarize<'s>(
         is_before_typescript_7_1,
         compiles: false,
         reads_as_bun_run,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
@@ -497,7 +497,7 @@ pub fn summarize_top_level<'s>(
             is_before_typescript_7_1: false,
             compiles: false,
             reads_as_bun_run,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
             skips_function_blocks: true,
             reads_module_statements_alone,
         };
@@ -561,7 +561,7 @@ pub fn summarize_in<'s>(
         is_before_typescript_7_1: false,
         compiles: false,
         reads_as_bun_run: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
@@ -583,8 +583,7 @@ impl<'s> Summary<'_, 's> {
         match self {
             Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
-                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
-                *file = emptied;
+                let mut in_arena = file.move_to_arena(arena, session);
                 in_arena.finish_nodes();
                 in_arena
             }
@@ -657,7 +656,7 @@ pub fn with_summary_in_place<'s, R>(
         is_before_typescript_7_1: false,
         compiles: false,
         reads_as_bun_run: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };

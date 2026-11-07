@@ -172,6 +172,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `lookAhead(isUnambiguouslyStartOfFunctionType)`
     fn is_at_parameters_of_function_type(&mut self) -> bool {
+        if !self.recovers()
+            && let Some(answer) = self.look_ahead(Self::is_start_of_function_type_by_tokens)
+        {
+            return answer;
+        }
         // A pattern after the `(` has to be parsed to get past it, including the types in it, and each `(` in those
         // types asks this question again, twice. So an answer that took a long scan is cached. Otherwise each level of
         // `({[a as ({[b as ..` takes three times as long as the level inside it.
@@ -201,6 +206,28 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 .insert(insert_at, (at.0, at.1, answer));
         }
         answer
+    }
+
+    fn is_start_of_function_type_by_tokens(&mut self) -> Option<bool> {
+        self.next();
+        if matches!(self.token(), T::CloseParen | T::DotDotDot) {
+            return Some(true);
+        }
+        if self.token().is_modifier() || matches!(self.token(), T::OpenBracket | T::OpenBrace) {
+            return None;
+        }
+        if !self.is_identifier() && self.token() != T::This {
+            return Some(false);
+        }
+        self.next();
+        Some(match self.token() {
+            T::Colon | T::Comma | T::Question | T::Equals => true,
+            T::CloseParen => {
+                self.next();
+                self.token() == T::EqualsGreaterThan
+            }
+            _ => false,
+        })
     }
 
     /// `isUnambiguouslyStartOfFunctionType`
@@ -761,10 +788,23 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => return self.type_reference(),
         };
         // `parseKeywordAndNoDot`
-        if matches!(self.lx.first_byte_of_next(), 0 | b'.') && self.peek() == T::Dot {
+        if !matches!(self.lx.first_byte_of_next(), 0 | b'.') {
+            return self.token_type(TypeNodeKind::Keyword(keyword));
+        }
+        if COMMENTS {
+            return match self.peek() {
+                T::Dot => self.type_reference(),
+                _ => self.token_type(TypeNodeKind::Keyword(keyword)),
+            };
+        }
+        let mark = self.lx.mark();
+        let ty = self.token_type(TypeNodeKind::Keyword(keyword));
+        if self.token() == T::Dot {
+            self.pop_type();
+            self.lx.reset(mark);
             return self.type_reference();
         }
-        self.token_type(TypeNodeKind::Keyword(keyword))
+        ty
     }
 
     /// `parseJSDocAllType`, `parseJSDocNullableType`, `parseJSDocNonNullableType`. The checker reports them.
@@ -787,7 +827,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if matches!(token, T::Asterisk | T::AsteriskEquals) || is_unknown_type {
             // `checkJSDocTypeIsInJsFile`
             if !self.options.is_javascript {
-                self.flag(DiagnosticKind::Grammar, 8020, (start, start + 1), &[]);
+                self.flag_early_error(8020, (start, start + 1), &[]);
             }
             return self.add_type(TypeNodeKind::Keyword(Keyword::Any), start, start + 1);
         }
@@ -863,6 +903,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => self.missing_identifier(1110, 0),
         };
         self.note_name_in_type(first.0, first.1);
+        if self.token() != T::Dot {
+            return self.f.entity_name(std::iter::once(first));
+        }
         self.s.names.push(first);
         // `checkTypeReferenceNode`: `A.<T>`
         if self.rest_of_entity_name(PrivateNames::Rejected) && !self.newline_before() {
@@ -973,7 +1016,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn flag_type_arguments(&mut self, at: (u32, u32), code: u32) {
-        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+        self.flag_early_error(code, at, &[]);
     }
 
     /// Call after a heritage clause's expression or a JSX element's name. `parseTypeArguments`
@@ -1403,7 +1446,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if !is_first_extends && is_checked {
                 is_checked = false;
                 if is_extends {
-                    self.flag(DiagnosticKind::Grammar, 1172, (keyword.0, 0), &[]);
+                    self.flag_early_error(1172, (keyword.0, 0), &[]);
                 }
             }
             if is_extends && self.is_for_oxc() {
@@ -1468,16 +1511,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `checkGrammarHeritageClause`
             match comma {
                 _ if !is_checked => {}
-                Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, (comma.0, 0), &[]),
+                Some(comma) => self.flag_early_error(1009, (comma.0, 0), &[]),
                 // oxc has already given up.
                 None if count == 0 && self.token() != T::OpenBrace && self.is_for_oxc() => {}
                 None if count == 0 => {
                     let at = (keyword.1, keyword.1);
-                    self.flag(DiagnosticKind::Grammar, 1097, at, &[b"extends"]);
+                    self.flag_early_error(1097, at, &[b"extends"]);
                 }
                 None => {
                     if let Some((at, code)) = element_error {
-                        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+                        self.flag_early_error(code, at, &[]);
                     }
                 }
             }
@@ -1874,12 +1917,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let at = (type_start, element.end);
         if has_dots_before_type {
             element.member_type = TupleMemberType::Rest;
-            self.flag(DiagnosticKind::Grammar, 5087, at, &[]);
+            self.flag_early_error(5087, at, &[]);
             element.ty = self.rest_element_type(element.ty);
         } else if let Some(operand) = self.unwrap_nullable_type(element.ty) {
             element.member_type = TupleMemberType::Optional;
             element.written = operand;
-            self.flag(DiagnosticKind::Grammar, 5086, at, &[]);
+            self.flag_early_error(5086, at, &[]);
             // `getTypeFromOptionalTypeNode`
             let undefined = TypeNodeKind::Keyword(Keyword::Undefined);
             let undefined = self.add_type(undefined, type_start, type_start);
@@ -2111,14 +2154,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             .get(params.start as usize)
             .filter(|_| !params.is_empty())
         else {
-            return self.flag(DiagnosticKind::Grammar, 1096, member, &[]);
+            return self.flag_early_error(1096, member, &[]);
         };
         let name = self.f.pats.get(first.pat.idx()).map_or(0, |it| it.pos);
         if params.len() != 1 {
-            return self.flag(DiagnosticKind::Grammar, 1096, (name, 0), &[]);
+            return self.flag_early_error(1096, (name, 0), &[]);
         }
         if let Some(comma) = comma {
-            self.flag(DiagnosticKind::Grammar, 1025, (comma, 0), &[]);
+            self.flag_early_error(1025, (comma, 0), &[]);
         }
         let error = if first.flags.contains(Flags::REST) {
             Some((first.pos, 1017))
@@ -2134,7 +2177,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             None
         };
         if let Some((at, code)) = error {
-            self.flag(DiagnosticKind::Grammar, code, (at, 0), &[]);
+            self.flag_early_error(code, (at, 0), &[]);
         }
     }
 
@@ -2396,7 +2439,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.f.body_starts.push((func, open));
         let at = (open, self.prev_end());
-        self.flag(DiagnosticKind::Grammar, 1183, at, &[]);
+        self.flag_early_error(1183, at, &[]);
         true
     }
 

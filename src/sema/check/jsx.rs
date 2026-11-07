@@ -234,7 +234,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `anySignature`
     pub(super) fn any_signature(&self) -> SigId {
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: ArenaBox::empty(),
             ret: TypeId::ANY,
@@ -261,7 +261,7 @@ impl<'p, 's> Checker<'p, 's> {
             rest: false,
             declaration: None,
         }];
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
             ret,
@@ -466,7 +466,7 @@ impl<'p, 's> Checker<'p, 's> {
         // type is considered.
         let single_sig = [sig];
         let parts: &[SigId] = match self.types().sig(sig) {
-            SigData::Synth { of, .. } if !of.is_empty() => &of[..],
+            SigData::Synth(SynthSig { of, .. }) if !of.is_empty() => &of[..],
             _ => &single_sig[..],
         };
         let mut results = Vec::with_capacity(parts.len());

@@ -6,7 +6,7 @@
 use super::*;
 use crate::atom::Interner;
 use crate::bind::SymbolId;
-use crate::check::commit::Commits;
+use crate::check::commit::{Commits, PreparedLog};
 use crate::local::{HashIndex, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
 use crate::session::Session;
@@ -20,6 +20,7 @@ use crate::types::{
 };
 use crate::util::{ShardedMap, WindowedMap, shard_among, spread_in_window};
 use bun_sema_standalone as _;
+use bun_threading::Guarded;
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
@@ -662,11 +663,28 @@ fn from_now(task: &Task) -> Stored {
 
 /// Runs commit `number` for `task`. Returns the number of entries it stored.
 fn commit<'s>(tables: &Tables<'s>, commits: &Commits<'s>, task: &Task<'s>, number: u32) -> u64 {
-    let mut log = task.buffer().take_log();
-    let stored = commits.store(&tables.all(), task, &mut log, number, None);
+    let prepared = prepare(tables, task);
+    store(tables, commits, task, &prepared, number)
+}
+
+/// The part of a commit that comes before its mutex.
+fn prepare<'s>(tables: &Tables<'s>, task: &Task<'s>) -> PreparedLog {
+    let log = task.buffer().take_log();
+    Commits::prepare(&tables.all(), task, &log)
+}
+
+/// The part of commit `number` that runs under its mutex. Returns the number of entries it stored.
+fn store<'s>(
+    tables: &Tables<'s>,
+    commits: &Commits<'s>,
+    task: &Task<'s>,
+    prepared: &PreparedLog,
+    number: u32,
+) -> u64 {
+    let stored = commits.store(&tables.all(), prepared, number, None);
     task.view().unwrap().has_committed(number);
     task.resume_writing_immediately();
-    stored
+    stored.iter().sum()
 }
 
 fn next_statement(task: &Task) {
@@ -1022,8 +1040,8 @@ fn expression_entries_of_visited_file_stay_local() {
     // An expression of another file, evaluated to get the type of a declaration there.
     table.insert(&task, (B, 1), STRING, stored());
     assert_eq!((task.buffer().logged(), task.held_back()), (1, 1));
-    let mut log = task.buffer().take_log();
-    assert_eq!(commits.store(&[&table], &task, &mut log, 1, None), 1);
+    let prepared = Commits::prepare(&[&table], &task, &task.buffer().take_log());
+    assert_eq!(commits.store(&[&table], &prepared, 1, None), [0, 1]);
     let mut other = begin_committing(&session, &tables, &commits, 1);
     assert_eq!(table.get(&other, &(A, 1)), None);
     assert_eq!(table.get(&other, &(B, 1)), Some(STRING));
@@ -1133,6 +1151,123 @@ fn node_entries_of_a_commit_appear_atomically() {
             });
         }
     });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn nothing_is_visible_before_a_commit_stores() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut first = begin_committing(&session, &tables, &commits, 0);
+    first.begin_file(A, true);
+    let second = begin_committing(&session, &tables, &commits, 1);
+    tables.by_node.insert(&first, (A, 1), STRING, stored());
+    tables.set.insert(&first, (A, 3), (), stored());
+    tables.by_id.insert(&first, STRING, NUMBER, stored());
+    (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), stored());
+    (tables.indirect_by_node).insert_ref(&first, (A, 4), Box::new([STRING]), stored());
+    (tables.by_key).insert(&first, (STRING, NUMBER), STRING, stored());
+    let prepared = prepare(&tables, &first);
+    assert_eq!(prepared.len(), 6);
+    next_statement(&second);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
+    assert_eq!(tables.by_node.commit_of((A, 1)), None);
+    assert_eq!(tables.set.get(&second, &(A, 3)), None);
+    assert_eq!(tables.by_id.get(&second, &STRING), None);
+    assert_eq!(tables.shapes.get_ref(&second, &STRING), None);
+    assert_eq!(tables.indirect_by_node.get_ref(&second, &(A, 4)), None);
+    assert_eq!(tables.by_key.get(&second, &(STRING, NUMBER)), None);
+    assert_eq!(store(&tables, &commits, &first, &prepared, 1), 6);
+    next_statement(&second);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+    assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
+    assert_eq!(tables.set.get(&second, &(A, 3)), Some(()));
+    assert_eq!(tables.by_id.get(&second, &STRING), Some(NUMBER));
+    assert!(tables.shapes.get_ref(&second, &STRING).is_some());
+    assert!(tables.indirect_by_node.get_ref(&second, &(A, 4)).is_some());
+    assert_eq!(tables.by_key.get(&second, &(STRING, NUMBER)), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn first_commit_to_store_wins_whichever_prepared_first() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let [first, second, late] =
+        [0, 1, 2].map(|index| begin_committing(&session, &tables, &commits, index));
+    for (task, value) in [(&first, STRING), (&second, NUMBER), (&late, STRING)] {
+        tables.by_node.insert(task, (A, 1), value, stored());
+        tables.set.insert(task, (A, 3), (), stored());
+        tables.by_id.insert(task, STRING, value, stored());
+        (tables.shapes).insert_ref(task, STRING, Box::new([value]), stored());
+        (tables.indirect_by_node).insert_ref(task, (A, 4), Box::new([value]), stored());
+        (tables.by_key).insert(task, (STRING, NUMBER), value, stored());
+    }
+    let (of_first, of_second) = (prepare(&tables, &first), prepare(&tables, &second));
+    assert_eq!((of_first.len(), of_second.len()), (6, 6));
+    assert_eq!(store(&tables, &commits, &second, &of_second, 1), 6);
+    assert_eq!(store(&tables, &commits, &first, &of_first, 2), 0);
+    // What has lost by the time a commit prepares never gets as far as the mutex.
+    assert_eq!(prepare(&tables, &late).len(), 0);
+    let reader = begin_committing(&session, &tables, &commits, 3);
+    assert_eq!(tables.by_node.get(&reader, &(A, 1)), Some(NUMBER));
+    assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
+    assert_eq!(tables.by_id.get(&reader, &STRING), Some(NUMBER));
+    let shape = tables.shapes.get_ref(&reader, &STRING);
+    assert_eq!(shape.map(|it| &it[..]), Some(&[NUMBER][..]));
+    let in_table = tables.indirect_by_node.get_ref(&reader, &(A, 4));
+    assert_eq!(in_table.map(|it| &it[..]), Some(&[NUMBER][..]));
+    assert_eq!(tables.by_key.get(&reader, &(STRING, NUMBER)), Some(NUMBER));
+}
+
+/// Only the stores of a commit are one at a time. What comes before them runs while another commit stores.
+#[test]
+fn commits_prepare_while_another_commit_stores() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let (last_commit, stored_by_all) = (Guarded::new(0), AtomicUsize::new(0));
+    on_threads(8, &|index| {
+        let task = begin_committing(&session, &tables, &commits, index as u32);
+        for node in 0..20 {
+            tables.by_node.insert(&task, (A, node), STRING, stored());
+            tables.set.insert(&task, (B, node), (), stored());
+            tables.by_id.insert(&task, TypeId(node), STRING, stored());
+            (tables.by_key).insert(&task, (TypeId(node), NUMBER), STRING, stored());
+        }
+        let prepared = prepare(&tables, &task);
+        let mut last_commit = last_commit.lock();
+        *last_commit += 1;
+        let stored = store(&tables, &commits, &task, &prepared, *last_commit);
+        stored_by_all.fetch_add(stored as usize, Ordering::Relaxed);
+    });
+    assert_eq!(stored_by_all.load(Ordering::Relaxed), 80);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn entry_that_other_tasks_find_is_counted_once() {
+    for (counts, expected) in [(false, 0), (true, 1)] {
+        let session = Session::new();
+        let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+        commits.count_entries_found(counts);
+        let mut first = begin_committing(&session, &tables, &commits, 0);
+        first.begin_file(A, true);
+        tables.by_node.insert(&first, (A, 1), STRING, stored());
+        tables.by_node.insert(&first, (A, 2), NUMBER, stored());
+        assert_eq!(commit(&tables, &commits, &first, 1), 2);
+        // The task that stored it finds it in the shared part too.
+        first.begin_file(B, true);
+        let [second, third] =
+            [1, 2].map(|index| begin_committing(&session, &tables, &commits, index));
+        for task in [&first, &second, &second, &third] {
+            assert_eq!(tables.by_node.get(task, &(A, 1)), Some(STRING));
+            commits.note_entries_found(task.view().unwrap());
+        }
+        assert_eq!(commits.totals()[5], expected);
+        // The mark changes no lookup.
+        assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
+        assert_eq!(tables.by_node.get(&third, &(A, 1)), Some(STRING));
+    }
 }
 
 #[test]
@@ -1346,7 +1481,7 @@ fn query_is_added_to_cycle_members_once_while_it_is_in_progress() {
     };
     // The serial numbers of the queries in progress.
     let (mut stack, mut pushed) = (Vec::new(), 0);
-    let mut in_progress = MembersInProgress::default();
+    let mut in_progress = RangesInProgress::default();
     let (mut added, mut members) = (Vec::new(), Vec::new());
     for _ in 0..50_000 {
         match next(5) {

@@ -222,11 +222,7 @@ bun build <entry points>
 <ParamField path="--explain" type="string">
   With <code>--aot</code>: list the code that compiled to a slow path, worst first, with a fix for each.{" "}
   <code>--explain=json</code> prints one object per line. Other reports: <code>guards</code>, <code>guards-json</code>,{" "}
-  <code>trim</code>, <code>missed-optimizations</code>, <code>allocations</code>
-</ParamField>
-
-<ParamField path="--aot-log-type-mismatches" type="boolean">
-  With <code>--aot</code>: the executable logs every value that doesn't match its declared type
+  <code>trim</code>, <code>allocations</code>
 </ParamField>
 
 <ParamField path="--aot-huge-heap" type="boolean">
@@ -247,6 +243,11 @@ bun build <entry points>
   from disk at run time. Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-harden" type="string">
+  With <code>--aot</code>: make a bug in the compiler harder to turn into a memory bug. Takes a list of{" "}
+  <code>proof-checks</code> and <code>ignore-told-ranges</code>. The executable runs slower
+</ParamField>
+
 <ParamField path="--compile-in-place" type="boolean">
   With <code>--aot</code>: keep modules at their paths on disk and load anything that wasn't compiled from there. The
   executable only runs on the machine that built it
@@ -258,7 +259,8 @@ bun build <entry points>
   <code>--no-compile-function-source</code>: a library that reads <code>fn.toString()</code> gets{" "}
   <code>[native code]</code>. The path of a module stays only where your code can read it, such as through{" "}
   <code>import.meta.path</code>, and the other modules don't show up when your code lists the folders inside the
-  executable. Same as <code>--sourcemap=external</code>
+  executable. The <code>name</code> of every function and class is empty. <code>--sourcemap=external</code> does the
+  same and leaves <code>name</code> alone
 </ParamField>
 
 <ParamField path="--trim" type="boolean">

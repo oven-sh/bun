@@ -146,7 +146,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `a?.b!`x``: what runs has no `!`, and an optional chain is no tag of a template.
     fn check_tag_behind_assertion(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let ExprKind::TaggedTemplate(call) = hir[e].kind else {
@@ -166,7 +165,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    // `bun run` reads the flags of every regular expression, also of one that nothing uses.
     fn check_regexp_flag_early_errors(&mut self, file: FileId, e: ExprId) {
         let ExprKind::Regex { flags, .. } = self.hir(file)[e].kind else {
             return;
@@ -284,6 +282,7 @@ impl Checker<'_, '_> {
             } else if matches!(hir[target].kind, ExprKind::Ident(_))
                 && (target != operand || is_parenthesized(hir, operand))
                 && self.is_strict_mode_code(file, hir.node(e))
+                && !self.names_member_of_container(file, target)
             {
                 self.early_error_at((file, hir[target].pos, 0), 1102, &[]);
             }
@@ -354,7 +353,6 @@ impl Checker<'_, '_> {
             self.early_grammar_error_at((file, hir[e].pos, 0), 1109, &[]);
         }
         let specifier = hir.id_at(args, 0);
-        // `bun run` takes `meta` alone after `import.`.
         let written = match phase {
             ImportPhase::Evaluation => None,
             ImportPhase::Defer => Some(b"defer".as_slice()),

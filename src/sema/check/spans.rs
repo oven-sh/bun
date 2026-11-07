@@ -46,28 +46,68 @@ pub(super) fn line_break_len(text: &[u8], at: usize) -> usize {
     }
 }
 
+#[inline]
+fn line_break_candidates(word: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGH_BITS: u64 = 0x80 * ONES;
+    let low = word & !HIGH_BITS;
+    let from_line_feed = low + (0x80 - 0x0A) * ONES;
+    let past_carriage_return = low + (0x80 - 0x0E) * ONES;
+    ((from_line_feed & !past_carriage_return) | word) & HIGH_BITS
+}
+
+#[inline]
+fn index_of_line_break_byte(text: &[u8], mut at: usize) -> Option<usize> {
+    while let Some(bytes) = text.get(at..at + 8) {
+        let Ok(bytes) = <[u8; 8]>::try_from(bytes) else {
+            break;
+        };
+        let word = u64::from_le_bytes(bytes);
+        let mut candidates = line_break_candidates(word);
+        while candidates != 0 {
+            let shift = candidates.trailing_zeros() & !7;
+            if matches!((word >> shift) as u8, b'\n' | b'\r' | 0xE2) {
+                return Some(at + shift as usize / 8);
+            }
+            candidates &= candidates - 1;
+        }
+        at += 8;
+    }
+    let rest = text.get(at..)?;
+    let found = rest
+        .iter()
+        .position(|byte| matches!(byte, b'\n' | b'\r' | 0xE2))?;
+    Some(at + found)
+}
+
 /// `ComputeECMALineStarts`: the start of each line of `text`.
 pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
     let mut starts = vec![0u32];
-    let mut i = 0;
-    // 0xE2 starts U+2028 and U+2029, which end a line too.
-    while let Some(found) = bun_core::strings::index_of_any(&text[i..], b"\n\r\xE2") {
-        i += found;
-        match text[i] {
-            b'\r' if text.get(i + 1) == Some(&b'\n') => i += 1,
-            0xE2 => {
-                if text.get(i + 1) != Some(&0x80) || !matches!(text.get(i + 2), Some(0xA8 | 0xA9)) {
-                    i += 1;
-                    continue;
-                }
-                i += 2;
-            }
-            _ => {}
+    let (words, rest) = text.as_chunks::<8>();
+    for (index, &bytes) in words.iter().enumerate() {
+        let mut candidates = line_break_candidates(u64::from_le_bytes(bytes));
+        while candidates != 0 {
+            let at = index * 8 + candidates.trailing_zeros() as usize / 8;
+            push_start_behind_line_break(text, at, &mut starts);
+            candidates &= candidates - 1;
         }
-        i += 1;
-        starts.push(i as u32);
+    }
+    for at in text.len() - rest.len()..text.len() {
+        push_start_behind_line_break(text, at, &mut starts);
     }
     starts
+}
+
+#[inline]
+fn push_start_behind_line_break(text: &[u8], at: usize, starts: &mut Vec<u32>) {
+    let len = match text[at] {
+        b'\n' => 1,
+        b'\r' if text.get(at + 1) != Some(&b'\n') => 1,
+        // 0xE2 starts U+2028 and U+2029, which end a line too.
+        0xE2 if line_break_len(text, at) == 3 => 3,
+        _ => return,
+    };
+    starts.push((at + len) as u32);
 }
 
 /// `strings.TrimLeftFunc(line, stringutil.IsWhiteSpaceLike)`
@@ -120,10 +160,13 @@ pub fn normalize_jsdoc_type_source_text(text: &[u8]) -> Cow<'_, [u8]> {
 
 /// End of the line that contains `at`, before its line break.
 pub(crate) fn line_end(text: &[u8], mut at: usize) -> usize {
-    while at < text.len() && line_break_len(text, at) == 0 {
-        at += 1;
+    while let Some(found) = index_of_line_break_byte(text, at) {
+        if line_break_len(text, found) != 0 {
+            return found;
+        }
+        at = found + 1;
     }
-    at.min(text.len())
+    text.len()
 }
 
 /// `SkipTrivia`: skips whitespace and comments starting at `at`.
@@ -135,8 +178,8 @@ pub fn skip_trivia(text: &[u8], at: usize) -> usize {
 pub(super) fn skip_trivia_ex(text: &[u8], mut at: usize, stop_after_line_break: bool) -> usize {
     loop {
         match text.get(at) {
-            Some(b'\n' | b'\r') => {
-                at += if text[at..].starts_with(b"\r\n") {
+            Some(&line_break @ (b'\n' | b'\r')) => {
+                at += if line_break == b'\r' && text.get(at + 1) == Some(&b'\n') {
                     2
                 } else {
                     1
@@ -267,6 +310,8 @@ pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
                 }
             } else if matches!(b, b' ' | b'\t' | 0x0B | 0x0C) {
                 at -= 1;
+            } else if b < 0x80 {
+                break;
             } else if at >= 2 && white_space_len(text, at - 2) == 2 {
                 at -= 2;
             } else if at >= 3 && white_space_len(text, at - 3) == 3 {
@@ -275,7 +320,7 @@ pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
                 break;
             }
         }
-        if text[..at].ends_with(b"*/")
+        if matches!(text[..at], [.., b'*', b'/'])
             && let Some(open) = bun_core::strings::last_index_of(&text[..at - 2], b"/*")
         {
             cold_path();
@@ -283,7 +328,7 @@ pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
         }
         if at == before {
             // `isShebangTrivia`: the first line of a file.
-            let is_in_shebang = text.starts_with(b"#!")
+            let is_in_shebang = matches!(text, [b'#', b'!', ..])
                 && bun_core::strings::index_of_any(&text[..at], b"\n\r").is_none();
             return if is_in_shebang { 0 } else { at };
         }

@@ -2,12 +2,14 @@ use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
 use crate::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, is_linked_by_bundler, is_name_read_by_transpiler,
+    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_written_arms,
+    is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
     ComputedCandidate, ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind,
-    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteResolution,
+    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteOfComputedLoad, SiteResolution,
+    join,
 };
 
 pub(super) fn resolve_code_imports<'s, 'r>(
@@ -19,19 +21,26 @@ pub(super) fn resolve_code_imports<'s, 'r>(
 ) -> LoadedCode<'s, 'r> {
     let atoms = &context.atoms;
     let sites = analyzed.analysis.import_sites;
-    let erased_before = find_sites_erased_before(context, key, sites);
     let mut resolutions = Vec::with_capacity(sites.len());
     let mut targets = Vec::new();
+    let folder_of_text = context.host.directory_of(key.path);
     for (index, site) in sites.iter().enumerate() {
-        if erased_before.is_some_and(|answers| answers[index] == CodeAnswer::Erased) {
-            resolutions.push(SiteResolution::Constant(CodeResolution::Erased));
-            continue;
-        }
         let key = match analyzed.analysis.path_to_resolve_from(index) {
-            Some(path) => LoadKey {
+            Some(ResolvedFrom::File(path)) => LoadKey {
                 path: context.resolver.keep(atoms.bytes(path)),
                 ..key
             },
+            Some(ResolvedFrom::PathFromOwnFolder(path)) => {
+                let path = atoms.bytes(path);
+                let mut whole = join(&context.host.directory_of(key.path), path);
+                if path.ends_with(b"/") {
+                    whole.extend_from_slice(b"/noop.js");
+                }
+                LoadKey {
+                    path: context.resolver.keep(&whole),
+                    ..key
+                }
+            }
             None => key,
         };
         let alternatives = analyzed.analysis.alternatives_of(&site.specifier);
@@ -40,13 +49,33 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             true => NamesKnown::ToTranspiler,
             false => NamesKnown::ToLoader,
         };
-        let resolution = resolve_site(context, key, hir, site, alternatives, names);
+        let written = SiteOfComputedLoad {
+            folder: &folder_of_text,
+            opens_database: loader_attribute(hir, site)
+                .is_some_and(|it| atoms.bytes(it) == b"sqlite")
+                && !embed_attribute(hir, site).is_some_and(|it| atoms.bytes(it) == b"true")
+                && !analyzed
+                    .analysis
+                    .is_path_from_own_directory(site.specifier_node)
+                && analyzed
+                    .analysis
+                    .find_resolved_form(site.specifier_node)
+                    .is_none(),
+            type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+        };
+        let resolution = resolve_site(context, key, hir, site, alternatives, names, written);
+        let arms = match site.specifier {
+            ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
+            _ => SmallVec::new(),
+        };
+        let resolution = add_written_arms(context, key, site, &arms, resolution);
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
             is_linked_by_bundler: matches!(site.specifier, ImportSpecifier::Constant(_))
                 && is_linked_by_bundler(hir, bound, site.kind),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+            may_have_unread_type: may_have_unread_type(hir, site),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
             is_statement: matches!(
                 site.kind,
@@ -81,20 +110,6 @@ pub(super) fn resolve_code_imports<'s, 'r>(
     };
     code.index_targets_by_specifier();
     code
-}
-
-/// The answers of `CompileInputs::loaded_before` for the sites of the file. Nobody asked for what is behind a site that it erased.
-fn find_sites_erased_before<'s>(
-    context: &CodeLoadContext<'_, 's, '_>,
-    key: LoadKey<'_>,
-    sites: &[ImportSite],
-) -> Option<&'s [CodeAnswer<'s>]> {
-    let known = context.find_loaded_before(key)?.compiled;
-    let sites_before = known.analysis.import_sites;
-    let has_same_sites = sites.len() == sites_before.len()
-        && (sites.iter().zip(sites_before)).all(|(site, before)| site.kind == before.kind);
-    debug_assert!(has_same_sites);
-    has_same_sites.then_some(known.code_answers)
 }
 
 impl<'s, 'r> LoadedCode<'s, 'r> {
@@ -164,7 +179,42 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
     }
 }
 
-/// `import_sites::is_name_read_by_transpiler`
+fn add_written_arms<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    key: LoadKey<'r>,
+    site: &ImportSite,
+    arms: &[Atom],
+    resolution: SiteResolution<'r>,
+) -> SiteResolution<'r> {
+    let SiteResolution::Computed(ComputedResolution::All {
+        cause,
+        host_modules,
+    }) = resolution
+    else {
+        return resolution;
+    };
+    let kind = (
+        CodeImportKind::from_site(site.kind),
+        CodeImportForm::from_site(site.kind),
+    );
+    let mut candidates = host_modules.to_vec();
+    for &arm in arms {
+        let named = resolve_specifier(context, key, context.atoms.bytes(arm), kind);
+        if let CodeResolution::File(file) = named
+            && !candidates.contains(&ComputedCandidate::File(file))
+        {
+            candidates.push(ComputedCandidate::File(file));
+        }
+    }
+    if candidates.len() == host_modules.len() {
+        return resolution;
+    }
+    SiteResolution::Computed(ComputedResolution::All {
+        cause,
+        host_modules: context.session.arena().alloc_slice_copy(&candidates),
+    })
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NamesKnown {
     ToTranspiler,
@@ -178,23 +228,26 @@ fn resolve_site<'r>(
     site: &ImportSite,
     alternatives: &[ImportSpecifier],
     names: NamesKnown,
+    written: SiteOfComputedLoad<'_>,
 ) -> SiteResolution<'r> {
-    // `import.meta.require("bun:fs")`
     let is_unknown = |name: &[u8]| {
         names == NamesKnown::ToLoader && context.host.is_name_for_transpiler_alone(name)
     };
     let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     debug_assert!(is_constant || !site.is_host_value && !is_get_builtin_module(site.kind));
     let (atoms, resolver) = (&context.atoms, context.resolver);
-    let kind = (
-        CodeImportKind::from_site(site.kind),
-        CodeImportForm::from_site(site.kind),
-    );
+    let form = match site.kind {
+        ImportSiteKind::ImportEquals(it) if hir[hir[it].stmt].loc == hir::TextRange::default() => {
+            CodeImportForm::WrittenByHost
+        }
+        kind => CodeImportForm::from_site(kind),
+    };
+    let kind = (CodeImportKind::from_site(site.kind), form);
     let specifier = match site.specifier {
         ImportSpecifier::Constant(specifier) => atoms.bytes(specifier),
         ImportSpecifier::Pattern { prefix, suffix } => {
             let (prefix, suffix) = (atoms.bytes(prefix), atoms.bytes(suffix));
-            let resolution = resolve_pattern(context, key, prefix, suffix, kind);
+            let resolution = resolve_pattern(context, key, prefix, suffix, kind, written);
             return SiteResolution::Computed(resolution);
         }
         ImportSpecifier::OneOf(_) => {
@@ -214,11 +267,12 @@ fn resolve_site<'r>(
                 directory: &directory_of_request(context, key, kind.1),
                 kind: kind.0,
                 form: kind.1,
+                site: written,
             };
             return SiteResolution::Computed(resolver.resolve_alternative_code(&request, &texts));
         }
         ImportSpecifier::Unknown => {
-            let resolution = resolve_pattern(context, key, b"", b"", kind);
+            let resolution = resolve_pattern(context, key, b"", b"", kind, written);
             return SiteResolution::Computed(ComputedResolution::All {
                 cause: ComputedUnknown::NoPattern,
                 host_modules: candidates_of(resolution),
@@ -238,22 +292,63 @@ fn resolve_site<'r>(
         true => CodeResolution::NotFound(CodeFailure::ModuleNotFound),
         false => resolve_specifier(context, key, specifier, kind),
     };
+    let resolution = leave_outside_with_package(context, key, hir, site, names, resolution)
+        .unwrap_or(resolution);
     let resolution =
         resolve_file_loaded_another_way(context, key, hir, site, specifier, resolution);
     let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
     let resolution =
+        resolve_database(context, hir, site, specifier, resolution).unwrap_or(resolution);
+    let resolution =
         resolve_at_run_time(context, site, specifier, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
-        true => builtin_module_or_erased(resolution, &|specifier| {
-            context.host.is_builtin_module_in_other_program(specifier)
-        }),
+        true => builtin_module_or_erased(resolution),
         false => resolution,
     })
 }
 
-/// `import path from "package/dist/library.js" with { type: "file" }`: another program of the realm holds the file as code, and would answer with what the code exports.
-/// What is asked for is the path of the file, its text or its data, and that is a module of its own, which this program holds.
-/// `import text from "./page.html" with { type: "text" }`: so it is with a page, which the run time would bundle and serve.
+fn leave_outside_with_package<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    key: LoadKey<'r>,
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+    names: NamesKnown,
+    resolution: CodeResolution<'r>,
+) -> Option<CodeResolution<'r>> {
+    let (CodeResolution::File(file), ImportSpecifier::Constant(specifier)) =
+        (resolution, site.specifier)
+    else {
+        return None;
+    };
+    let loads = matches!(
+        site.kind,
+        ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+    );
+    if !loads || !context.host.leaves_packages_outside() {
+        return None;
+    }
+    let form = CodeImportForm::from_site(site.kind);
+    let request = CodeRequest {
+        specifier: context.atoms.bytes(specifier),
+        importer: key.path,
+        directory: &directory_of_request(context, key, form),
+        kind: CodeImportKind::from_site(site.kind),
+        form,
+    };
+    let resolver = context.resolver;
+    if !resolver.leads_into_package_left_outside(&request, file.path) {
+        return None;
+    }
+    let is_read_by_bundler =
+        names == NamesKnown::ToTranspiler && is_name_written_out(hir, site.specifier_node);
+    (!is_read_by_bundler).then(|| CodeResolution::External {
+        specifier: resolver.keep(request.specifier),
+        kind: ExternalKind::UncompiledCode,
+    })
+}
+
 fn resolve_file_loaded_another_way<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     key: LoadKey<'r>,
@@ -263,38 +358,17 @@ fn resolve_file_loaded_another_way<'r>(
     resolution: CodeResolution<'r>,
 ) -> CodeResolution<'r> {
     let is_outside = matches!(resolution, CodeResolution::External { .. });
-    // `import data from "./data.json" with { type: "json" }` here and in a file of another program: one module, which that program holds under the type.
-    if let (CodeResolution::File(file), Some(type_attribute)) =
-        (resolution, loader_attribute(hir, site))
-        && file.host_module.is_none()
-        && (context.host).is_form_in_other_program(file.path, context.atoms.bytes(type_attribute))
-    {
-        return CodeResolution::External {
-            specifier: file.path,
-            kind: ExternalKind::UncompiledCode,
-        };
-    }
     let Some(type_attribute) = loader_attribute(hir, site).filter(|_| is_outside) else {
         return resolution;
     };
-    // As for a macro: the file itself is looked for, whoever holds it.
     let kind = (CodeImportKind::from_site(site.kind), CodeImportForm::Macro);
     let path = match resolve_specifier(context, key, specifier, kind) {
-        CodeResolution::External {
-            specifier: path,
-            kind: ExternalKind::UncompiledCode,
-        } if context.host.is_in_other_program(path) && !context.host.is_left_to_loader(path) => {
-            path
-        }
         CodeResolution::External {
             specifier: path,
             kind: ExternalKind::HostValue,
         } if context.host.leaves_to_run_time(path) => path,
         _ => return resolution,
     };
-    if (context.host).is_form_in_other_program(path, context.atoms.bytes(type_attribute)) {
-        return resolution;
-    }
     let loader_with = |type_attribute| {
         let kind = loader_kind(site);
         let request = (context.resolver).loader_request(path, kind, type_attribute, None);
@@ -330,7 +404,36 @@ fn resolve_data_url<'r>(
     }))
 }
 
-// A program may name a file that is created after the build, such as a configuration file under `/etc`.
+fn resolve_database<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+    specifier: &[u8],
+    resolution: CodeResolution<'r>,
+) -> Option<CodeResolution<'r>> {
+    let has_text = |value: Option<Atom>, text: &[u8]| {
+        value.is_some_and(|value| context.atoms.bytes(value) == text)
+    };
+    let is_path = specifier.starts_with(b"./") || specifier.starts_with(b"../");
+    let is_file_or_absent = match resolution {
+        CodeResolution::File(file) => file.host_module.is_none(),
+        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => true,
+        _ => false,
+    };
+    if !is_path
+        || !is_file_or_absent
+        || !has_text(loader_attribute(hir, site), b"sqlite")
+        || has_text(embed_attribute(hir, site), b"true")
+    {
+        return None;
+    }
+    let path = context.host.create_file_of_database(specifier)?;
+    Some(CodeResolution::File(CodeFile {
+        path: context.resolver.keep(&path),
+        host_module: None,
+    }))
+}
+
 fn resolve_at_run_time<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     site: &ImportSite,
@@ -359,7 +462,6 @@ fn resolve_at_run_time<'r>(
         CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
             is_load && bun_paths::is_absolute(specifier)
         }
-        // `./a.ts?fresh=1` is one more module of the file. Where the program holds none, `CodeHost::holds_modules_with_queries`, only code from disk can be one.
         CodeResolution::NotFound(CodeFailure::QueryString) => kind == ExternalKind::UncompiledCode,
         _ => false,
     };
@@ -373,10 +475,7 @@ fn is_get_builtin_module(kind: ImportSiteKind) -> bool {
     matches!(kind, ImportSiteKind::GetBuiltinModule(_))
 }
 
-fn builtin_module_or_erased<'r>(
-    resolution: CodeResolution<'r>,
-    is_builtin_module_in_other_program: &dyn Fn(&[u8]) -> bool,
-) -> CodeResolution<'r> {
+fn builtin_module_or_erased(resolution: CodeResolution<'_>) -> CodeResolution<'_> {
     match resolution {
         CodeResolution::HostModule(_)
         | CodeResolution::External {
@@ -384,10 +483,6 @@ fn builtin_module_or_erased<'r>(
             ..
         } => resolution,
         CodeResolution::File(file) if file.host_module.is_some() => resolution,
-        CodeResolution::External {
-            kind: ExternalKind::UncompiledCode,
-            specifier,
-        } if is_builtin_module_in_other_program(specifier) => resolution,
         CodeResolution::File(_)
         | CodeResolution::External {
             kind: ExternalKind::UncompiledCode,
@@ -405,9 +500,10 @@ fn directory_of_request<'r>(
 ) -> Cow<'r, [u8]> {
     match form {
         CodeImportForm::Dynamic => context.host.directory_of_dynamic_imports(key.path),
-        CodeImportForm::Static | CodeImportForm::ResolveOnly | CodeImportForm::Macro => {
-            context.host.directory_of(key.path)
-        }
+        CodeImportForm::Static
+        | CodeImportForm::ResolveOnly
+        | CodeImportForm::Macro
+        | CodeImportForm::WrittenByHost => context.host.directory_of(key.path),
     }
 }
 
@@ -432,6 +528,7 @@ fn resolve_pattern<'r>(
     prefix: &[u8],
     suffix: &[u8],
     (kind, form): (CodeImportKind, CodeImportForm),
+    site: SiteOfComputedLoad<'_>,
 ) -> ComputedResolution<'r> {
     context
         .resolver
@@ -442,6 +539,7 @@ fn resolve_pattern<'r>(
             directory: &directory_of_request(context, key, form),
             kind,
             form,
+            site,
         })
 }
 
@@ -472,6 +570,17 @@ fn loader_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     type_attribute(hir, site).filter(|&value| value != known::r#macro)
 }
 
+fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
+    let ImportSiteKind::ImportCall(call) = site.kind else {
+        return false;
+    };
+    let has_options = match hir[call].kind {
+        ExprKind::ImportCall { args, .. } => args.len() > 1,
+        _ => true,
+    };
+    has_options && type_attribute(hir, site).is_none()
+}
+
 fn embed_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     let attributes = site.attributes.some()?;
     hir.import_attribute(attributes, known::embed)
@@ -491,6 +600,7 @@ struct TargetOrigin<'a> {
     kind: CodeImportKind,
     is_linked_by_bundler: bool,
     type_attribute: Option<&'a [u8]>,
+    may_have_unread_type: bool,
     embed_attribute: Option<&'a [u8]>,
     is_statement: bool,
     increases_depth: bool,
@@ -500,6 +610,7 @@ const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     kind: CodeImportKind::Import,
     is_linked_by_bundler: true,
     type_attribute: None,
+    may_have_unread_type: false,
     embed_attribute: None,
     is_statement: true,
     increases_depth: false,
@@ -516,6 +627,7 @@ fn add_target<'r>(
         kind,
         is_linked_by_bundler,
         type_attribute,
+        may_have_unread_type,
         embed_attribute,
         is_statement,
         increases_depth,
@@ -530,31 +642,19 @@ fn add_target<'r>(
         loader,
     };
     let index = targets.len() as u32;
+    let has_type_of_shared_kind =
+        may_have_unread_type || type_attribute.is_some_and(|it| it != b"json");
     targets.push(CodeTarget {
-        key: find_file_required_before(context, key).unwrap_or(key),
+        key,
         host_module: file.host_module,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
+        is_linked_by_bundler,
         is_loaded_with_importer: is_statement,
-        has_shared_type: is_statement && type_attribute.is_some_and(|it| it != b"json"),
+        has_shared_type: is_statement && has_type_of_shared_kind,
+        has_type_of_shared_kind,
     });
     index
-}
-
-/// `import_what_is_required`, as `CompileInputs::loaded_before` has decided it: the file that is required may be one that this load does not reach.
-fn find_file_required_before<'r>(
-    context: &CodeLoadContext<'_, '_, 'r>,
-    key: LoadKey<'r>,
-) -> Option<LoadKey<'r>> {
-    context.inputs.loaded_before?;
-    if key.loader != HostLoader::default() {
-        return None;
-    }
-    let required = LoadKey {
-        path: context.resolver.file_required_in_place_of(key.path)?,
-        ..key
-    };
-    context.find_loaded_before(required).map(|_| required)
 }
 
 pub(super) fn files_of(resolution: SiteResolution<'_>) -> impl Iterator<Item = CodeFile<'_>> {

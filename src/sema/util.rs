@@ -160,6 +160,10 @@ impl<K> OrderedSet<K> {
     pub(crate) fn into_keys(self) -> SmallVec<[K; OrderedSet::<()>::FEW]> {
         self.keys
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
 }
 
 impl<K> Default for OrderedSet<K> {
@@ -250,12 +254,14 @@ impl PositionSet {
 
     #[inline]
     pub(crate) fn insert(&mut self, position: usize) {
-        self.0[position / 64] |= 1 << (position % 64);
+        let words: &mut [u64] = &mut self.0;
+        words[position / 64] |= 1 << (position % 64);
     }
 
     #[inline]
     pub(crate) fn contains(&self, position: usize) -> bool {
-        self.0[position / 64] >> (position % 64) & 1 != 0
+        let words: &[u64] = &self.0;
+        words[position / 64] >> (position % 64) & 1 != 0
     }
 
     /// Iterates over the positions in ascending order.
@@ -655,7 +661,13 @@ impl Window {
     /// Returns the window of any other key.
     #[inline]
     pub fn of_hash<T: std::hash::Hash + ?Sized>(key: &T) -> Window {
-        Window::new(3, (fx_hash(key) >> 32) as u32 % Self::HASHED)
+        Window::of_hashed(fx_hash(key))
+    }
+
+    /// Returns `of_hash` for a key whose `fx_hash` is `hash`.
+    #[inline]
+    pub fn of_hashed(hash: u64) -> Window {
+        Window::new(3, (hash >> 32) as u32 % Self::HASHED)
     }
 }
 
@@ -908,6 +920,32 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
             || list.push((key.clone(), value.take().unwrap())),
         );
         value.is_none()
+    }
+
+    /// The first half of `add_if_absent`, which takes no lock. Puts the pair where `add_pushed_if_absent` finds it, and
+    /// returns its index. No lookup finds it yet. A pair that's never added stays allocated, and nothing refers to it.
+    pub(crate) fn push(&self, spread: u64, key: &K, value: V) -> u32
+    where
+        K: Clone,
+    {
+        self.list(spread).push((key.clone(), value))
+    }
+
+    /// Inserts the pair at `index`, which `push` returned for `spread`, unless its key already has a value. Returns true
+    /// if it was inserted.
+    pub(crate) fn add_pushed_if_absent(&self, spread: u64, index: u32) -> bool {
+        let list = self.list(spread);
+        let key = &list.get(index).0;
+        let mut is_added = false;
+        self.slot_table.find_or_add(
+            spread,
+            |i| list.get(i).0 == *key,
+            || {
+                is_added = true;
+                index
+            },
+        );
+        is_added
     }
 }
 

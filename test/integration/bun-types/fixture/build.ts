@@ -30,17 +30,27 @@ Bun.build({ entrypoints: ["hey"], check: { runExternalCode: "yes" } });
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotLogTypeMismatches: true, aotExplain: ["guards", "guards-json"] },
+  compile: { aot: true, aotExplain: ["guards", "guards-json"] },
 });
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotLogTypeMismatches: false, aotExplain: "guards-json" },
+  compile: { aot: true, aotExplain: "guards-json" },
 });
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotExplain: ["missed-optimizations", "guards"] },
+  compile: { aot: true, aotExplain: ["allocations", "guards", "forms", "statistics"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotHarden: ["proof-checks"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotHarden: "proof-checks,ignore-told-ranges" },
 });
 
 Bun.build({
@@ -53,28 +63,6 @@ Bun.build({
   entrypoints: ["hey"],
   // @ts-expect-error
   compile: { aot: true, aotTypeErrors: "warn" },
-});
-
-Bun.build({
-  entrypoints: ["hey"],
-  compile: { aot: true, aotDisable: ["flow-results", "pass:InlineCalls"], aotHeat: "everything-is-cold" },
-});
-
-Bun.build({
-  entrypoints: ["hey"],
-  compile: { aot: true, aotDisable: "flow-results,pass:InlineCalls" },
-});
-
-Bun.build({
-  entrypoints: ["hey"],
-  // @ts-expect-error
-  compile: { aot: true, aotHeat: "lukewarm" },
-});
-
-Bun.build({
-  entrypoints: ["hey"],
-  // @ts-expect-error
-  compile: { aot: true, aotDisable: [1] },
 });
 
 Bun.build({

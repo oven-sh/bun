@@ -231,6 +231,7 @@ fn add_import(file: &mut FileBuilder, default: Atom, attributes: ExprId) -> Stmt
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes,
+        loaded_as: Atom::NONE,
     });
     file.stmt(StmtKind::Import(import), 0)
 }
@@ -370,6 +371,7 @@ fn scan_file(
         is_library: false,
         host_values: &[],
         jsx,
+        own_name: b"",
     };
     let bound = bind(&hir, options, &atoms, arena);
     let decisions = fold_file(&hir, &bound, &fold, &file_inputs, &atoms, arena).decisions;

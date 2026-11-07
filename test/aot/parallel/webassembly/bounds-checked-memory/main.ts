@@ -1,5 +1,6 @@
-// A memory that cannot be a fast memory is bounds-checked, and compiled code assumes a fast one: that instance is interpreted, the other is not, and the results match plain Bun.
+// A memory that cannot be a fast memory is bounds-checked. A module has code for either kind of memory, so both instances run compiled code.
 /// <reference path="../wasm-files.d.ts" />
+// Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "../many-memories/module.wasm";
 
 function outcomeOf(run: () => unknown): string {

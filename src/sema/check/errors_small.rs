@@ -136,7 +136,12 @@ impl<'p> Checker<'p, '_> {
             _ => None,
         };
         if is_and || body.is_some() {
-            self.check_known_truthy_types(file, left, left, body.unwrap_or(Node::NONE));
+            let body = body.unwrap_or(Node::NONE);
+            // Each `||` and `??` of a chain in the condition of an `if` comes here with what stands to its left.
+            match !is_and && self.files().is_compile_build() {
+                true => self.check_known_truthy_types_of_chain(file, left, body),
+                false => self.check_known_truthy_types(file, left, left, body),
+            }
         }
     }
 
@@ -185,6 +190,26 @@ impl<'p> Checker<'p, '_> {
         }
         self.last_logical_chain = (file, e, parent);
         parent
+    }
+
+    /// FOR SPEED, in a build, where nobody holds the list of mistakes against tsgo's: `check_known_truthy_types` for the left operand of an operator of a chain
+    /// whose every operator comes here. What stands deeper than `LONG` operators was the left operand of one of them and was tested there. Without this, the n
+    /// operands of a chain take n * n tests.
+    fn check_known_truthy_types_of_chain(&mut self, file: FileId, whole: ExprId, body: Node) {
+        const LONG: u32 = 32;
+        let hir = self.hir(file);
+        let (mut test, mut passed) = (whole, 0);
+        self.check_known_truthy_type(file, test, whole, body);
+        while let ExprKind::Binary {
+            op: BinOp::Or | BinOp::Nullish,
+            left,
+            ..
+        } = hir[test].kind
+            && passed < LONG
+        {
+            (test, passed) = (left, passed + 1);
+            self.check_known_truthy_type(file, test, whole, body);
+        }
     }
 
     /// `checkTestingKnownTruthyTypes`. `whole` is the condition the check was first called with, whose type is

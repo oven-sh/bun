@@ -302,6 +302,9 @@ impl<'p, 's> Checker<'p, 's> {
         skip_object_function_property_augment: bool,
     ) -> Option<Prop<'s>> {
         let skips_augment = skip_object_function_property_augment;
+        if !skips_augment && let Some(grown) = self.property_of_grown_union(containing_type, name) {
+            return Some(grown);
+        }
         let parts = self.parts(containing_type);
         let uses_facts =
             parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips_augment && self.are_member_facts_valid();
@@ -320,6 +323,87 @@ impl<'p, 's> Checker<'p, 's> {
             self.visit_member(&mut walk, &mut builder, current);
         }
         self.finish_union_property(builder, containing_type, name)
+    }
+
+    /// The property `name` of a union that has grown by a member (`Growth`), made of that property of the union it has grown
+    /// from, where each member has a public property of its own, and so has the new one. It's what the two loops of
+    /// `createUnionOrIntersectionProperty` make: they find nothing new about the other members. `None`: they make it.
+    fn property_of_grown_union(&mut self, union: TypeId, name: Atom) -> Option<Prop<'s>> {
+        let growth = *self.grown_unions.get(&union)?;
+        let key = (growth.from, name);
+        let holder = self.p.union_properties.get(&self.task, &key)??;
+        let TypeData::Synth(shape) = self.data(holder) else {
+            return None;
+        };
+        let so_far = shape.props.first()?;
+        let PropSource::Intersected(whole, parts) = &so_far.source else {
+            return None;
+        };
+        let other = PropFlags::PRIVATE
+            | PropFlags::PROTECTED
+            | PropFlags::READ_PARTIAL
+            | PropFlags::WRITE_PARTIAL;
+        // The first member has `singleProp`.
+        if *whole != growth.from
+            || growth.at == 0
+            || parts.len() != self.parts(growth.from).len()
+            || so_far.flags.intersects(other)
+            || Self::value_declaration(so_far).is_some()
+            || self.is_numeric_name(name)
+        {
+            return None;
+        }
+        let walk = Walk {
+            name,
+            skips_augment: false,
+            is_late_bound: self.atoms().is_symbol_name(name),
+            uses_facts: false,
+            was_walked_before: false,
+            is_ordinary_name: None,
+            has_literal_type: false,
+        };
+        let mut builder = UnionPropertyBuilder::new(union);
+        self.add_member(&walk, &mut builder, growth.added)?;
+        if builder.prop_set.len() != 1
+            || !builder.index_types.is_empty()
+            || builder.flags.intersects(other)
+        {
+            return None;
+        }
+        let added = builder.prop_set.pop()?;
+        let single = &parts[0];
+        if single.source == added.source
+            || self.is_same_uninstantiated_member(single, &added)
+            || parts.contains(&added)
+        {
+            return None;
+        }
+        let accessors = |p: &Prop| match p.flags.contains(PropFlags::ACCESSOR) {
+            true => p.flags & (ACCESSOR_KIND | PropFlags::READONLY),
+            false => PropFlags::empty(),
+        };
+        let mut flags = so_far.flags | builder.flags & (PropFlags::OPTIONAL | PropFlags::READONLY);
+        if accessors(&added) != accessors(single) {
+            flags.remove(ACCESSOR_KIND);
+        }
+        self.type_and_write_type_of_prop(&added);
+        let [_, added] = {
+            let first_and_added = [single.clone_in(self.arena), added];
+            flags |= self.non_uniform_and_literal(&first_and_added);
+            first_and_added
+        };
+        let (before, after) = parts.split_at(growth.at);
+        let copy = |part: &Prop| part.clone_in(self.arena);
+        let all = (before.iter().map(copy))
+            .chain([added])
+            .chain(after.iter().map(copy));
+        Some(Prop {
+            name,
+            flags,
+            source: PropSource::Intersected(union, self.list_of(all)),
+            mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
+        })
     }
 
     /// True if a full lookup would match the cached facts, given the computations currently in progress.

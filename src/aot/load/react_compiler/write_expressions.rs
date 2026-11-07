@@ -1,3 +1,4 @@
+use super::module_items::ModuleItems;
 use super::writer::{NodeShape, TreeWriter, UnsupportedNode, Written};
 use bun_ast::op::{Level, TABLE};
 use bun_ast::{E, Expr, ExprData, ExprTag, G, Loc, LocRef, OpCode, OptionalChain, Ref, flags};
@@ -231,7 +232,6 @@ impl TreeWriter<'_, '_> {
         Ok(written)
     }
 
-    // `expression` is the last one added: `parens` is sorted by expression.
     fn parenthesize(&mut self, expression: ExprId) {
         let written = self.file[expression];
         self.file
@@ -249,7 +249,11 @@ impl TreeWriter<'_, '_> {
     }
 
     fn write_identifier(&mut self, reference: Ref, loc: Loc) -> ExprId {
-        let SymbolOrigin::NamespaceMember(namespace) = self.origin_of(reference) else {
+        let origin = self.origin_of(reference);
+        if let Some(key) = ModuleItems::key_of_sentinel(self.atoms, origin) {
+            return self.write_sentinel(reference, loc, key);
+        }
+        let SymbolOrigin::NamespaceMember(namespace) = origin else {
             return self.identifier(reference, loc);
         };
         let object = self.identifier(namespace, loc);
@@ -257,6 +261,28 @@ impl TreeWriter<'_, '_> {
         let (pos, end) = self.range_of_shape(loc, NodeShape::Member);
         let kind = self.file.dot((object, Chain::No), (name, pos), end);
         self.file.expr(kind, pos, end)
+    }
+
+    fn write_sentinel(&mut self, reference: Ref, loc: Loc, key: Atom) -> ExprId {
+        let target = self.identifier(reference, loc);
+        let range = (self.file[target].pos, self.file[target].end);
+        let constructor = self.write_member_of_global(known::globalThis, b"Symbol", range);
+        let callee = self.write_member(constructor, b"for", range);
+        let key = self.add_expression_at(ExprKind::String(key), range);
+        let args = self.file.list(&[key]);
+        let call = self.file.add_call(Call {
+            callee,
+            args,
+            type_args: ListAt::EMPTY,
+            close_pos: range.1,
+            chain: Chain::No,
+            is_pure: false,
+        });
+        let value = self.add_expression_at(ExprKind::Call(call), range);
+        let op = Some(BinOp::Nullish);
+        let filled = self.add_expression_at(ExprKind::Assign { op, target, value }, range);
+        self.parenthesize(filled);
+        filled
     }
 
     fn write_member(&mut self, object: ExprId, name: &[u8], (pos, end): Range) -> ExprId {
@@ -360,7 +386,6 @@ impl TreeWriter<'_, '_> {
         Ok(self.add_expression_at(ExprKind::TaggedTemplate(call), range))
     }
 
-    // Text without an escape is its own raw text. Nothing reads the raw text of a template without a tag.
     fn write_template_text(
         &self,
         contents: &E::TemplateContents,
@@ -446,7 +471,6 @@ impl TreeWriter<'_, '_> {
         let is_computed = property_flags.contains(flags::Property::IsComputed);
         let was_shorthand = property_flags.contains(flags::Property::WasShorthand);
         if let ExprData::EString(text) = &key.data {
-            // `{ __proto__ }` defines a property, as `{ ["__proto__"]: v }` does. `{ __proto__: v }` sets the prototype.
             let name_kind = match is_computed || was_shorthand {
                 true => NameKind::ComputedString,
                 false => NameKind::StringLiteral,
@@ -498,7 +522,6 @@ impl TreeWriter<'_, '_> {
             return Err(unsupported(value.data.tag()));
         };
         let id = self.write_function_expression(&function.func, kind, value.loc)?;
-        // The checker finds the `?` of `m?() {}` in the text before the anchor. `a ? { m() {} } : b` has one at its `{`.
         self.file[id].anchor = key_range.1;
         if let Some(name) = key.name() {
             self.file[id].name = name;
@@ -539,7 +562,6 @@ impl TreeWriter<'_, '_> {
         let (obj, chain) = self.write_chain_base(&dot.target, dot.optional_chain)?;
         let (pos, end) = self.range_of_shape(loc, NodeShape::Member);
         let name = self.atoms.intern(dot.name.slice());
-        // The compiler gives the name the position of the whole expression. A member access ends with its name.
         let name_start = end.saturating_sub(dot.name.slice().len() as u32).max(pos);
         let name_range = (name_start, end);
         if !is_identifier(dot.name.slice()) {
@@ -561,7 +583,6 @@ impl TreeWriter<'_, '_> {
     ) -> Written<(CallId, Range)> {
         let args = self.write_expression_list(arguments)?;
         let (pos, end) = self.range_of_shape(loc, shape);
-        // The compiler gives only the call of a JSX element the position of its end. A call ends with its `)`.
         let close_pos = match close.is_empty() {
             true => end.saturating_sub(1).max(pos),
             false => self.range_of(close).0,
@@ -584,14 +605,12 @@ impl TreeWriter<'_, '_> {
         let Operator::Unary(op) = operator_of(unary.op) else {
             return Err(unsupported(ExprTag::EUnary));
         };
-        // Without its flag `delete a.b` stands for `delete (0, a.b)`. The compiler has no such `delete`.
         let delete_flag = E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS;
         if op == UnOp::Delete && !unary.flags.contains(delete_flag) {
             return Err(unsupported(ExprTag::EUnary));
         }
         let level = TABLE.get_ptr_const(unary.op).level;
         let mut operand = self.write_operand(&unary.value, level.sub(1))?;
-        // Without its flag `typeof x` stands for `typeof (0, x)`, which throws if nothing binds `x`.
         let typeof_flag = E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER;
         if let ExprData::EIdentifier(name) = &unary.value.data
             && unary.op == OpCode::UnTypeof
@@ -655,7 +674,6 @@ impl TreeWriter<'_, '_> {
         }
     }
 
-    // In development `jsxDEV` is passed `this`, which the checker rejects in a function that gives it no type.
     pub(super) fn write_this_parameter(
         &mut self,
         kind: FnKind,
@@ -740,7 +758,6 @@ fn function_flags(set: flags::FunctionSet) -> Flags {
     written
 }
 
-// An operand is in parentheses where `js_printer` prints them: the early errors of the checker read them from the tree.
 fn precedence(expression: &Expr) -> Level {
     match &expression.data {
         ExprData::EBinary(binary) => TABLE.get_ptr_const(binary.op).level,

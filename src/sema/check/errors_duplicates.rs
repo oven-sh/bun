@@ -13,6 +13,7 @@ use crate::bind::{
     ClassOwner, Decl, JsDeclarationKind, MemberOwner, Parent, SymbolId,
     assignment_declaration_kind, flags_of_member,
 };
+use crate::program::ReadingNoTrees;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -719,10 +720,14 @@ impl Checker<'_, '_> {
         let files = self.files();
         let before = files.rank_of_file(file) as usize;
         files.order.iter().take(before).any(|&other| {
-            // A file with an `export *` isn't a leaf, and a leaf's data is freed after its task.
-            !files.module(other).is_leaf
-                && !self.bound(other).export_stars.is_empty()
-                && files.module(other).is_module()
+            // The trees of an earlier file may be gone, but never those of a file with an `export *`. Such a file isn't a
+            // leaf either, and a leaf's data is freed after its task.
+            let has_export_star = {
+                let _reading = ReadingNoTrees::begin();
+                let module = files.module(other);
+                !module.is_leaf && !module.bound.export_stars.is_empty() && module.is_module()
+            };
+            has_export_star
                 && self.is_checked_no_later_than(other, file)
                 && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))
         })

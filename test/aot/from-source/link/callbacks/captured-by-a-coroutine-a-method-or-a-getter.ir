@@ -1,0 +1,21 @@
+# A coroutine keeps its captures in a frame of its own in the heap, from one step to the next: no capture of a generator or of an async function is only called, whatever its body does. A method and a getter lie on an object that outlives the call.
+# f1 = each, f2 = run, f3 = byGenerator, f4 = byAsyncFunction, f5 = byMethod, f6 = byGetter, f7 = maker
+# -- source: captured-by-a-coroutine-a-method-or-a-getter.ts
+# declare function sink(...values: unknown[]): void;
+# function each(steps: () => Iterable<number>): number { let t = 0; for (const x of steps()) t += x; return t; }
+# function run(job: () => Promise<number>): number { job(); return 1; }
+# function byGenerator(f: () => number): number { const t = each(function* () { yield f(); yield f(); }); return t + 1; }
+# function byAsyncFunction(f: () => number): number { const t = run(async () => { await 0; return f(); }); return t + 1; }
+# function byMethod(f: () => number) { class Holder { call() { return f(); } } return new Holder(); }
+# function byGetter(f: () => number) { return { get value() { return f(); } }; }
+# function maker(k: number) { const a = byGenerator(() => k); const b = byAsyncFunction(() => k + 1); const c = byMethod(() => k + 2); const d = byGetter(() => k + 3); return [a, b, c, d]; }
+# sink(maker(1), maker(2));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 0 {{*}}only-called
+# CHECK-LABEL: function f2
+# CHECK: parameter 0 {{*}}only-called
+# CHECK-LABEL: function f3
+# CHECK-NOT: only-called
+# CHECK-LABEL: function f7

@@ -28,7 +28,6 @@ const SUBMODULES: [(&str, &str); 3] = [
 const BARREL: &str =
     "export { a } from './a.js'; export { b } from './b.js'; export { c } from './c.js';";
 
-// The files of the package that are compiled, in the order of the program.
 fn load_with_threads(files: &[(&str, &str)], thread_count: u32) -> Vec<String> {
     let options = AotOptions {
         thread_count: NonZeroU32::new(thread_count),
@@ -168,7 +167,6 @@ fn names_read_from_what_a_call_loads_are_its_names() {
     }
 }
 
-// The three tests that follow hold what `bun build` does with each line.
 #[test]
 fn names_read_through_callbacks_patterns_and_bindings_are_the_names_of_a_call() {
     let entry_points = [

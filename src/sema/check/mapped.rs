@@ -209,17 +209,25 @@ impl<'p, 's> Checker<'p, 's> {
                 cold_path();
                 self.generic_object_flags_of_all(&[base, constraint])
             }
-            _ => {
-                let flags = self.flags(ty);
-                (
-                    flags & tf::INSTANTIABLE_NON_PRIMITIVE != 0
-                        || self.is_generic_mapped_type(ty)
-                        || self.is_generic_tuple_type(ty),
-                    flags & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
-                        || self.is_generic_string_like_type(ty),
-                    self.is_mapped_type(ty),
-                )
+            TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper,
+            } => (
+                self.is_mapped_type_generic(ty, file, node, mapper),
+                false,
+                true,
+            ),
+            TypeData::Tuple { .. } => (self.is_generic_tuple_type(ty), false, false),
+            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
+                (false, self.is_generic_string_like_type(ty), false)
             }
+            TypeData::TypeParam(..)
+            | TypeData::ThisParam(_)
+            | TypeData::Marker(_)
+            | TypeData::IndexedAccess { .. }
+            | TypeData::Cond { .. } => (true, true, false),
+            TypeData::Keyof(_) => (false, true, false),
+            _ => (false, false, false),
         }
     }
 
@@ -1103,6 +1111,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// What an object literal of an untyped file, or a union of them, holds under a name that it doesn't have: anything. See
+    /// `type_of_name_that_some_literals_have`.
+    fn type_under_name_in_literals(
+        &mut self,
+        literals: TypeId,
+        name: Option<Atom>,
+        access_flags: AccessFlags,
+    ) -> TypeId {
+        let name = name.filter(|_| !access_flags.contains(AccessFlags::WRITING));
+        let held = name.and_then(|name| self.type_of_name_that_some_literals_have(literals, name));
+        held.unwrap_or(TypeId::ANY)
+    }
+
     /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type, and `holder` is what
     /// `apparent_type_or_type_variable` returns for it. The index pair is `indexType`, which isn't a union, and
     /// `fullIndexType`.
@@ -1294,7 +1315,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(TypeId::NEVER);
             }
             if self.is_js_literal_type(object) {
-                return Some(TypeId::ANY);
+                return Some(self.type_under_name_in_literals(object, name, access_flags));
             }
             if let Some((file, e)) = access_expression
                 && !self.is_const_enum_object(object)
@@ -1346,7 +1367,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(TypeId::UNDEFINED);
         }
         if self.is_js_literal_type(object) {
-            return Some(TypeId::ANY);
+            return Some(self.type_under_name_in_literals(object, name, access_flags));
         }
         if let Some(index_node) = self.span_of_index_node(access_node) {
             let is_bigint_literal = match access_node {
@@ -1505,7 +1526,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (is_repeatable || !is_member)
         {
             // The call in progress will overwrite the entry.
-            if !is_repeatable && self.may_be_in_flight(q) && self.stack.contains(&q) {
+            if !is_repeatable && self.is_in_flight(q) {
                 self.note_cycle();
             }
             return known;
@@ -1537,7 +1558,7 @@ impl<'p, 's> Checker<'p, 's> {
             // If the query was in progress several times, the outermost one stores last.
             (Ok(stored), None) => {
                 let entry = (ty, is_repeatable);
-                let is_inner = self.may_be_in_flight(q) && self.stack.contains(&q);
+                let is_inner = self.is_in_flight(q);
                 let stored = match is_inner || !is_repeatable {
                     true => stored.held_back(),
                     false => stored,
@@ -1676,7 +1697,19 @@ impl<'p, 's> Checker<'p, 's> {
                 return TypeId::UNRESOLVED;
             };
             // A cache hit skips the lookups below. A miss does them in tsgo's order and fills the cache afterwards.
-            let root = self.conditional_roots.get(&(file, node)).cloned();
+            let root = self.conditional_roots.get(&(file, node)).map(|root| {
+                let mut infer_params = SmallVec::new();
+                for &param in root.infer_params.iter() {
+                    infer_params.push(param);
+                }
+                ConditionalRoot {
+                    check_declared: root.check_declared,
+                    check_variable: root.check_variable,
+                    extends_declared: root.extends_declared,
+                    check_tuples: root.check_tuples,
+                    infer_params,
+                }
+            });
             let mark = self.non_cacheable_mark();
             let (check_declared, check_variable) = match &root {
                 Some(root) => (root.check_declared, root.check_variable),
@@ -3064,7 +3097,7 @@ impl<'p, 's> Checker<'p, 's> {
             (self.p.mapped_types_with_errors).insert(&self.task, of, (), stored);
             // `resolveMappedTypeMembers` resolves the constraint type of `of` and the members of a
             // reverse mapped modifiers type before the symbol exists. See `circular_mapped_property`.
-            if let Some(at) = self.stack.iter().rposition(|in_progress| *in_progress == q) {
+            if let Some(at) = self.innermost_in_flight(q) {
                 let own = self.mapped_origin(of);
                 let mut constraints = self.mapped_constraints_in_progress.iter();
                 let is_through_members = constraints.any(|it| it.1 > at && Some(it.0) == own)

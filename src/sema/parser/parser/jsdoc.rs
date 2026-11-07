@@ -717,6 +717,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             mode,
             stmt: StmtId::NONE,
             attributes,
+            loaded_as: Atom::NONE,
         };
         (declaration, self.pos(), has_clause)
     }

@@ -121,6 +121,9 @@
       "SharedWatcher"
     ]
   },
+  "src/runtime/cli/test/ShardsByReach.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/crypto/PBKDF2.rs": {
     "unsafe impl Send": [
       "Digest"

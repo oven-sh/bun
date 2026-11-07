@@ -1,0 +1,54 @@
+# -- source: allocation-creates-what-it-lists-in-the-order-written.ts
+# interface Options { name?: string; depth?: number; flag: boolean; tail?: string }
+# function flagAndTail(t: string): Options { return { flag: false, tail: t }; }
+# function otherOrder(n: string): Options { return { flag: true, name: n }; }
+# function all(n: string, d: number, t: string): Options { return { name: n, depth: d, flag: true, tail: t }; }
+# function backward(n: string, d: number, t: string): Options { return { tail: t, flag: true, depth: d, name: n }; }
+# console.log(Object.keys(flagAndTail("t")).join(), Object.keys(otherOrder("n")).join(), Object.keys(all("n", 1, "t")).join(), Object.keys(backward("n", 1, "t")).join());
+# -- end of source
+# An object lists its keys in the order in which it got them, and an allocation can create only a row of fields whose order the image holds. So the plan takes an order from each allocation as it is written:
+# the scan leaves the list in the summary of the body, unless it begins the order in which the layout declares its fields, which the plan has anyway (`all`).
+# Without that order the allocation lists the longest beginning that has one, and each field behind that is defined by name, by a closed operation that may run any code.
+# RUN(SUMMARY): summary f1 f2 f3 f4
+# REQUIRES(SUMMARY): entries-of-bun
+# SUMMARY-LABEL: summary f1
+# SUMMARY: allocation-lists L0 "flag" "tail"
+# SUMMARY-LABEL: summary f2
+# SUMMARY: allocation-lists L0 "flag" "name"
+# SUMMARY-LABEL: summary f3
+# SUMMARY-NOT: allocation-lists
+# SUMMARY-LABEL: summary f4
+# SUMMARY: allocation-lists L0 "tail" "flag" "depth" "name"
+# RUN: plan orders mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: orders L0
+# CHECK-NEXT: order 0: "flag" "name"
+# CHECK-NEXT: order 1: "flag" "tail"
+# CHECK-NEXT: order 2: "name" "depth" "flag" "tail"
+# CHECK-NEXT: order 3: "tail" "flag" "depth" "name"
+# CHECK-NEXT: orders
+# RUN(WALK): walk f1 f2 f3 f4 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK-NOT: PropDefine
+# WALK-LABEL: code f1:Body
+# WALK: NewObject {{*}}layout=L0 fields=[1, 3]
+# WALK-LABEL: code f2:Body
+# WALK: NewObject {{*}}layout=L0 fields=[1, 2]
+# WALK-LABEL: code f3:Body
+# WALK: NewObject {{*}}layout=L0 fields=[2, 0, 1, 3]
+# WALK-LABEL: code f4:Body
+# WALK: NewObject {{*}}layout=L0 fields=[3, 1, 0, 2]
+# RUN(WITHHELD): plan orders mechanisms=all-TypedSlots
+# REQUIRES(WITHHELD): entries-of-bun
+# WITHHELD: orders L0
+# WITHHELD-NEXT: order 0: "name" "depth" "flag" "tail"
+# WITHHELD-NEXT: orders
+# RUN(BEHIND): walk f1 f4 mechanisms=all-TypedSlots
+# REQUIRES(BEHIND): entries-of-bun
+# BEHIND-LABEL: code f1:Body
+# BEHIND: [[made]]: L0 @Cell = NewObject {{*}}layout=L0 traits
+# BEHIND-NEXT: PropDefine [[made]], {{*}}key="flag"
+# BEHIND-NEXT: PropDefine [[made]], {{*}}key="tail"
+# BEHIND-LABEL: code f4:Body
+# BEHIND: PropDefine {{*}}key="tail"
+# BEHIND: PropDefine {{*}}key="name"

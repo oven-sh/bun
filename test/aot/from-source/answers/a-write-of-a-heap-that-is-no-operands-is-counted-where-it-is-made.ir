@@ -1,0 +1,51 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare const pick: number;
+# const shelf: any = { get label() { return this._label; }, set label(value) { this._label = value; } };
+# function makeMiddle(tag: any): any { const middle = Object.create(shelf); middle.tag = tag; return middle; }
+# function makeLeaf(above: any, tag: any): any { const leaf = Object.create(above); leaf.tag = tag; return leaf; }
+# function decorate(target: any): void { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; target.zebra = work; }
+# function watch(leaf: any, middle: any, turns: number, when: number): number {
+#   let found = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     if (leaf._label !== undefined) found++;
+#     if (turn === when) middle._label = "late";
+#   }
+#   return found;
+# }
+# const spare = makeMiddle("spare"), middle = makeMiddle("middle");
+# spare.label = "text";
+# decorate(middle);
+# const second = makeLeaf(middle, 2), third = makeLeaf(middle, 3);
+# print(watch(second, middle, 20, 5));
+# print(watch(third, middle, 20, 99));
+# class Ordered { both(): string { return "ordered"; } }
+# class Plain { both(): string { return "plain"; } }
+# const order = [Ordered, Plain];
+# class InOrder extends order[pick] {}
+# class NoOrder extends order[1 - pick] {}
+# for (let i = 0; i < 3; i++) print(new InOrder().both() + " " + new NoOrder().both() + " " + new Ordered().both());
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h): the guards of members are the words of no operand, so no digest sees them: whoever writes them counts it, and a call that runs no other code
+# and is said not to write them leaves the counts as they stood.
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 0;
+# NET: 14
+# NET-NEXT: 20
+# NET-NEXT: ordered plain ordered
+# NET-NEXT: ordered plain ordered
+# NET-NEXT: ordered plain ordered
+# NET-NEXT: went on
+# The lie, testing=RowSaysLess: the row of an operation of the run time is taken not to write them. What lays a new object below its prototype arms the guards over what is made below `shelf`.
+# RUN(ARMED): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/SetLiteralPrototype/MemberGuards mechanisms=all globalThis.pick = 0;
+# ARMED: AOT: f{{*}} at {{*}}: the rows of effects of operation:SetLiteralPrototype and of runtime:operationAOTSetLiteralPrototype say that the call will not write MemberGuards, and under it guards were armed or have begun. This is a bug in Bun.
+# ARMED-NOT: went on
+# ARMED: crashed
+# ARMED: with
+# What defines a class below another parent than the one that was expected ends them.
+# RUN(ENDED): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/NewClass/MemberGuards mechanisms=all globalThis.pick = 0;
+# ENDED: 20
+# ENDED: AOT: f{{*}} at {{*}}: the rows of effects of operation:NewClass and of runtime:operationAOTNewClass say that the call will not write MemberGuards, and under it guards that held have ended. This is a bug in Bun.
+# ENDED-NOT: went on
+# ENDED: crashed
+# ENDED: with

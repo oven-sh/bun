@@ -17,6 +17,14 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"if (false) return;"#, Esm),
     ("a.js", r#"return;"#, Esm),
     ("a.js", r#"module.exports = 1;"#, CommonJs),
+    ("a.ts", r#"export = 1;"#, CommonJs),
+    ("a.ts", r#"namespace N { export = 1; }"#, CommonJs),
+    (
+        "a.ts",
+        r#"namespace N { namespace M { export = 1; } }"#,
+        CommonJs,
+    ),
+    ("a.ts", r#"declare namespace N { export = 1; }"#, Esm),
     ("a.ts", r#"class A { @(this) b() {} }"#, CommonJs),
     ("a.ts", r#"class A { b(@(this) c) {} }"#, Esm),
     ("a.js", r#"exports.a = 1;"#, CommonJs),
@@ -25,6 +33,16 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"function f() { with (a) b; }"#, CommonJs),
     ("a.js", r#"if (false) { with (a) b; }"#, CommonJs),
     ("a.mjs", r#"module.exports = 1;"#, CommonJs),
+    ("a.js", r#"console.log(typeof this);"#, CommonJs),
+    ("a.cjs", r#"console.log(typeof this);"#, CommonJs),
+    ("a.mjs", r#"console.log(typeof this);"#, CommonJs),
+    ("a.mts", r#"console.log(typeof this);"#, CommonJs),
+    ("a.mjs", r#"const f = () => this;"#, CommonJs),
+    ("a.mjs", r#"function f() { this; }"#, Esm),
+    ("a.mjs", r#"if (false) this;"#, Esm),
+    ("a.mjs", r#"this; export {};"#, Esm),
+    ("a.mjs", r#"if (this) module.exports = 1;"#, CommonJs),
+    ("a.mjs", r#"this.a = 1; exports.b = 2;"#, CommonJs),
     ("a.cjs", r#"import "m";"#, Esm),
     ("a.cjs", r#"import.meta;"#, Esm),
     ("a.cts", r#"import type {} from "a";"#, Esm),
@@ -43,7 +61,8 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.ts", r#"import { T } from "m"; require("x");"#, Esm),
     ("a.js", r#""#, Esm),
     ("a.js", r#"1;"#, Esm),
-    ("a.js", r#"("use strict");"#, Esm),
+    ("a.js", "`use strict`;", Esm),
+    ("a.ts", "`use strict` as any;", Esm),
     ("a.js", r#"function f() { "use strict"; }"#, Esm),
     ("a.js", r#"if (false) require("a");"#, Esm),
     ("a.js", r#"function f(require) { require("a"); }"#, Esm),
@@ -53,6 +72,15 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"__filename;"#, CommonJs),
     ("a.js", r#""use strict";"#, CommonJs),
     ("a.js", r#"'use strict'; 1;"#, CommonJs),
+    ("a.js", r#"("use strict");"#, CommonJs),
+    ("a.js", r"'use\x20strict';", CommonJs),
+    ("a.ts", r#""use strict" as any;"#, CommonJs),
+    ("a.ts", r#"<any>"use strict";"#, CommonJs),
+    (
+        "a.ts",
+        r#"import type A = require("a"); "use strict";"#,
+        CommonJs,
+    ),
     (
         "a.ts",
         r#"import type { A } from "m"; require("x");"#,
@@ -1102,6 +1130,8 @@ fn site_kind_name(kind: ImportSiteKind) -> &'static str {
         ImportSiteKind::ImportMetaResolve(_) => "ImportMetaResolve",
         ImportSiteKind::GetBuiltinModule(_) => "GetBuiltinModule",
         ImportSiteKind::MockModule(_) => "MockModule",
+        ImportSiteKind::ImportByTestRunner(_) => "ImportByTestRunner",
+        ImportSiteKind::RequireByTestRunner(_) => "RequireByTestRunner",
     }
 }
 
@@ -1113,7 +1143,9 @@ fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call)
-        | ImportSiteKind::MockModule(call) => Some(call),
+        | ImportSiteKind::MockModule(call)
+        | ImportSiteKind::ImportByTestRunner(call)
+        | ImportSiteKind::RequireByTestRunner(call) => Some(call),
         _ => None,
     }
 }
@@ -1208,7 +1240,7 @@ fn positions_of_this_answer_as_the_walk_does() {
         this;
     "#;
     analyzed("a.js", text, |s| {
-        let positions = ThisPositions::of(&s.hir);
+        let positions = ThisPositions::of(&s.hir, false);
         let names_of = |test: &dyn Fn(FnId) -> bool| -> Vec<String> {
             let functions = (0..s.hir.fns.len() as u32).map(FnId).filter(|&it| test(it));
             let declared = functions.filter(|&it| s.hir[it].kind == FnKind::Decl);
@@ -1217,7 +1249,7 @@ fn positions_of_this_answer_as_the_walk_does() {
                 .collect()
         };
         for function in (0..s.hir.fns.len() as u32).map(FnId) {
-            let by_walk = evaluates_own_this(&s.hir, function);
+            let by_walk = evaluates_own_this(&s.hir, function, false);
             assert_eq!(
                 positions.evaluates_own_this(&s.hir, function),
                 by_walk,
@@ -1242,11 +1274,87 @@ fn positions_of_this_answer_as_the_walk_does() {
 }
 
 #[test]
+fn an_element_is_a_place_of_this_where_jsx_takes_this() {
+    use bun_sema::module_format::{ThisPositions, evaluates_own_this};
+    let text = r#"
+        function plain() { return 1; }
+        function own() { return <a />; }
+        function in_arrow() { return () => <a />; }
+        function in_attribute() { return [<a b={<c />} />]; }
+        function of_inner_function() { return function () { return <a />; }; }
+        function of_method() { return { a() { return <a />; } }; }
+        function of_field() { return class { a = <a />; }; }
+    "#;
+    analyzed("a.jsx", text, |s| {
+        let declared = |test: &dyn Fn(FnId) -> bool| -> Vec<String> {
+            let functions = (0..s.hir.fns.len() as u32).map(FnId).filter(|&it| test(it));
+            let declared = functions.filter(|&it| s.hir[it].kind == FnKind::Decl);
+            declared
+                .map(|it| s.workspace.text(s.hir[it].name).to_owned())
+                .collect()
+        };
+        let taking = ThisPositions::of(&s.hir, true);
+        let expected = ["own", "in_arrow", "in_attribute"];
+        assert_eq!(
+            declared(&|it| taking.evaluates_own_this(&s.hir, it)),
+            expected
+        );
+        assert_eq!(
+            declared(&|it| evaluates_own_this(&s.hir, it, true)),
+            expected
+        );
+        let leaving = ThisPositions::of(&s.hir, false);
+        assert!(declared(&|it| leaving.evaluates_own_this(&s.hir, it)).is_empty());
+        assert!(declared(&|it| evaluates_own_this(&s.hir, it, false)).is_empty());
+    });
+}
+
+fn format_of(path: &str, text: &str, fold: &Fold<'_>) -> ModuleFormat {
+    let mut format = None;
+    with_workspace(|workspace| {
+        let fold = workspace.fold_inputs(fold);
+        let analyzed = workspace.analyze(&Source::new(path, text), &fold);
+        format = Some(analyzed.analysis.module_format);
+    });
+    format.expect("the file is analyzed")
+}
+
+#[test]
 fn formats() {
     for &(path, text, format) in FORMATS {
-        analyzed(path, text, |s| {
-            assert_eq!(s.analysis.module_format, format, "{path}: {text}");
-        });
+        let found = format_of(path, text, &Fold::MINIFIED);
+        assert_eq!(found, format, "{path}: {text}");
+    }
+}
+
+const REQUIRES_THAT_BUN_RUN_REMOVES: &[&str] = &[
+    r#"if (false) require("a");"#,
+    r#"if (2 < 1) require("a");"#,
+    r#"if (1 === 2) require("a");"#,
+    r#"const no = false; if (no) require("a");"#,
+    r#"if (1 + 1 === 3) require("a");"#,
+    r#"if ("a" + 1 === "b") require("a");"#,
+    r#"if ("b" < "a") require("a");"#,
+    r#"if ("".length) require("a");"#,
+    r#"if (~-1) require("a");"#,
+];
+
+#[test]
+fn statement_that_bun_run_removes_decides_nothing_without_minify_syntax() {
+    for text in [
+        "[...[module]];",
+        "[...[...[module]]];",
+        r#"if (typeof Bun === "undefined") { [...[module]]; }"#,
+    ] {
+        assert_eq!(format_of("a.js", text, &Fold::NONE), Esm, "{text}");
+    }
+}
+
+#[test]
+fn format_follows_what_bun_run_computes_whatever_the_build_minifies() {
+    for &text in REQUIRES_THAT_BUN_RUN_REMOVES {
+        assert_eq!(format_of("a.js", text, &Fold::NONE), Esm, "{text}");
+        assert_eq!(format_of("a.js", text, &Fold::MINIFIED), Esm, "{text}");
     }
 }
 
@@ -1646,6 +1754,32 @@ fn first_format_stands() {
 }
 
 #[test]
+fn function_in_block_under_the_name_of_a_commonjs_variable_is_no_sign_of_commonjs() {
+    for (text, name) in [
+        ("{ function exports() {} } exports.a = 1;", "exports"),
+        ("exports.a = 1; { function exports() {} }", "exports"),
+        ("module.exports = 1; if (a) function module() {}", "module"),
+    ] {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+        analyzed("a.cjs", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+            let redeclared = s.bound.runtime.redeclared_commonjs_variables();
+            let Binding::Symbol(parameter) = s.binding(name, 0) else {
+                panic!("{text}");
+            };
+            assert_eq!(redeclared.len(), 1, "{text}");
+            assert_eq!(redeclared[0].0, parameter, "{text}");
+        });
+    }
+    let text = "{ function exports() {} } exports.a = 1; module.exports.b = 2;";
+    analyzed("a.js", text, |s| {
+        assert_eq!(s.analysis.module_format, CommonJs);
+    });
+}
+
+#[test]
 fn early_errors_follow_goal() {
     analyzed("a.js", VAR_AND_FUNCTION, |s| {
         assert_eq!(s.bound.runtime.early_redeclarations().len(), 1);
@@ -1653,6 +1787,179 @@ fn early_errors_follow_goal() {
     analyzed("a.cjs", VAR_AND_FUNCTION, |s| {
         assert!(s.bound.runtime.early_redeclarations().is_empty());
     });
+}
+
+const REMOVED_BEHIND_TEMPLATES: &[&str] = &[
+    "if (`é`) {} else { module.exports = 1; }",
+    "if (``) { module.exports = 1; }",
+    "if (`a${1}`) {} else { module.exports = 1; }",
+    "if (`${\"a\"}`) {} else { module.exports = 1; }",
+    "if (`${\"\"}`) { module.exports = 1; }",
+    "if (`${null}${true}${1n}${1.5}`) {} else { module.exports = 1; }",
+    "if (`a${`b`}`) {} else { module.exports = 1; }",
+    "if (`${`a${1}`}`) {} else { module.exports = 1; }",
+    "if (`a${1}` === \"a1\") {} else { module.exports = 1; }",
+    "if (`a\\x7f${1}`) {} else { module.exports = 1; }",
+    "const t = `a${1}`; if (t) {} else { module.exports = 1; }",
+];
+
+const LEFT_BEHIND_TEMPLATES: &[&str] = &[
+    "if (`é${1}`) {} else { module.exports = 1; }",
+    "if (`${1}é`) {} else { module.exports = 1; }",
+    "if (`${\"é\"}`) {} else { module.exports = 1; }",
+    "if (`a${\"é\"}b`) {} else { module.exports = 1; }",
+    "if (`${\"\"}é`) {} else { module.exports = 1; }",
+    "if (`\\u00e9${1}`) {} else { module.exports = 1; }",
+    "if (`${\"\\u00e9\"}`) {} else { module.exports = 1; }",
+    "if (`a\\x80${1}`) {} else { module.exports = 1; }",
+    "if (`${0x1n}`) {} else { module.exports = 1; }",
+    "if (`a${`é`}`) {} else { module.exports = 1; }",
+    "if (`${`é${1}`}`) {} else { module.exports = 1; }",
+    "if (`é${1}` === \"é1\") {} else { module.exports = 1; }",
+    "if (!`é${1}`) { module.exports = 1; }",
+    "if (typeof `é${1}` === \"string\") {} else { module.exports = 1; }",
+    "`é${1}` || (module.exports = 1);",
+    "const t = `é${1}`; if (t) {} else { module.exports = 1; }",
+    "if (String.raw`a`) {} else { module.exports = 1; }",
+    "if (`a${x}`) {} else { module.exports = 1; }",
+];
+
+#[test]
+fn what_and_and_or_give_decides_the_format_where_bun_run_knows_the_left_operand() {
+    for text in [
+        "if (0x0n || \"x\") {} else { module.exports = 1; }",
+        "if (0x1n && \"\") { module.exports = 1; }",
+        "if (a || \"x\") {} else { module.exports = 1; }",
+        "if ((0x0n || \"x\") && 1) {} else { module.exports = 1; }",
+        "if ((0x1n && \"\") || 0) { module.exports = 1; }",
+        "if (!(0x0n || \"x\")) { module.exports = 1; }",
+        "(0x0n || \"x\") || (module.exports = 1);",
+        "(0x0n || \"x\") ? 1 : (module.exports = 1);",
+        "if ((0, 0x0n || \"x\")) {} else { module.exports = 1; }",
+        "if ([0x0n || \"x\"][0]) {} else { module.exports = 1; }",
+        "if ((0 || \"x\") === \"x\") {} else { module.exports = 1; }",
+        "if ((1 && \"x\") === \"x\") {} else { module.exports = 1; }",
+    ] {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+    }
+    for text in [
+        "if ((0x0n || \"x\") === \"x\") {} else { module.exports = 1; }",
+        "if (typeof (0x0n || \"x\") === \"string\") {} else { module.exports = 1; }",
+        "if ((0x0n || \"x\") + \"y\") {} else { module.exports = 1; }",
+        "if ((0x0n || \"x\").length) {} else { module.exports = 1; }",
+        "const a = 0x0n || \"x\"; if (a) {} else { module.exports = 1; }",
+        "if ((0x0n || \"x\") ?? 0) {} else { module.exports = 1; }",
+        "if (`${0x0n || \"x\"}`) {} else { module.exports = 1; }",
+        "if ((0x1n && \"x\") === \"x\") {} else { module.exports = 1; }",
+    ] {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+}
+
+const REMOVED_BEHIND_BIGINTS_WITH_A_RADIX: &[&str] = &[
+    "if (0x1n === 0x1n) {} else { module.exports = 1; }",
+    "if (0x1_0n === 0x10n) {} else { module.exports = 1; }",
+    "if (0x1n !== 0x1n) { module.exports = 1; }",
+    "if (0x1n == 0x1n) {} else { module.exports = 1; }",
+    "if (0x1n === null) { module.exports = 1; }",
+    "if (0x1n == null) { module.exports = 1; }",
+    "if (typeof 0x1n === \"bigint\") {} else { module.exports = 1; }",
+    "if (typeof 0x1n) {} else { module.exports = 1; }",
+    "if (void 0x1n) { module.exports = 1; }",
+    "0x1n ?? (module.exports = 1);",
+    "if (0o7n === 0o7n) {} else { module.exports = 1; }",
+    "if (0b1n === 0b1n) {} else { module.exports = 1; }",
+    "if (0X1n === 0X1n) {} else { module.exports = 1; }",
+    "0b1n ?? (module.exports = 1);",
+    "if (0n) { module.exports = 1; }",
+    "if (1n) {} else { module.exports = 1; }",
+    "if (1n === 2n) { module.exports = 1; }",
+    "if (1_0n === 10n) {} else { module.exports = 1; }",
+    "if (`${1n}`) {} else { module.exports = 1; }",
+    "1n || (module.exports = 1);",
+];
+
+const LEFT_BEHIND_BIGINTS_WITH_A_RADIX: &[&str] = &[
+    "if (0x1n) {} else { module.exports = 1; }",
+    "if (0x0n) { module.exports = 1; }",
+    "if (0o0n) { module.exports = 1; }",
+    "if (!0x1n) { module.exports = 1; }",
+    "if (!!0x1n) {} else { module.exports = 1; }",
+    "if (0x1n === 1n) {} else { module.exports = 1; }",
+    "if (0x1n === 0x2n) { module.exports = 1; }",
+    "if (0x1n === 0X1n) {} else { module.exports = 1; }",
+    "if (0b1n !== 1n) { module.exports = 1; }",
+    "if (0x1n == 1n) {} else { module.exports = 1; }",
+    "if (0x1n + \"\") {} else { module.exports = 1; }",
+    "if (\"\" + 0x1n) {} else { module.exports = 1; }",
+    "if (`${0x1n}`) {} else { module.exports = 1; }",
+    "0x1n || (module.exports = 1);",
+    "0x0n && (module.exports = 1);",
+    "0x1n ? 1 : (module.exports = 1);",
+    "if ((0, 0x1n)) {} else { module.exports = 1; }",
+    "if ([0x1n][0]) {} else { module.exports = 1; }",
+    "if (0x1n && 1) {} else { module.exports = 1; }",
+    "if (1 && 0x1n) {} else { module.exports = 1; }",
+    "if (0 || 0x1n) {} else { module.exports = 1; }",
+    "if (0x1n ?? 0) {} else { module.exports = 1; }",
+    "if (null ?? 0x1n) {} else { module.exports = 1; }",
+    "if (0o7n) {} else { module.exports = 1; }",
+    "if (0b1n) {} else { module.exports = 1; }",
+    "if (0X1n) {} else { module.exports = 1; }",
+    "if (0O7n) {} else { module.exports = 1; }",
+    "if (0B1n) {} else { module.exports = 1; }",
+    "if (0x1_0n) {} else { module.exports = 1; }",
+    "if (0xan === 0xAn) {} else { module.exports = 1; }",
+    "if (0o7n === 0x7n) {} else { module.exports = 1; }",
+    "if (-0x1n) {} else { module.exports = 1; }",
+    "if (~0x1n) {} else { module.exports = 1; }",
+    "if (-0x1n === -0x1n) {} else { module.exports = 1; }",
+    "switch (0x1n) { case 0x1n: break; default: module.exports = 1; }",
+    "switch (1n) { case 0x2n: module.exports = 1; }",
+];
+
+#[test]
+fn bigints_written_with_a_radix_decide_the_format_by_their_kind_alone() {
+    for text in REMOVED_BEHIND_BIGINTS_WITH_A_RADIX {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+    }
+    for text in LEFT_BEHIND_BIGINTS_WITH_A_RADIX {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+    for text in [
+        "enum E { A = 0x1n } if (E.A) {} else { module.exports = 1; }",
+        "if (0x1n as any) {} else { module.exports = 1; }",
+    ] {
+        analyzed("a.ts", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+    let text = "if ((0x1n as any) === 0x1n) {} else { module.exports = 1; }";
+    analyzed("a.ts", text, |s| {
+        assert_eq!(s.analysis.module_format, Esm);
+    });
+}
+
+#[test]
+fn templates_that_bun_run_joins_decide_the_format() {
+    for text in REMOVED_BEHIND_TEMPLATES {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+    }
+    for text in LEFT_BEHIND_TEMPLATES {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
 }
 
 #[test]
@@ -1669,6 +1976,102 @@ fn repeated_analysis_is_identical() {
             assert_eq!(format!("{again:?}"), analysis, "{path}: {text}");
             assert_eq!(describe_runtime(&bound), bindings, "{path}: {text}");
             assert_eq!(strict_flags(&first.hir), strict, "{path}: {text}");
+        });
+    }
+}
+
+const REMOVED_BEHIND_ENUM_MEMBERS: &[&str] = &[
+    "enum E { A = 4 } if (E.A) {} else { module.exports = 1; }",
+    "enum E { A, B } if (E.B) {} else { module.exports = 1; }",
+    "enum E { A } if (E.A) { module.exports = 1; }",
+    r#"enum E { A = "x" } if (E.A) {} else { module.exports = 1; }"#,
+    r#"enum E { A = "" } if (E.A) { module.exports = 1; }"#,
+    r#"enum E { A = 4 } if (E["A"]) {} else { module.exports = 1; }"#,
+    r#"enum E { "a-b" = 4 } if (E["a-b"]) {} else { module.exports = 1; }"#,
+    "if (E.A) {} else { module.exports = 1; } enum E { A = 4 }",
+    "function h() { if (E.A) {} else { module.exports = 1; } enum E { A = 4 } }",
+    "enum E { A = 2 + 2 } if (E.A === 4) {} else { module.exports = 1; }",
+    "enum E { A = -1, B } if (E.B) { module.exports = 1; }",
+    "enum E { A = 0.5, B } if (E.B === 1.5) {} else { module.exports = 1; }",
+    r#"enum E { A = "a".length } if (E.A) {} else { module.exports = 1; }"#,
+    "const enum E { A = 4 } if (E.A) {} else { module.exports = 1; }",
+    "namespace N { export enum E { A = 4 } } if (N.E.A) {} else { module.exports = 1; }",
+    "namespace N { enum E { A = 4 } if (E.A) {} else { module.exports = 1; } }",
+    "enum E { A = 4 } enum E { B = A + 1 } if (E.B === 5) {} else { module.exports = 1; }",
+    "enum E { A = 4 } enum E { B = E.A + 1 } if (E.B === 5) {} else { module.exports = 1; }",
+    "enum E { A = 4, B = E.A + 1 } if (E.B === 5) {} else { module.exports = 1; }",
+    r#"enum E { A = 4, B = E["A"] } if (E.B === 4) {} else { module.exports = 1; }"#,
+    "enum E { A = 1, B = A << 2, C = B | A } if (E.C === 5) {} else { module.exports = 1; }",
+    r#"enum E { A = "a" + "b", B = `${A}c` } if (E.B === "abc") {} else { module.exports = 1; }"#,
+    "enum E { A = 4 } enum F { B = E.A, C } if (F.C === 5) {} else { module.exports = 1; }",
+    "enum E { A = 4 } { enum E { A = 0 } if (E.A) { module.exports = 1; } }",
+    "enum E { A = 4 } if ((E as any).A) {} else { module.exports = 1; }",
+    "enum E { A = 4 } if (E.A as any) {} else { module.exports = 1; }",
+    "enum E { A = 4 } E = {} as any; if (E.A) {} else { module.exports = 1; }",
+    "enum E { A = 4 } E.A || (module.exports = 1);",
+    "enum E { A = 4 } function g() { return E.A ? 1 : module.exports; }",
+    "enum E { A = 4 } if (`${E.A}` === \"4\") {} else { module.exports = 1; }",
+    "enum E { A = 4 } const a = E.A; if (a) {} else { module.exports = 1; }",
+    "enum E { A = 4 } const a = E.A + 1; if (a) {} else { module.exports = 1; }",
+    "enum E { A = 1, B = A ? 2 : 3 } if (E.B === 2) {} else { module.exports = 1; }",
+    r#"enum E { A = "a", B = A.length } if (E.B) {} else { module.exports = 1; }"#,
+    "enum E { A = 1 } enum E { B } if (E.B) { module.exports = 1; }",
+    "enum E { é = 4 } if (E.é) {} else { module.exports = 1; }",
+    "enum E { A = 4 } if (E[`A`]) {} else { module.exports = 1; }",
+    "enum E { A = 4 } if (E!.A) {} else { module.exports = 1; }",
+    "enum E { A = 4 } (E as any).A = 0; if (E.A) {} else { module.exports = 1; }",
+    "namespace N { export enum E { A = 4 } export const c = E.A ? 1 : module; }",
+    "namespace N { export enum E { A = 4 } function f() { if (E.A) {} else { module.exports = 1; } } }",
+    "namespace N { export enum E { A = 4 } } namespace N { if (N.E.A) {} else { module.exports = 1; } }",
+    "namespace N { export namespace M { export enum E { A = 4 } } } if (N.M.E.A) {} else { module.exports = 1; }",
+    "namespace N { export enum E { A = 4 } } if ((N.E as any).A) {} else { module.exports = 1; }",
+    "function f() {} namespace f { export enum E { A = 4 } } if (f.E.A) {} else { module.exports = 1; }",
+    "enum E { A = 4 } namespace E { if (E.A) {} else { module.exports = 1; } }",
+];
+
+const LEFT_BEHIND_ENUM_MEMBERS: &[&str] = &[
+    "enum E { A = 4 } function f(E: any) { if (E.A) {} else { module.exports = 1; } }",
+    "enum E { A = 4 } if (E[4]) {} else { module.exports = 1; }",
+    "enum E { A = 4 } if (E.Missing) { module.exports = 1; }",
+    "enum E { A = 4 } const e = E; if (e.A) {} else { module.exports = 1; }",
+    r#"enum E { A = 4 } if (typeof E.A === "number") {} else { module.exports = 1; }"#,
+    "enum E { A = 4 } if (E?.A) {} else { module.exports = 1; }",
+    "enum E { A = 4 } switch (E.A) { case 5: module.exports = 1; }",
+    "enum E { A = 4 } while (!E.A) { module.exports = 1; }",
+    r#"enum E { A = 4 } if (E.A == "4") {} else { module.exports = 1; }"#,
+    "enum E { A = 4 } if (E.A.toString()) {} else { module.exports = 1; }",
+    "declare enum E { A = 4 } if (E.A) {} else { module.exports = 1; }",
+    "const one = 1; enum E { A = one } if (E.A) {} else { module.exports = 1; }",
+    "enum E { A = Math.PI } if (E.A) {} else { module.exports = 1; }",
+    "enum E { A = 1, B = f(), C } function f() { return 1; } if (E.C) {} else { module.exports = 1; }",
+    r#"enum E { A = "s", B } if (E.B) { module.exports = 1; }"#,
+    "enum E { A = E.A } if (E.A) { module.exports = 1; }",
+    "enum E { A = B, B = 1 } if (E.A) { module.exports = 1; }",
+    "enum E { A = F.B } enum F { B = 1 } if (E.A) {} else { module.exports = 1; }",
+    "if (N.E.A) {} else { module.exports = 1; } namespace N { export enum E { A = 4 } }",
+    "namespace N { export enum E { A = 4 } } namespace N { if (E.A) {} else { module.exports = 1; } }",
+    "namespace N { export enum E { A = 4 } } namespace N { export enum F { B = E.A } } if (N.F.B) {} else { module.exports = 1; }",
+    "namespace N { export namespace M { export enum E { A = 4 } } } namespace N { if (M.E.A) {} else { module.exports = 1; } }",
+    "namespace N { export enum E { A = 4 } } import Alias = N.E; if (Alias.A) {} else { module.exports = 1; }",
+    "namespace N { export enum E { A = 4 } } if (N.E?.A) {} else { module.exports = 1; }",
+    "enum E { A = 4 } namespace E { export const B = 0; } if (E.B) { module.exports = 1; }",
+    r#"enum E { "é" = 4 } if (E["é"]) {} else { module.exports = 1; }"#,
+    r#"enum E { A = 4 } if (E["A" + ""]) {} else { module.exports = 1; }"#,
+    "enum E { A = 4 } if (E[E.A]) {} else { module.exports = 1; }",
+    "enum E { A = 1, B = true } if (E.B) {} else { module.exports = 1; }",
+    "enum E { A = 4 } let a = E.A; if (a) {} else { module.exports = 1; }",
+];
+
+#[test]
+fn members_of_enums_that_bun_run_writes_in_place_decide_the_format() {
+    for text in REMOVED_BEHIND_ENUM_MEMBERS {
+        analyzed("a.ts", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+    }
+    for text in LEFT_BEHIND_ENUM_MEMBERS {
+        analyzed("a.ts", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
         });
     }
 }
@@ -1700,6 +2103,41 @@ fn macro_results_change_format() {
         assert_eq!(third.module_format, CommonJs);
         assert!(!hir[g].is_strict);
     });
+}
+
+#[test]
+fn top_level_await_that_only_a_build_rules_out_makes_an_asynchronous_module() {
+    for text in [
+        r#"if (process.platform === "win32") { await 0; }"#,
+        r#"if (process.platform !== "win32") {} else { await 0; }"#,
+        r#"const a = process.platform === "win32" ? await 0 : 1;"#,
+        r#"process.platform === "win32" && (await 0);"#,
+        r#"if (process.platform === "win32") { for await (const x of y); }"#,
+        r#"if (process.platform === "win32") { await using a = b; }"#,
+        r#"if (typeof Bun === "undefined") { await 0; }"#,
+    ] {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&BUILD_FACTS);
+            let analyzed = workspace.analyze(&Source::new("a.mjs", text), &fold);
+            let awaits = find_exprs(&analyzed.hir, |kind| matches!(kind, ExprKind::Await(_)));
+            let decisions = &analyzed.analysis.decisions;
+            assert!(
+                awaits.iter().all(|&it| decisions.is_dead_expr(it)),
+                "{text}"
+            );
+            assert!(analyzed.analysis.has_live_top_level_await, "{text}");
+        });
+    }
+    for &(text, _, is_live) in TOP_LEVEL_AWAITS {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&BUILD_FACTS);
+            let analyzed = workspace.analyze(&Source::new("a.mjs", text), &fold);
+            assert_eq!(
+                analyzed.analysis.has_live_top_level_await, is_live,
+                "{text}"
+            );
+        });
+    }
 }
 
 #[test]

@@ -57,9 +57,10 @@ function copyArray(list, start: number, lead: number) {
 function joinArray(list, first: number, separator: string) {
   let joined = "";
   for (let i = first; i < list.length; i++) {
-    const item = list[i];
-    if (i > first) joined += separator;
-    if (item != null) joined += `${item}`;
+    // join() takes null and undefined as "".
+    const item = list[i] ?? "";
+    // One template is one rope.
+    joined = i > first ? `${joined}${separator}${item}` : `${item}`;
   }
   return joined;
 }

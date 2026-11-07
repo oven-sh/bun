@@ -1267,6 +1267,9 @@ describe("bundler", () => {
         export default isBuffer;
       `,
     },
+    // https://github.com/oven-sh/bun/issues/45729: `module` in an ES module prints as `module_isBuffer`, which
+    // nothing declares. The `typeof` test in front of each read keeps the bundle from throwing.
+    allowUndeclaredGeneratedNames: ["module_isBuffer"],
     run: {
       stdout: "pass",
     },

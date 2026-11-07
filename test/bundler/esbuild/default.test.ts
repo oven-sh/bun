@@ -1260,6 +1260,8 @@ describe.concurrent("bundler", () => {
       `,
     },
     banner: "#! from banner",
+    // The banner is a second hashbang line, and only the first line of a file can be one.
+    allowOutputSyntaxError: true,
     onAfterBundle(api) {
       assert(api.readFile("/out.js").startsWith("#! in file"), "hashbang from banner does not override file hashbang");
     },
@@ -2033,6 +2035,8 @@ describe.concurrent("bundler", () => {
     format: "iife",
     outfile: "/out.js",
     minifyIdentifiers: true,
+    // https://github.com/oven-sh/bun/issues/24540: iife output calls `__require` and does not define it.
+    allowUndeclaredGeneratedNames: ["__require"],
   });
   itBundled("default/WithStatementTaintingNoBundle", {
     files: {
@@ -5716,6 +5720,9 @@ describe.concurrent("bundler", () => {
     },
     entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
     format: "cjs",
+    // https://github.com/oven-sh/bun/issues/45729: `module` in an ES module prints as `module_cjs_in_esm`, which
+    // nothing declares. The output throws a ReferenceError.
+    allowUndeclaredGeneratedNames: ["module_cjs_in_esm"],
     /* TODO FIX expectedScanLog: `cjs-in-esm.js: WARNING: The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected
   cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
   cjs-in-esm.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected

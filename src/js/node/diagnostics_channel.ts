@@ -2,6 +2,7 @@
 // Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
 
 const { validateFunction } = require("internal/validators");
+const { reportUncaughtException } = require("internal/shared");
 
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
@@ -97,7 +98,7 @@ function wrapStoreRun(store: Store, data: unknown, next: () => unknown, transfor
     try {
       context = transform(data);
     } catch (err) {
-      process.nextTick(() => reportError(err));
+      process.nextTick(reportUncaughtException, err);
       return next();
     }
 
@@ -162,7 +163,7 @@ class ActiveChannel {
         const onMessage = subscribers![i];
         onMessage(data, this.name);
       } catch (err) {
-        process.nextTick(() => reportError(err));
+        process.nextTick(reportUncaughtException, err);
       }
     }
   }

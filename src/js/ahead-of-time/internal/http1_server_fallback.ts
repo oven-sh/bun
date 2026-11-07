@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http1_server_fallback.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9411c7ddf6a9e79667dfde90e0dc5ac6161ac63bd73bb2a91021597f3d5be87e.
+// Written against that file with the SHA-256 4cd00d716b7a9603886b0454443d6f7ebe191d4dd141ede3d62b56a7e05019a6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
@@ -13,7 +13,7 @@ const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
-const reportError = globalThis.reportError;
+const { reportUncaughtException } = require("internal/shared");
 
 function rethrowUncaught(err: unknown) {
   throw err;
@@ -234,7 +234,7 @@ function createHttp1FallbackResponseHandle(
       handle.onflushed?.();
     } catch (err) {
       // A 'finish' listener that throws must not unwind into the socket's write callbacks or 'close' listeners.
-      reportError(err);
+      reportUncaughtException(err);
     }
   }
 

@@ -100,9 +100,29 @@ const nativeCall =
   /\$(cpp|newCppFunction|bindgen)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
 const keyOf = (match: RegExpMatchArray) => `${match[1]}\t${match[3]}\t${match[5]}`;
 
+const readOfReportError = "__reportErrorOfGlobalThis__";
+
+/** For a text of a builtin module as it is written. A read of the global `reportError` throws: a program replaces that global. */
+export function moduleTranspiler(): (source: string, file: string) => string {
+  const transpiler = new Bun.Transpiler({
+    loader: "ts",
+    define: { "reportError": readOfReportError, "globalThis.reportError": readOfReportError },
+    deadCodeElimination: false,
+  });
+  return (source, file) => {
+    const transpiled = transpiler.transformSync(source);
+    if (transpiled.includes(readOfReportError)) {
+      throw new Error(
+        `${path.relative(path.join(BASE, "../.."), file).replaceAll("\\", "/")}: reportError is a global, which a program or a DOM test environment replaces. Call reportUncaughtException of internal/shared with what a listener threw: the 'uncaughtException' listeners get it, as in Node`,
+      );
+    }
+    return transpiled;
+  };
+}
+
 /** generate-js2native.ts keeps one numbering per process: only a process's first call returns the ids of a build. */
 export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
-  const transpiler = new Bun.Transpiler({ loader: "ts" });
+  const transpile = moduleTranspiler();
   const found = new Map<string, NativeCall>();
   const files = [...sourceFiles, ...functionFiles];
   // The bundler of the modules numbers what the first texts call before it comes here: what only a second text calls is numbered behind all of that.
@@ -119,7 +139,7 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
       .relative(BASE, file)
       .replaceAll("\\", "/")
       .replace(/^ahead-of-time\//, "");
-    const calls = new Set(transpiler.transformSync(source).matchAll(nativeCall).map(keyOf));
+    const calls = new Set(transpile(source, file).matchAll(nativeCall).map(keyOf));
     for (const match of source.matchAll(nativeCall)) {
       const key = keyOf(match);
       if (!calls.has(key)) continue;

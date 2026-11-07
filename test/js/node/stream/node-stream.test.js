@@ -651,6 +651,39 @@ it.each(["before the first read", "after a chunk"])(
   },
 );
 
+// Like Node's modules, the adapter never calls a reportError that the program has put on globalThis.
+it("Readable.fromWeb: what a _destroy() callback throws is an uncaught exception for a program with a reportError of its own", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        const log = [];
+        globalThis.reportError = error => void log.push("reportError of the program: " + error.message);
+        process.on("uncaughtException", error => void log.push("uncaughtException: " + error.message));
+        const readable = Readable.fromWeb(new ReadableStream({ pull(controller) { controller.enqueue("a"); } }));
+        readable._destroy(null, () => {});
+        setImmediate(() => {
+          // Nothing is left to cancel: the callback runs inside _destroy().
+          readable._destroy(null, () => {
+            throw new Error("from the callback");
+          });
+          setImmediate(() => console.log(JSON.stringify(log)));
+        });
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ log: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+    log: ["uncaughtException: from the callback"],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
 // buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
 // emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so

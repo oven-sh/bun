@@ -12,6 +12,7 @@ const { SQLDialect, SQLResultArray, firstKeyword } =
 const { SQLQueryResultMode } = require("internal/sql/query");
 const { closeTimeoutMs } = require("internal/sql/pool");
 const { SQLiteError } = require("internal/sql/errors");
+const { reportUncaughtException } = require("internal/shared");
 
 function toSQLiteError(err: unknown) {
   if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
@@ -170,7 +171,7 @@ class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Data
     try {
       if (onconnect) onconnect(this.storedError);
     } catch (thrown) {
-      reportError(thrown);
+      reportUncaughtException(thrown);
     }
   }
 
@@ -252,7 +253,7 @@ class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Data
       const onclose: SQLiteConnectionInfo["onclose"] = $getByIdDirect(this.connectionInfo, "onclose");
       if (onclose) onclose(this.storedError);
     } catch (thrown) {
-      reportError(thrown);
+      reportUncaughtException(thrown);
     }
   }
 

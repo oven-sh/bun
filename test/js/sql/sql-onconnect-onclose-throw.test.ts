@@ -136,12 +136,13 @@ for (const [name, image, scheme] of servers) {
 // fixture allocates the closed port itself (same as forcedCloseFixture below)
 // so the bind→close→connect window is not widened by the subprocess spawn,
 // during which the concurrent forcedCloseFixture tests are issuing bind(0).
-function refusedConnectionFixture(adapter: "postgres" | "mysql") {
+function refusedConnectionFixture(adapter: "postgres" | "mysql", setUp = "") {
   const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
   const db = adapter === "postgres" ? "/postgres" : "/db";
   return /* ts */ `
 import { SQL } from "bun";
 import { closedPort } from ${JSON.stringify(wireFramesPath)};
+${setUp}
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
 const port = await closedPort();
 const sql = new SQL({
@@ -177,6 +178,20 @@ for (const [adapter, refusedCode] of [
     },
   );
 }
+
+// Like every builtin module, the pool never calls a reportError that the program has put on globalThis.
+test.concurrent(
+  "postgres: what onclose throws is an uncaught exception for a program with a reportError of its own",
+  async () => {
+    const setUp = `globalThis.reportError = err => console.log("reportError of the program:", err.message);`;
+    expect(await runFixture(refusedConnectionFixture("postgres", setUp))).toEqual({
+      stdout:
+        "onclose: ERR_POSTGRES_CONNECTION_REFUSED\nuncaught: boom from onclose\nquery rejected: ERR_POSTGRES_CONNECTION_REFUSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // The first query starts the pool: `max` attempts.
 test.concurrent("postgres: pool calls from onclose are safe when the password function throws", async () => {

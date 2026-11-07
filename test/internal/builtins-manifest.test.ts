@@ -10,6 +10,7 @@ import {
   helperModules,
   locate,
   moduleList,
+  moduleTranspiler,
   sourceFiles,
   specifierOf,
   typesOnlySchemas,
@@ -291,6 +292,73 @@ describe("builtins-manifest-model.ts", () => {
       expect(numbered).toEqual(Array.from(numbered, (_, id) => id));
       expect(numbered.length).toBeGreaterThan(0);
       expect(numbered.length).toBeLessThan(all.length);
+    },
+    generatorTimeout,
+  );
+
+  // A program, or a DOM environment of `bun test`, puts a reportError of its own on globalThis.
+  test("a text of a builtin module that reads the global reportError is refused", () => {
+    const transpile = moduleTranspiler();
+    const isRefused = (text: string) => {
+      try {
+        transpile(text, join(root, "src", "js", "node", "example.ts"));
+        return false;
+      } catch (error) {
+        expect(String(error)).toContain("src/js/node/example.ts: reportError is a global");
+        expect(String(error)).toContain("reportUncaughtException of internal/shared");
+        return true;
+      }
+    };
+    expect({
+      call: isRefused(`try { emit(); } catch (error) { reportError(error); }`),
+      value: isRefused(`process.nextTick(reportError, error);`),
+      typeof: isRefused(`if (typeof reportError === "function") emit();`),
+      member: isRefused(`const report = globalThis.reportError;`),
+      memberCall: isRefused(`globalThis.reportError(error);`),
+      statement: isRefused(`reportError;`),
+      voidMember: isRefused(`void globalThis.reportError;`),
+      deadCall: isRefused(`if (false) reportError(error);`),
+      local: isRefused(`function reportError(error) {} reportError(1); add("reportError", reportError);`),
+      memberOfWindow: isRefused(`win.reportError(error); if (typeof win.reportError === "function") emit();`),
+      assignment: isRefused(`globalThis.reportError = report;`),
+      commentAndString: isRefused(`// reportError(error)\nconst name = "reportError";`),
+    }).toEqual({
+      call: true,
+      value: true,
+      typeof: true,
+      member: true,
+      memberCall: true,
+      statement: true,
+      voidMember: true,
+      deadCall: true,
+      local: false,
+      memberOfWindow: false,
+      assignment: false,
+      commentAndString: false,
+    });
+  });
+
+  test(
+    "the build reads every text of a builtin module through that check",
+    async () => {
+      const model = JSON.stringify(join(root, "src", "codegen", "builtins-manifest-model.ts"));
+      const result = await bun(
+        "-e",
+        `import fs from "node:fs";
+         import { nativeCalls, typesOnlySchemas } from ${model};
+         const read = fs.readFileSync;
+         fs.readFileSync = (file, ...rest) =>
+           read(file, ...rest) +
+           (String(file).endsWith("diagnostics_channel.ts") ? "\\nprocess.nextTick(reportError, 1);" : "");
+         try {
+           nativeCalls(typesOnlySchemas([]));
+           console.log("every text was accepted");
+         } catch (error) {
+           console.log(error.message);
+         }`,
+      );
+      expectSuccess(result);
+      expect(result.stdout).toStartWith("src/js/node/diagnostics_channel.ts: reportError is a global");
     },
     generatorTimeout,
   );

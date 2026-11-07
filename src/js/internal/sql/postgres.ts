@@ -20,6 +20,7 @@ const {
 } = require("internal/sql/query");
 
 const { PostgresError } = require("internal/sql/errors");
+const { reportUncaughtException } = require("internal/shared");
 
 const {
   createConnection: createPostgresConnection,
@@ -376,7 +377,7 @@ function invoke<T>(callback: (arg?: T) => void, arg?: T) {
   try {
     callback(arg);
   } catch (err) {
-    reportError(err);
+    reportUncaughtException(err);
   }
 }
 

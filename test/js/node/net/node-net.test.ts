@@ -3473,8 +3473,9 @@ describe("net.Server.listen({ fd })", () => {
 // listener-throw-*-fixture.js files run unchanged under node; the expected
 // event logs below are what Node v26.3.0 prints for them.
 describe.concurrent("uncaughtException from socket listeners", () => {
-  async function runFixture(name: string, env?: Record<string, string>) {
-    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, `listener-throw-${name}-fixture.js`), env);
+  async function runFixture(name: string, env?: Record<string, string>, preload?: string) {
+    const fixture = join(import.meta.dir, `listener-throw-${name}-fixture.js`);
+    const { stdout, stderr, exitCode } = await bunRun(preload ? ["--preload", preload, fixture] : fixture, env);
     return { stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) };
   }
   const tlsEnv = { TLS_FIXTURE: JSON.stringify(tlsCert) };
@@ -3527,6 +3528,38 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stdout).not.toContain("socket-error:");
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
+  });
+
+  // Node's modules never read the global reportError. A program that has its own function there before node:net
+  // first loads, or a getter that throws, gets the same log (`node -r` for the preload).
+  // One at a time: the processes of the tests above already fill a debug build's time limit.
+  describe.serial("every listener and callback that a socket event calls", () => {
+    const preload = join(import.meta.dir, "listener-throw-reporterror-preload.js");
+
+    it.each(["replaced", "getter"])("with the global reportError %s", async kind => {
+      const env = { ...tlsEnv, REPORT_ERROR: kind };
+      expect(await runFixture("every-site", env, preload)).toEqual({
+        stdout: JSON.stringify([
+          "uncaught:connection",
+          "uncaught:data",
+          "uncaught:onread buffer",
+          "uncaught:onread function",
+          "uncaught:secureConnection",
+          "uncaught:secureConnect",
+          // https://github.com/oven-sh/bun/issues/46473 is about what the socket does after this throw.
+          "uncaught:checkServerIdentity",
+        ]),
+        exitCode: 0,
+      });
+    });
+
+    it("without an uncaughtException handler the process crashes, with the global reportError replaced", async () => {
+      const fixture = join(import.meta.dir, "listener-throw-no-handler-fixture.js");
+      const { stdout, stderr, exitCode } = await bunRun(["--preload", preload, fixture], { REPORT_ERROR: "replaced" });
+      expect(stdout).toBe("");
+      expect(stderr).toContain("fatal-boom");
+      expect(exitCode).toBe(1);
+    });
   });
 });
 

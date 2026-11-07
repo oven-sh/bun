@@ -429,6 +429,66 @@ describe("Channel", () => {
     });
   });
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/diagnostics_channel.js#L100-L108 and #L182-L192: Node reports with
+  // triggerUncaughtException() on the next tick. A reportError on globalThis is the program's, and Node never reads it.
+  test.concurrent.each([
+    ["as it is", ""],
+    ["replaced", `globalThis.reportError = error => void log.push("reportError of the program: " + error.message);`],
+    ["deleted", `delete globalThis.reportError;`],
+    [
+      "a getter that throws",
+      `Object.defineProperty(globalThis, "reportError", { get() { throw new Error("reportError was read from globalThis"); } });`,
+    ],
+  ])(
+    "what a subscriber or a bindStore() transform throws is an uncaught exception of the next tick, with reportError %s",
+    async (_, setUp) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const log = [];
+            ${setUp}
+            const { channel } = require("node:diagnostics_channel");
+            const { AsyncLocalStorage } = require("node:async_hooks");
+            process.on("uncaughtException", error => void log.push("uncaughtException: " + error.message));
+            const dc = channel("throws");
+            dc.subscribe(() => {
+              throw new Error("from the subscriber");
+            });
+            dc.subscribe(() => void log.push("the next subscriber"));
+            dc.publish({});
+            log.push("publish() returned");
+            dc.bindStore(new AsyncLocalStorage(), () => {
+              throw new Error("from the transform");
+            });
+            dc.runStores({}, () => void log.push("the function of runStores()"));
+            log.push("runStores() returned");
+            setImmediate(() => console.log(JSON.stringify(log)));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ log: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+        log: [
+          "the next subscriber",
+          "publish() returned",
+          "the next subscriber",
+          "the function of runStores()",
+          "runStores() returned",
+          "uncaughtException: from the subscriber",
+          "uncaughtException: from the transform",
+          "uncaughtException: from the subscriber",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   test("references are not leaked", () => {
     function noop() {}
 

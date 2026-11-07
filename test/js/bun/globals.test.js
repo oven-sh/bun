@@ -415,3 +415,49 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     ).toEqual({ objects: 1, isKey: false, isPrinted: false, isReceiver: false, receivers: ["URL"] });
   });
 });
+
+// A program, or a DOM environment of bun test, puts a reportError of its own on globalThis. Not in the block above: its
+// tests run at once, and one more process takes them past the time limit on a debug build.
+it("no builtin module reads reportError from globalThis when it loads, in the main thread or in a worker", async () => {
+  const load = `
+    let reads = 0;
+    Object.defineProperty(globalThis, "reportError", {
+      get() {
+        reads++;
+        throw new Error("reportError was read from globalThis");
+      },
+      configurable: true,
+    });
+    const thrown = [];
+    for (const id of ["net", "tls", "http2", "http", "diagnostics_channel"]) {
+      try {
+        require("node:" + id);
+      } catch (error) {
+        thrown.push(id + ": " + error.message);
+      }
+    }
+    const result = { reads, thrown };
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // A worker is a realm of its own: it evaluates the modules again, while this thread does.
+        const worker = new (require("node:worker_threads").Worker)(
+          ${JSON.stringify(load)} + 'require("node:worker_threads").parentPort.postMessage(result)',
+          { eval: true },
+        );
+        ${load}
+        worker.on("message", inWorker => console.log(JSON.stringify({ inMainThread: result, inWorker })));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const inEveryRealm = { reads: 0, thrown: [] };
+  expect(JSON.parse(stdout)).toEqual({ inMainThread: inEveryRealm, inWorker: inEveryRealm });
+  expect(exitCode).toBe(0);
+});

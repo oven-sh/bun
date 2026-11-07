@@ -118,6 +118,58 @@ describe("bundler", () => {
     run: { stdout: "./modules/a.ts,./modules/b.ts\n./modules/a.ts,./modules/b.ts" },
   });
 
+  const effects = {
+    "/effects/a.ts": `console.log("a was evaluated");`,
+    "/effects/b.ts": `console.log("b was evaluated");`,
+  };
+
+  // `minifySyntax` inlines the constant and prints `Object["keys"]` as `Object.keys`. Neither decides what is imported.
+  for (const minifySyntax of [false, true]) {
+    const suffix = minifySyntax ? "WithMinifySyntax" : "";
+
+    itBundled("import-meta-glob/EagerCallInDeadCodeImports" + suffix, {
+      entryPoints: ["/entry.ts"],
+      files: {
+        ...effects,
+        "/entry.ts": `
+          const DEBUG = false;
+          if (DEBUG) import.meta.glob("./effects/a.ts", { eager: true });
+          if (false) import.meta.glob("./effects/b.ts", { eager: true });
+          console.log("entry");`,
+      },
+      minifySyntax,
+      run: { stdout: "a was evaluated\nb was evaluated\nentry" },
+    });
+
+    itBundled("import-meta-glob/OnlyObjectKeysAsWrittenBundlesNothing" + suffix, {
+      entryPoints: ["/entry.ts"],
+      files: {
+        ...effects,
+        "/entry.ts": `
+          console.log(Object.keys(import.meta.glob("./effects/*.ts", { eager: true })).join());
+          console.log(Object["keys"](import.meta.glob("./effects/a.ts", { eager: true })).join());`,
+      },
+      minifySyntax,
+      run: { stdout: "a was evaluated\n./effects/a.ts,./effects/b.ts\n./effects/a.ts" },
+    });
+
+    itBundled("import-meta-glob/InvalidCallInDeadCodeWarns" + suffix, {
+      entryPoints: ["/entry.ts"],
+      files: {
+        "/entry.ts": `
+          const pattern = "./modules/*.ts", DEBUG = false;
+          if (DEBUG) import.meta.glob(pattern);
+          if (false) import.meta.glob(pattern);
+          console.log("entry");`,
+      },
+      minifySyntax,
+      bundleWarnings: {
+        "/entry.ts": Array(2).fill(`Expected a glob pattern to be a string literal, but got identifier`),
+      },
+      run: { stdout: "entry" },
+    });
+  }
+
   itBundled("import-meta-glob/UnusedResultIsRemoved", {
     entryPoints: ["/entry.ts"],
     files: {

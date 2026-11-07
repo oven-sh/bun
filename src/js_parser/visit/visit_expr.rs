@@ -7,7 +7,7 @@ use bun_core::strings;
 
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
-use crate::lower::import_meta_glob::is_object_keys_call;
+use crate::lower::import_meta_glob::{CallAsWritten, is_object_keys_call};
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
@@ -1963,8 +1963,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        let import_meta_glob = (p.has_import_meta && p.is_import_meta_glob_call(&e_))
-            .then(|| p.read_import_meta_glob_call(&e_, expr.loc));
+        let as_written = if p.has_import_meta {
+            p.call_as_written(&e_, expr.loc)
+        } else {
+            CallAsWritten::Other
+        };
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -2234,7 +2237,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.options.features.inject_jest_globals && p.visit_import_in_mock_path(&mut e_),
             );
             let mut arg_in = ExprIn {
-                is_object_keys_argument: p.has_import_meta && is_object_keys_call(&p.symbols, &e_),
+                is_object_keys_argument: matches!(as_written, CallAsWritten::ObjectKeys)
+                    && is_object_keys_call(&p.symbols, &e_),
                 ..Default::default()
             };
             // Upstream only checks a function's immediate parent call, so the `fn` in `memo(forwardRef(fn))` counts too.
@@ -2263,7 +2267,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if let Some(arguments) = import_meta_glob {
+        if let CallAsWritten::ImportMetaGlob(arguments) = as_written {
             p.expand_import_meta_glob(e, arguments, in_.is_object_keys_argument);
             return;
         }

@@ -1246,6 +1246,48 @@ test.concurrent("the browser build of a page leaves out the serverExports of its
   expect(bundle).not.toContain("server-only-secret");
 });
 
+test.concurrent("the browser build of a page imports no eager import.meta.glob() of a server export", async () => {
+  using dir = tempDir("bake-command-server-exports-glob", {
+    "app/server-only/secret.js": `export const secret = "server-only-secret";`,
+    "app/browser/effect.js": `globalThis.effect = "browser-side-effect";`,
+    // The first call is not in a server export, so both builds import its file, dead code or not.
+    "app/pages/index.js": `
+      if (false) import.meta.glob("../browser/*.js", { eager: true });
+      export const loader = () => Object.values(import.meta.glob("../server-only/*.js", { eager: true, import: "secret" })).join();
+      export default () => "home-page-module";
+    `,
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.pageModule.loader() + " " + globalThis.effect + " " + meta.modules.join(" "));
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".js"],
+            clientPages: { serverExports: ["loader"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const [status, secret, effect, bundleUrl] = (await get(url, "/")).split(" ");
+  expect([status, secret, effect]).toEqual(["200", "server-only-secret", "browser-side-effect"]);
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).toContain("browser-side-effect");
+  expect(bundle).not.toContain("server-only-secret");
+});
+
 test.concurrent("bun bake sends a page's new code to a page load after an edit", async () => {
   using dir = tempDir("bake-command-page-edit", {
     "app/pages/index.tsx": `export default function Home() { return <h1>{"first-version"}</h1>; }`,

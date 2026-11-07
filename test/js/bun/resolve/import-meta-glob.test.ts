@@ -301,12 +301,17 @@ describe.concurrent("import.meta.glob", () => {
   test("the function is only defined in modules whose calls are replaced", async () => {
     const { stdout, stderr, exitCode } = await runEntry(
       `import other from "./other.ts";
+       import dead from "./dead.ts";
        import.meta.glob("./dir/a.ts");
-       console.log(JSON.stringify([typeof import.meta.glob, Object.keys(import.meta), other]));`,
-      { "proj/src/other.ts": `export default [typeof import.meta.glob, Object.keys(import.meta)];` },
+       console.log(JSON.stringify([typeof import.meta.glob, Object.keys(import.meta), other, dead]));`,
+      {
+        "proj/src/other.ts": `export default [typeof import.meta.glob, Object.keys(import.meta)];`,
+        // A call in dead code is replaced too.
+        "proj/src/dead.ts": `if (false) import.meta.glob("./dir/a.ts"); export default typeof import.meta.glob;`,
+      },
     );
     expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: ["function", ["glob"], ["undefined", []]],
+      stdout: ["function", ["glob"], ["undefined", []], "function"],
       stderr: "",
       exitCode: 0,
     });
@@ -516,14 +521,73 @@ describe.concurrent("import.meta.glob", () => {
     ).toEqual({ stdout: `["./effects/one.ts","./effects/two.ts"]`, stderr: "", exitCode: 0 });
   });
 
-  test("a call in dead code imports nothing", async () => {
+  // Vite imports these too.
+  test("an eager call in dead code imports its files", async () => {
     expect(
       await runEntry(
         `if (false) import.meta.glob("./effects/*.ts", { eager: true });
          console.log(JSON.stringify(Object.keys(import.meta.glob("./effects/o*.ts"))));`,
         sideEffects,
       ),
-    ).toEqual({ stdout: `["./effects/one.ts"]`, stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: `one was evaluated\ntwo was evaluated\n["./effects/one.ts"]`, stderr: "", exitCode: 0 });
+  });
+
+  // Each of these folds, inlines and removes different code, so none of that may decide what a call imports.
+  describe("the same files are imported by", () => {
+    const call = `import.meta.glob("./files/*.ts", { eager: true })`;
+    // prettier-ignore
+    const shapes: [code: string, imports: boolean][] = [
+      [`${call};`, true],
+      [`function unused() { ${call}; }`, true],
+      [`if (false) ${call};`, true],
+      [`false && ${call};`, true],
+      [`true || ${call};`, true],
+      [`1 ?? ${call};`, true],
+      [`true ? 0 : ${call};`, true],
+      [`const DEBUG = false; if (DEBUG) ${call};`, true],
+      [`if (DEFINED_AS_FALSE) ${call};`, true],
+      [`import { feature } from "bun:bundle"; if (feature("OFF")) ${call};`, true],
+      [`dropped(${call});`, true],
+      [`Object.keys(${call});`, false],
+      [`Object["keys"](${call});`, true],
+      ["Object[`keys`](" + call + ");", true],
+      [`const keys = "keys"; Object[keys](${call});`, true],
+      [`Object["ke" + "ys"](${call});`, true],
+    ];
+    const flags = ["--define", "DEFINED_AS_FALSE=false", "--drop=dropped"];
+    const files = {
+      ...Object.fromEntries(
+        shapes.flatMap(([code], i) => [
+          [`${i}/shape.ts`, code],
+          [`${i}/files/a.ts`, `(globalThis.imported ??= []).push(${i});`],
+        ]),
+      ),
+      "print.test.ts": `${shapes.map((_, i) => `import "./${i}/shape.ts";`).join("\n")}
+        const print = () => console.log("IMPORTED" + JSON.stringify(globalThis.imported ?? []));
+        if (typeof test === "function") test("print", print);
+        else print();`,
+    };
+    const build = (minify: string[]) => async (cwd: string) => {
+      const args = ["build", ...flags, ...minify, "--target=bun", "--outdir=out", "./print.test.ts"];
+      const built = await run(cwd, args);
+      if (built.exitCode !== 0) return built;
+      return await run(cwd, ["out/print.test.js"]);
+    };
+
+    test.each([
+      ["bun run", (cwd: string) => run(cwd, [...flags, "print.test.ts"])],
+      ["bun test", (cwd: string) => run(cwd, ["test", ...flags, "./print.test.ts"])],
+      ["bun test --coverage", (cwd: string) => run(cwd, ["test", "--coverage", ...flags, "./print.test.ts"])],
+      ["bun build", build([])],
+      ["bun build --minify", build(["--minify"])],
+    ])("%s", async (_, mode) => {
+      using dir = tempDir("import-meta-glob", files);
+      const { stdout, stderr, exitCode } = await mode(String(dir));
+      const line = stdout.split("\n").find(line => line.startsWith("IMPORTED"));
+      expect({ stderr: line ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const imported: number[] = JSON.parse(line!.slice("IMPORTED".length));
+      expect(shapes.map(([code], i) => [code, imported.includes(i)])).toEqual(shapes);
+    });
   });
 
   const assets = {
@@ -804,6 +868,21 @@ describe.concurrent("import.meta.glob", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("a module whose only call is in dead code isn't restored from the cache either", async () => {
+    const padding = Buffer.alloc(80 * 1024, "/").toString();
+    using dir = tempDir("import-meta-glob", {
+      "modules/a.ts": `console.log("a");`,
+      "glob.ts": `if (false) import.meta.glob("./modules/*.ts", { eager: true });\n//${padding}`,
+    });
+    const env = {
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    expect(await run(String(dir), ["glob.ts"], env)).toEqual({ stdout: "a\n", stderr: "", exitCode: 0 });
+    writeFileSync(join(String(dir), "modules/b.ts"), `console.log("b");`);
+    expect(await run(String(dir), ["glob.ts"], env)).toEqual({ stdout: "a\nb\n", stderr: "", exitCode: 0 });
   });
 });
 

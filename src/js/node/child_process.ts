@@ -195,8 +195,8 @@ function spawn(file, args, options) {
     if (signal.aborted) {
       process.nextTick(onAbortListener);
     } else {
-      signal.addEventListener("abort", onAbortListener, { once: true });
-      const remove = () => signal.removeEventListener("abort", onAbortListener);
+      // As in Node.js, the listener still runs after another one called stopImmediatePropagation().
+      const remove = require("internal/abort_listener").addAbortListener(signal, onAbortListener)[Symbol.dispose];
       child.once("exit", remove);
       child.once("close", remove);
     }

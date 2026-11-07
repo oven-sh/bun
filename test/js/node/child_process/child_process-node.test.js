@@ -1,6 +1,7 @@
 import { bunEnv, bunExe, isWindows } from "harness";
 import { createTest } from "node-harness";
 import { ChildProcess, exec, fork, spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import util from "node:util";
@@ -509,6 +510,35 @@ describe("child_process double pipe", () => {
         done();
       }),
     );
+  });
+});
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L888-L890
+describe("spawn abort-signal", () => {
+  it("kills the child after another abort listener called stopImmediatePropagation()", async () => {
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", event => event.stopImmediatePropagation());
+
+    const child = spawn(bunExe(), [fixtures.path("child-process-stay-alive-forever.js")], {
+      signal: controller.signal,
+      env: bunEnv,
+      stdio: "ignore",
+    });
+    const errors = [];
+    const { promise: closed, resolve } = Promise.withResolvers();
+    child.on("error", error => errors.push(error));
+    child.on("close", () => resolve());
+    try {
+      await once(child, "spawn");
+      controller.abort();
+      expect({ killed: child.killed, errors: errors.map(error => error.name) }).toEqual({
+        killed: true,
+        errors: ["AbortError"],
+      });
+    } finally {
+      child.kill();
+      await closed;
+    }
   });
 });
 

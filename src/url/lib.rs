@@ -388,8 +388,13 @@ impl<'a> URL<'a> {
             whatwg::Parsed::from_utf8(input)
         };
         let Some(url) = normalized else {
+            // `path` collapses a one-byte prefix such as `/a` to `/`, so read the prefix from `pathname`.
+            let pathname = as_written.pathname;
+            let prefix =
+                &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())];
+            let prefix = strings::trim_right(prefix, b"/");
             return Some(S3Endpoint {
-                host_with_path: Box::from(as_written.host_with_path()),
+                host_with_path: [as_written.host, prefix].concat().into_boxed_slice(),
                 is_http: as_written.is_http(),
             });
         };
@@ -398,7 +403,7 @@ impl<'a> URL<'a> {
         let mut host_with_path = url.hostname().to_owned_slice();
         let pathname = url.pathname();
         let path = pathname.to_utf8();
-        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
+        host_with_path.extend_from_slice(strings::trim_right(path.slice(), b"/"));
         Some(S3Endpoint {
             host_with_path: host_with_path.into_boxed_slice(),
             is_http,

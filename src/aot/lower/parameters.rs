@@ -1,7 +1,7 @@
 mod arguments;
 mod binding;
 
-pub(in crate::lower) use binding::parameter_symbols;
+pub(in crate::lower) use binding::parameters_named_in_body;
 
 use bun_sema::hir::{self, Call, ExprKind};
 

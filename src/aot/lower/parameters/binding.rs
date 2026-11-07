@@ -1,5 +1,6 @@
 use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, SymbolId, has_simple_parameter_list};
-use bun_sema::hir::{self, FnId, FnKind, ParamId, PatId, PatKind};
+use bun_sema::hir::{self, ExprKind, FnBody, FnId, FnKind, ParamId, PatId, PatKind};
+use bun_sema::node::{Node, NodeData, ToNode};
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -20,6 +21,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let values: SmallVec<[ValueId; 4]> = (0..count).map(get_parameter).collect();
         let mut initial: SmallVec<[(BindingRef, ValueId); 4]> = SmallVec::new();
         let unit = CodeUnit::Function(source);
+        let flags = self.builder.function().flags;
+        if flags.intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR) {
+            self.coroutine.named_parameters =
+                parameters_named_in_body(hir, self.file.bound, source);
+        }
         if let Some(object) = self.create_arguments_object(unit, &values) {
             initial.push((BindingRef::Slot(top, ScopeSlot::Arguments), object));
         }
@@ -98,7 +104,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let top = self.file.bound.fns[source.idx()].scope;
         let symbols = parameter_symbols(self.file.hir, self.file.bound, source);
-        let names = symbols.into_iter().map(BindingRef::Symbol);
+        let names = symbols.into_iter().filter_map(|symbol| {
+            let binding = BindingRef::Symbol(symbol);
+            let placement = self.file.scopes.placement(binding);
+            let is_shared = placement.is_some_and(|placement| placement.is_shared);
+            (is_shared || self.coroutine.named_parameters.contains(&symbol)).then_some(binding)
+        });
         let arguments = BindingRef::Slot(top, ScopeSlot::Arguments);
         self.coroutine.held = names.chain([arguments]).collect();
     }
@@ -154,6 +165,61 @@ pub(in crate::lower) fn parameter_symbols(
     }
     symbols.sort_unstable();
     symbols
+}
+
+/// The parameters that an identifier in the body (or in a function nested in it) names, or that a `var` of the same name declares.
+/// JavaScriptCore's wrapper of a generator or async function captures only these into its activation.
+pub(in crate::lower) fn parameters_named_in_body(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> SmallVec<[SymbolId; 4]> {
+    let parameters = parameter_symbols(hir, bound, function);
+    let mut named: SmallVec<[SymbolId; 4]> = SmallVec::new();
+    let mut name = |symbol: SymbolId| {
+        if parameters.contains(&symbol) && !named.contains(&symbol) {
+            named.push(symbol);
+        }
+    };
+    for &symbol in &parameters {
+        let declarations = &bound.symbol(symbol).decls;
+        if declarations
+            .iter()
+            .any(|declaration| matches!(declaration, Decl::Var(_)))
+        {
+            name(symbol);
+        }
+    }
+    let copies = bound.runtime.parameter_var_copies();
+    let start = copies.partition_point(|copy| copy.function < function);
+    let end = copies.partition_point(|copy| copy.function <= function);
+    for copy in &copies[start..end] {
+        name(copy.parameter);
+    }
+    let mut pending: SmallVec<[Node; 16]> = match hir[function].body {
+        FnBody::Block(statements) => hir
+            .ids(statements)
+            .map(|statement| statement.to_node(hir))
+            .collect(),
+        FnBody::Expr(expression) => SmallVec::from_slice(&[expression.to_node(hir)]),
+        FnBody::None => SmallVec::new(),
+    };
+    while let Some(node) = pending.pop() {
+        if let NodeData::Expr(expression) = hir.data(node)
+            && let ExprKind::Ident(_) = hir[expression].kind
+        {
+            if let Binding::Symbol(symbol) = bound.binding(expression) {
+                name(symbol);
+            }
+            continue;
+        }
+        hir.for_each_child(node, &mut |child| {
+            pending.push(child);
+            false
+        });
+    }
+    named.sort_unstable();
+    named
 }
 
 fn apply_default(

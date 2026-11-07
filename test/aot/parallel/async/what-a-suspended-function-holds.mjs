@@ -287,7 +287,7 @@ a local read in the catch block: kept
 a local of a try block read only in front: collected
 a member of a result that waits for the await, in a try with a finally: kept
 a parameter named only in front of the await: kept
-a parameter nobody names: kept
+a parameter nobody names: collected
 a parameter named behind the await: kept
 a name of a destructured parameter, named only in front: kept
 a member of a rest parameter named only in front: kept
@@ -303,9 +303,9 @@ a member stored between two awaits: kept
 generator: a local read behind the yield: kept
 generator: a local read only in front of the yield: collected
 generator: a parameter named only in front: kept
-generator: a parameter nobody names: kept
+generator: a parameter nobody names: collected
 generator: a parameter of one that has not started: kept
-generator: a parameter nobody names of one that has not started: kept
+generator: a parameter nobody names of one that has not started: collected
 generator: a member nobody reads of a literal read behind: kept
 async generator: a member nobody reads of a literal read behind a yield: kept
 async generator: a local read only in front of the yield: collected

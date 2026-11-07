@@ -5927,12 +5927,8 @@ static bool isSandboxOf(JSC::JSGlobalProxy* contextGlobal, JSC::JSValue value)
         if (value == sandbox)
             return true;
         // The own slot of a Proxy is the slot of its target.
-        while (auto* proxyObject = dynamicDowncast<ProxyObject>(sandbox)) {
-            if (proxyObject->isRevoked())
-                return false;
-            sandbox = proxyObject->target();
-        }
-        contextGlobal = dynamicDowncast<JSGlobalProxy>(sandbox);
+        sandbox = context->sandboxBehindProxies();
+        contextGlobal = sandbox ? dynamicDowncast<JSGlobalProxy>(sandbox) : nullptr;
     }
     return false;
 }
@@ -5945,8 +5941,13 @@ static NEVER_INLINE void forEachOwnPropertyOfRealmGlobal(JSC::JSGlobalProxy* pro
 
     // The global of another realm shows what the program put on it, not the realm's builtins.
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    proxy->methodTable()->getOwnPropertyNames(proxy, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    auto* context = dynamicDowncast<Bun::NodeVMGlobalObject>(proxy->target());
+    bool isListed = context && context->getOwnEnumerablePropertyNamesReadingNoExport(globalObject, properties);
     RETURN_IF_EXCEPTION(scope, );
+    if (!isListed) {
+        proxy->methodTable()->getOwnPropertyNames(proxy, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 
     auto& names = properties.data()->propertyNameVector();
     if (sorted)

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -1077,6 +1077,14 @@ describe("printing the global of a node:vm context", () => {
     return { descriptor, calls: () => calls };
   }
 
+  // After link() a module has its function declarations, and a read of `later` throws until evaluate().
+  async function linkedModule() {
+    const module = new vm.SourceTextModule("export const later = 1; export function hoisted() {}");
+    await module.link(() => {});
+    return module;
+  }
+  const contextGlobalOver = sandbox => runInContext("this", createContext(sandbox));
+
   it("lists the accessors of the sandbox and calls none of them", () => {
     const calls = [];
     const symbol = Symbol("symbol");
@@ -1453,6 +1461,126 @@ describe("printing the global of a node:vm context", () => {
         expect(() => print(contextGlobal)).toThrow("from the ownKeys trap");
       });
     });
+
+    describe("when the sandbox is a module namespace", () => {
+      const withoutLater = "{\n  hoisted: [Function: hoisted],\n}";
+      const withLater = "{\n  hoisted: [Function: hoisted],\n  later: 1,\n}";
+      const readBeforeSet = "Cannot access 'later' before initialization";
+
+      it.each([
+        ["the namespace", namespace => namespace],
+        ["a Proxy of the namespace", namespace => new Proxy(namespace, {})],
+        ["a Proxy of a Proxy of the namespace", namespace => new Proxy(new Proxy(namespace, {}), {})],
+        ["the global of a context over the namespace", namespace => contextGlobalOver(namespace)],
+        [
+          "a Proxy of the global of a context over the namespace",
+          namespace => new Proxy(contextGlobalOver(namespace), {}),
+        ],
+        [
+          "a Proxy of the global of a context over a Proxy of the namespace",
+          namespace => new Proxy(contextGlobalOver(new Proxy(namespace, {})), {}),
+        ],
+      ])("%s: an export that is not set yet is left out", async (_, sandboxOf) => {
+        const module = await linkedModule();
+        const contextGlobal = contextGlobalOver(sandboxOf(module.namespace));
+        expect(print(contextGlobal)).toBe(withoutLater);
+        expect(module.status).toBe("linked");
+        await module.evaluate();
+        expect(print(contextGlobal)).toBe(withLater);
+      });
+
+      it("a cell of Bun.inspect.table()", async () => {
+        const module = await linkedModule();
+        const table = Bun.inspect.table([{ cell: contextGlobalOver(module.namespace) }], options);
+        expect(table).toContain("{ hoisted: [Function: hoisted] }");
+      });
+
+      // The names come from the namespace, so the print asks the trap for a name one time: to look it up.
+      it("a getOwnPropertyDescriptor trap over the namespace is asked at the lookup only", async () => {
+        const module = await linkedModule();
+        const asked = [];
+        const getOwnPropertyDescriptor = (target, key) => {
+          asked.push(key);
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        };
+        const contextGlobal = contextGlobalOver(new Proxy(module.namespace, { getOwnPropertyDescriptor }));
+        asked.length = 0;
+        expect(print(contextGlobal)).toBe(withoutLater);
+        expect(asked.filter(key => key === "hoisted" || key === "later").sort()).toEqual(["hoisted", "later"]);
+      });
+
+      it("a getOwnPropertyDescriptor trap over the namespace that throws leaves the name out", async () => {
+        const module = await linkedModule();
+        await module.evaluate();
+        const getOwnPropertyDescriptor = (target, key) => {
+          if (key === "hoisted") throw new Error("the trap threw");
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        };
+        const contextGlobal = contextGlobalOver(new Proxy(module.namespace, { getOwnPropertyDescriptor }));
+        expect(print(contextGlobal)).toBe("{\n  later: 1,\n}");
+      });
+
+      // The engine checks what an ownKeys trap returns against the target, and that check reads every export.
+      it("an ownKeys trap over the namespace: the print throws while an export is not set, as Reflect.ownKeys() does", async () => {
+        const module = await linkedModule();
+        const contextGlobal = contextGlobalOver(new Proxy(module.namespace, { ownKeys: Reflect.ownKeys }));
+        expect(() => Reflect.ownKeys(contextGlobal)).toThrow(readBeforeSet);
+        expect(() => print(contextGlobal)).toThrow(readBeforeSet);
+        await module.evaluate();
+        expect(print(contextGlobal)).toBe(withLater);
+      });
+
+      it("an ownKeys trap that throws and a revoked Proxy end the print with their error", async () => {
+        const module = await linkedModule();
+        const ownKeys = () => {
+          throw new Error("from the ownKeys trap");
+        };
+        expect(() => print(contextGlobalOver(new Proxy(module.namespace, { ownKeys })))).toThrow(
+          "from the ownKeys trap",
+        );
+
+        const { proxy, revoke } = Proxy.revocable(module.namespace, {});
+        const contextGlobal = contextGlobalOver(proxy);
+        revoke();
+        expect(() => print(contextGlobal)).toThrow(TypeError);
+      });
+
+      const contextGlobalWithVar = (sandbox, name) => {
+        const context = createContext(sandbox);
+        runInContext(`var ${name};`, context);
+        return runInContext("this", context);
+      };
+
+      it.each([
+        ["the namespace", namespace => contextGlobalWithVar(namespace, "outer"), ["hoisted", "later", "outer"]],
+        [
+          "a Proxy of the namespace",
+          namespace => contextGlobalWithVar(new Proxy(namespace, {}), "outer"),
+          ["hoisted", "later", "outer"],
+        ],
+        [
+          "the global of a context over the namespace",
+          namespace => contextGlobalWithVar(contextGlobalWithVar(namespace, "inner"), "outer"),
+          ["hoisted", "later", "inner", "outer"],
+        ],
+        [
+          "a Proxy of the global of a context over a Proxy of the namespace",
+          namespace =>
+            contextGlobalWithVar(new Proxy(contextGlobalWithVar(new Proxy(namespace, {}), "inner"), {}), "outer"),
+          ["hoisted", "later", "inner", "outer"],
+        ],
+      ])("%s: the names are those of Object.keys(), in its order", async (_, contextGlobalOf, keys) => {
+        const module = await linkedModule();
+        await module.evaluate();
+        const contextGlobal = contextGlobalOf(module.namespace);
+        expect(Object.keys(contextGlobal)).toEqual(keys);
+        const printed = print(contextGlobal)
+          .split("\n")
+          .slice(1, -1)
+          .map(line => line.slice(2, line.indexOf(":")));
+        expect(printed).toEqual(options ? keys.toSorted() : keys);
+      });
+    });
   });
 
   // bun:test prints what a read gives: its snapshots, diffs and matcher messages call getters on purpose.
@@ -1620,6 +1748,31 @@ describe("printing the global of a node:vm context", () => {
         "expect(received).toBeNull()\n\nReceived: {\n  after: 1,\n}\n",
       );
     });
+
+    it("a module namespace sandbox with an export that is not set yet", async () => {
+      const module = await linkedModule();
+      const contextGlobal = contextGlobalOver(module.namespace);
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: Module {\n  hoisted: [Function: hoisted],\n}\n",
+      );
+      const diff = messageOf(() => expect(contextGlobal).toEqual(1));
+      expect(diff).toContain('+   "hoisted": [Function: hoisted],\n+ }\n');
+      expect(diff).not.toContain("later");
+    });
+
+    it("the getter that a mock.module() factory returns is called one time for each print", async () => {
+      let calls = 0;
+      mock.module("inspect-test-mocked-module", () => ({
+        get value() {
+          return ++calls;
+        },
+      }));
+      // A mocked module without a file has no other way to its namespace.
+      const contextGlobal = contextGlobalOver(await import("inspect-test-mocked-module"));
+      calls = 0;
+      expect([withoutClassName(Bun.inspect(contextGlobal)), calls]).toEqual(["{\n  value: 1,\n}", 1]);
+      expect([withoutClassName(Bun.inspect(contextGlobal, { sorted: true })), calls]).toEqual(["{\n  value: 2,\n}", 2]);
+    });
   });
 
   it("an error message that prints the global", () => {
@@ -1630,6 +1783,69 @@ describe("printing the global of a node:vm context", () => {
     );
     expect(() => createContext({}, { microtaskMode: contextGlobal })).toThrow("{ a: 1, other: [Getter] }");
     expect(calls()).toBe(0);
+  });
+
+  it("an error message that prints the global over a module namespace with an export that is not set yet", async () => {
+    const module = await linkedModule();
+    const contextGlobal = contextGlobalOver(module.namespace);
+    expect(() => createContext({}, { microtaskMode: contextGlobal })).toThrow(
+      "Module { hoisted: [Function: hoisted] }",
+    );
+  });
+
+  it("a script lists the keys of a module namespace sandbox as before", async () => {
+    const module = await linkedModule();
+    const context = createContext(module.namespace);
+    const contextGlobal = runInContext("this", context);
+    const readBeforeSet = "Cannot access 'later' before initialization";
+    expect(() => Object.keys(contextGlobal)).toThrow(readBeforeSet);
+    expect(() => runInContext("Object.keys(this)", context)).toThrow(readBeforeSet);
+    expect(Object.getOwnPropertyNames(contextGlobal)).toEqual(expect.arrayContaining(["hoisted", "later"]));
+    expect(runInContext("Object.getOwnPropertyNames(this)", context)).toEqual(
+      expect.arrayContaining(["hoisted", "later"]),
+    );
+  });
+
+  // These pass without the listing for a module namespace too. They pin that it keeps what other namespaces print.
+  it.concurrent("a CommonJS, a required and a deferred namespace as the sandbox print as before", async () => {
+    using dir = tempDir("inspect-vm-global-over-namespaces", {
+      "esm.mjs": "export const a = 1;\nexport default function f() {}\n",
+      "cjs.cjs": "module.exports = { a: 1 };\n",
+      "required.mjs": "export const value = 1;\n",
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        import vm from "node:vm";
+        import * as cjs from "./cjs.cjs";
+        import defer * as deferred from "./esm.mjs";
+
+        const required = createRequire(import.meta.url)("./required.mjs");
+        Object.defineProperty(required, Symbol.for("key"), { value: 1, enumerable: true });
+        for (const namespace of [cjs, required, deferred])
+          for (const options of [{ compact: true }, { compact: true, sorted: true }])
+            console.log(Bun.inspect(vm.runInContext("this", vm.createContext(namespace)), options));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "Module { a: 1, default: { a: 1 } }",
+        "Module { a: 1, default: { a: 1 } }",
+        "Module { value: 1, [Symbol(key)]: 1 }",
+        "Module { [Symbol(key)]: 1, value: 1 }",
+        "Deferred Module { a: 1, default: [Function: f] }",
+        "Deferred Module { a: 1, default: [Function: f] }",
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it.concurrent("console methods", async () => {

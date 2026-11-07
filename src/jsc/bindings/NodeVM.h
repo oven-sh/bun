@@ -133,6 +133,10 @@ public:
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned index, JSC::PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    // For a print. Behind Proxies and other contexts the sandbox can be a module namespace: this lists what DontEnumPropertiesMode::Exclude lists for it and reads no export. It returns false for any other sandbox.
+    bool getOwnEnumerablePropertyNamesReadingNoExport(JSGlobalObject*, JSC::PropertyNameArrayBuilder&);
+    // Null without a sandbox, and behind a revoked Proxy.
+    JSObject* sandboxBehindProxies() const;
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);

@@ -1661,10 +1661,109 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     RELEASE_AND_RETURN(scope, Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode));
 }
 
+// The namespace of the ahead-of-time run time is an ObjectType cell. A compiled object has the same flag under another JSType, so it never makes the call.
+static bool isNamespaceOfModule(JSObject* object)
+{
+    JSC::JSType type = object->type();
+    if (type == JSC::ModuleNamespaceObjectType)
+        return true;
+    return type == JSC::ObjectType && JSC::TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && JSC::AOT::isModuleNamespace(object);
+}
+
+JSObject* NodeVMGlobalObject::sandboxBehindProxies() const
+{
+    JSObject* object = m_sandbox.get();
+    while (auto* proxy = object ? dynamicDowncast<ProxyObject>(object) : nullptr)
+        object = proxy->isRevoked() ? nullptr : proxy->target();
+    return object;
+}
+
+// `object` is what sandboxBehindProxies() gives: a namespace, which answers HasProperty for an export and does not read its binding, or the global of another context.
+static bool hasEnumerableOwnPropertyReadingNoExport(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::HasProperty);
+    bool hasProperty;
+    if (auto* innerProxy = dynamicDowncast<JSGlobalProxy>(object)) {
+        auto* inner = dynamicDowncast<NodeVMGlobalObject>(innerProxy->target());
+        if (!inner)
+            return false;
+        if (JSObject* innerSandbox = inner->sandboxBehindProxies()) {
+            if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+                return false;
+            bool isInSandbox = hasEnumerableOwnPropertyReadingNoExport(innerSandbox, globalObject, propertyName);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isInSandbox)
+                return true;
+        }
+        hasProperty = NodeVMGlobalObject::Base::getOwnPropertySlot(inner, globalObject, propertyName, slot);
+    } else {
+        hasProperty = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+    }
+    RETURN_IF_EXCEPTION(scope, false);
+    return hasProperty && !(slot.attributes() & PropertyAttribute::DontEnum);
+}
+
+// Lists one context in the order of getOwnPropertyNames: the sandbox, then the global's own names.
+static void listEnumerableNamesReadingNoExport(NodeVMGlobalObject* context, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* sandbox = context->contextifiedObject();
+    // Taken before a trap of the listing below can revoke a Proxy.
+    JSObject* behindProxies = context->sandboxBehindProxies();
+    EnsureStillAliveScope keepAlive(behindProxies);
+
+    auto* innerProxy = dynamicDowncast<JSGlobalProxy>(sandbox);
+    if (auto* inner = innerProxy ? dynamicDowncast<NodeVMGlobalObject>(innerProxy->target()) : nullptr) {
+        if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+            return;
+        listEnumerableNamesReadingNoExport(inner, globalObject, propertyNames);
+        RETURN_IF_EXCEPTION(scope, );
+    } else {
+        PropertyNameArrayBuilder allNames(vm, propertyNames.propertyNameMode(), propertyNames.privateSymbolMode());
+        sandbox->methodTable()->getOwnPropertyNames(sandbox, globalObject, allNames, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, );
+        for (const auto& name : allNames) {
+            bool isEnumerable = hasEnumerableOwnPropertyReadingNoExport(behindProxies, globalObject, name);
+            RETURN_IF_EXCEPTION(scope, );
+            if (isEnumerable)
+                propertyNames.add(name.impl());
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, NodeVMGlobalObject::Base::getOwnPropertyNames(context, globalObject, propertyNames, DontEnumPropertiesMode::Exclude));
+}
+
+bool NodeVMGlobalObject::getOwnEnumerablePropertyNamesReadingNoExport(JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    for (auto* context = this;;) {
+        JSObject* behindProxies = context->sandboxBehindProxies();
+        if (!behindProxies)
+            return false;
+        if (isNamespaceOfModule(behindProxies))
+            break;
+        auto* innerProxy = dynamicDowncast<JSGlobalProxy>(behindProxies);
+        context = innerProxy ? dynamicDowncast<NodeVMGlobalObject>(innerProxy->target()) : nullptr;
+        if (!context)
+            return false;
+    }
+
+    listEnumerableNamesReadingNoExport(this, globalObject, propertyNames);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSValue argument = callFrame->argument(0);
-    return JSValue::encode(jsBoolean(argument.inherits(JSModuleNamespaceObject::info()) || (argument.isCell() && JSC::AOT::isModuleNamespace(argument.asCell()))));
+    return JSValue::encode(jsBoolean(argument.isObject() && isNamespaceOfModule(asObject(argument))));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

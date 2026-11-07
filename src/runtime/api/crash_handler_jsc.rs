@@ -259,3 +259,7 @@ pub(crate) fn get_feature_data() -> FeatureData {
         generated_at: bun_core::time::milli_timestamp().max(0) as u64,
     }
 }
+
+pub(crate) fn is_analytics_enabled() -> bool {
+    analytics::is_enabled()
+}

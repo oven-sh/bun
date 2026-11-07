@@ -2,7 +2,7 @@
 // Expected values verified against json5@2.2.3 reference implementation.
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, integersThatNeedRounding, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("escape sequences", () => {
@@ -302,6 +302,37 @@ describe("numbers - additional", () => {
     expect(JSON5.parse("0x8000000000000000")).toEqual(9223372036854775808);
     // 0xFFFFFFFFFFFFFFFF = u64 max
     expect(JSON5.parse("0xFFFFFFFFFFFFFFFF")).toEqual(18446744073709551615);
+  });
+
+  // A JSON5 hex number is an ECMAScript HexIntegerLiteral: a Number of any magnitude, rounded to the
+  // nearest double. json5 returns `Number("0x...")` for it.
+  test("hex number of 2^64 or more", () => {
+    const zeros = (count: number) => Buffer.alloc(count, "0").toString();
+    expect(JSON5.parse("0x10000000000000000")).toBe(2 ** 64);
+    expect(JSON5.parse("0x1ffffffffffffffff")).toBe(2 ** 65);
+    expect(JSON5.parse("0xFFFFFFFFFFFFFFFFFF")).toBe(4.722366482869645e21);
+    expect(JSON5.parse("+0x1" + zeros(30))).toBe(2 ** 120);
+    expect(JSON5.parse("-0X1" + zeros(30))).toBe(-(2 ** 120));
+    // 2^1020 is finite and 2^1024 is not
+    expect(JSON5.parse(`{a: [0x1${zeros(255)}, 0x1${zeros(256)}], b: -0x1${zeros(256)}}`)).toEqual({
+      a: [2 ** 1020, Infinity],
+      b: -Infinity,
+    });
+  });
+
+  test("hex numbers round to the nearest double", () => {
+    // JSON5 has no `0o`, no `0b` and no digit separator.
+    const cases = integersThatNeedRounding().filter(([text]) => /^0x[0-9a-f]+$/i.test(text));
+    expect(cases.some(([, exact]) => exact >= 2n ** 64n)).toBe(true);
+    for (const [text, exact] of cases.slice()) {
+      if (exact !== 0n) cases.push(["-" + text, -exact], ["+" + text, exact]);
+    }
+    const wrong: object[] = [];
+    for (const [text, exact] of cases) {
+      const value = JSON5.parse(text);
+      if (!Object.is(value, Number(exact))) wrong.push({ text, value, nearest: Number(exact) });
+    }
+    expect(wrong).toEqual([]);
   });
 });
 
@@ -718,11 +749,6 @@ describe("error messages", () => {
     expect(() => JSON5.parse("0x")).toThrow("Invalid hex number");
     expect(() => JSON5.parse("0X")).toThrow("Invalid hex number");
     expect(() => JSON5.parse("0xGG")).toThrow("Invalid hex number");
-  });
-
-  // -- Hex number too large --
-  test("hex number too large", () => {
-    expect(() => JSON5.parse("0xFFFFFFFFFFFFFFFFFF")).toThrow("Invalid hex number");
   });
 });
 

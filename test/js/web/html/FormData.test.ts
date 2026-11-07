@@ -127,6 +127,23 @@ describe("FormData", () => {
       expect([entry.name, entry.type, await entry.text()]).toEqual(["other.txt", "text/plain", "a"]);
       expect(file.name).toBe("a.txt");
     });
+
+    it("names the new File for a slice of a File 'blob'", async () => {
+      const file = new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 });
+      const form = new FormData();
+      form.append("chunk", file.slice(0, 5));
+      form.append("whole", file);
+      const chunk = form.get("chunk") as File;
+      expect([chunk instanceof File, chunk.name, chunk.type, await chunk.text()]).toEqual([
+        true,
+        "blob",
+        "application/pdf",
+        "01234",
+      ]);
+      expect(form.get("whole")).toBe(file);
+      const body = await new Response(form).text();
+      expect(body.match(/filename="[^"]*"/g)).toEqual(['filename="blob"', 'filename="report.pdf"']);
+    });
   });
 
   it("should use the correct filenames", async () => {

@@ -3564,7 +3564,7 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
+static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, bool copiesErrors)
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* copy = nullptr;
@@ -3574,13 +3574,24 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
     } else if (object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
         JSValue prototype = object->getPrototypeDirect();
         copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    } else if (copiesErrors && object->classInfo() == ErrorInstance::info()) {
+        // Made the way a structured clone makes one: it captures no stack.
+        copy = ErrorInstance::create(globalObject, String(), uncheckedDowncast<ErrorInstance>(object)->errorType(), {}, String(), String());
+        copy->setPrototypeDirect(vm, object->getPrototypeDirect());
     } else {
         return nullptr;
     }
+    bool isError = copy->type() == ErrorInstanceType;
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    // The stack of an Error stays out of the copy: to ask for it, or for all the names, can call `Error.prepareStackTrace`.
+    if (isError)
+        object->structure()->getPropertyNamesFromStructure(vm, names, DontEnumPropertiesMode::Include);
+    else
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (const auto& name : names) {
+        if (isError && (name == vm.propertyNames->message || ErrorInstance::isLazilyMaterialized(vm, name)))
+            continue;
         PropertyDescriptor descriptor;
         bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -3592,6 +3603,13 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
         copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    // The message can be a getter that needs the private fields of `object`, which the copy does not have.
+    if (isError) {
+        JSValue message = object->getIfPropertyExists(globalObject, vm.propertyNames->message);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (message)
+            copy->putDirect(vm, vm.propertyNames->message, message, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
     // The loop can't define `length` (it's not configurable), and trailing holes only exist through it.
     if (auto* array = dynamicDowncast<JSArray>(copy)) {
         array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
@@ -3601,7 +3619,7 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
 }
 
 // Returns `root` with matched properties replaced by their asymmetric matchers, copying only the objects that change.
-static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
+static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern, bool copiesErrors)
 {
     using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
     auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
@@ -3625,7 +3643,7 @@ static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope
 
     MarkedArgumentBuffer keepAlive;
     for (auto& [pair, copy] : copies) {
-        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)));
+        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)), copiesErrors);
         RETURN_IF_EXCEPTION(scope, {});
         if (copy)
             keepAlive.append(copy);
@@ -3660,7 +3678,8 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
-        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
+        // The diff of a failed match keeps the message of an Error, which says more than the matcher it matched.
+        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset, matched) : obj;
         RETURN_IF_EXCEPTION(scope, false);
         *replaced = JSValue::encode(shown);
     }

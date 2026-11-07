@@ -100,7 +100,7 @@ public:
         if (state & (HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN)) {
             return true;
         }
-        if (!(state & (HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN | HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE))) {
+        if (!(state & HttpResponseData<SSL>::HTTP_CLOSE_MARKS)) {
             return false;
         }
         return shouldCloseAfterFinOrWhenIdle(httpResponseData);
@@ -118,6 +118,14 @@ public:
      * close, peer FIN, close-when-idle), the response is complete and every
      * outgoing byte has been flushed. Returns true when the socket was closed. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_CLOSE_MARKS)) {
+            return false;
+        }
+        return closeMarkedIfDone(httpResponseData);
+    }
+
+    /* closeIfDoneAndMarked() for a connection that has a mark, out of line. */
+    __attribute__((noinline)) bool closeMarkedIfDone(HttpResponseData<SSL> *httpResponseData) {
         if (shouldCloseConnection(httpResponseData)) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {

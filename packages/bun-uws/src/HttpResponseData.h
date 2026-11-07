@@ -181,6 +181,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
             | HTTP_NODE_HALF_CLOSED,
+
+        /* The bits that mark a connection to close. HttpResponse::shouldCloseConnection() reads these and no other:
+         * without one of them, no close gate closes the connection. */
+        HTTP_CLOSE_MARKS = HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

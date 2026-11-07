@@ -1,0 +1,53 @@
+---
+title: Build a backend using Encore and Bun
+sidebarTitle: Encore with Bun
+mode: center
+---
+
+[Encore](https://encore.dev) is an open source backend framework for TypeScript with built-in infrastructure and observability.
+
+<Note>Bun support in Encore is experimental. Enable it by adding `"experiments": ["bun-runtime"]` to your `encore.app` file.</Note>
+
+```ts hello/hello.ts icon="/icons/typescript.svg"
+import { api } from "encore.dev/api";
+
+export const world = api(
+  { expose: true, method: "GET", path: "/hello/:name" },
+  async ({ name }: { name: string }) => {
+    return { message: `Hello, ${name}!` };
+  }
+);
+```
+
+---
+
+Install the Encore CLI and create a new app:
+
+```bash terminal icon="terminal"
+brew install encoredev/tap/encore
+encore app create my-app --example=ts/hello-world
+cd my-app
+```
+
+---
+
+Enable Bun in `encore.app`:
+
+```json encore.app icon="file-json"
+{
+  "id": "my-app",
+  "experiments": ["bun-runtime"]
+}
+```
+
+---
+
+Run locally and open [localhost:4000](http://localhost:4000):
+
+```bash terminal icon="terminal"
+encore run
+```
+
+---
+
+Refer to [Encore's documentation](https://encore.dev/docs) for more, or see the [deployment guide](/docs/guides/deployment/encore) for deploying to Encore Cloud.

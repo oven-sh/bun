@@ -1294,22 +1294,33 @@ test("prints the object that dispatched an event one level deep", () => {
   // Where no event holds it, it prints in full.
   expect(printedInFailure({ socket })).toHaveLength(4103);
 
-  // A function and an error take one line, so they print as they do elsewhere.
+  // A function and an error take one line, so they print as they do elsewhere. An event that the object holds prints
+  // as its class, and its `target` is not read.
+  let reads = 0;
+  class Counted extends Event {
+    get target() {
+      reads++;
+      return null;
+    }
+  }
   class Hub extends EventTarget {
     failure = new Error("e");
     handler = () => {};
+    last = new Counted("a");
     self = this;
   }
   const hub = new Hub();
   hub.addEventListener("a", listener);
   hub.dispatchEvent(new Event("a"));
-  expect(printedInFailure(listener.mock.calls[1][0]).slice(-8, -3)).toEqual([
+  expect(printedInFailure(listener.mock.calls[1][0]).slice(-9, -3)).toEqual([
     '  "target": EventTarget Hub {',
     '    "failure": [Error: e],',
     '    "handler": [Function],',
+    '    "last": [Counted],',
     '    "self": [Hub],',
     "  },",
   ]);
+  expect(reads).toBe(0);
 });
 
 test("does not print the accessors of a value that is not a native event", () => {

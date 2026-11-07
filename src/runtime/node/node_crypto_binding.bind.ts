@@ -37,14 +37,12 @@ const randomUUID = {
 } as const;
 
 const optionalUint32 = b.u32.validateInteger().optional;
+/** Node refuses the second name of an option where it reads it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L91-L100 */
 export const ScryptOptions = b.dictionary(
   {
-    N: optionalUint32,
-    cost: optionalUint32,
-    r: optionalUint32,
-    blockSize: optionalUint32,
-    p: optionalUint32,
-    parallelization: optionalUint32,
+    N: { type: optionalUint32, altNames: ["cost"], exclusive: true },
+    r: { type: optionalUint32, altNames: ["blockSize"], exclusive: true },
+    p: { type: optionalUint32, altNames: ["parallelization"], exclusive: true },
     maxmem: b.u64.validateInteger().optional,
   },
   { allowArray: true, nonObjectAsEmpty: true, reportedAs: "" },

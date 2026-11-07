@@ -514,8 +514,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
             return static_cast<sqlite3_int64>(lazy_sqlite3_changes(db));
         };
     }
-    // sqlite3_db_status64 was added in 3.51.0; macOS 14 ships 3.43. The
-    // 32-bit variant has been in the ABI since 3.6.1 and masks to 31 bits.
+    // sqlite3_db_status64 was added in 3.51.0; macOS 14 ships 3.43.
     if (!lazy_sqlite3_db_status64) {
         lazy_sqlite3_db_status64 = [](sqlite3* db, int op, sqlite3_int64* pCur, sqlite3_int64* pHiwtr, int resetFlg) -> int {
             int current = 0;

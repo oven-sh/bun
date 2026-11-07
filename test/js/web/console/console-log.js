@@ -270,3 +270,26 @@ console.log("Hello %%i %i", 5, 6);
 
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
+
+// %d is the integer part of Number(value), %i is parseInt(value) and %f is parseFloat(value)
+console.log("%i %i", [1, 2, 3, 4, 5]);
+console.log("| %d | %i | %f |", "42abc", "42abc", "42abc");
+console.log("| %d | %i | %f |", "\u00a04.5px", "\u00a04.5px", "\u00a04.5px");
+console.log("| %d | %i | %f |", "\u30004.5px", "\u30004.5px", "\u30004.5px");
+console.log("| %d | %i | %f |", "0x1f", "0x1f", "0x1f");
+console.log("| %d | %i | %f |", "", "", "");
+console.log("| %d | %i | %f |", null, null, null);
+console.log("| %d | %i | %f |", true, true, true);
+console.log("| %d | %i | %f |", [], [], []);
+console.log("| %d | %i | %f |", new Date(0), new Date(0), new Date(0));
+console.log("| %d | %i | %f |", { valueOf: () => 7 }, { valueOf: () => 7 }, { valueOf: () => 7 });
+console.log("| %d | %i | %f |", { toString: () => "8.5" }, { toString: () => "8.5" }, { toString: () => "8.5" });
+console.log("| %d | %i | %f |", -0.5, -0.5, -0.5);
+console.log("| %d | %i | %f |", -0, -0, -0);
+console.log("| %d | %i | %f |", "-0", "-0", "-0");
+console.log("| %d | %i | %f |", 2 ** 60, 2 ** 60, 2 ** 60);
+console.log("| %d | %i | %f |", 123456789012345680000, 123456789012345680000, 123456789012345680000);
+console.log("| %d | %i | %f |", 12n, 12n, 12n);
+console.log("| %d | %i | %f |", -12345678901234567890n, -12345678901234567890n, -12345678901234567890n);
+console.log("| %d | %i | %f |", Object(5n), Object(5n), Object(5n));
+console.log("| %d | %i | %f |", Symbol("d"), Symbol("i"), Symbol("f"));

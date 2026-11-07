@@ -1,4 +1,4 @@
-import type { Subprocess } from "bun";
+import { RedisClient, type Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
@@ -1512,6 +1512,77 @@ it.concurrent(
     expect({ events, requestLines: await requestLinesFor("/upgrade").promise }).toEqual({
       events: ["open", "message: hi", "close 1000"],
       requestLines: 1,
+    });
+  },
+);
+
+// Answers HELLO and GET by hand: every key holds "value-of-<key>". It renegotiates once, when it has read the first
+// RENEGOTIATE_AT command, and answers that command when the renegotiation has finished. When the connection closes it
+// prints the commands it got.
+const renegotiatingRedisServer = /* js */ `
+  const server = require("tls").createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      const received = [];
+      let pending = "";
+      let renegotiated = false;
+      socket.on("error", () => {});
+      socket.on("close", () => console.log(JSON.stringify(received)));
+      socket.on("data", chunk => {
+        pending += chunk;
+        // A command is a RESP array of bulk strings: *<count>, then <count> times $<length> and the bytes.
+        for (let head; (head = /^\\*(\\d+)\\r\\n/.exec(pending)); ) {
+          const lines = pending.slice(head[0].length).split("\\r\\n");
+          if (lines.length <= 2 * head[1]) return;
+          const command = lines.slice(0, 2 * head[1]).filter((_, index) => index % 2 === 1);
+          pending = lines.slice(2 * head[1]).join("\\r\\n");
+          received.push(command.join(" "));
+          const answer = () =>
+            socket.write(
+              command[0] === "HELLO"
+                ? "%2\\r\\n$6\\r\\nserver\\r\\n$5\\r\\nredis\\r\\n$5\\r\\nproto\\r\\n:3\\r\\n"
+                : "$" + (9 + command[1].length) + "\\r\\nvalue-of-" + command[1] + "\\r\\n",
+            );
+          if (renegotiated || command[0] !== process.env.RENEGOTIATE_AT) {
+            answer();
+          } else {
+            renegotiated = true;
+            socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : answer()));
+          }
+        }
+      });
+    },
+  );
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
+
+// The repeat report must not send HELLO again: the server answers it too, and every later command gets the reply to
+// the command before it.
+it.concurrent.each(["HELLO", "GET"])(
+  "Bun.RedisClient sends HELLO once when the server renegotiates before it answers %s",
+  async renegotiateAt => {
+    await using server = Bun.spawn({
+      cmd: ["node", "-e", renegotiatingRedisServer],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key, RENEGOTIATE_AT: renegotiateAt },
+    });
+    const output = lines(server.stdout);
+    const port = Number((await output.next()).value);
+    const redis = new RedisClient(`rediss://user:secret@localhost:${port}`, {
+      tls: { ca: tls.cert },
+      autoReconnect: false,
+    });
+    const values: unknown[] = [];
+    try {
+      for (const key of ["a", "b"]) values.push(await redis.get(key));
+    } finally {
+      redis.close();
+    }
+    expect({ values, received: JSON.parse((await output.next()).value!) }).toEqual({
+      values: ["value-of-a", "value-of-b"],
+      received: ["HELLO 3 AUTH user secret", "GET a", "GET b"],
     });
   },
 );

@@ -899,7 +899,8 @@ impl FileReader {
             self.flowing.get()
         );
 
-        if self.flowing.get() == flag {
+        // Before `on_start` the reader has no parent to hand a read to, and nothing to pause.
+        if !self.started.get() || self.flowing.get() == flag {
             return;
         }
 

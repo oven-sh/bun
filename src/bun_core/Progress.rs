@@ -122,13 +122,6 @@ pub struct Progress {
     /// Whether the terminal supports ANSI escape codes.
     pub supports_ansi_escape_codes: bool,
 
-    /// If the terminal is "dumb", don't print output.
-    /// This can be useful if you don't want to print all
-    /// the stages of code generation if there are a lot.
-    /// You should not use it if the user should see output
-    /// for example showing the user what tests run.
-    pub dont_print_on_dumb: bool,
-
     pub root: Node,
 
     /// Keeps track of how much time has passed since the beginning.
@@ -167,7 +160,6 @@ impl Default for Progress {
             terminal: None,
             is_windows_terminal: false,
             supports_ansi_escape_codes: false,
-            dont_print_on_dumb: false,
             root: Node::default(),
             timer: None,
             prev_refresh_timestamp: 0,
@@ -512,11 +504,6 @@ impl Progress {
     }
 
     fn refresh_with_held_lock(&mut self) {
-        let is_dumb = !self.supports_ansi_escape_codes && !self.is_windows_terminal;
-        if is_dumb && self.dont_print_on_dumb {
-            return;
-        }
-
         let Some(file) = self.terminal else {
             return;
         };

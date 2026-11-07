@@ -1,5 +1,6 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { expect } from "bun:test";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -147,3 +148,158 @@ devTest("onResolve + onLoad virtual file", {
 //     await dev.fetch("/").expect('value: 2');
 //   },
 // });
+
+devTest("a file a plugin resolves to is not sent again when its importer changes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "shared",
+        setup(build) {
+          // Spelled with forward slashes, as a plugin building paths from a template does.
+          build.onResolve({ filter: /^shared$/ }, () => ({
+            path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
+          }));
+        },
+      };
+    `,
+    "shared.ts": `
+      console.log("shared");
+      export default "s";
+    `,
+    "item.ts": `
+      import s from "shared";
+      console.log("item " + s + " 1");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("shared", "item s 1");
+    // Only item.ts changed: shared.ts must not run again (its state kept).
+    await dev.patch("item.ts", { find: " 1", replace: " 2" });
+    await c.expectMessage("item s 2");
+    await dev.patch("item.ts", { find: " 2", replace: " 3" });
+    await c.expectMessage("item s 3");
+  },
+});
+devTest("a plugin's onLoad filter sees the path its onResolve gave", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "generated",
+        setup(build) {
+          // A file that is not on the disk, named with forward slashes and loaded by a filter written for them.
+          build.onResolve({ filter: /^generated$/ }, () => ({
+            path: path.join(import.meta.dir, "generated.ts").replaceAll("\\\\", "/"),
+          }));
+          build.onLoad({ filter: /\\/generated\\.ts$/ }, () => ({ contents: 'export default "g";', loader: "ts" }));
+        },
+      };
+    `,
+    "item.ts": `
+      import g from "generated";
+      console.log("item " + g);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("item g");
+  },
+});
+devTest("a file a plugin resolves to with forward slashes is watched", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "shared",
+        setup(build) {
+          // Spelled with forward slashes, as a plugin building paths from a template does.
+          build.onResolve({ filter: /^shared$/ }, () => ({
+            path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
+          }));
+        },
+      };
+    `,
+    "shared.ts": `
+      export default "s1";
+    `,
+    "item.ts": `
+      import s from "shared";
+      console.log("item " + s);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("item s1");
+    await dev.patch("shared.ts", { find: "s1", replace: "s2" });
+    await c.expectMessage("item s2");
+    await dev.patch("shared.ts", { find: "s2", replace: "s3" });
+    await c.expectMessage("item s3");
+  },
+});
+devTest("a file a plugin's onLoad filter matches but leaves to the disk is watched", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import { appendFileSync } from "node:fs";
+      import * as path from "node:path";
+      export default {
+        name: "shared",
+        setup(build) {
+          build.onResolve({ filter: /^shared$/ }, () => ({
+            path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
+          }));
+          // Matches the path as written, and returns nothing: the file is read from the disk.
+          build.onLoad({ filter: /\\/shared\\.ts$/ }, () => {
+            appendFileSync(path.join(import.meta.dir, "loads.txt"), "load\\n");
+          });
+        },
+      };
+    `,
+    "shared.ts": `
+      export default "s1";
+    `,
+    "item.ts": `
+      import s from "shared";
+      console.log("item " + s);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("item s1");
+    expect(dev.read("loads.txt")).toBe("load\n");
+    await dev.patch("shared.ts", { find: "s1", replace: "s2" });
+    await c.expectMessage("item s2");
+  },
+});

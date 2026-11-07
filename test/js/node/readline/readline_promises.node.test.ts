@@ -116,6 +116,7 @@ describe("readline/promises.Readline", () => {
     ["a Duplex with writable: false", () => new Duplex({ ...notWritable, read() {} })],
     ["a Transform with writable: false", () => new Transform(notWritable)],
     ["an object with write() that is not a stream", () => ({ write() {} })],
+    ["a Writable whose write is not a function", () => Object.defineProperty(sink(), "write", { value: null })],
   ])("the constructor throws ERR_INVALID_ARG_TYPE for %s", (_, make) => {
     const stream = make() as Writable;
     expect(() => new readlinePromises.Readline(stream)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");

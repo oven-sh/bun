@@ -1670,40 +1670,7 @@ impl Run<'_> {
             }
 
             if ctx.runtime_options.eval.eval_and_print {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                result.then2(
-                                    global,
-                                    JSValue::UNDEFINED,
-                                    crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
-                };
-                bun_jsc::ConsoleObject::message_with_type_and_level(
-                    bun_jsc::ConsoleObject::MessageType::Log,
-                    bun_jsc::ConsoleObject::MessageLevel::Log,
-                    global,
-                    &[to_print],
-                );
+                print_eval_result(vm);
             }
 
             vm.on_before_exit();
@@ -1777,6 +1744,53 @@ fn dump_build_error(vm: &mut VirtualMachine) {
         ));
     }
     Output::flush();
+}
+
+/// `--print` in `Run::start`: writes the entry point's result the way `console.log` does.
+#[cold]
+#[inline(never)]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely.print_eval_result")
+)]
+fn print_eval_result(vm: &mut VirtualMachine) {
+    let global = vm.global();
+    let result = vm
+        .entry_point_result
+        .value
+        .get()
+        .unwrap_or(JSValue::UNDEFINED);
+    let to_print = match result.as_any_promise() {
+        None => result,
+        Some(promise) => {
+            // The loop drained on its own: one more turn runs the unref'd work that is already due.
+            if promise.status() == PromiseStatus::Pending && vm.unhandled_error_counter == 0 {
+                vm.tick();
+                vm.auto_tick_active();
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+                // The reason is printed as the result. Whether this turn ran must not decide the exit code.
+                if promise.status() == PromiseStatus::Rejected {
+                    promise.set_handled(vm.jsc_vm());
+                }
+            }
+            match promise.status() {
+                PromiseStatus::Pending => result,
+                _ => promise.result(vm.jsc_vm()),
+            }
+        }
+    };
+    // The process entry is the outermost frame: a conversion that threw is reported here.
+    crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            global,
+            &[to_print],
+        )
+    }));
 }
 
 /// Cold tail shared by the rejected-entry-point and load-failure paths in

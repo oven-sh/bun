@@ -203,6 +203,148 @@ describe("--print for cjs/esm", () => {
   });
 });
 
+async function print(script: string, flag = "-p") {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), flag, script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// The timer is unref'd and already due when the event loop drains, so the result is still pending then.
+const settlesLate = (settle: "resolve" | "reject", value: string) =>
+  `new Promise((resolve, reject) => { setTimeout(() => ${settle}(${value}), 1).unref(); Bun.sleepSync(10); })`;
+
+describe.concurrent("--print of a result that throws while it is formatted", () => {
+  const thrower = `({ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("inspect failed"); } })`;
+  const reported = { stdout: "", stderr: expect.stringContaining("error: inspect failed"), exitCode: 1 };
+
+  describe.each(["-p", "--print"])("%s", flag => {
+    test.each([
+      ["a value", thrower],
+      ["a settled promise", `Promise.resolve(${thrower})`],
+      ["a top-level await", `await new Promise(resolve => setTimeout(() => resolve(${thrower}), 1))`],
+      ["a promise fulfilled late", settlesLate("resolve", thrower)],
+      ["a promise rejected late", settlesLate("reject", thrower)],
+    ])("%s", async (_, script) => {
+      expect(await print(script, flag)).toEqual(reported);
+    });
+  });
+
+  test("exit listeners see exit code 1", async () => {
+    const script = `process.exitCode = 5; process.on("exit", code => console.log("exit", code)); ${thrower}`;
+    expect(await print(script)).toEqual({ ...reported, stdout: "exit 1\n" });
+  });
+
+  test.each([
+    ["a value", thrower],
+    ["a promise fulfilled late", settlesLate("resolve", thrower)],
+  ])("an uncaughtException listener gets the error of %s", async (_, result) => {
+    const script = `
+      process.on("uncaughtException", (error, origin) => {
+        console.log(origin, error.message);
+        setTimeout(() => console.log("timer ran"), 1);
+      });
+      process.on("exit", code => console.log("exit", code));
+      ${result}`;
+    expect(await print(script)).toEqual({
+      stdout: "uncaughtException inspect failed\ntimer ran\nexit 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node runs the listener before it prints, so stdout is not asserted.
+  test("a beforeExit listener that logs does not crash", async () => {
+    const { stderr, exitCode } = await print(`process.on("beforeExit", () => console.log("beforeExit")); ${thrower}`);
+    expect({ stderr, exitCode }).toEqual({ stderr: reported.stderr, exitCode: 1 });
+  });
+
+  // The error printer returns normally here and leaves the exception on the VM.
+  test("an Error with a property that throws", async () => {
+    const source = `Object.defineProperty(/a/, "source", { get() { throw new Error("inner failed"); } })`;
+    const { stderr, exitCode } = await print(`Object.assign(new Error("outer"), { property: ${source} })`);
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.stringContaining("error: inner failed"), exitCode: 1 });
+  });
+});
+
+describe.concurrent("--print of a promise that is pending when the event loop drains", () => {
+  const exitListener = `process.on("exit", () => console.log("exit listener ran"));`;
+
+  test("fulfilled late: the value is printed, then beforeExit and exit listeners run", async () => {
+    const script = `
+      process.on("beforeExit", () => console.log("beforeExit"));
+      process.on("exit", code => console.log("exit", code));
+      ${settlesLate("resolve", `"RESULT"`)}`;
+    expect(await print(script)).toEqual({ stdout: "RESULT\nbeforeExit\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+
+  test("fulfilled late by a timer that starts a ref'd timer: both run before the value is printed", async () => {
+    const script = `
+      ${exitListener}
+      new Promise(resolve => {
+        setTimeout(() => { setTimeout(() => console.log("second timer ran"), 1); resolve("RESULT"); }, 1).unref();
+        Bun.sleepSync(10);
+      })`;
+    expect(await print(script)).toEqual({
+      stdout: "second timer ran\nRESULT\nexit listener ran\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Whether the due timer runs is a race in a real script, so it does not decide the exit code.
+  // The vendored test-timers-*-promisified.js files run -p on the then() shape.
+  test.each([
+    ["by its executor", settlesLate("reject", `"REASON"`)],
+    ["from a then() callback", `${settlesLate("resolve", "1")}.then(() => { throw "REASON"; })`],
+  ])("rejected late %s: the reason is printed and the exit code is 0", async (_, result) => {
+    expect(await print(`${exitListener} ${result}`)).toEqual({
+      stdout: "REASON\nexit listener ran\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("settled by a timer that a beforeExit listener starts: printed once, as pending", async () => {
+    const script = `
+      let settle;
+      const result = new Promise(resolve => { settle = resolve; });
+      process.once("beforeExit", () => setTimeout(() => settle("LATE"), 1));
+      process.on("exit", code => console.log("exit", code));
+      result`;
+    expect(await print(script)).toEqual({ stdout: "Promise { <pending> }\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+
+  // The error ends the loop with the timer still ref'd. Nothing of the script runs after it.
+  test.each(["resolve", "reject"])("after an unhandled rejection the %s() timer does not run", async settle => {
+    const script = `
+      ${exitListener}
+      Promise.reject(new Error("early rejection"));
+      new Promise((resolve, reject) => {
+        setTimeout(() => { console.log("timer ran"); ${settle}("late"); }, 1);
+        Bun.sleepSync(10);
+      })`;
+    expect(await print(script)).toEqual({
+      stdout: "Promise { <pending> }\nexit listener ran\n",
+      stderr: expect.stringContaining("error: early rejection"),
+      exitCode: 1,
+    });
+  });
+
+  test("after an unhandled rejection a timer that calls process.exit(0) does not run", async () => {
+    const script = `Promise.reject(new Error("early rejection")); setTimeout(() => process.exit(0), 20); new Promise(() => {})`;
+    expect(await print(script)).toEqual({
+      stdout: "Promise { <pending> }\n",
+      stderr: expect.stringContaining("error: early rejection"),
+      exitCode: 1,
+    });
+  });
+});
+
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');

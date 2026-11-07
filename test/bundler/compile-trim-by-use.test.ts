@@ -41,6 +41,17 @@ const features: Record<string, { implements: string; program: string; prints: st
     `,
     prints: "true 1\n",
   },
+  "assert-deep-equal": {
+    implements: "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepEqual",
+    program: `
+      import assert from "node:assert";
+      const first = new AggregateError([new Error("one")], "failed");
+      assert.deepEqual(first, new AggregateError([new Error("one")], "failed"));
+      assert.notDeepEqual(first, new AggregateError([new Error("two")], "failed"));
+      console.log("compared");
+    `,
+    prints: "compared\n",
+  },
 };
 
 const textsOfBundlerFeatures = [

@@ -121,7 +121,7 @@ feature CryptoHasher "Bun.CryptoHasher"
 
 feature Udp "Bun.udpSocket and node:dgram"
 
-feature DeepEquals "Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual"
+feature DeepEquals "Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual, assert.deepEqual and assert.partialDeepStrictEqual"
   minimum 30000
 
 feature Spawn "Bun.spawn and Bun.spawnSync"

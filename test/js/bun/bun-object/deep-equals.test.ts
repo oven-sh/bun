@@ -62,6 +62,40 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, baz)).toBe(false);
   });
 
+  // node:assert and node:util compare `errors` on their own entry points (test/js/node/assert/deep-equal.test.ts).
+  it("does not read the errors of an AggregateError", () => {
+    let reads = 0;
+    const make = (message: string) =>
+      Object.defineProperty(new AggregateError([], "m"), "errors", {
+        get: () => (reads++, [new TypeError(message)]),
+        configurable: true,
+      });
+    expect(
+      deepEquals(new AggregateError([new TypeError("a")], "m"), new AggregateError([new TypeError("b")], "m")),
+    ).toBe(true);
+    expect(deepEquals(make("a"), make("b"))).toBe(true);
+    // The fourth argument is not in the public types.
+    const withSkipPrototype = Bun.deepEquals as (
+      a: unknown,
+      b: unknown,
+      strict?: boolean,
+      skipPrototype?: boolean,
+    ) => boolean;
+    expect(withSkipPrototype(make("a"), make("b"), strict, true)).toBe(true);
+    expect(reads).toBe(0);
+  });
+
+  it("compares an enumerable errors of an Error as any other property", () => {
+    const withErrors = (errors: unknown[]) => Object.assign(new Error("m"), { errors });
+    const withHiddenErrors = (errors: unknown[]) =>
+      Object.defineProperty(new Error("m"), "errors", { value: errors, configurable: true });
+    expect(deepEquals(withErrors([1]), withErrors([1]))).toBe(true);
+    expect(deepEquals(withErrors([1]), withErrors([2]))).toBe(false);
+    // node:assert rejects this pair. Here a hidden property matches an enumerable one, unless `strict` counts the properties.
+    expect(deepEquals(withErrors([1]), withHiddenErrors([1]))).toBe(!strict);
+    expect(deepEquals(withErrors([1]), withHiddenErrors([2]))).toBe(false);
+  });
+
   it("KeyObjects and CryptoKeys are compared by what they hold", () => {
     const key = (fill: number) => createSecretKey(Buffer.alloc(16, fill));
     const cryptoKey = (fill: number, extractable = true) => key(fill).toCryptoKey("AES-GCM", extractable, ["encrypt"]);

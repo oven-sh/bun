@@ -2,12 +2,15 @@
 //!
 //! - Interactive terminal: `bun_ast::Msg::write_format`, which is how Bun prints its own errors.
 //! - Everything else: TypeScript's plain format, which editors, continuous integration and other tools already parse.
+//!   Only that format prints the text of the checked files as `tsc` does. The others print it [`escaped`].
 
-use crate::{Category, Diagnostic, Report, TaskOutput};
+use crate::{Category, Diagnostic, MessageChain, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
+use bun_core::fmt::escape_control_chars;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::messages;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
@@ -51,19 +54,99 @@ pub struct Style<'a> {
     pub show_all: bool,
 }
 
+/// True if `text` has an ASCII control character or a non-ASCII byte. Most text has neither and is printed as it is.
+fn may_have_control_characters(text: &[u8]) -> bool {
+    strings::index_of_newline_or_non_ascii(text, 0).is_some() || strings::contains_char(text, 0x7f)
+}
+
+/// Returns `text` on one line, with its control characters as escape sequences such as `\x1b`.
+pub fn escaped(text: impl Into<BString>) -> BString {
+    let text = text.into();
+    match may_have_control_characters(&text) {
+        true => alloc_print!("{}", escape_control_chars(&text)),
+        false => text,
+    }
+}
+
+/// Writes `text` as [`escaped`] returns it.
+pub fn write_escaped(out: &mut Vec<u8>, text: &[u8]) {
+    match may_have_control_characters(text) {
+        true => {
+            let _ = write!(out, "{}", escape_control_chars(text));
+        }
+        false => out.extend_from_slice(text),
+    }
+}
+
+/// Writes `text`, which has its own line breaks (`\n` or `\r\n`): each line [`escaped`], with `\n` between the lines.
+pub fn write_escaped_lines(out: &mut Vec<u8>, text: &[u8]) {
+    let mut rest = text;
+    while let Some((line, after)) = strings::split_once_char(rest, b'\n') {
+        write_escaped(out, line.strip_suffix(b"\r").unwrap_or(line));
+        out.push(b'\n');
+        rest = after;
+    }
+    write_escaped(out, rest);
+}
+
 /// Returns the path relative to the working directory, or the absolute path if that would need two or more `../`.
+/// The path is [`escaped`], because no layout of `tsc` prints it.
 fn display_path(path: &[u8], style: &Style) -> BString {
     let relative = relative_path(path, style.cwd, style);
     if relative.starts_with(b"../../") {
-        crate::host::to_native(path).into()
+        escaped(crate::host::to_native(path))
     } else {
-        relative
+        escaped(relative)
     }
 }
 
 /// `ConvertToRelativePath`
 fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
+}
+
+/// Writes `d.text` for Bun's own layouts: [`escaped`], each argument on one line, so no argument reads as another diagnostic.
+pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
+    if !may_have_control_characters(&d.text) {
+        out.extend_from_slice(&d.text);
+        return;
+    }
+    fn has_line_break(args: &[Box<[u8]>], chain: &[MessageChain]) -> bool {
+        (args.iter()).any(|arg| strings::contains_char(arg, b'\n'))
+            || (chain.iter()).any(|it| has_line_break(&it.args, &it.message_chain))
+    }
+    // No template has a line break, so the line breaks of `d.text` are the elaboration's.
+    if !has_line_break(&d.args, &d.message_chain) {
+        return write_escaped_lines(out, &d.text);
+    }
+    // The template gets Bun's commands, as `d.text` has them. Rewriting the finished text would change an argument too.
+    fn write_composed(out: &mut Vec<u8>, template: &str, code: u32, args: &[Box<[u8]>]) {
+        let with_bun_commands = crate::with_bun_commands(template.into());
+        let template = std::str::from_utf8(&with_bun_commands).unwrap_or(template);
+        let on_one_line = |arg: &[u8]| Vec::from(escaped(arg));
+        let args: Vec<Vec<u8>> = match (code, args) {
+            // The paths of the cycle follow the argument that has them all, one per line. See `open_build_task`.
+            (6202, [_, paths @ ..]) if !paths.is_empty() => {
+                let paths: Vec<Vec<u8>> = paths.iter().map(|path| on_one_line(path)).collect();
+                vec![paths.join(&b'\n')]
+            }
+            _ => args.iter().map(|arg| on_one_line(arg)).collect(),
+        };
+        messages::format(out, template, &args);
+    }
+    // `MessageChain::flatten`
+    fn write_chain(out: &mut Vec<u8>, chain: &[MessageChain], level: usize) {
+        for it in chain {
+            out.push(b'\n');
+            out.extend(std::iter::repeat_n(b' ', 2 * level));
+            let template = messages::message(it.code).map_or("", |m| m.1);
+            write_composed(out, template, it.code, &it.args);
+            write_chain(out, &it.message_chain, level + 1);
+        }
+    }
+    let template = messages::message(d.code).map_or("Unknown error.", |m| m.1);
+    write_composed(out, template, d.code, &d.args);
+    write_chain(out, &d.message_chain, 1);
 }
 
 /// Formats `1234` as `1,234`.
@@ -99,11 +182,12 @@ fn truncate_to_width(text: &[u8], width: usize) -> &[u8] {
 /// Converts `d` to input for `bun_ast::Msg::write_format`: the message, its location, and the last `max_lines` source
 /// lines up to the line it starts on. Only an error includes its code.
 fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, max_lines: usize) -> bun_ast::Data {
+    let mut text = Vec::with_capacity(d.text.len() + 8);
     // Bun's own diagnostics have no code.
-    let text = match d.code {
-        code if code != 0 && includes_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
-        _ => d.text.clone(),
-    };
+    if d.code != 0 && includes_code {
+        let _ = write!(text, "TS{}: ", d.code);
+    }
+    write_message(&mut text, d);
     // Leading blank lines carry no information.
     let lines = &d.source[..d.source.len().min((d.line - d.source_line) as usize + 1)];
     let lines = &lines[lines.len().saturating_sub(max_lines)..];
@@ -295,8 +379,31 @@ fn attribute(text: &[u8]) -> BString {
     out
 }
 
+/// Returns the offset in `line` of its 0-based UTF-16 column `column`. `units` counts a run of bytes that isn't UTF-8.
+pub fn offset_of_column(line: &[u8], column: usize, units: fn(&[u8]) -> u32) -> usize {
+    if line.is_ascii() {
+        return column.min(line.len());
+    }
+    let (mut offset, mut counted) = (0, 0);
+    for chunk in line.utf8_chunks() {
+        for character in chunk.valid().chars() {
+            if counted >= column {
+                return offset;
+            }
+            counted += character.len_utf16();
+            offset += character.len_utf8();
+        }
+        if counted >= column {
+            return offset;
+        }
+        counted += units(chunk.invalid()) as usize;
+        offset += chunk.invalid().len();
+    }
+    offset
+}
+
 /// Writes the `<source>` element of a problem. `lines` isn't empty, and its first line has the number `first`. Carets
-/// go below line number `at`, from column `from` up to column `to`, both 0-based. `to` is `None` for the end of the
+/// go below line number `at`, from byte `from` up to byte `to` of it ([`offset_of_column`]). `to` is `None` for the end of the
 /// line.
 pub fn write_agent_source(
     out: &mut Vec<u8>,
@@ -309,14 +416,26 @@ pub fn write_agent_source(
     let gutter = bun_core::fmt::digit_count(first as usize + lines.len() - 1);
     for (line, text) in (first..).zip(lines) {
         let text = strings::replace_owned(text, b"\t", b" ");
-        let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
+        let _ = write!(out, "{line:>gutter$} | ");
+        write_escaped(out, text.trim_ascii_end());
+        out.push(b'\n');
         if line == at {
-            let (from, to) = (
-                from.min(text.len()),
-                to.unwrap_or(text.len()).min(text.len()),
-            );
-            let carets = "^".repeat(to.saturating_sub(from).max(1));
-            let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
+            let from = from.min(text.len());
+            let to = to.unwrap_or(text.len()).clamp(from, text.len());
+            // The columns of what is printed, counted at the end of `out`: an escape sequence is longer than its character.
+            let mut columns = |part: &[u8]| {
+                if !may_have_control_characters(part) {
+                    return part.len();
+                }
+                let printed = out.len();
+                let _ = write!(out, "{}", escape_control_chars(part));
+                let columns = strings::wtf8_len_utf16(&out[printed..]) as usize;
+                out.truncate(printed);
+                columns
+            };
+            let before = gutter + 3 + columns(&text[..from]);
+            let carets = "^".repeat(columns(&text[from..to]).max(1));
+            let _ = writeln!(out, "{:before$}{carets}", "");
         }
     }
     out.extend_from_slice(b"</source>\n");
@@ -340,7 +459,7 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let _ = write!(out, " times=\"{}\"", duplicates.len() + 1);
     }
     out.extend_from_slice(b">\n");
-    out.extend_from_slice(&d.text);
+    write_message(out, d);
     out.push(b'\n');
     let has_long_line = d
         .source
@@ -359,13 +478,18 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let end = d.source.len().min(at + 3);
         let end = end - blank(&mut d.source[at + 1..end].iter().rev());
         let lines: Vec<&[u8]> = d.source[first..end].iter().map(Vec::as_slice).collect();
-        let to = (d.end_line == d.line).then(|| d.end_column as usize - 1);
+        // `line_and_character` has counted them.
+        let offset = |column: u32| {
+            let units = strings::utf8_lossy_len_utf16;
+            offset_of_column(&d.source[at], column as usize - 1, units)
+        };
+        let to = (d.end_line == d.line).then(|| offset(d.end_column));
         write_agent_source(
             out,
             d.source_line + first as u32,
             &lines,
             d.line,
-            (d.column as usize - 1, to),
+            (offset(d.column), to),
         );
     }
     for note in &d.related {
@@ -379,7 +503,9 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
                 note.column
             );
         }
-        let _ = writeln!(out, ">{}</related>", note.text.as_bstr());
+        out.push(b'>');
+        write_message(out, note);
+        out.extend_from_slice(b"</related>\n");
     }
     let duplicates: Vec<&Diagnostic> = (duplicates.iter().copied())
         .filter(|other| !other.path.is_empty())
@@ -427,14 +553,21 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
             d.end_column
         );
     }
-    // (`bun_core::fmt::github_action` leaves `%` unchanged.)
-    let text = strings::replace_owned(
-        &strings::replace_owned(&d.text, b"%", b"%25"),
-        b"\r",
-        b"%0D",
-    );
+    // (`bun_core::fmt::github_action` leaves `%` unchanged.) No carriage return is left to encode.
+    let mut text = Vec::new();
+    write_message(&mut text, d);
+    let text = strings::replace_owned(&text, b"%", b"%25");
     let text = strings::replace_owned(&text, b"\n", b"%0A");
     let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
+}
+
+/// A line of `--traceResolution`, `--listFiles` or `--explainFiles`.
+fn write_line(out: &mut Vec<u8>, line: &[u8], style: &Style) {
+    match style.layout {
+        Layout::Plain => out.extend_from_slice(line),
+        Layout::Pretty | Layout::Agent => write_escaped(out, line),
+    }
+    out.push(b'\n');
 }
 
 /// Writes the diagnostics, in order.
@@ -461,8 +594,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
     };
     for task in std::iter::once(&before_the_tasks).chain(tasks) {
         for line in take(&mut trace, task.resolution_trace) {
-            out.extend_from_slice(line);
-            out.push(b'\n');
+            write_line(out, line, style);
         }
         let diagnostics = take(&mut diagnostics, task.diagnostics);
         // `QuietDiagnosticReporter`
@@ -494,8 +626,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
             }
         }
         for line in take(&mut listed_files, task.listed_files) {
-            out.extend_from_slice(line);
-            out.push(b'\n');
+            write_line(out, line, style);
         }
     }
 }
@@ -557,7 +688,9 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 first.code,
                 width
             );
-            let reported = summary_line(&first.text);
+            let mut message = Vec::new();
+            write_message(&mut message, first);
+            let reported = summary_line(&message);
             let first_location =
                 alloc_print!("{}:{}", display_path(&first.path, style), first.line);
             // Truncate the message to the terminal width. Append the first location only if it fits.
@@ -702,7 +835,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             out,
             style.color,
             "<red>error<r><d>:<r> {}\n",
-            BStr::new(&file.message(&relative_path(&file.path, style.cwd, style)))
+            BStr::new(&file.message(&escaped(relative_path(&file.path, style.cwd, style))))
         );
     }
     // A repository can have a hundred fixtures that nobody installs.
@@ -712,7 +845,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             1 => ("is", BString::from("1 dependency")),
             n => ("are", alloc_print!("{n} dependencies")),
         };
-        let manifest = relative_path(&it.manifest, style.cwd, style);
+        let manifest = escaped(relative_path(&it.manifest, style.cwd, style));
         let cwd_flag = match it.is_cwd_manifest {
             true => BString::default(),
             false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
@@ -841,7 +974,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         .unwrap_or(1);
     for (first, count) in &by_file {
         let path = if style.layout == Layout::Plain {
-            relative_path(&first.path, style.cwd, style)
+            escaped(relative_path(&first.path, style.cwd, style))
         } else {
             display_path(&first.path, style)
         };

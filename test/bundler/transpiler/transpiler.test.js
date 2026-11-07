@@ -6476,6 +6476,8 @@ describe("parse error flood", () => {
     first: [(${position})(errors[0]), (${position})(errors[0].notes[0])],
     last: [(${position})(errors.at(-1)), (${position})(errors.at(-1).notes[0])],
     lineText: errors.at(-1).notes[0].position.lineText,
+    fourthFromLast: [(${position})(errors.at(-4)), (${position})(errors.at(-4).notes[0])],
+    fourthFromLastLineText: errors.at(-4).notes[0].position.lineText,
   })`;
 
   async function flood(cmd, options = {}) {
@@ -6526,6 +6528,12 @@ describe("parse error flood", () => {
             ['"h" was originally declared here', 9, 5],
           ],
           lineText: "let h;",
+          // No cursor stays at this note.
+          fourthFromLast: [
+            ['"e" has already been declared', 262, 5],
+            ['"e" was originally declared here', 6, 5],
+          ],
+          fourthFromLastLineText: "let e;",
         }),
         stderr: "",
         exitCode: 0,
@@ -6554,6 +6562,11 @@ describe("parse error flood", () => {
             ["x was originally declared here", 258, 6],
           ],
           lineText: "{var x;}",
+          fourthFromLast: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 255, 6],
+          ],
+          fourthFromLastLineText: "{var x;}",
         }),
         stderr: "",
         exitCode: 0,
@@ -6588,6 +6601,12 @@ describe("parse error flood", () => {
           ],
           // 40 bytes before the note and 80 bytes after it.
           lineText: line.slice(46 - 40, 46 + 80),
+          // No cursor stays at this note.
+          fourthFromLast: [
+            ['"e" has already been declared', 1, declarations.length + 252 * 6 + 5],
+            ['"e" was originally declared here', 1, 29],
+          ],
+          fourthFromLastLineText: line.slice(0, 28 + 80),
         }),
         stderr: "",
         exitCode: 0,
@@ -6650,6 +6669,11 @@ describe("parse error flood", () => {
             ["x was originally declared here", DIAGNOSTICS + 2, 6],
           ],
           lineText: "{var x;}",
+          fourthFromLast: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", DIAGNOSTICS - 1, 6],
+          ],
+          fourthFromLastLineText: "{var x;}",
         }),
         stderr: "",
         exitCode: 0,
@@ -6687,6 +6711,11 @@ describe("parse error flood", () => {
             [note, 2, 1],
           ],
           lineText: "await 0;",
+          fourthFromLast: [
+            [error, DIAGNOSTICS - 3, 9],
+            [note, 2, 1],
+          ],
+          fourthFromLastLineText: "await 0;",
         }),
         stderr: "",
         exitCode: 0,
@@ -6732,6 +6761,108 @@ describe("parse error notes", () => {
     },
   };
   const located = ({ message, position }) => [message, position.line, position.column, position.lineText];
+
+  // The line, the column and the excerpt of the byte `offset`, counted from the start of `bytes`.
+  function walkFromTheStart(bytes, offset) {
+    const lineBreakAt = i =>
+      bytes[i] === 0x0a ||
+      bytes[i] === 0x0d ||
+      (bytes[i] === 0xe2 && bytes[i + 1] === 0x80 && (bytes[i + 2] === 0xa8 || bytes[i + 2] === 0xa9));
+    let line = 1;
+    let lineStart = 0;
+    for (let i = 0; i < offset;) {
+      if (lineBreakAt(i)) {
+        i += bytes[i] === 0xe2 ? 3 : bytes[i] === 0x0d && bytes[i + 1] === 0x0a ? 2 : 1;
+        line++;
+        lineStart = i;
+      } else {
+        i++;
+      }
+    }
+    let end = offset;
+    while (end < bytes.length && !lineBreakAt(end)) end++;
+    let start = lineStart;
+    // A line that goes on for more than 80 bytes is cut 40 bytes before the offset and 80 after it.
+    if (end - offset > 80) {
+      start = Math.max(start, offset - 40);
+      end = offset + 80;
+      while ((bytes[start] & 0xc0) === 0x80) start--;
+      while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end++;
+    }
+    const column = bytes.subarray(lineStart, offset).toString().length + 1;
+    return [line, column, bytes.subarray(start, end).toString()];
+  }
+
+  it("a note that is found from a checkpoint has the line, column and text of a walk from the start", () => {
+    const chunks = [];
+    let length = 0;
+    const push = text => {
+      chunks.push(Buffer.from(text));
+      length += chunks.at(-1).length;
+    };
+    const fill = (count, byte) => Buffer.alloc(count, byte).toString();
+    // A comment that ends at the byte `end`.
+    const commentUpTo = end => push(`/*${fill(end - length - 4, "p")}*/`);
+    const sites = [];
+    // `let n<k>;` with 51 bytes before the name on its line, and a line break `distance` bytes after the name starts.
+    // U+2026 starts with the first byte of U+2028 and of U+2029.
+    const declare = (lineBreak, distance, at = length + 51) => {
+      push(`/* \u2026 ${fill(at - length - 14, "f")} */let `);
+      sites.push(length);
+      push(`n${sites.length - 1}; /*${fill(distance - 9, "g")}\u2026${lineBreak}*/\n`);
+    };
+
+    declare("\r", 79);
+    // The name is at a checkpoint.
+    declare("\r\n", 80, 1024);
+    declare("\u2028", 81);
+    // A character of four bytes across a checkpoint.
+    commentUpTo(2046 - 2);
+    push("/*\u{1F600}*/\n");
+    declare("\u2029", 79);
+    // CR LF across a checkpoint.
+    commentUpTo(3071);
+    push("\r\n");
+    declare("\n", 80);
+    declare("\r", 81);
+    commentUpTo(5000);
+    push("\n");
+    declare("\u2028", 80);
+    declare("\r\n", 79);
+
+    // Each name again, in turn: a cursor stays at three of the eight notes, and the other five start at a checkpoint.
+    const again = [];
+    for (let round = 0; round < 8; round++) {
+      for (let k = 0; k < sites.length; k++) {
+        push("let ");
+        again.push(length);
+        push(`n${k}; `);
+      }
+      push("\n");
+    }
+    // The end of the file is inside a character.
+    push(`n0(\n//${fill(100, "x")}\u00e9`);
+    const bytes = Buffer.concat(chunks);
+    expect([sites[1], bytes.indexOf("\u{1F600}"), bytes.indexOf("\r\n", 3000)]).toEqual([1024, 2046, 3071]);
+
+    let thrown;
+    try {
+      new Bun.Transpiler({ loader: "js" }).transformSync(bytes);
+    } catch (e) {
+      thrown = e;
+    }
+    const expected = again.map((offset, i) => {
+      const k = i % sites.length;
+      return [
+        [`"n${k}" has already been declared`, ...walkFromTheStart(bytes, offset)],
+        [`"n${k}" was originally declared here`, ...walkFromTheStart(bytes, sites[k])],
+      ];
+    });
+    // The error is on the last byte. The first byte of a character that is cut short counts as one column.
+    const lastLine = walkFromTheStart(bytes, bytes.length - 1);
+    expected.push([["Unexpected end of file", lastLine[0], 2 + 100 + 2, lastLine[2]], undefined]);
+    expect(thrown.errors.map(error => [located(error), error.notes[0] && located(error.notes[0])])).toEqual(expected);
+  });
 
   for (const [name, { source, error, note }] of Object.entries(cases)) {
     it(`${name}: the error and its note have their own line, column and text`, () => {

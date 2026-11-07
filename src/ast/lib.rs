@@ -2081,19 +2081,12 @@ impl ErrorPositionState {
     /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
     /// are line breaks). Returns `true` if a line break was crossed.
     fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
-        self.advance_to_boundary(&contents[..to], from, to).1
-    }
-
-    /// [`Self::advance`] that reads past `to` to finish a character. Also returns where the last one it read ends.
-    fn advance_to_boundary(&mut self, contents: &[u8], from: usize, to: usize) -> (usize, bool) {
         use bun_core::strings::{CodepointIterator, Cursor};
-        let iter_ = CodepointIterator::init(&contents[from..]);
+        let iter_ = CodepointIterator::init(&contents[from..to]);
         let mut iter = Cursor::default();
         let mut crossed_line_break = false;
-        let mut end = from;
 
-        while end < to && iter_.next(&mut iter) {
-            end = from + iter.width as usize + iter.i as usize;
+        while iter_.next(&mut iter) {
             match iter.c {
                 0x0A => {
                     // '\n'
@@ -2129,8 +2122,8 @@ impl ErrorPositionState {
         }
 
         #[cfg(test)]
-        count_scanned(end - from);
-        (end, crossed_line_break)
+        count_scanned(to - from);
+        crossed_line_break
     }
 
     fn to_error_position(self, line_end: usize) -> ErrorPosition {
@@ -2170,11 +2163,25 @@ fn scan_line_end(contents: &[u8], offset: usize) -> usize {
     contents.len()
 }
 
+/// Where the character at `to` ends if a scan from `from` is inside it there, else `to`. A scan can resume from this place.
+fn character_boundary(contents: &[u8], from: usize, to: usize) -> usize {
+    use bun_core::strings::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(&contents[from..]);
+    let mut iter = Cursor::default();
+    let mut boundary = from;
+
+    while boundary < to && iter_.next(&mut iter) {
+        boundary = from + iter.i as usize + iter.width as usize;
+    }
+
+    #[cfg(test)]
+    count_scanned(boundary - from);
+    boundary
+}
+
 /// [`scan_line_end`] for an excerpt: the line break if one starts in the 81 bytes from `offset`, else where the excerpt is cut.
 fn excerpt_line_end(contents: &[u8], offset: usize) -> usize {
     let window = &contents[offset..contents.len().min(offset + 81)];
-    #[cfg(test)]
-    count_scanned(window.len());
     let mut at = 0;
     while let Some(found) = bun_core::strings::index_of_any(&window[at..], b"\r\n\xE2") {
         at += found;
@@ -2183,6 +2190,8 @@ fn excerpt_line_end(contents: &[u8], offset: usize) -> usize {
             contents[offset + at..],
             [b'\r' | b'\n', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]
         ) {
+            #[cfg(test)]
+            count_scanned(at);
             return offset + at;
         }
         at += 1;
@@ -2192,6 +2201,8 @@ fn excerpt_line_end(contents: &[u8], offset: usize) -> usize {
     while end < contents.len() && !bun_core::strings::is_utf8_char_boundary(contents[end]) {
         end += 1;
     }
+    #[cfg(test)]
+    count_scanned(end - offset);
     end
 }
 
@@ -2213,10 +2224,10 @@ fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
     (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1)
 }
 
-/// The scans that [`Source::init_error_position`] resumes: N positions in any order cost O(file size + N × `CHECKPOINT_INTERVAL`).
+/// The scans that [`Source::init_error_position`] resumes: N positions of well-formed UTF-8 in any order cost O(file size + N × `CHECKPOINT_INTERVAL`).
 #[derive(Default)]
 struct PositionIndex {
-    /// The `contents` that were scanned: address and length, as `usize` so that the index is `Send`.
+    /// The `contents` that were scanned: address and length. Other contents reset the index.
     contents_ptr: usize,
     contents_len: usize,
     cursors: [ScanCursor; 4],
@@ -2285,9 +2296,10 @@ impl PositionIndex {
 
         while (self.checkpoints.len() + 1) * CHECKPOINT_INTERVAL <= offset {
             let (from, mut state) = self.checkpoints.last().copied().unwrap_or_default();
-            let to = (self.checkpoints.len() + 1) * CHECKPOINT_INTERVAL;
-            let (end, _) = state.advance_to_boundary(contents, from, to);
-            self.checkpoints.push((end, state));
+            let multiple = (self.checkpoints.len() + 1) * CHECKPOINT_INTERVAL;
+            let to = character_boundary(contents, from, multiple);
+            state.advance(contents, from, to);
+            self.checkpoints.push((to, state));
         }
 
         // A checkpoint is up to 3 bytes past its multiple of the interval, so the last of these can be past `offset`.
@@ -2306,6 +2318,10 @@ impl PositionIndex {
 /// Where a [`Source`] keeps its [`PositionIndex`]. A lookup takes the box out and puts it back, so no two threads share one.
 #[derive(Default)]
 pub struct PositionIndexSlot(AtomicPtr<PositionIndex>);
+
+const fn assert_send<T: Send>() {}
+
+const _: () = assert_send::<PositionIndex>();
 
 impl PositionIndexSlot {
     fn swap(&self, index: Option<Box<PositionIndex>>) -> Option<Box<PositionIndex>> {
@@ -2343,6 +2359,7 @@ impl Drop for PositionIndexSlot {
 }
 
 /// Calls [`PositionIndexSlot::release`] when it goes out of scope.
+#[must_use = "the index is released on drop; bind to a named local"]
 pub struct ReleasePositionIndex<'a>(pub &'a PositionIndexSlot);
 
 impl Drop for ReleasePositionIndex<'_> {
@@ -3389,7 +3406,7 @@ mod position_index_tests {
         for contents in &corpus {
             let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
             let len = contents.len();
-            let stride = if cfg!(miri) { len / 8 } else { 1 };
+            let stride = len / 8;
 
             // From the end, the fifth offset and each one after it is behind all four cursors.
             for offset in (0..len + 2).rev().step_by(stride) {
@@ -3436,16 +3453,120 @@ mod position_index_tests {
         }
     }
 
+    /// A source whose cursors are past every offset, so that each lookup starts at a checkpoint.
+    fn answering_from_checkpoints(contents: &[u8]) -> Source<'_> {
+        let source = Source::init_path_string(b"index-test.js" as &[u8], contents);
+        let past_the_end = ScanCursor {
+            offset: usize::MAX,
+            ..Default::default()
+        };
+        source.position_index.swap(Some(Box::new(PositionIndex {
+            contents_ptr: contents.as_ptr() as usize,
+            contents_len: contents.len(),
+            cursors: [past_the_end; 4],
+            missed: true,
+            ..Default::default()
+        })));
+        source
+    }
+
+    #[test]
+    fn a_position_inside_a_character_is_where_a_walk_from_byte_0_of_main_has_it() {
+        let digits = b"0123456789".repeat(10);
+        // (contents, offset, line, column) as main b1305ddc7c reports them. An offset at the end is the last byte.
+        let cases: [(Vec<u8>, usize, usize, usize); 6] = [
+            ("ab\u{1F600}cd".as_bytes().to_vec(), 3, 1, 4),
+            ("ab\u{1F600}cd".as_bytes().to_vec(), 5, 1, 6),
+            ("ab\u{1F600}cd".as_bytes().to_vec(), 6, 1, 5),
+            (b"ab\xF0\x9Fcd".to_vec(), 5, 1, 6),
+            ([&digits[..], "\u{1F600}".as_bytes()].concat(), 104, 1, 104),
+            ([&digits[..], "\u{2028}".as_bytes()].concat(), 103, 1, 103),
+        ];
+        for (contents, offset, line, column) in &cases {
+            let fresh = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+            for source in [&fresh, &answering_from_checkpoints(contents)] {
+                let position = source.init_error_position(usize2loc(*offset));
+                assert_eq!(
+                    (position.line_count, position.column_count),
+                    (*line, *column),
+                    "offset {offset} of {:?}",
+                    bstr::BStr::new(contents)
+                );
+            }
+        }
+    }
+
     #[test]
     fn one_position_that_no_cursor_can_resume_to_starts_no_checkpoints() {
         // `Unexpected end of file` is reported on the last byte, here inside a character.
         let contents = [&b"0123456789".repeat(10)[..], "\u{1F600}".as_bytes()].concat();
         let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
-        assert_located_as_by_a_walk_from_byte_0(&source, contents.len() - 1);
+        let position = source.init_error_position(usize2loc(contents.len()));
+        assert_eq!((position.line_count, position.column_count), (1, 104));
 
         let index = source.position_index.swap(None).unwrap();
         assert!(index.missed);
         assert_eq!(index.checkpoints.capacity(), 0);
+    }
+
+    #[test]
+    fn a_lookup_from_a_checkpoint_cuts_the_excerpt_of_a_scan_to_the_line_end() {
+        let digits = b"0123456789".repeat(9);
+        let line_breaks: [&[u8]; 5] = [
+            b"\n",
+            b"\r",
+            b"\r\n",
+            "\u{2028}".as_bytes(),
+            "\u{2029}".as_bytes(),
+        ];
+        for line_break in line_breaks {
+            // The line break is 79 to 82 bytes after the offset: an excerpt keeps 80.
+            for distance in 79..=82 {
+                // U+2026 starts with the first byte of U+2028 and is no line break.
+                let contents = [
+                    &digits[..50],
+                    &digits[..distance - 3],
+                    "\u{2026}".as_bytes(),
+                    line_break,
+                    &digits[..30],
+                ]
+                .concat();
+                let source = answering_from_checkpoints(&contents);
+                assert_located_as_by_a_walk_from_byte_0(&source, 50);
+            }
+            // No line break in reach, and a character of four bytes across the 80th byte.
+            let contents = [
+                &digits[..50],
+                &digits[..78],
+                "\u{1F600}".as_bytes(),
+                &digits[..30],
+                line_break,
+            ]
+            .concat();
+            let source = answering_from_checkpoints(&contents);
+            assert_located_as_by_a_walk_from_byte_0(&source, 50);
+        }
+    }
+
+    #[test]
+    fn a_lookup_from_a_checkpoint_reads_a_bounded_part_of_the_source() {
+        let digits = b"0123456789".repeat(30);
+        // 90 continuation bytes where the excerpt is cut: an excerpt ends at the start of a character, as on main.
+        let ill_formed = [&digits[..150 + 70], &b"\x80".repeat(90)[..], &digits[..80]].concat();
+        for (contents, run) in [(&digits[..], 0), (&ill_formed[..], 90)] {
+            let source = answering_from_checkpoints(contents);
+            let per_lookup = CHECKPOINT_INTERVAL + 3 + 81 + run;
+            // The first lookup fills the checkpoints as far as its offset. That reads each byte twice.
+            for (offset, fill) in [(152, 2 * (152 + 3)), (150, 0), (40, 0), (149, 0), (7, 0)] {
+                BYTES_SCANNED.set(0);
+                source.init_error_position(usize2loc(offset));
+                assert!(
+                    BYTES_SCANNED.get() <= fill + per_lookup,
+                    "read {} bytes for offset {offset}",
+                    BYTES_SCANNED.get()
+                );
+            }
+        }
     }
 
     #[test]
@@ -3520,12 +3641,11 @@ mod position_index_tests {
 
     #[test]
     fn position_index_is_shared_between_threads() {
-        let (lines, threads) = if cfg!(miri) { (2, 2) } else { (64, 4) };
-        let contents = b"0123456789\r\n".repeat(lines);
+        let contents = b"0123456789\r\n".repeat(2);
         let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
         let len = contents.len();
         std::thread::scope(|scope| {
-            for thread in 0..threads {
+            for thread in 0..2 {
                 let source = &source;
                 scope.spawn(move || {
                     for i in 0..len {

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::entity as entity_mod;
 use super::types::{OFF, TextType};
 
@@ -436,6 +438,45 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
         return Some(&out[..len1]);
     }
     None
+}
+
+/// What a link destination or a link title means: `\*` is `*` and `&amp;` is `&`.
+pub(crate) fn resolve_escapes(raw: &[u8]) -> Cow<'_, [u8]> {
+    let mut resolved: Vec<u8> = Vec::new();
+    // `raw[..done]` is in `resolved`.
+    let mut done = 0;
+    let mut from = 0;
+    while let Some(found) = bun_core::strings::index_of_any(&raw[from..], b"\\&") {
+        let at = from + found;
+        let mut entity = [0u8; 8];
+        let resolution = match raw[at] {
+            b'\\' => raw
+                .get(at + 1)
+                .filter(|&&escaped| is_ascii_punctuation(escaped))
+                .map(|escaped| (core::slice::from_ref(escaped), at + 2)),
+            _ => match find_entity(raw, at) {
+                Some(end) => decode_entity_to_utf8(&raw[at..end], &mut entity)
+                    .map(|stands_for| (stands_for, end)),
+                None => None,
+            },
+        };
+        let Some((stands_for, end)) = resolution else {
+            from = at + 1;
+            continue;
+        };
+        if done == 0 {
+            resolved.reserve(raw.len());
+        }
+        resolved.extend_from_slice(&raw[done..at]);
+        resolved.extend_from_slice(stands_for);
+        done = end;
+        from = end;
+    }
+    if done == 0 {
+        return Cow::Borrowed(raw);
+    }
+    resolved.extend_from_slice(&raw[done..]);
+    Cow::Owned(resolved)
 }
 
 /// Generate a GitHub-compatible slug from text content.

@@ -81,15 +81,11 @@ impl RendererImpl for ImageUrlCollector {
         if span_type != SpanType::Img {
             return Ok(());
         }
-        if detail.href.is_empty() {
+        if detail.href_as_written().is_empty() {
             return Ok(());
         }
-        // detail.href is a slice into the parser's reusable buffer, which
-        // is freed when renderWithRenderer returns (p.deinit). Dupe it so
-        // callers can safely read collector.urls after rendering finishes.
-        let mut scratch: Vec<u8> = Vec::new();
-        let owned = Box::<[u8]>::from(sanitize_source_text(detail.href, &mut scratch));
-        self.urls.push(owned);
+        // `AnsiRenderer::emit_image` looks the download up by these bytes.
+        self.urls.push(sanitized_address(&detail.href()));
         Ok(())
     }
 }
@@ -118,6 +114,8 @@ struct AnsiRenderer<'a> {
     image_alt: Vec<u8>,
     /// Saved image src URL for when the image span closes (owned).
     image_src: Option<Box<[u8]>>,
+    /// That src as the document writes it, if `image_src` is not that: a file can have that name.
+    image_src_written: Option<Box<[u8]>>,
     /// Saved image title (rendered after alt, owned).
     image_title: Option<Box<[u8]>>,
     /// Active paragraph-level wrapping column usage. Tracks visible chars
@@ -280,6 +278,7 @@ impl<'a> AnsiRenderer<'a> {
             image_depth: 0,
             image_alt: Vec::new(),
             image_src: None,
+            image_src_written: None,
             image_title: None,
             col: 0,
             soft_break: None,
@@ -590,14 +589,13 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::Img => {
                 self.image_depth += 1;
                 if self.image_depth == 1 {
-                    let mut src_scratch: Vec<u8> = Vec::new();
-                    self.image_src = Some(Box::<[u8]>::from(sanitize_source_text(
-                        detail.href,
-                        &mut src_scratch,
-                    )));
+                    let src = detail.href();
+                    self.image_src_written = matches!(src, std::borrow::Cow::Owned(_))
+                        .then(|| sanitized_address(detail.href_as_written()));
+                    self.image_src = Some(sanitized_address(&src));
                     let mut title_scratch: Vec<u8> = Vec::new();
                     self.image_title = Some(Box::<[u8]>::from(sanitize_source_text(
-                        detail.title,
+                        &detail.title(),
                         &mut title_scratch,
                     )));
                     self.image_alt.clear();
@@ -661,6 +659,7 @@ impl<'a> AnsiRenderer<'a> {
                 if self.image_depth == 1 {
                     self.emit_image();
                     self.image_src = None;
+                    self.image_src_written = None;
                     self.image_title = None;
                     self.image_alt.clear();
                 }
@@ -1945,7 +1944,10 @@ impl<'a> AnsiRenderer<'a> {
                     }
                 }
             }
-            if let Some(abs_path) = resolve_local_image_path(s, self.theme.image_base_dir) {
+            let base_dir = self.theme.image_base_dir;
+            let found = resolve_local_image_path(s, base_dir)
+                .or_else(|| resolve_local_image_path(self.image_src_written.as_deref()?, base_dir));
+            if let Some(abs_path) = found {
                 self.emit_kitty_image_file(&abs_path);
                 self.image_depth = saved_depth;
                 self.image_alt = alt;
@@ -1975,8 +1977,13 @@ impl<'a> AnsiRenderer<'a> {
             && self.link.is_none()
             && !src.as_deref().unwrap().starts_with(b"data:");
         if link_ok {
+            let mut scratch: Vec<u8> = Vec::new();
             self.write_raw_no_color(b"\x1b]8;;");
-            self.write_raw_no_color(src.as_deref().unwrap());
+            self.write_raw_no_color(strip_controls(
+                src.as_deref().unwrap(),
+                &mut scratch,
+                Sanitize::AddressInSequence,
+            ));
             self.write_raw_no_color(b"\x1b\\");
         }
         let img_marker: &[u8] = if self.theme.colors {
@@ -2040,8 +2047,13 @@ impl<'a> AnsiRenderer<'a> {
     /// `base64_payload` is already the base64 body of a `data:image/png`
     /// URL, so we forward it as-is — no temp file, no re-encoding.
     fn emit_kitty_image_direct(&mut self, base64_payload: &[u8]) {
+        let mut scratch: Vec<u8> = Vec::new();
         self.write_raw_no_color(b"\x1b_Ga=T,t=d,f=100,q=2;");
-        self.write_raw_no_color(base64_payload);
+        self.write_raw_no_color(strip_controls(
+            base64_payload,
+            &mut scratch,
+            Sanitize::AddressInSequence,
+        ));
         self.write_raw_no_color(b"\x1b\\");
         self.write_raw(b"\n");
         self.col = 0;
@@ -2361,21 +2373,39 @@ fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
 }
 
 fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
-    fn is_disallowed(c: u8) -> bool {
-        (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
-    }
+    strip_controls(bytes, scratch, Sanitize::Text)
+}
+
+fn sanitized_address(address: &[u8]) -> Box<[u8]> {
+    let mut scratch: Vec<u8> = Vec::new();
+    Box::from(strip_controls(address, &mut scratch, Sanitize::Address))
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Sanitize {
+    /// Text of the document. An ESC goes with the escape sequence that it starts.
+    Text,
+    /// Where a link or an image goes. Only the control bytes go: what follows one is part of the address.
+    Address,
+    /// An address in an OSC 8 sequence or a Kitty payload. A tab or a line break would break it, so they go too.
+    AddressInSequence,
+}
+
+fn strip_controls<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>, how: Sanitize) -> &'b [u8] {
+    let keeps_tab_and_line_break = how != Sanitize::AddressInSequence;
+    let is_disallowed = |c: u8| {
+        (c < 0x20 && !(keeps_tab_and_line_break && (c == b'\n' || c == b'\t'))) || c == 0x7f
+    };
     fn is_utf8_c1(bytes: &[u8], i: usize) -> bool {
         bytes[i] == 0xC2 && i + 1 < bytes.len() && (0x80..=0x9F).contains(&bytes[i + 1])
     }
-    fn needs_strip(bytes: &[u8], i: usize) -> bool {
-        is_disallowed(bytes[i]) || is_utf8_c1(bytes, i)
-    }
+    let needs_strip = |bytes: &[u8], i: usize| is_disallowed(bytes[i]) || is_utf8_c1(bytes, i);
     if !(0..bytes.len()).any(|i| needs_strip(bytes, i)) {
         return bytes;
     }
     let mut i: usize = 0;
     while i < bytes.len() {
-        if bytes[i] == 0x1b {
+        if bytes[i] == 0x1b && how == Sanitize::Text {
             i += 1;
             if i < bytes.len() && bytes[i] == b'[' {
                 i += 1;
@@ -2459,16 +2489,12 @@ fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 /// Build the final href string with autolink prefixes (mailto:, http://).
 /// Caller owns the returned memory.
 fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
-    let mut buf: Vec<u8> = Vec::new();
-    if detail.autolink_email {
-        buf.extend_from_slice(b"mailto:");
-    }
-    if detail.autolink_www {
-        buf.extend_from_slice(b"http://");
-    }
     let mut scratch: Vec<u8> = Vec::new();
-    buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
-    buf.into_boxed_slice()
+    Box::from(strip_controls(
+        &detail.href(),
+        &mut scratch,
+        Sanitize::AddressInSequence,
+    ))
 }
 
 // ========================================

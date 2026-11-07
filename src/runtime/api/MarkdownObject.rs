@@ -745,8 +745,8 @@ impl<'a> ParseRenderer<'a> {
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            href: Box::from(detail.href),
-            title: Box::from(detail.title),
+            href: Box::from(detail.href()),
+            title: Box::from(detail.title()),
             ..Default::default()
         });
         Ok(())
@@ -1254,8 +1254,8 @@ impl<'a> JsCallbackRenderer<'a> {
         let collects = !self.get_span_callback(span_type).is_empty();
         let entry = if collects {
             CallbackStackEntry {
-                href: Box::from(detail.href),
-                title: Box::from(detail.title),
+                href: Box::from(detail.href()),
+                title: Box::from(detail.title()),
                 ..Default::default()
             }
         } else {

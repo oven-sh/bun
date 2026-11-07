@@ -1932,8 +1932,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// Server side: queues the file for each graph that bundles it. For a CSS module, that is each graph that holds its class names.
-    /// Returns false if no graph bundles it.
+    /// Server side: queues the file for each graph that bundles it, and returns false if there is none. A CSS module is bundled by each graph that holds its class names.
     fn append_server_entry_points(
         &self,
         index: usize,

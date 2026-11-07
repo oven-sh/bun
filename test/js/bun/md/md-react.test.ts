@@ -88,6 +88,27 @@ describe("Bun.markdown.react", () => {
     expect(img.props.children).toBeUndefined();
   });
 
+  test("noHtmlSpans: an autolink in angle brackets is an a element", () => {
+    const p = children("<https://example.com/docs> and <b>raw</b>\n", undefined, { noHtmlSpans: true })[0];
+    const [link, ...rest] = p.props.children;
+    expect(link.type).toBe("a");
+    expect(link.props).toEqual({ href: "https://example.com/docs", children: ["https://example.com/docs"] });
+    expect(rest).toEqual([" and <b>raw</b>"]);
+  });
+
+  test.each([
+    ["<https://example.com/x>", {}, "https://example.com/x"],
+    ["<https://example.com/x>", { noHtmlSpans: true }, "https://example.com/x"],
+    ["https://example.com/x", { autolinks: true }, "https://example.com/x"],
+    ["www.example.com", { autolinks: true }, "www.example.com"],
+    ["me@example.com", { autolinks: true }, "me@example.com"],
+    ["[[Page]]", { wikiLinks: true }, "Page"],
+  ])("%s in the description of an image is in alt, options %j", (link, options, text) => {
+    const img = children(`![a ${link} b](/i.png)\n`, undefined, options)[0].props.children[0];
+    expect(img.type).toBe("img");
+    expect(img.props).toEqual({ src: "/i.png", alt: `a ${text} b` });
+  });
+
   test("reference-style link has href/title in props", () => {
     const md = '[click here][ref]\n\n[ref]: https://example.com/path "the title"\n';
     const link = children(md)[0].props.children[0];
@@ -584,6 +605,15 @@ describe("Bun.markdown.react component overrides", () => {
     const link = children("[click](https://example.com)\n", { a: Link })[0].props.children[0];
     expect(link.type).toBe(Link);
     expect(link.props.href).toBe("https://example.com");
+  });
+
+  test("noHtmlSpans: link override is used for an autolink in angle brackets", () => {
+    function Link({ href, children }: any) {
+      return React.createElement("a", { href, className: "custom" }, ...children);
+    }
+    const link = children("<https://example.com/docs>\n", { a: Link }, { noHtmlSpans: true })[0].props.children[0];
+    expect(link.type).toBe(Link);
+    expect(link.props.href).toBe("https://example.com/docs");
   });
 
   test("image override preserves src and alt props", () => {

@@ -1844,6 +1844,38 @@ for (const root of ["root.css", "root.module.css"]) {
     },
   });
 }
+devTest("stylesheet of a server file and a client file imports a stylesheet that is broken and fixed", {
+  framework: frameworkWithClientEntry(false),
+  files: {
+    "child.css": `.child { color: red; }`,
+    "root.css": `
+      @import "./child.css";
+      .root { color: red; }
+    `,
+    "client.ts": `
+      import "./root.css";
+    `,
+    "routes/index.ts": `
+      import "../root.css";
+      export default function (req, meta) {
+        return Response.json({ v: 1, styles: meta.styles });
+      }
+    `,
+  },
+  async test(dev) {
+    const css = async () => {
+      const { styles } = (await (await dev.fetch("/")).json()) as { styles: string[] };
+      return await dev.fetch(styles[0]).text();
+    };
+    expect(await css()).toContain(".child {");
+    await dev.write("child.css", `.child { color: red; }}`, { errors: null });
+    // The page has the browser's copy of root.css. This bundles the server's copy, with the broken file.
+    await dev.patch("routes/index.ts", { find: "v: 1", replace: "v: 2", errors: null });
+    // The fix bundles root.css again.
+    await dev.write("child.css", `.fixed { color: red; }`);
+    expect(await css()).toContain(".fixed {");
+  },
+});
 devTest("css file that imports a file that is not css does not kill old styles", {
   files: {
     "theme.json": `{}`,

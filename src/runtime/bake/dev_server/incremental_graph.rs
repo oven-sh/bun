@@ -1667,12 +1667,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
                     let prior_css_root = existing.content.css_root();
+                    let was_css_child = matches!(existing.content, Content::CssChild);
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
                     existing.failed = true;
                     if let Some(id) = prior_css_root {
                         // Keep it a css root so a trace still finds the stylesheet.
                         existing.kind = FileKind::Css;
                         existing.content = Content::CssRoot(id);
+                    } else if was_css_child {
+                        // Keep it a css child so a save of it bundles the roots that import it.
+                        existing.kind = FileKind::Css;
+                        existing.content = Content::CssChild;
                     } else {
                         existing.kind = FileKind::Unknown;
                     }

@@ -701,7 +701,7 @@ describe.concurrent("hoisting", () => {
       expected: "mocked",
       files: { "package.json": `{ "imports": { "#cfg": "./cfg.json" } }` },
     },
-    ...["@cfg", "@/cfg"].map(path => ({
+    ...["@cfg", "@/cfg", "~/cfg", "$cfg"].map(path => ({
       name: `the alias ${path} from paths in tsconfig.json`,
       path,
       call: "vi.mock",

@@ -340,15 +340,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             })
     }
 
-    /// `#cfg` is an alias from `imports` in package.json, and `@cfg` or `@/cfg` has no package behind the scope.
+    /// A package name starts with a letter, a digit, `-`, or `@scope/` and a name, so `#cfg`, `~/cfg`, `@cfg` and `@/cfg` are aliases.
     fn is_alias_name(path: &[u8]) -> bool {
         match path {
-            [b'#', ..] => true,
             [b'@', name @ ..] => !matches!(
                 strings::index_of_char_usize(name, b'/'),
                 Some(slash) if slash > 0 && slash + 1 < name.len()
             ),
-            _ => false,
+            [first, ..] => first.is_ascii() && !first.is_ascii_alphanumeric() && *first != b'-',
+            [] => false,
         }
     }
 

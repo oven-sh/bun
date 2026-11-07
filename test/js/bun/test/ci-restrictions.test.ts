@@ -146,7 +146,6 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).toBe(1);
       expect(stderr).toContain("Snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
       expect(stderr).toContain('Received: "this is new"');
@@ -156,6 +155,7 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
 exports[\`existing snapshot 1\`] = \`"hello world"\`;
 `,
       );
+      expect(exitCode).toBe(1);
     });
 
     test("toMatchSnapshot should fail for new snapshots when GITHUB_ACTIONS=1", async () => {
@@ -179,12 +179,12 @@ test("new snapshot", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).toBe(1);
       expect(stderr).toContain("Snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
       expect(stderr).toContain('Received: "this is new"');
       // The refused snapshot must not leave an empty .snap file or directory behind.
       expect(existsSync(join(dir, "__snapshots__"))).toBe(false);
+      expect(exitCode).toBe(1);
     });
 
     test("toMatchSnapshot should work for new snapshots when CI=false", async () => {

@@ -237,15 +237,7 @@ describe.concurrent("a name that a script puts on globalThis after the file is l
       .filter(line => line.startsWith("row: "))
       .sort();
 
-  test.each([
-    ["beforeAll", []],
-    ["beforeAll", ["--isolate"]],
-    ["beforeAll", ["--isolate=modules"]],
-    ["beforeAll", ["--parallel=2"]],
-    ["beforeAll", ["--globals=vitest"]],
-    ["beforeEach", []],
-    ["beforeEach", ["--isolate"]],
-  ])("in a %s() of a preload script: %j", async (hook, flags) => {
+  const setInHookOfPreload = async (hook, flags) => {
     const file = name => `
       import { test } from "bun:test";
       test("test", () => {
@@ -268,9 +260,23 @@ describe.concurrent("a name that a script puts on globalThis after the file is l
       rows: ["row: a true true true", "row: b true true true", "row: c true true true"],
       exitCode: 0,
     });
-  });
+  };
+  test.each([
+    ["beforeAll", []],
+    ["beforeAll", ["--isolate"]],
+    ["beforeAll", ["--parallel=2"]],
+    ["beforeAll", ["--globals=vitest"]],
+    ["beforeEach", []],
+    ["beforeEach", ["--isolate"]],
+  ])("in a %s() of a preload script: %j", setInHookOfPreload);
+  // Each file loads every module again. A debug build takes seconds for that.
+  test(
+    `in a beforeAll() of a preload script: ["--isolate=modules"]`,
+    () => setInHookOfPreload("beforeAll", ["--isolate=modules"]),
+    30_000,
+  );
 
-  test("in a preload script that another one reads", async () => {
+  test.each([[[]], [["--globals=vitest"]]])("in a preload script that another one reads: %j", async flags => {
     using dir = tempDir("jest-globals-late", {
       "first.ts": `globalThis.own = globalThis.expect = () => {};`,
       "second.ts": `
@@ -280,7 +286,8 @@ describe.concurrent("a name that a script puts on globalThis after the file is l
       `,
       "a.test.ts": `test("test", () => {});`,
     });
-    const { stdout, exitCode } = await run(String(dir), ["test", "--preload=./first.ts", "--preload=./second.ts"]);
+    const preloads = ["--preload=./first.ts", "--preload=./second.ts"];
+    const { stdout, exitCode } = await run(String(dir), ["test", ...preloads, ...flags]);
     expect({ rows: rowsOf(stdout), exitCode }).toEqual({
       rows: ["row: as it loads true", "row: in its hook true"],
       exitCode: 0,
@@ -482,6 +489,193 @@ describe.concurrent("a name that a script puts on globalThis after the file is l
     });
   });
 
+  // The runner's export has a name of its own, so nothing in the file binds the name of the test global.
+  test("a store, a delete and a name inside with stay as the file has them", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "stores.test.cjs": `
+        const { test } = require("bun:test");
+        const rows = [];
+        const row = (name, fn) => {
+          try {
+            rows.push(name + "=" + fn());
+          } catch (error) {
+            rows.push(name + "=" + error.name);
+          }
+        };
+        test("test", () => {
+          const one = () => 1;
+          const two = () => 2;
+          row("assign", () => ((expect = one), globalThis.expect === one && expect === one));
+          row("delete", () => (delete expect) + "," + ("expect" in globalThis) + "," + typeof expect(1).toBe);
+          row("compound", () => ((it ||= one), typeof it));
+          row("update", () => ((globalThis.describe = 1), describe++, globalThis.describe));
+          row("pattern", () => (([beforeAll] = [two]), globalThis.beforeAll === two));
+          row("object pattern", () => (({ afterAll } = { afterAll: two }), globalThis.afterAll === two));
+          row("for-of", () => {
+            for (beforeEach of [two]);
+            return globalThis.beforeEach === two;
+          });
+          row("for-in", () => {
+            for (afterEach in { key: 1 });
+            return globalThis.afterEach;
+          });
+          row("with hit", () => {
+            with ({ jest: "its own" }) return jest;
+          });
+          row("with miss", () => {
+            with ({}) return typeof jest.fn + "," + typeof mock;
+          });
+          row("with store", () => {
+            const scope = { vi: 0 };
+            with (scope) vi = 5;
+            return scope.vi + "," + ("vi" in globalThis);
+          });
+          row("eval", () => eval("typeof expect") + "," + typeof expect);
+          console.log("row: stores", rows.join(" "));
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: [
+        "row: stores assign=true delete=true,false,function compound=ReferenceError update=2 pattern=true" +
+          " object pattern=true for-of=true for-in=key with hit=its own with miss=ReferenceError with store=5,false" +
+          " eval=undefined,function",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test.each([[[]], [["--globals=vitest"]]])("in every shape of a read: %j", async flags => {
+    using dir = tempDir("jest-globals-late", {
+      "preload.ts": `
+        import { beforeAll, expect as runner } from "bun:test";
+        beforeAll(() => {
+          globalThis.expect = Object.assign((...args) => runner(...args), { isOwn: true });
+        });
+      `,
+      "shapes.test.js": `
+        import { test } from "bun:test";
+        const rows = [];
+        const row = (name, value) => rows.push(value?.isOwn ? name : name + "=" + typeof value);
+        test("test", async () => {
+          row("bare", expect);
+          row("call", (expect(1).toBe(1), expect));
+          row("shorthand", { expect }.expect);
+          row("spread", [...[expect]][0]);
+          row("optional call", (expect?.(1), expect));
+          row("default parameter", ((value = expect) => value)());
+          row("class field", class { static value = expect; }.value);
+          row("heritage", new (class extends (expect && Object) { value = expect; })().value);
+          row("logical", expect && expect);
+          row("nullish", expect ?? 1);
+          row("comma", (0, expect));
+          row("template", [\`\${expect.isOwn}\`, expect][1]);
+          row("arrow", (() => expect)());
+          row("conditional", expect ? expect : 0);
+          row("typeof", typeof expect === "function" && expect);
+          row("computed key", { [expect.name]: expect }[expect.name]);
+          row("await", await expect);
+          const first = expect
+          expect(first).toBe(first)
+          row("no semicolon", first);
+          function* values() {
+            yield expect;
+          }
+          row("yield", values().next().value);
+          try {
+            throw expect;
+          } catch (thrown) {
+            row("throw", thrown);
+          }
+          switch (expect) {
+            case expect:
+              row("case", expect);
+          }
+          for (const value of [expect]) row("for-of", value);
+          row("eval", eval("expect"));
+          row("define", DEFINED_AS_EXPECT);
+          console.log("row: shapes", rows.join(" "));
+        });
+      `,
+    });
+    const args = ["test", "--preload=./preload.ts", "--define", "DEFINED_AS_EXPECT=expect", ...flags];
+    const { stdout, exitCode } = await run(String(dir), args);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: [
+        "row: shapes bare call shorthand spread optional call default parameter class field heritage logical nullish" +
+          " comma template arrow conditional typeof computed key await no semicolon yield throw case for-of eval define",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // "bun:test" has no \`suite\` and "vitest" has no \`xit\`. A file gets no import for such a name.
+  test.each([
+    ["nothing.test.js", "", "suite", []],
+    ["partial.test.js", `import { test } from "bun:test";`, "suite", []],
+    ["partial.test.cjs", `const { test } = require("bun:test");`, "suite", []],
+    ["partial.test.js", `import { test } from "vitest";`, "xit", []],
+    ["partial.test.js", `import { test } from "vitest";`, "xit", ["--globals=vitest"]],
+  ])("a name that the test module lacks stays a free name in %s: %s %s %j", async (file, header, name, flags) => {
+    using dir = tempDir("jest-globals-late", {
+      [file]: `
+        ${header}
+        const rows = [];
+        const row = fn => {
+          try {
+            rows.push(fn());
+          } catch (error) {
+            rows.push(error.name);
+          }
+        };
+        test("test", () => {
+          row(() => {
+            typeof ${name};
+            return "ok";
+          });
+          row(() => {
+            void ${name};
+            return "ok";
+          });
+          row(() => {
+            if (${name}) {
+            }
+            return "ok";
+          });
+          row(() => typeof ${name});
+          row(() => [1, ${name}][0]);
+          console.log("row: free", rows.join(" "));
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", ...flags]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: ["row: free ok ReferenceError ReferenceError undefined ReferenceError"],
+      exitCode: 0,
+    });
+  });
+
+  test("a TypeScript alias of a namespace of a test global is a type, and is erased", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "alias.test.ts": `
+        import { test } from "bun:test";
+        import Mock = jest.Mock;
+        import Deep = jest.Mock.Fn;
+        let mock: Mock<() => void> | undefined;
+        let deep: Deep | undefined;
+        test("test", () => {
+          console.log("row: alias", typeof mock, typeof deep, typeof jest.fn);
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: ["row: alias undefined undefined function"],
+      exitCode: 0,
+    });
+  });
+
   test("with --globals=vitest the name is a property of globalThis and nothing else", async () => {
     using dir = tempDir("jest-globals-late", {
       "globals.test.ts": `
@@ -508,6 +702,34 @@ describe.concurrent("a name that a script puts on globalThis after the file is l
     const { stdout, exitCode } = await run(String(dir), ["test", "--globals=vitest"]);
     expect({ rows: rowsOf(stdout), exitCode }).toEqual({
       rows: ["row: globals true true undefined undefined ReferenceError"],
+      exitCode: 0,
+    });
+  });
+
+  test("with --globals=vitest a name that a preload script deletes is gone, except for a file that imports nothing", async () => {
+    const read = name => `
+      let seen = typeof expect;
+      try {
+        seen += " " + typeof expect(1).toBe;
+      } catch (error) {
+        seen += " " + error.name;
+      }
+      console.log("row: ${name}", seen);
+    `;
+    using dir = tempDir("jest-globals-late", {
+      "first.ts": `delete globalThis.expect;`,
+      "second.ts": `import { beforeAll } from "vitest"; ${read("second preload")}`,
+      "imports.test.ts": `import { test } from "vitest"; test("test", () => { ${read("imports a test module")} });`,
+      "nothing.test.ts": `test("test", () => { ${read("imports nothing")} });`,
+    });
+    const preloads = ["--preload=./first.ts", "--preload=./second.ts"];
+    const { stdout, exitCode } = await run(String(dir), ["test", ...preloads, "--globals=vitest"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: [
+        "row: imports a test module undefined ReferenceError",
+        "row: imports nothing function function",
+        "row: second preload undefined ReferenceError",
+      ],
       exitCode: 0,
     });
   });

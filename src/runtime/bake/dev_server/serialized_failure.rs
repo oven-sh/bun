@@ -136,6 +136,15 @@ impl SerializedFailure {
         Packed::from_bits(raw).decode()
     }
 
+    /// The `bundling_failures` key of this failure, if a file owns it.
+    pub(crate) fn file_owner(&self) -> Option<OwnerPacked> {
+        match self.get_owner() {
+            Owner::Client(index) => Some(OwnerPacked::new(Side::Client, index.get())),
+            Owner::Server(index) => Some(OwnerPacked::new(Side::Server, index.get())),
+            Owner::None | Owner::Route(_) => None,
+        }
+    }
+
     /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
     /// `_dev` parameter so call sites read uniformly.
     pub(crate) fn deinit<D>(&self, _dev: &D) {

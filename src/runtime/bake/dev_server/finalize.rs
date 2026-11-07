@@ -323,7 +323,7 @@ fn finalize_bundle_inner(
             }
         };
         let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
-        match targets[part_range.source_index.get() as usize].bake_graph() {
+        let deleted_file = match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Client => dev.client_graph.receive_chunk(
                 &mut ctx,
                 index,
@@ -360,6 +360,17 @@ fn finalize_bundle_inner(
                 },
                 graph == bake::Graph::Ssr,
             )?,
+        };
+        if let Some(client_index) = deleted_file {
+            // No build finds the slot of a deleted file again, so this bundle must not give it a failure.
+            let owner =
+                serialized_failure::OwnerPacked::new(bake::Side::Client, client_index.get());
+            let _ = current_bundle!()
+                .resolution_failure_entries
+                .swap_remove(&owner);
+            dev.incremental_result
+                .failures_added
+                .retain(|failure| failure.file_owner() != Some(owner));
         }
     }
 
@@ -624,6 +635,7 @@ fn finalize_bundle_inner(
         *had_sent_hmr_event = true;
     }
     dev.index_failures()?;
+    dev.assert_failures_match_failed_files();
 
     dev.client_graph.ensure_stale_bit_capacity(false)?;
     dev.server_graph.ensure_stale_bit_capacity(false)?;

@@ -861,13 +861,13 @@ static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore:
     }
 }
 
-JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, ReaderOwner owner)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
+    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream, owner);
     RETURN_IF_EXCEPTION(scope, {});
     auto* chunks = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
@@ -916,7 +916,7 @@ JSValue readableStreamIntoText(JSGlobalObject* globalObject, WebCore::JSReadable
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue arrayResult = readableStreamIntoArray(globalObject, stream);
+    JSValue arrayResult = readableStreamIntoArray(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, convertChunkArrayPromise(vm, globalObject, arrayResult, ChunkArrayConversion::Text));
 }
@@ -1003,7 +1003,7 @@ static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject
         controller->m_closeOnPullSettled = true;
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
+    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     auto* context = InternalFieldTuple::create(vm, defaultGlobalObject(globalObject)->internalFieldTupleStructure(), stream, reader);
     RELEASE_AND_RETURN(scope, directConsumeLoopStep(vm, globalObject, context));
@@ -1172,7 +1172,7 @@ JSValue readableStreamToText(JSGlobalObject* globalObject, WebCore::JSReadableSt
     RELEASE_AND_RETURN(scope, readableStreamIntoText(globalObject, stream));
 }
 
-JSValue readableStreamToArray(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamToArray(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, ReaderOwner owner)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1180,7 +1180,7 @@ JSValue readableStreamToArray(JSGlobalObject* globalObject, WebCore::JSReadableS
         RELEASE_AND_RETURN(scope, readableStreamToArrayDirect(globalObject, stream));
     if (auto* error = unusableStreamError(globalObject, stream))
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-    RELEASE_AND_RETURN(scope, readableStreamIntoArray(globalObject, stream));
+    RELEASE_AND_RETURN(scope, readableStreamIntoArray(globalObject, stream, owner));
 }
 
 // The chunk arrays these conversions consume are built by the array pump and never escape
@@ -1259,7 +1259,7 @@ JSValue readableStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSRea
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
         return fastPath;
-    JSValue arrayResult = readableStreamToArray(globalObject, stream);
+    JSValue arrayResult = readableStreamToArray(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, convertChunkArrayPromise(vm, globalObject, arrayResult, ChunkArrayConversion::ArrayBuffer));
 }
@@ -1276,7 +1276,7 @@ JSValue readableStreamToBytes(JSGlobalObject* globalObject, WebCore::JSReadableS
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
         return fastPath;
-    JSValue arrayResult = readableStreamToArray(globalObject, stream);
+    JSValue arrayResult = readableStreamToArray(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, convertChunkArrayPromise(vm, globalObject, arrayResult, ChunkArrayConversion::Bytes));
 }
@@ -1339,7 +1339,7 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
         return fastPath;
-    JSValue arrayResult = readableStreamToArray(globalObject, stream);
+    JSValue arrayResult = readableStreamToArray(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     auto* arrayPromise = dynamicDowncast<JSPromise>(arrayResult);
     if (!arrayPromise) [[unlikely]] {
@@ -1400,7 +1400,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToArray, (JSGlobalObject * glob
     auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "stream"_s, "ReadableStream"_s, streamValue);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToArray(globalObject, stream)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToArray(globalObject, stream, ReaderOwner::Script)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToArrayBuffer, (JSGlobalObject * globalObject, CallFrame* callFrame))

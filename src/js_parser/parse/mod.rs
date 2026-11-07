@@ -1486,6 +1486,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
+                // Tested in the loop, where only a parse that read a legal comment comes.
+                if !p.options.keep_legal_comments {
+                    break;
+                }
                 let loc = p.lexer.loc();
                 stmts.push(p.s(S::Comment { text: comment.text }, loc));
             }

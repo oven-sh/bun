@@ -71,6 +71,97 @@ devTest("source map emitted for hmr chunk", {
   },
 });
 
+devTest("hmr chunk source map follows the source when mappings do not change", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import other from "./App";
+      console.log("Hello, " + other + "!");
+      import.meta.hot.accept();
+    `,
+    "App.tsx": `
+      export default "AAA";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("Hello, AAA!");
+    // Each edit changes only a string literal. The VLQ mappings stay the
+    // same, so the source map must be keyed by the source content too.
+    const mapUrls = new Set<string>();
+    let lastSourceMapUrl: string | undefined;
+    for (const word of ["BBB", "CCC", "DDD"]) {
+      const source = `export default "${word}";\nimport.meta.hot.accept();`;
+      await dev.write("App.tsx", source);
+      const chunk = await c.getMostRecentHmrChunk();
+      expect(chunk).toContain(`"${word}"`);
+      const sourceMapUrl = sourceMappingUrl(chunk);
+      mapUrls.add(sourceMapUrl);
+      lastSourceMapUrl = sourceMapUrl;
+      const sourceMap = await dev.fetch(sourceMapUrl).json();
+      expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)).toEqual([dev.join("App.tsx")]);
+      expect(sourceMap.sourcesContent[1]).toBe(source);
+    }
+    expect(mapUrls.size).toBe(3);
+
+    // A re-save with the same bytes produces the same source map, so it
+    // reuses the same key.
+    await dev.writeNoChanges("App.tsx");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toContain(`"DDD"`);
+    expect(sourceMappingUrl(chunk)).toBe(lastSourceMapUrl);
+  },
+});
+
+devTest("hmr chunk source map follows the line count of a part without mappings", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import other from "./App";
+      import text from "./data.txt";
+      console.log("Hello, " + other + "! " + text.length);
+      import.meta.hot.accept();
+    `,
+    "App.tsx": `
+      export default "AAA";
+      import.meta.hot.accept();
+    `,
+    "data.txt": "x",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("Hello, AAA! 1");
+    // A text file prints no mappings, so the store keeps only its line
+    // count. The line count offsets every part after it in the chunk. Each
+    // save changes only that count, so each save needs its own key. The
+    // bundler does not order the parts, so the rendered mappings are not
+    // compared: a text part at the end of the chunk offsets nothing.
+    const mapUrls = new Set<string>();
+    for (const text of ["BBB\n", "BBB\n\n", "BBB\n\n\n"]) {
+      {
+        await using _batch = await dev.batchChanges({ errors: null });
+        await dev.write("data.txt", text, { dedent: false });
+        await dev.writeNoChanges("App.tsx");
+      }
+      const chunk = await c.getMostRecentHmrChunk();
+      const sourceMapUrl = sourceMappingUrl(chunk);
+      mapUrls.add(sourceMapUrl);
+      const sourceMap = await dev.fetch(sourceMapUrl).json();
+      expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath).sort()).toEqual(
+        [dev.join("index.ts"), dev.join("data.txt"), dev.join("App.tsx")].sort(),
+      );
+      // index.ts re-runs on each update. Its output is not under test.
+      c.messages.length = 0;
+    }
+    expect(mapUrls.size).toBe(3);
+  },
+});
+
 type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
   /** Original script generated */
   script: string;
@@ -87,12 +178,16 @@ async function extractSourceMapHtml(dev: Dev, html: string) {
   return extractSourceMap(dev, scriptSource);
 }
 
-async function extractSourceMap(dev: Dev, scriptSource: string) {
-  const sourceMapUrl = scriptSource.match(/\n\/\/# sourceMappingURL=([^"]+)/);
+function sourceMappingUrl(scriptSource: string) {
+  const sourceMapUrl = scriptSource.match(/\n\/\/# sourceMappingURL=(\S+)/);
   if (!sourceMapUrl) {
     throw new Error("Source map URL not found in " + scriptSource);
   }
-  const sourceMap = await dev.fetch(sourceMapUrl[1]).text();
+  return sourceMapUrl[1];
+}
+
+async function extractSourceMap(dev: Dev, scriptSource: string) {
+  const sourceMap = await dev.fetch(sourceMappingUrl(scriptSource)).text();
   if (!sourceMap.startsWith("{")) {
     throw new Error("Source map is not valid JSON: " + sourceMap);
   }

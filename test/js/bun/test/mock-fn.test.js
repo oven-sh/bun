@@ -4280,6 +4280,30 @@ if (isBun) {
           expect(other.prototype.constructor).toBe(other);
         });
 
+        // The receiver of these stores is a Proxy, and the native setter behind a fresh `prototype` takes the mock.
+        // JavaScriptCore gives it the receiver, and the setter refuses the store.
+        // https://github.com/oven-sh/WebKit/pull/993 changes that. With a WebKit that has it, these pass: remove the
+        // `failing` mark.
+        test.failing.each([
+          ["a Proxy", mocked => new Proxy(mocked, {})],
+          ["a Proxy of a Proxy", mocked => new Proxy(new Proxy(mocked, {}), {})],
+          ["a Proxy made in a node:vm context", mocked => vm.runInNewContext("new Proxy(mocked, {})", { mocked })],
+        ])("assignment through %s", (_, wrap) => {
+          const assigned = {};
+          const mocked = fresh();
+          wrap(mocked).prototype = assigned;
+          expect(Object.getOwnPropertyDescriptor(mocked, "prototype")).toEqual({ value: assigned, ...attributes });
+          expect(Object.getPrototypeOf(new mocked())).toBe(assigned);
+
+          const viaReflect = fresh();
+          expect(Reflect.set(wrap(viaReflect), "prototype", assigned)).toBe(true);
+          expect(viaReflect.prototype).toBe(assigned);
+
+          const asReceiver = fresh();
+          expect(Reflect.set({}, "prototype", assigned, wrap(asReceiver))).toBe(true);
+          expect(asReceiver.prototype).toBe(assigned);
+        });
+
         test("defineProperty", () => {
           const value = {};
           const mocked = fresh();

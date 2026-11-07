@@ -1040,8 +1040,9 @@ function _toUnixTimestamp(time: any, name = "time") {
   if (typeof time === "string" && +time == time) {
     return +time;
   }
+  // NumberIsFinite in Node. $isFinite is the global isFinite, which converts its argument first.
   // @ts-ignore
-  if ($isFinite(time)) {
+  if (typeof time === "number" && $isFinite(time)) {
     if (time < 0) {
       return Date.now() / 1000;
     }

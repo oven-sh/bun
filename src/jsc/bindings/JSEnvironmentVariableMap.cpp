@@ -307,7 +307,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
         return JSValue::encode(hasExistingValue);
     }
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -399,7 +399,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
     EncodedSlice value = { nullptr, 0 };
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -447,7 +447,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
     EncodedSlice value = { nullptr, 0 };
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
 

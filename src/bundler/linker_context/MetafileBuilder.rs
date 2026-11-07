@@ -361,11 +361,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 }
 
                 // Add "external": true for external imports
-                if record
-                    .flags
-                    .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-                    || !record.source_index.is_valid()
-                {
+                if !record.source_index.is_valid() {
                     j.push_static(b",\n          \"external\": true");
                 }
 

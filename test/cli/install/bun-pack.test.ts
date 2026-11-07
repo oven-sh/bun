@@ -21,6 +21,7 @@ import {
   isASAN,
   isDebug,
   isLinux,
+  isMacOS,
   isRoot,
   isWindows,
   MAX_PATH_BYTES,
@@ -5246,11 +5247,11 @@ describe.concurrent("bins", () => {
   });
 
   test.each([
-    { onDisk: "bins/cli.js", bin: "bins/CLI.js" },
-    { onDisk: "bins/cli.js", bin: "BINS/cli.js" },
-    { onDisk: "caf\u00e9.js", bin: "cafe\u0301.js" },
-    { onDisk: "cafe\u0301.js", bin: "caf\u00e9.js" },
-  ])("a bin that the file system finds under another name is packed: %j", async ({ onDisk, bin }) => {
+    { onDisk: "bins/cli.js", bin: "bins/CLI.js", isFound: isMacOS || isWindows },
+    { onDisk: "bins/cli.js", bin: "BINS/cli.js", isFound: isMacOS || isWindows },
+    { onDisk: "caf\u00e9.js", bin: "cafe\u0301.js", isFound: isMacOS },
+    { onDisk: "cafe\u0301.js", bin: "caf\u00e9.js", isFound: isMacOS },
+  ])("a bin that the file system finds under another name is packed: %j", async ({ onDisk, bin, isFound }) => {
     using dir = tempDir("pack-bins-found-name", {
       "package.json": JSON.stringify({ name: "pack-bins-found-name", version: "1.0.0", files: ["index.js"], bin }),
       "index.js": indexJs,
@@ -5259,9 +5260,8 @@ describe.concurrent("bins", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    const found = existsSync(join(dir, bin)) ? [`package/${bin}`] : [];
     expect(tarballEntries(join(dir, "pack-bins-found-name-1.0.0.tgz")).sort()).toEqual(
-      ["package/package.json", "package/index.js", ...found].sort(),
+      ["package/package.json", "package/index.js", ...(isFound ? [`package/${bin}`] : [])].sort(),
     );
     expect(exitCode).toBe(0);
   });

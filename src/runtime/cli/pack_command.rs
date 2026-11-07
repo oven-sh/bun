@@ -1294,14 +1294,19 @@ pub(crate) fn packed_bin_kind(abs_workspace_path: &[u8], bin_path: &[u8]) -> bun
 fn is_never_packed_on_disk(abs_workspace_path: &[u8], bin_path: &[u8]) -> bool {
     let bin_path = strings::without_trailing_slash(bin_path);
     let mut spill: Vec<u8> = Vec::new();
-    let mut lstat = |parts: &[&[u8]]| {
-        bun_sys::lstat(resolve_path::join_z_spill::<resolve_path::platform::Auto>(
-            &mut spill, parts,
-        ))
+    let mut lstat_if_present = |parent: &[u8], name: &[u8]| {
+        let parts: [&[u8]; 3] = [abs_workspace_path, parent, name];
+        let abs_path =
+            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
+        match bun_sys::lstat(abs_path) {
+            Ok(stat) => Some(stat),
+            Err(err) if is_absent(err.get_errno()) => None,
+            Err(err) => fail_file(err, "stat", bin_path),
+        }
     };
     let mut start = 0;
     for name in strings::split(bin_path, b"/") {
-        let parent = &bin_path[..start];
+        let parent = strings::without_trailing_slash(&bin_path[..start]);
         let is_root_file = start == 0 && name.len() == bin_path.len();
         start += name.len() + 1;
 
@@ -1309,21 +1314,27 @@ fn is_never_packed_on_disk(abs_workspace_path: &[u8], bin_path: &[u8]) -> bool {
         if names.iter().any(|listed| **listed == *name) {
             continue;
         }
-        let Ok(found) = lstat(&[abs_workspace_path, parent, name]) else {
+        let Some(found) = lstat_if_present(parent, name) else {
             return true;
         };
-        let mut same_file = names.iter().filter(|listed| {
-            lstat(&[abs_workspace_path, parent, listed])
-                .is_ok_and(|st| st.st_dev == found.st_dev && st.st_ino == found.st_ino)
-        });
-        let is_never_packed = |listed: &[u8]| {
+        let mut same_file = (names.iter())
+            .filter(|listed| {
+                lstat_if_present(parent, listed)
+                    .is_some_and(|st| st.st_dev == found.st_dev && st.st_ino == found.st_ino)
+            })
+            .peekable();
+        // Some network and FUSE file systems have no inode numbers, or other ones for each path.
+        if found.st_ino == 0 || same_file.peek().is_none() {
+            Output::err_generic(
+                "bin \"{}\" is spelled differently in its directory",
+                (bstr::BStr::new(bin_path),),
+            );
+            Global::crash();
+        }
+        if same_file.any(|listed| {
             is_unconditionally_excluded(listed, 2).is_some()
-                || (is_root_file && listed == b"package.json")
-        };
-        let Some(first) = same_file.next() else {
-            return true;
-        };
-        if is_never_packed(first) || same_file.any(|listed| is_never_packed(listed)) {
+                || (is_root_file && listed.eq_ignore_ascii_case(b"package.json"))
+        }) {
             return true;
         }
     }
@@ -1339,15 +1350,20 @@ fn names_in_dir(abs_workspace_path: &[u8], subpath: &[u8]) -> Vec<Box<[u8]>> {
     let dir = match bun_sys::open_dir_absolute(abs_path.as_bytes()) {
         Ok(dir) => dir,
         Err(err) if is_absent(err.get_errno()) => return Vec::new(),
+        Err(err) if subpath.is_empty() => fail_open_dir(err.into(), b"."),
         Err(err) => fail_open_dir(err.into(), subpath),
     };
     let _close = CloseOnDrop::new(dir);
     let mut iter = DirIterator::iterate(dir);
     let mut names = Vec::new();
-    while let Some(entry) = next_dir_entry(&mut iter, subpath) {
-        names.push(entry.name.slice_u8().into());
+    loop {
+        match iter.next() {
+            Ok(Some(entry)) => names.push(entry.name.slice_u8().into()),
+            Ok(None) => return names,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => return names,
+            Err(err) => fail_read_dir(err, subpath),
+        }
     }
-    names
 }
 
 /// `published_files` has already queued the bins, so the walks skip them.

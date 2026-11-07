@@ -326,6 +326,8 @@ impl RuntimeTranspilerStore {
         package_json: Option<&PackageJSON>,
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
+        // A copy of the resolver's `extra_cjs_extensions`.
+        extra_cjs_extensions: Box<[Box<[u8]>]>,
         module_loader: JSValue,
     ) -> *mut c_void {
         let path_text = Box::<[u8]>::from(path.text);
@@ -363,6 +365,7 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 aot_package_config,
+                extra_cjs_extensions,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
@@ -417,6 +420,8 @@ pub struct TranspilerJob {
     /// `Transpiler::find_aot_package_config`, asked on the JS thread.
     pub(crate) aot_package_config:
         Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
+    /// The resolver's list, copied on the JS thread: that thread frees its own when `Module._extensions` changes.
+    pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub(crate) promise: StrongOptional,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
@@ -713,8 +718,13 @@ impl TranspilerJob {
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
-        // Note: the resolver already shares opts with the parent
-        // Transpiler via raw pointer; set_arena/set_log keep them in sync.
+        // SAFETY: `resolver.opts` is a value field of this copy, which is never dropped, so an alias of the job's list, which outlives the copy, can overwrite its list.
+        unsafe {
+            ptr::write(
+                &raw mut transpiler.resolver.opts.extra_cjs_extensions,
+                ptr::read(&raw const this.extra_cjs_extensions),
+            );
+        }
         transpiler.macro_context = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;

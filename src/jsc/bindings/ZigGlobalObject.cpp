@@ -914,6 +914,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
+    Bun::IsolatedModuleCache::evictPathsOfFinishedTestFile(vm);
+
     // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
     oldGlobal->onLoadPlugins.clear();

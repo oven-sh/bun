@@ -2749,10 +2749,17 @@ pub(crate) mod __gated_printer {
 
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
-                    self.print_space_before_identifier();
-                    self.print_symbol(meta.wrapper_ref);
-                    self.print(b"()");
                     if meta.exports_ref.is_valid() {
+                        // A re-entered `init_foo()` is `undefined`: ask again one job later.
+                        self.print(b"(");
+                        self.print_symbol(meta.wrapper_ref);
+                        self.print(b"()");
+                        self.print_space();
+                        self.print(b"||");
+                        self.print_space();
+                        self.print(b"Promise.resolve().then(");
+                        self.print_symbol(meta.wrapper_ref);
+                        self.print(b"))");
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();
                         if namespace_unused {
@@ -2768,6 +2775,10 @@ pub(crate) mod __gated_printer {
                             }
                         }
                         self.print_dot_then_suffix();
+                    } else {
+                        self.print_space_before_identifier();
+                        self.print_symbol(meta.wrapper_ref);
+                        self.print(b"()");
                     }
                     if wrap {
                         self.print(b")");

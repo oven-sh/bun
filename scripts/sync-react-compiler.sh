@@ -105,11 +105,14 @@ for pair in "${boundary[@]}"; do
   boundary_excludes+=(":(exclude)compiler/crates/${pair%%:*}")
 done
 
-# An upstream file that uses react_compiler_ast and has no entry above is a new
-# boundary file: it needs a Bun port + an entry, and is listed until it has one.
+# An upstream file that names react_compiler_ast outside a // comment and has
+# no entry above is a new boundary file: it needs a Bun port + an entry, and is
+# printed until it has one.
 # git grep exits with 1 when no file matches. Any other failure stops the script.
-new_consumers=$(git -C "$tmp" grep --no-color -lF 'react_compiler_ast::' "$new" -- 'compiler/crates/*/src/*.rs' \
-  ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" | sed "s/^$new://") || [ $? -eq 1 ]
+new_consumers=$(git -C "$tmp" grep --no-color -lE \
+  -e '(^|[^A-Za-z0-9_])react_compiler_ast($|[^A-Za-z0-9_])' --and --not -e '^[[:space:]]*//' "$new" -- \
+  'compiler/crates/*/src/*.rs' ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" \
+  | sed "s/^$new://") || [ $? -eq 1 ]
 
 # Not part of a whole-crate port: a file with an entry above, and a new consumer.
 declare -a not_whole_crate=("${boundary_excludes[@]}")
@@ -145,7 +148,13 @@ for pair in "${boundary[@]}"; do
 done
 
 echo "### new react_compiler_ast consumers (need new Bun port) ###"
-echo "${new_consumers:-(none)}"
 echo
+[ -n "$new_consumers" ] || { echo "(none)"; echo; }
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  echo "── $file"
+  git -C "$tmp" show "$new:$file"
+  echo
+done <<< "$new_consumers"
 
 echo "When porting is done: echo $new > $ported_file"

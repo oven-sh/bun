@@ -37,7 +37,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
         [crates]: {
           // Whole-crate ports. The second names react_compiler_ast in a comment, and does not use it.
           "react_compiler_hir/src/lib.rs": source("hir", 1),
-          "react_compiler_hir/src/environment.rs": "// Uses no type of react_compiler_ast.\n",
+          "react_compiler_hir/src/environment.rs": "pub struct Environment {\n    // Not from react_compiler_ast.\n}\n",
           "react_compiler_reactive_scopes/src/prune_unused_labels.rs": source("prune", 1),
           // In the directory of a whole-crate port, and not part of it: an AST-boundary port, and a file Bun does
           // not have.
@@ -119,12 +119,12 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       "react_compiler_hir/src/print.rs": source("print", 3),
       "react_compiler_lowering/src/build_hir.rs": astConsumer("lower", 3),
       // New upstream, and use react_compiler_ast. The script has the first as an AST-boundary port. It has no entry
-      // for the second, which is in the directory of a whole-crate port.
+      // for the second, which is in the directory of a whole-crate port and names the crate without `::`.
       "react_compiler_lowering/src/hir_builder.rs": astConsumer("builder", 3),
-      "react_compiler_hir/src/ast_types.rs": astConsumer("ast_types", 3),
-      // New upstream, and nothing to port: a file of react_compiler_ast itself, and a file that uses another crate.
+      "react_compiler_hir/src/ast_types.rs": `use react_compiler_ast as ast;\n${source("ast_types", 3)}`,
+      // New upstream, and nothing to port: a file of react_compiler_ast itself, and a file that uses other crates.
       "react_compiler_ast/src/scope.rs": astConsumer("scope", 3),
-      "react_compiler/src/timing.rs": "use react_compiler_ast_extras::Timer;\n",
+      "react_compiler/src/timing.rs": "use react_compiler_ast_extras::Timer;\nuse my_react_compiler_ast::Clock;\n",
     });
   });
 
@@ -214,8 +214,12 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "-pub fn print() -> u32 { 1 }",
           "+pub fn print() -> u32 { 3 }",
           "### new react_compiler_ast consumers (need new Bun port) ###",
-          "compiler/crates/react_compiler_hir/src/ast_types.rs",
-          "compiler/crates/react_compiler_lowering/src/source_location.rs",
+          "── compiler/crates/react_compiler_hir/src/ast_types.rs",
+          "use react_compiler_ast as ast;",
+          "pub fn ast_types() -> u32 { 3 }",
+          "── compiler/crates/react_compiler_lowering/src/source_location.rs",
+          "use react_compiler_ast::File;",
+          "pub fn convert_base_loc() -> u32 { 1 }",
           "When porting is done: echo <main> > <repo>/src/react_compiler/UPSTREAM_PORTED",
         ],
       }
@@ -241,7 +245,9 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "+pub fn hir() -> u32 { 2 }",
           "### AST-boundary ports (re-port via DESIGN.md type map) ###",
           "### new react_compiler_ast consumers (need new Bun port) ###",
-          "compiler/crates/react_compiler_lowering/src/source_location.rs",
+          "── compiler/crates/react_compiler_lowering/src/source_location.rs",
+          "use react_compiler_ast::File;",
+          "pub fn convert_base_loc() -> u32 { 1 }",
           "When porting is done: echo <second> > <repo>/src/react_compiler/UPSTREAM_PORTED",
         ],
       }

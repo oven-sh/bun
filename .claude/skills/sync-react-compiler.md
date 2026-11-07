@@ -39,8 +39,8 @@ the porting reference for the AST-boundary files.
    ```
    Output is grouped into three sections: whole-crate ports, AST-boundary
    ports, and every upstream file that uses `react_compiler_ast` and has no
-   entry in the script's `boundary` array (i.e. a new boundary file that needs
-   a fresh Bun port).
+   entry in the script's `boundary` array, printed in full (i.e. a new boundary
+   file that needs a fresh Bun port).
 
 2. **Apply whole-crate diffs mechanically.** For each hunk under the
    whole-crate section, apply it to the corresponding `src/react_compiler/<dir>/`
@@ -60,11 +60,10 @@ the porting reference for the AST-boundary files.
    For large diffs, fan out one agent per file with the upstream diff + the Bun
    port + DESIGN.md as context, then adversarially review each port.
 
-4. **Handle new boundary files.** If the third section lists any file, add it
-   to the `boundary` array in `scripts/sync-react-compiler.sh` and run the
-   script again: the AST-boundary section then prints the file. Write a fresh
-   Bun port of it under `src/react_compiler/`, and add a row to the layout
-   table in `DESIGN.md`. If Bun does not port the file, give its entry a
+4. **Handle new boundary files.** If the third section prints any file, write a
+   fresh Bun port of it under `src/react_compiler/`, add it to the `boundary`
+   array in `scripts/sync-react-compiler.sh`, and add a row to the layout table
+   in `DESIGN.md`. If Bun does not port the file, give its entry a
    `(not ported; ...)` label. A file stays in the third section until it has
    an entry.
 

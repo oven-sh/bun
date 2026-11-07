@@ -2,7 +2,7 @@ import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
-import { closeSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, readSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -424,6 +424,90 @@ describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
     } finally {
       closeSync(childEnd);
       if (writeEnd !== undefined) closeSync(writeEnd);
+    }
+  });
+});
+
+// `bun filter.js < file | reader`: stdin is a file and the reader of stdout is slow. The
+// reader here takes nothing until the child reports a write that met backpressure, then
+// exactly what was written, so each large chunk pauses stdin. On Linux the last pause
+// falls between the final chunk and EOF, and EOF is pushed behind a byte that is still
+// buffered.
+describe.skipIf(isWindows)("a file on stdin piped to a stdout under backpressure", () => {
+  test.concurrent("pipeline() to process.stdout still emits 'end' and calls back", async () => {
+    const size = 1024 * 1024 + 1;
+    using dir = tempDir("stdin-file-backpressure", { "in.bin": Buffer.alloc(size, "x") });
+    const [childEnd, parentEnd] = createSocketPair();
+    let childEndOpen = true;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("node:fs");
+          const { pipeline } = require("node:stream");
+          const result = { callback: null, end: false };
+          let written = 0;
+          const write = process.stdout.write;
+          process.stdout.write = function (chunk, ...rest) {
+            written += chunk.length;
+            const ok = write.call(this, chunk, ...rest);
+            if (!ok) fs.writeSync(2, "full " + written + "\\n");
+            return ok;
+          };
+          process.stdin.on("end", () => (result.end = true));
+          pipeline(process.stdin, process.stdout, err => (result.callback = err ? err.code : "ok"));
+          process.on("exit", () => fs.writeSync(2, "result " + JSON.stringify(result) + "\\n"));`,
+        ],
+        stdin: Bun.file(join(String(dir), "in.bin")),
+        stdout: childEnd,
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      closeSync(childEnd);
+      childEndOpen = false;
+
+      const buffer = Buffer.alloc(64 * 1024);
+      let bytes = 0;
+      // Reads the child's stdout up to `target` bytes in total, or to its end.
+      async function take(target: number) {
+        while (bytes < target) {
+          let n: number;
+          try {
+            n = readSync(parentEnd, buffer, 0, Math.min(buffer.length, target - bytes), null);
+          } catch (err) {
+            // The socket is non-blocking: the child has not written the rest yet.
+            if ((err as NodeJS.ErrnoException).code !== "EAGAIN") throw err;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            continue;
+          }
+          if (n === 0) return;
+          bytes += n;
+        }
+      }
+
+      const decoder = new TextDecoder();
+      let pending = "";
+      let result: unknown;
+      for await (const chunk of proc.stderr) {
+        pending += decoder.decode(chunk, { stream: true });
+        const lines = pending.split("\n");
+        pending = lines.pop()!;
+        for (const line of lines) {
+          if (line.startsWith("full ")) await take(Number(line.slice(5)));
+          else if (line.startsWith("result ")) result = JSON.parse(line.slice(7));
+        }
+      }
+      await take(Infinity);
+
+      expect({ bytes, result, exitCode: await proc.exited }).toEqual({
+        bytes: size,
+        result: { callback: "ok", end: true },
+        exitCode: 0,
+      });
+    } finally {
+      if (childEndOpen) closeSync(childEnd);
+      closeSync(parentEnd);
     }
   });
 });

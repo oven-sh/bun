@@ -1384,7 +1384,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         }
     }
 
-    crate::migration::clear_non_registry_platform_constraints(this);
+    crate::migration::clear_workspace_platform_constraints(this);
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
     if this.resolve(log).is_err() {

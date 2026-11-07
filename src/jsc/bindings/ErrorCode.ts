@@ -12,6 +12,15 @@ type ErrorCodeMapping = Array<
   ]
 >;
 
+/** The codes of the rows made with `plain()`. */
+export const plainErrorCodes = new Set<string>();
+
+// A row whose error inherits Error.prototype.toString when Node throws it. test/js/node/errors/error-code-toString-fixture.cjs has a producer for each marked row, and runs in Node and in Bun.
+function plain(...row: ErrorCodeMapping[number]): ErrorCodeMapping[number] {
+  plainErrorCodes.add(row[0]);
+  return row;
+}
+
 const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_ACCESS_DENIED", Error],
@@ -199,7 +208,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MYSQL_CONNECTION_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_IDLE_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_LIFETIME_TIMEOUT", Error, "MySQLError"],
-  ["ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"],
+  plain("ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"),
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_METHOD", Error],
   ["ERR_S3_INVALID_PATH", Error],

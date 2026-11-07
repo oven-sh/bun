@@ -29,7 +29,7 @@ const asksCellForItsClass = {
 } satisfies b.FunctionField;
 
 // ErrorCode.cpp: an error with a code is an instance of the kind of error the code stands for, with an object of its own for each code in front of the prototype of that kind.
-// The error has `code` itself. That object has `name` and `toString`, and an error whose name is not the name of its kind has `name` itself too.
+// The error has `code` itself. That object has `name`, and `toString` unless ErrorCode.ts makes the row with plain(). An error whose name is not the name of its kind has `name` itself too.
 const kindsOfErrorsWithCode = ["Error", "TypeError", "RangeError", "SyntaxError", "URIError"];
 const [firstKind, ...otherKinds] = kindsOfErrorsWithCode.map(kind => b.instance(kind));
 const newErrorWithCode = b.union(firstKind, ...otherKinds).unaliased;
@@ -83,7 +83,7 @@ const makesAbortError = [
   {
     args: { message: b.string.optional, options: b.undefined.optional },
     returns: b.instance("Error").unaliased,
-    resultProperties: membersOfErrorWithCode,
+    resultProperties: { name: b.string, code: b.string },
     capability: "heap",
     implementation: b.hostCall,
   },

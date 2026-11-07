@@ -149,13 +149,14 @@ JSC::JSObject* ErrorCodeCache::createPrototype(JSC::VM& vm, JSC::JSGlobalObject*
         break;
     }
 
-    auto* toString = JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private);
-    if (data.ownName != ErrorOwnName::SystemError)
-        toString->putDirect(vm, WebCore::builtinNames(vm).codePrivateName(), code, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
-
     // The name of the kind, also where that is not "Error": ErrorInstance::sanitizedNameString() looks at the error and at this object only, and then answers "Error".
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(JSC::errorTypeName(data.type))), JSC::PropertyAttribute::DontEnum | 0);
-    prototype->putDirect(vm, vm.propertyNames->toString, toString, JSC::PropertyAttribute::DontEnum | 0);
+    if (data.hasNodeErrorToString) {
+        auto* toString = JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private);
+        if (data.ownName != ErrorOwnName::SystemError)
+            toString->putDirect(vm, WebCore::builtinNames(vm).codePrivateName(), code, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+        prototype->putDirect(vm, vm.propertyNames->toString, toString, JSC::PropertyAttribute::DontEnum | 0);
+    }
 
     return prototype;
 }

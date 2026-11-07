@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { EventEmitter, once } from "node:events";
 import { readFileSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { connect, type AddressInfo } from "node:net";
+import { join } from "node:path";
+import { setTimeout as sleepWithSignal } from "node:timers/promises";
 
 // Errors with a Node `code` get their prototype, including `toString`, from the native
 // error table (src/jsc/bindings/ErrorCode.cpp).
@@ -102,5 +108,187 @@ describe("node error toString()", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// Node defines the `name [code]: message` toString() on the NodeError classes that makeNodeErrorWithCode makes:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L462-L464
+// The errors below are of no such class in Node.
+describe("an error that is no NodeError in Node inherits Error.prototype.toString", () => {
+  function expectInheritedToString(err: any) {
+    expect(err).toBeInstanceOf(Error);
+    expect(String(err)).toBe(`${err.name}: ${err.message}`);
+    expect(err.toString).toBe(Error.prototype.toString);
+    expect(Object.hasOwn(Object.getPrototypeOf(err), "toString")).toBe(false);
+    // The first line of the stack never had the code.
+    expect(err.stack.split("\n")[0]).toBe(String(err));
+  }
+
+  function rejection(promise: Promise<unknown>): Promise<any> {
+    return promise.then(
+      () => {
+        throw new Error("expected the promise to reject");
+      },
+      err => err,
+    );
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L979-L988
+  describe.concurrent("AbortError", () => {
+    function expectAbortError(err: any, reason: unknown) {
+      expect({ name: err.name, code: err.code, cause: err.cause, string: String(err) }).toEqual({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: reason,
+        string: "AbortError: The operation was aborted",
+      });
+      expectInheritedToString(err);
+    }
+
+    test("timers/promises setTimeout({ signal })", async () => {
+      const signal = AbortSignal.abort();
+      expectAbortError(await rejection(sleepWithSignal(1, undefined, { signal })), signal.reason);
+    });
+
+    test("events.once({ signal })", async () => {
+      const reason = new Error("stop");
+      expectAbortError(
+        await rejection(once(new EventEmitter(), "never", { signal: AbortSignal.abort(reason) })),
+        reason,
+      );
+    });
+
+    // This one is made by native code, the two above by built-in modules.
+    test("fs.promises.readFile({ signal })", async () => {
+      const signal = AbortSignal.abort();
+      expectAbortError(await rejection(readFile(import.meta.path, { signal })), signal.reason);
+    });
+  });
+
+  // llhttp's error is a plain Error that gets a `code`.
+  test("the HPE_* error of an http clientError", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    await using server = createServer(() => {});
+    server.on("clientError", (err, socket) => {
+      socket.destroy();
+      resolve(err);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1", () => socket.write("BOGUS\r\n\r\n"));
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error("the connection closed and the server emitted no clientError")));
+    // Without a reader the socket does not see the server close the connection.
+    socket.resume();
+    try {
+      const err = await promise;
+      expect({ name: err.name, code: err.code, string: String(err) }).toEqual({
+        name: "Error",
+        code: "HPE_INVALID_METHOD",
+        string: "Error: Parse Error: Invalid method encountered",
+      });
+      expectInheritedToString(err);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/promises.js#L46-L58
+  test.concurrent.each(
+    ["strict", "throw"].flatMap(mode => [
+      [mode, "an uncaughtException listener", `process.on("uncaughtException", report);`],
+      [mode, "the capture callback", `process.setUncaughtExceptionCaptureCallback(report);`],
+    ]),
+  )("the error of an unhandled rejection under --unhandled-rejections=%s, handed to %s", async (mode, _, hook) => {
+    const src = `
+      function report(err) {
+        // strict emits the rejection after this call. A listener keeps the warning about it off stderr.
+        process.on("unhandledRejection", () => {});
+        console.log(JSON.stringify({
+          name: err.name,
+          code: err.code,
+          string: String(err),
+          inherits: err.toString === Error.prototype.toString,
+          prototypeHasToString: Object.hasOwn(Object.getPrototypeOf(err), "toString"),
+        }));
+      }
+      ${hook}
+      Promise.reject(1);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `--unhandled-rejections=${mode}`, "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = {
+      name: "UnhandledPromiseRejection",
+      code: "ERR_UNHANDLED_REJECTION",
+      string:
+        "UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, " +
+        'or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "1".',
+      inherits: true,
+      prototypeHasToString: false,
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // Node itself says which rows ErrorCode.ts may make with plain(): a producer of each runs there too.
+  describe("the rows made with plain()", () => {
+    const fixture = join(import.meta.dir, "error-code-toString-fixture.cjs");
+    // --unhandled-rejections=throw is for ERR_UNHANDLED_REJECTION.
+    const flags = ["--unhandled-rejections=throw"];
+    const expected = [["ERR_UNHANDLED_REJECTION", "UnhandledPromiseRejection"]].map(([code, name]) =>
+      JSON.stringify({ code, name, string: "name: message", inheritsToString: true }),
+    );
+
+    // The producers were held against v26.3.0, v26.12.1 and v26.13.0.
+    for (const [name, runtime] of [
+      ["bun", bunExe()],
+      ["node", nodeExeAtLeast("26.3.0")],
+    ] as const) {
+      test.skipIf(!runtime)(`inherit Error.prototype.toString (${name})`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [runtime!, ...flags, fixture],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ lines: stdout.trimEnd().split(/\r?\n/), stderr, exitCode }).toEqual({
+          lines: expected,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    }
+  });
+
+  test("a NodeError keeps `name [code]: message`", () => {
+    function thrown(fn: () => unknown): any {
+      try {
+        fn();
+      } catch (err) {
+        return err;
+      }
+      throw new Error("expected the function to throw");
+    }
+
+    const rangeError = thrown(() => Buffer.alloc(-1));
+    expect({ name: rangeError.name, code: rangeError.code, string: String(rangeError) }).toEqual({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      string: `RangeError [ERR_OUT_OF_RANGE]: ${rangeError.message}`,
+    });
+    expect(Object.hasOwn(Object.getPrototypeOf(rangeError), "toString")).toBe(true);
+
+    const typeError = thrown(() => new EventEmitter().on("x", 1 as any));
+    expect({ name: typeError.name, code: typeError.code, string: String(typeError) }).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      string: `TypeError [ERR_INVALID_ARG_TYPE]: ${typeError.message}`,
+    });
   });
 });

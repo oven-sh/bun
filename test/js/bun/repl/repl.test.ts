@@ -1873,6 +1873,100 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
   });
 });
 
+// $HOME/.bun_repl_history holds one entry per line. The newlines inside a
+// multi-line entry are written as '\r', so the entry survives a restart.
+describe.concurrent("REPL history file", () => {
+  const ARROW_UP = "\x1b[A";
+
+  // The physical lines of the history file (the last one is the "" after the
+  // final newline).
+  async function savedLines(home: string) {
+    const content = await Bun.file(path.join(home, ".bun_repl_history")).text();
+    return content.split("\n");
+  }
+
+  test("multi-line entry is saved on one line and reloads as one entry", async () => {
+    using dir = tempDir("repl-history-multiline", {});
+    const home = String(dir);
+
+    const first = await runRepl(["function f() {", "  return 1", "}", ".exit"], { home });
+    expect(first.outputs).toEqual(["undefined"]);
+    expect(first.stderr).toBe("");
+    expect(first.exitCode).toBe(0);
+    expect(await savedLines(home)).toEqual(["function f() {\r  return 1\r}", ""]);
+
+    // Next session: the up arrow recalls the entry and Enter runs it, which
+    // defines f. Running it again adds no second entry.
+    const second = await runRepl([ARROW_UP, "f()", ".history", ".exit"], { home });
+    expect(second.outputs).toEqual([
+      "undefined",
+      "1",
+      "Command History:\n     1  function f() {\n  return 1\n}\n     2  f()",
+    ]);
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
+  });
+
+  test("entries with blank lines round-trip in order", async () => {
+    using dir = tempDir("repl-history-mixed", {});
+    const home = String(dir);
+
+    const first = await runRepl(["const a = 1", "function g() {", "", "  return 2", "}", "const b = 3", ".exit"], {
+      home,
+    });
+    expect(first.outputs).toEqual(["1", "undefined", "3"]);
+    expect(first.stderr).toBe("");
+    expect(first.exitCode).toBe(0);
+    expect(await savedLines(home)).toEqual(["const a = 1", "function g() {\r\r  return 2\r}", "const b = 3", ""]);
+
+    const second = await runRepl([".history", ".exit"], { home });
+    expect(second.outputs).toEqual([
+      "Command History:\n     1  const a = 1\n     2  function g() {\n\n  return 2\n}\n     3  const b = 3",
+    ]);
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
+  });
+
+  test("loads a CRLF history file without keeping the line endings", async () => {
+    // A history file re-saved by a CRLF editor: the '\r' before each '\n' is
+    // part of the line ending, while the ones inside the second entry are its
+    // stored newlines.
+    using dir = tempDir("repl-history-crlf", {
+      ".bun_repl_history": "1 + 1\r\nfunction h() {\r  return 3\r}\r\n",
+    });
+    const home = String(dir);
+
+    const { stdout, outputs, stderr, exitCode } = await runRepl([".history", "2 + 2", ".exit"], { home });
+    // A leaked '\r' does not show in the diff of a failed toEqual, so name it first.
+    expect(stdout).not.toContain("\r");
+    expect(outputs).toEqual(["Command History:\n     1  1 + 1\n     2  function h() {\n  return 3\n}", "4"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    // Re-saved with plain '\n' line endings; the stored newlines inside the
+    // multi-line entry are kept.
+    expect(await savedLines(home)).toEqual(["1 + 1", "function h() {\r  return 3\r}", "2 + 2", ""]);
+  });
+
+  test("a CRLF file of single-line entries loads and is re-saved without the CRs", async () => {
+    // A history file written on Windows, or edited in a CRLF editor: every '\r'
+    // is part of a line ending, so none of them may end up in an entry, where
+    // it would show in recall and .history and be written back on every save.
+    using dir = tempDir("repl-history-crlf-single-line", {
+      ".bun_repl_history": "old_one\r\nold_two\r\n",
+    });
+    const home = String(dir);
+
+    const { stdout, outputs, stderr, exitCode } = await runRepl([".history", "2 + 2", ".exit"], { home });
+    expect(stdout).not.toContain("\r");
+    expect(outputs).toEqual(["Command History:\n     1  old_one\n     2  old_two", "4"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(await savedLines(home)).toEqual(["old_one", "old_two", "2 + 2", ""]);
+  });
+});
+
 test("skips the history file when $HOME is longer than PATH_MAX", async () => {
   const home = "/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
   const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home });

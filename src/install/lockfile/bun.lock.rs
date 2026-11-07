@@ -43,6 +43,10 @@ use super::{
 
 use bun_io::AsFmt;
 
+#[path = "unused_entries.rs"]
+mod unused_entries;
+use unused_entries::{Loaded, Lookups, Reach, Repeat, Slot, Unused, warn_unused};
+
 /// `Bin::to_json` indent callback typed against `AsFmt`.
 fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
     for _ in 0..*indent {
@@ -1577,6 +1581,7 @@ impl<T> PkgMap<T> {
     /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
     /// indistinguishable from an ordinary conflict-nested package whose hoist
     /// root is the lockfile root.
+    #[inline(always)]
     fn find_resolution(
         &self,
         pkg_path: &[u8],
@@ -1585,8 +1590,17 @@ impl<T> PkgMap<T> {
         path_buf: &mut [u8],
         bundled_pkgs: Option<&PkgPathSet>,
     ) -> Result<(&T, RowEvidence), ResolveError> {
-        let dep_name = dep.name.slice(string_buf);
+        self.find(pkg_path, dep.name.slice(string_buf), path_buf, bundled_pkgs)
+    }
 
+    #[inline(always)]
+    fn find(
+        &self,
+        pkg_path: &[u8],
+        dep_name: &[u8],
+        path_buf: &mut [u8],
+        bundled_pkgs: Option<&PkgPathSet>,
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
             return Err(ResolveError::InvalidPackageKey);
         }
@@ -1596,8 +1610,7 @@ impl<T> PkgMap<T> {
         let mut offset = pkg_path.len() + 1;
 
         let mut at_bundle_root = false;
-        let mut valid = true;
-        while valid {
+        loop {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
             let res_path = &path_buf[0..offset + dep_name.len()];
 
@@ -1620,46 +1633,45 @@ impl<T> PkgMap<T> {
                 at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
 
-            let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
-                offset = 0;
-                continue;
-            };
-
-            // might be a scoped package
-            let Some(at) = strings::last_index_of_char(&path_buf[0..offset - 1], b'@') else {
-                offset = slash + 1;
-                continue;
-            };
-
-            if at > slash {
-                valid = false;
-                continue;
-            }
-
-            let Some(next_slash) = strings::last_index_of_char(&path_buf[0..slash], b'/') else {
-                if at != 0 {
-                    return Err(ResolveError::InvalidPackageKey);
-                }
-                offset = 0;
-                continue;
-            };
-
-            if next_slash > at {
-                // there's a scoped package but it exists farther up
-                offset = slash + 1;
-                continue;
-            }
-
-            if next_slash + 1 != at {
-                valid = false;
-                continue;
-            }
-
-            offset = at;
+            offset = name_start(&path_buf[0..offset - 1])?;
         }
-
-        Err(ResolveError::InvalidPackageKey)
     }
+}
+
+/// Where the name of the package at `key` starts. Before it is the key of its folder with a slash, or nothing.
+#[inline]
+fn name_start(key: &[u8]) -> Result<usize, ResolveError> {
+    let Some(slash) = strings::last_index_of_char(key, b'/') else {
+        return Ok(0);
+    };
+
+    // might be a scoped package
+    let Some(at) = strings::last_index_of_char(key, b'@') else {
+        return Ok(slash + 1);
+    };
+
+    if at > slash {
+        return Err(ResolveError::InvalidPackageKey);
+    }
+
+    let Some(next_slash) = strings::last_index_of_char(&key[0..slash], b'/') else {
+        return if at == 0 {
+            Ok(0)
+        } else {
+            Err(ResolveError::InvalidPackageKey)
+        };
+    };
+
+    if next_slash > at {
+        // there's a scoped package but it exists farther up
+        return Ok(slash + 1);
+    }
+
+    if next_slash + 1 != at {
+        return Err(ResolveError::InvalidPackageKey);
+    }
+
+    Ok(at)
 }
 
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
@@ -1794,13 +1806,57 @@ fn parse_catalog(
     Ok(())
 }
 
+/// Returns how many entries of `packages` are unused: no dependency lookup stops at them.
 pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     manager: Option<&PackageManager>,
-) -> Result<(), ParseError> {
+) -> Result<usize, ParseError> {
+    let (warnings, errors, messages) = (log.warnings, log.errors, log.msgs.len());
+    let packages = root.get(b"packages");
+    let rows: &[JSON::E::PropertyJSON] = packages.as_ref().map_or(&[], object_rows);
+    let unused = match load_entries(lockfile, &root, source, log, manager, None)? {
+        Loaded::Done(unused) => unused,
+        Loaded::AgainWithout(mut left_out) => {
+            log.msgs.truncate(messages);
+            (log.warnings, log.errors) = (warnings, errors);
+            match load_entries(lockfile, &root, source, log, manager, Some(&left_out))? {
+                Loaded::Done(repeats) => {
+                    if let Some(repeats) = repeats {
+                        left_out.set_union(&repeats);
+                    }
+                    Some(left_out)
+                }
+                // Only an entry that listed other dependencies than its package has now leads here.
+                Loaded::AgainWithout(more) => {
+                    let entry = more.iterator::<true, true>().next();
+                    let at = entry.map_or(root.loc, |entry| rows[entry].key_loc);
+                    log.add_error(Some(source), at, b"No dependency resolves to this package");
+                    return Err(ParseError::InvalidPackageKey);
+                }
+            }
+        }
+    };
+    let Some(unused) = unused else {
+        return Ok(0);
+    };
+    if manager.is_some_and(|manager| manager.options.log_level.is_verbose()) {
+        warn_unused(rows, &unused);
+    }
+    Ok(unused.count())
+}
+
+/// Loads the file without the entries of `packages` that are in `without`.
+fn load_entries(
+    lockfile: &mut BinaryLockfile,
+    root: &JSON::Expr,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    manager: Option<&PackageManager>,
+    without: Option<&DynamicBitSet>,
+) -> Result<Loaded, ParseError> {
     let at_value = |key_loc| value_loc_of(source, key_loc);
     let at_item = |key_loc, index| item_loc(source, key_loc, index);
     macro_rules! fail {
@@ -2255,7 +2311,7 @@ pub(crate) fn parse_into_binary_lockfile(
         lockfile.get_or_put_id(0, root_name_hash)?;
     }
 
-    let mut pkg_map: PkgMap<PackageID> = PkgMap::init();
+    let mut pkg_map: PkgMap<Slot> = PkgMap::init();
 
     let workspace_pkgs_off: u32 = 1;
     let mut workspace_pkgs_len: u32 = 0;
@@ -2299,7 +2355,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             // there should be no duplicates
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
-            pkg_map.put(name, pkg_id);
+            pkg_map.put(name, Slot::of_workspace(pkg_id));
             workspace_pkgs_len += 1;
         }
     }
@@ -2332,7 +2388,10 @@ pub(crate) fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for row in pkg_rows {
+        for (entry, row) in pkg_rows.iter().enumerate() {
+            if without.is_some_and(|without| without.is_set(entry)) {
+                continue;
+            }
             let pkg_path = row.key.slice();
 
             let Some(pkg_info) = row.value.as_array() else {
@@ -2357,7 +2416,15 @@ pub(crate) fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for row in pkg_rows {
+        let mut repeats: Vec<Repeat> = Vec::new();
+        // The package of each entry that has its key.
+        let mut keyed: Vec<PackageID> = vec![invalid_package_id; pkg_rows.len()];
+
+        'next_pkg_key: for (entry, row) in pkg_rows.iter().enumerate() {
+            if without.is_some_and(|without| without.is_set(entry)) {
+                continue;
+            }
+            let entry = entry as u32;
             let key_loc = row.key_loc;
             let pkg_path = row.key.slice();
             let pkg_info = row.value.as_array().expect("checked above").items();
@@ -2478,8 +2545,8 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if lockfile_version != Version::V0 {
                 if res.tag == ResolutionTag::Workspace {
-                    let entry = pkg_map.get_or_put(pkg_path)?;
-                    if entry.found_existing {
+                    let slot = pkg_map.get_or_put(pkg_path)?;
+                    if slot.found_existing {
                         // this workspace package is already in the package map, because
                         // it was added as a workspaceOnly package earlier
                         continue;
@@ -2520,7 +2587,11 @@ pub(crate) fn parse_into_binary_lockfile(
                             //   "pkg1": "workspace:packages/pkg1",
                             //   "another-pkg1": "workspaces:packages/pkg1",
                             // },
-                            *entry.value_ptr = workspace_pkg_id;
+                            *slot.value_ptr = Slot {
+                                id: workspace_pkg_id,
+                                entry,
+                            };
+                            keyed[entry as usize] = workspace_pkg_id;
                             continue 'next_pkg_key;
                         }
                     }
@@ -2738,28 +2809,37 @@ pub(crate) fn parse_into_binary_lockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
+            let packages_before = lockfile.packages.len();
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+            if lockfile.packages.len() == packages_before {
+                repeats.push(Repeat {
+                    entry,
+                    package: pkg_id,
+                    list: pkg.dependencies,
+                });
+            }
 
             // The root's `bin` is recorded nowhere else.
             if pkg_id == 0 && res.tag == ResolutionTag::Root {
                 lockfile.packages.items_bin_mut()[0] = pkg.bin;
             }
 
-            let entry = pkg_map.get_or_put(pkg_path)?;
+            let slot = pkg_map.get_or_put(pkg_path)?;
             // Each workspace was registered under its name above. A root dependency of the same
             // name replaces it at that key, unless that dependency is a folder.
-            if entry.found_existing
+            if slot.found_existing
                 && !(res.tag != ResolutionTag::Folder
                     && (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len)
-                        .contains(&*entry.value_ptr)
-                    && lockfile.packages.items_name()[*entry.value_ptr as usize]
+                        .contains(&slot.value_ptr.id)
+                    && lockfile.packages.items_name()[slot.value_ptr.id as usize]
                         .slice(lockfile.buffers.string_bytes.as_slice())
                         == pkg_path)
             {
                 fail!(InvalidPackageKey, key_loc, b"Duplicate package path");
             }
 
-            *entry.value_ptr = pkg_id;
+            *slot.value_ptr = Slot { id: pkg_id, entry };
+            keyed[entry as usize] = pkg_id;
         }
 
         lockfile.buffers.resolutions =
@@ -2818,6 +2898,11 @@ pub(crate) fn parse_into_binary_lockfile(
             )
         };
         let own_peer = |dep: &Dependency| linked_member(dep).or_else(|| peer_by_version(dep));
+        // The install that wrote bun.lock did not resolve these, so no entry is for one. They are in increasing order.
+        let listed_unresolved = |dep_id: DependencyID| {
+            !unresolved_rows.is_empty() && unresolved_rows.binary_search(&dep_id).is_ok()
+        };
+        let mut reach = Reach::init(pkg_rows.len(), without);
 
         {
             // first the root dependencies are resolved
@@ -2825,6 +2910,12 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep = &dependencies[dep_id as usize];
 
                 let named = pkg_map.get(dep.name.slice(string_buf)).copied();
+                if let Some(named) = named
+                    && !listed_unresolved(dep_id)
+                {
+                    reach.mark_slot(named);
+                }
+                let named = named.map(|slot| slot.id);
                 // The key with a workspace's name can belong to a root dependency of the same name.
                 // The workspace is then found by name among the workspace packages.
                 let bound = if dep.behavior.is_workspace()
@@ -2863,7 +2954,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 // If a root dependency of the same name has this workspace's key, the workspace's
                 // dependencies are printed under `./<name>`. See `Tree::is_unlinked_member`.
-                let unlinked = pkg_map.get(workspace_name) != Some(&pkg_id);
+                let unlinked = pkg_map.get(workspace_name).map(|slot| slot.id) != Some(pkg_id);
                 let prefix: &[u8] = if unlinked { b"./" } else { b"" };
                 let name_end = prefix.len() + workspace_name.len();
 
@@ -2894,12 +2985,16 @@ pub(crate) fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let Some(res_id) = own_peer(dep).or_else(|| {
-                        pkg_map
-                            .get(workspace_node_modules)
-                            .or_else(|| pkg_map.get(dep_name))
-                            .copied()
-                    }) else {
+                    let found = pkg_map
+                        .get(workspace_node_modules)
+                        .or_else(|| pkg_map.get(dep_name))
+                        .copied();
+                    if let Some(found) = found
+                        && !listed_unresolved(dep_id)
+                    {
+                        reach.mark_slot(found);
+                    }
+                    let Some(res_id) = own_peer(dep).or_else(|| found.map(|slot| slot.id)) else {
                         // A bun.lock from an older Bun only has this dependency below a `packages`
                         // row of the workspace. The loop over `pkg_rows` below resolves it.
                         if unlinked || may_stay_unresolved(dep) {
@@ -2926,20 +3021,97 @@ pub(crate) fn parse_into_binary_lockfile(
         for root_dep in pkg_deps[0].get(dependencies) {
             root_dep_names.insert(root_dep.name_hash, ());
         }
-        for row in pkg_rows {
+        // A dependency that an entry cannot resolve fails the load only if the entry is used.
+        let mut failures: Vec<(u32, DependencyID, ResolveError)> = Vec::new();
+        let mut unused: Option<(DynamicBitSet, DynamicBitSet)> = None;
+        // Each entry has its turn. The entries of the packages of `Unused::Repeats` then have one more.
+        let turns = pkg_rows.iter().enumerate();
+        for (turn, (entry, row)) in turns.clone().chain(turns).enumerate() {
+            if turn == pkg_rows.len() {
+                reach.next_entry();
+                if reach.follow() {
+                    break;
+                }
+                let lookups = Lookups {
+                    rows: pkg_rows,
+                    map: &pkg_map,
+                    bundled: &bundled_pkgs,
+                    keyed: &keyed,
+                    repeats: &repeats,
+                    lists: pkg_deps,
+                    members: members.clone(),
+                    dependencies,
+                    string_buf,
+                };
+                match lookups.unused_entries(&mut reach, &mut path_buf[..])? {
+                    None => break,
+                    Some(Unused::Others(entries)) => return Ok(Loaded::AgainWithout(entries)),
+                    Some(Unused::Repeats { entries, packages }) => {
+                        let mut bound_again = packages.iterator::<true, true>();
+                        while let Some(package) = bound_again.next() {
+                            let list = pkg_deps[package];
+                            for dep_id in list.begin()..list.end() {
+                                bound_by[dep_id as usize] = RowEvidence::Unbound;
+                                resolutions[dep_id as usize] = invalid_package_id;
+                            }
+                        }
+                        unused = Some((entries, packages));
+                    }
+                }
+            }
+            reach.next_entry();
+            if without.is_some_and(|without| without.is_set(entry)) {
+                continue;
+            }
+            let entry = entry as u32;
             let pkg_path = row.key.slice();
 
-            let Some(&pkg_id) = pkg_map.get(pkg_path) else {
-                return Err(ParseError::InvalidPackagesObject);
+            let has_key = keyed[entry as usize] != invalid_package_id;
+            let pkg_id = if has_key {
+                keyed[entry as usize]
+            } else {
+                // Another entry has this key, or it is the name of a workspace.
+                let Some(slot) = pkg_map.get(pkg_path) else {
+                    return Err(ParseError::InvalidPackagesObject);
+                };
+                reach.mark(entry);
+                slot.id
             };
+            let is_used = has_key && reach.used[entry as usize];
+            if let Some((entries, packages)) = &unused
+                && (entries.is_set(entry as usize) || !packages.is_set(pkg_id as usize))
+            {
+                continue;
+            }
 
             let res = &pkg_resolutions[pkg_id as usize];
 
             if pkg_id == 0
                 || (res.tag == ResolutionTag::Workspace
-                    && pkg_map.get(pkg_names[pkg_id as usize].slice(string_buf)) == Some(&pkg_id))
+                    && pkg_map
+                        .get(pkg_names[pkg_id as usize].slice(string_buf))
+                        .is_some_and(|slot| slot.id == pkg_id))
             {
                 // The dependencies of the root and of this workspace were already resolved above.
+                if has_key && unused.is_none() {
+                    // bun writes entries below such an entry at a key of its own, so they are looked up from it.
+                    let deps = pkg_deps[pkg_id as usize];
+                    for dep_id in deps.begin()..deps.end() {
+                        let dep = &dependencies[dep_id as usize];
+                        if dep.version.tag != DependencyVersionTag::Uninitialized
+                            && !listed_unresolved(dep_id)
+                            && let Ok((&slot, _)) = pkg_map.find_resolution(
+                                pkg_path,
+                                dep,
+                                string_buf,
+                                &mut path_buf[..],
+                                dep.behavior.is_optional_peer().then_some(&bundled_pkgs),
+                            )
+                        {
+                            reach.stop_at(slot, is_used);
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -2961,7 +3133,12 @@ pub(crate) fn parse_into_binary_lockfile(
                     peer_by_version(dep)
                 };
                 let res_id = match by_version {
-                    Some(id) => id,
+                    Some(id) => {
+                        if !listed_unresolved(dep_id) {
+                            reach.peers.push((entry, dep_id));
+                        }
+                        id
+                    }
                     None => {
                         // Bounded so the loaded lockfile binds optional peers
                         // exactly like the hoister that re-derives them after
@@ -2973,7 +3150,11 @@ pub(crate) fn parse_into_binary_lockfile(
                             &mut path_buf[..],
                             dep.behavior.is_optional_peer().then_some(&bundled_pkgs),
                         ) {
-                            Ok((&id, mut evidence)) => {
+                            Ok((&slot, mut evidence)) => {
+                                if !listed_unresolved(dep_id) {
+                                    reach.stop_at(slot, is_used);
+                                }
+                                let id = slot.id;
                                 let own_entry = evidence == RowEvidence::OwnEntry;
                                 if evidence == RowEvidence::WalkedToRoot
                                     && dep.behavior.is_peer()
@@ -2997,24 +3178,18 @@ pub(crate) fn parse_into_binary_lockfile(
                                 id
                             }
                             Err(ResolveError::InvalidPackageKey) => {
-                                fail!(InvalidPackageKey, row.key_loc, b"Invalid package path");
+                                failures.push((entry, dep_id, ResolveError::InvalidPackageKey));
+                                continue 'deps;
                             }
                             Err(ResolveError::Unresolvable) => {
                                 if dep.behavior.is_optional_peer() {
                                     bound_by[dep_id as usize] = RowEvidence::Unprovided;
                                     resolutions[dep_id as usize] = invalid_package_id;
                                 }
-                                if may_stay_unresolved(dep) {
-                                    continue 'deps;
+                                if !may_stay_unresolved(dep) {
+                                    failures.push((entry, dep_id, ResolveError::Unresolvable));
                                 }
-                                return Err(dependency_resolution_failure(
-                                    dep,
-                                    Some(pkg_path),
-                                    string_buf,
-                                    source,
-                                    log,
-                                    row.key_loc,
-                                ));
+                                continue 'deps;
                             }
                         }
                     }
@@ -3022,6 +3197,26 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 resolutions[dep_id as usize] = res_id;
             }
+        }
+        drop(reach);
+
+        let is_unused = |entry: u32| {
+            (unused.as_ref()).is_some_and(|(entries, _)| entries.is_set(entry as usize))
+        };
+        if let Some(&(entry, dep_id, error)) = failures.iter().find(|failure| !is_unused(failure.0))
+        {
+            let row = &pkg_rows[entry as usize];
+            if error == ResolveError::InvalidPackageKey {
+                fail!(InvalidPackageKey, row.key_loc, b"Invalid package path");
+            }
+            return Err(dependency_resolution_failure(
+                &dependencies[dep_id as usize],
+                Some(row.key.slice()),
+                string_buf,
+                source,
+                log,
+                row.key_loc,
+            ));
         }
 
         // The install that wrote bun.lock did not resolve these, so they stay unresolved even if
@@ -3037,9 +3232,9 @@ pub(crate) fn parse_into_binary_lockfile(
         if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(&mut refused_names) {
             return Err(ParseError::OutOfMemory);
         }
-    }
 
-    Ok(())
+        Ok(Loaded::Done(unused.map(|(entries, _)| entries)))
+    }
 }
 
 /// Resolve a peer dependency edge the way the fresh resolver's

@@ -1374,6 +1374,9 @@ fn relative_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
     from: Text<'a>,
     to: Text<'a>,
 ) -> bindgen::Result<'a, R> {
+    if from.to_js() == to.to_js() {
+        return Ok(R::from_text(cx.heap.create_latin1_string(b"")));
+    }
     match relative_latin1::<WINDOWS, true>(&cx.heap, from, to) {
         Ok(Some(answer)) => Ok(R::from_text(answer)),
         _ => relative_other_with_scope::<WINDOWS, R>(cx, from, to),

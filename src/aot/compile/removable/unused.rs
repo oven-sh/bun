@@ -3,7 +3,7 @@ use bun_sema::util::SharedSort;
 
 use super::*;
 
-// `simplify_unused_expr` of src/js_parser/scan/scan_side_effects.rs: what `bun build` and `bun run` leave of an expression whose value nothing uses.
+// `simplify_unused_expr` of src/js_parser/scan/scan_side_effects.rs: what a bundle and `bun run` leave of an expression whose value nothing uses.
 impl Removable<'_, '_> {
     // The head of a `for` holds statements which the parser does not visit as statements.
     fn is_in_loop_head(&self, statement: StmtId) -> bool {

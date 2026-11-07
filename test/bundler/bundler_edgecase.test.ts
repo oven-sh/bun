@@ -1752,6 +1752,249 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
     },
   });
+  // The same for an exact name, and for a name that holds the import ("@/src" for
+  // "@/src/adder"), in every form of import. An alias that `external` does not name is
+  // still followed.
+  for (const [label, external] of [
+    ["ExactName", ["@/src/adder", "@/src/subber", "@/src/multiplier", "@/src/divider"]],
+    ["ParentName", ["@/src"]],
+  ] as const) {
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`edgecase/External${label}BeatsTSConfigPaths/${backend}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { add } from "@/src/adder";
+            import { kept } from "@/lib/kept";
+            const sub = require("@/src/subber");
+            const mul = import("@/src/multiplier");
+            const div = require.resolve("@/src/divider");
+            console.log(add, kept, sub, mul, div);
+          `,
+          "/src/adder.ts": `export const add = "bundled adder";`,
+          "/src/subber.ts": `export const sub = "bundled subber";`,
+          "/src/multiplier.ts": `export const mul = "bundled multiplier";`,
+          "/src/divider.ts": `export const div = "bundled divider";`,
+          "/lib/kept.ts": `export const kept = "bundled kept";`,
+          "/tsconfig.json": /* json */ `
+            {
+              "compilerOptions": {
+                "baseUrl": ".",
+                "paths": { "@/*": ["./*"] }
+              }
+            }
+          `,
+        },
+        packages: "external",
+        external: [...external],
+        target: "bun",
+        backend,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect({
+            imports: out.match(/(from |import\(|require\(|\.resolve\()"@\/[^"]+"/g),
+            bundled: out.match(/bundled \w+/g),
+          }).toEqual({
+            imports: [
+              `from "@/src/adder"`,
+              `require("@/src/subber"`,
+              `import("@/src/multiplier"`,
+              `.resolve("@/src/divider"`,
+            ],
+            bundled: ["bundled kept"],
+          });
+        },
+      });
+    }
+  }
+  // The monorepo form: `external` names a workspace sibling by its `paths` key. A sibling that
+  // `external` does not name is still followed.
+  itBundled("edgecase/ExternalNameOfTSConfigPathsKeyStaysExternal", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { ui } from "@acme/ui";
+        import { kept } from "@acme/kept";
+        console.log(ui, kept);
+      `,
+      "/packages/ui/src/index.ts": `export const ui = "bundled ui";`,
+      "/packages/kept/src/index.ts": `export const kept = "bundled kept";`,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@acme/ui": ["./packages/ui/src/index.ts"],
+              "@acme/kept": ["./packages/kept/src/index.ts"]
+            }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    external: ["@acme/ui"],
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect({
+        imports: out.match(/from "@acme\/[^"]+"/g),
+        bundled: out.match(/bundled \w+/g),
+      }).toEqual({
+        imports: [`from "@acme/ui"`],
+        bundled: ["bundled kept"],
+      });
+    },
+  });
+  // More rows of the same rule. Each case builds with files that say "INLINED" and runs the
+  // output beside files that say "LOADED". An import that the output still has prints "LOADED",
+  // and the output has it as written.
+  const namedAliasFiles = {
+    "/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"], "util/*": ["./src/util/*"] } } }`,
+    "/src/a.ts": `export const a = "INLINED";`,
+    "/src/util/a.ts": `export const a = "INLINED";`,
+  };
+  const namedAliasFilesAtRunTime = Object.fromEntries(
+    Object.entries(namedAliasFiles).map(([file, text]) => [file, text.replaceAll("INLINED", "LOADED")]),
+  );
+  const namedAliasCases: [
+    id: string,
+    specifier: string,
+    external: string[],
+    stdout: "LOADED" | "INLINED",
+    options: Partial<BundlerTestInput>,
+  ][] = [
+    [
+      "AfterPluginDeclines",
+      "@/a",
+      ["@/a"],
+      "LOADED",
+      { plugins: builder => void builder.onResolve({ filter: /.*/ }, () => undefined) },
+    ],
+    // `target: "node"` makes the names of node's builtin modules external. `external` does not
+    // name those, so an alias that starts with one is still bundled.
+    ["TargetNode", "@/a", ["@/a"], "LOADED", { target: "node" }],
+    ["TargetNodeBuiltinName", "util/a", [], "INLINED", { target: "node" }],
+    ["TargetNodeBuiltinNameAndOtherExternal", "util/a", ["pkg"], "INLINED", { target: "node" }],
+    ["TargetNodeBuiltinNameInExternal", "util/a", ["util"], "LOADED", { target: "node" }],
+  ];
+  for (const [id, specifier, external, stdout, options] of namedAliasCases) {
+    itBundled(`edgecase/ExternalNameBeatsTSConfigPaths/${id}`, {
+      files: { "/entry.ts": `import { a } from "${specifier}"; console.log(a);`, ...namedAliasFiles },
+      runtimeFiles: namedAliasFilesAtRunTime,
+      packages: "external",
+      external,
+      target: "bun",
+      ...options,
+      onAfterBundle(api) {
+        if (stdout === "LOADED") expect(api.readFile("/out.js")).toContain(`from "${specifier}"`);
+      },
+      run: { stdout },
+    });
+  }
+  // The alias of a named specifier is not looked up, so the build does not read the folder that
+  // the alias names. A lookup reports the package.json of that folder.
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/IsNotLookedUp", {
+    files: {
+      "/entry.ts": `import { a } from "@/folder"; console.log(a);`,
+      "/tsconfig.json": namedAliasFiles["/tsconfig.json"],
+      "/src/folder/package.json": `{ "main": `,
+      "/src/folder/index.ts": `export const a = "INLINED";`,
+    },
+    runtimeFiles: {
+      "/src/folder/package.json": `{ "main": "./index.ts" }`,
+      "/src/folder/index.ts": `export const a = "LOADED";`,
+    },
+    packages: "external",
+    external: ["@/folder"],
+    target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`from "@/folder"`);
+    },
+    run: { stdout: "LOADED" },
+  });
+  // The named file is not read either, so an error in it is not an error of the build.
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/IsNotParsed", {
+    files: {
+      "/entry.ts": `import { a } from "@/a"; console.log(a);`,
+      ...namedAliasFiles,
+      "/src/a.ts": `export const a = ;`,
+    },
+    runtimeFiles: namedAliasFilesAtRunTime,
+    packages: "external",
+    external: ["@/a"],
+    target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`from "@/a"`);
+    },
+    run: { stdout: "LOADED" },
+  });
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/CSSImport", {
+    files: {
+      "/entry.css": `@import "@/b.css";\n.a { color: red; }`,
+      "/src/b.css": `.b { color: blue; }`,
+      "/tsconfig.json": namedAliasFiles["/tsconfig.json"],
+    },
+    packages: "external",
+    external: ["@/b.css"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toContain(`@import "@/b.css";`);
+      api.expectFile("/out.css").not.toContain(".b {");
+    },
+  });
+  // Today `external` applies to a macro import too (#40631 is about that): the macro is then
+  // loaded by its specifier from the working directory. These two tests pin which specifier.
+  describe("a macro import that `external` names", () => {
+    async function build(cwd: string, ...flags: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "project/entry.ts", "--target=bun", ...flags],
+        cwd,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // The specifier is the import as written, not the package that `external` lists.
+    test("a path into a package runs the module at that path", async () => {
+      using dir = tempDir("external-macro-subpath", {
+        "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "index.js" }`,
+        "node_modules/pkg/index.js": `export function value() { return "from pkg"; }`,
+        "node_modules/pkg/sub.js": `export function value() { return "from pkg/sub"; }`,
+        "project/entry.ts": `import { value } from "pkg/sub" with { type: "macro" };\nconsole.log(value());\n`,
+      });
+      const builds = await Promise.all([
+        build(String(dir), "--external", "pkg"),
+        build(String(dir), "--external", "pkg*"),
+        build(String(dir), "--packages=external"),
+      ]);
+      for (const { stdout, stderr, exitCode } of builds) {
+        expect(stderr).toBe("");
+        expect(stdout).toContain(`console.log("from pkg/sub")`);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    // The alias resolves from the folder of the tsconfig.json only, so the load fails. It fails
+    // the same way with `--packages=external`.
+    test("a tsconfig alias is not followed", async () => {
+      using dir = tempDir("external-macro-alias", {
+        "project/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./*"] } } }`,
+        "project/macro.ts": `export function value() { return "from the macro"; }`,
+        "project/entry.ts": `import { value } from "@/macro" with { type: "macro" };\nconsole.log(value());\n`,
+      });
+      const [alone, withPackages, unnamed] = await Promise.all([
+        build(String(dir), "--external", "@/macro"),
+        build(String(dir), "--external", "@/macro", "--packages=external"),
+        build(String(dir), "--packages=external"),
+      ]);
+      for (const { stdout, stderr, exitCode } of [alone, withPackages]) {
+        expect(stderr).toContain(`Cannot find module '@/macro'`);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      }
+      expect(unnamed.stdout).toContain(`console.log("from the macro")`);
+      expect(unnamed.exitCode).toBe(0);
+    });
+  });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `

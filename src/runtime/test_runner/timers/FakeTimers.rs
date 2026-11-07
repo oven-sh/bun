@@ -419,6 +419,7 @@ enum Drive {
     Next(u32, NextStep),
 }
 
+/// `First` is sinon's `nextAsync()`: it runs the timer before the pending ticks. The other two are the `tickAsync(0)` that Jest calls after it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NextStep {
     First,
@@ -1320,7 +1321,12 @@ impl FakeTimers {
                 drive.drive = Drive::Next(steps, NextStep::AfterFirst);
                 // SAFETY: as above.
                 let Some(timer) = (unsafe { (*all).fake_timers.timers.delete_min() }) else {
-                    return Ok(Some(Step::Finished));
+                    // Jest's `tickAsync(0)` runs the ticks when there was no timer too.
+                    // SAFETY: as above.
+                    if unsafe { (*all).fake_timers.ticks.is_empty() } {
+                        return Ok(Some(Step::Finished));
+                    }
+                    return Ok(Some(Step::Again));
                 };
                 Self::drive_threw(global, id, Self::fire(global, timer)?);
                 Ok(Some(Step::Again))

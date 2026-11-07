@@ -2703,6 +2703,49 @@ describe("a faked process.nextTick and queueMicrotask", () => {
     expect(order).toEqual(["tick", "timeout 1", "tick of timeout 1", "timeout 2", "microtask of timeout 2"]);
   });
 
+  // As in Jest and Vitest. sinon's nextAsync() runs none of them before the timer. The tick by 0 ms that follows runs them.
+  describe.each([
+    ["vi", vi],
+    ["jest", jest],
+  ] as const)("%s.advanceTimersToNextTimerAsync()", (_, api) => {
+    test("runs the next timer before them", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      process.nextTick(() => order.push("tick"));
+      setTimeout(() => order.push("timeout"), 10);
+      await api.advanceTimersToNextTimerAsync();
+      expect(order).toEqual(["timeout", "tick"]);
+    });
+
+    test("runs them when no timer is pending", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      process.nextTick(() => order.push("tick"));
+      queueMicrotask(() => order.push("microtask"));
+      await api.advanceTimersToNextTimerAsync();
+      expect({ order, pending: api.getTimerCount() }).toEqual({ order: ["tick", "microtask"], pending: 0 });
+    });
+
+    test("goes on to a timer that one of them sets when no timer is pending", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      process.nextTick(() => (order.push("tick"), setTimeout(() => order.push("timeout of the tick"), 5)));
+      await api.advanceTimersToNextTimerAsync(2);
+      expect({ order, pending: api.getTimerCount() }).toEqual({ order: ["tick", "timeout of the tick"], pending: 0 });
+    });
+
+    test("rejects with the error of one when no timer is pending", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const after = vi.fn();
+      process.nextTick(() => {
+        throw new Error("from a tick");
+      });
+      process.nextTick(after);
+      await expect(api.advanceTimersToNextTimerAsync()).rejects.toThrow("from a tick");
+      expect({ ran: after.mock.calls.length, pending: api.getTimerCount() }).toEqual({ ran: 0, pending: 1 });
+    });
+  });
+
   test("runAllTicks() rethrows an error from one and leaves the rest queued", () => {
     vi.useFakeTimers({ toFake: [...toFake] });
     const after = vi.fn();

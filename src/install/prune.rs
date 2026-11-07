@@ -24,9 +24,9 @@ use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
 use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
+use crate::package_manager::WorkspaceFilter;
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
-use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -593,8 +593,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let quiet = manager.options.log_level == LogLevel::Silent;
 
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) = match manager
         .workspace_package_json_cache
         .get_with_path(log, path, Default::default())
@@ -614,7 +613,8 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let mut to_root = Package::default();
     let mut resolver: () = ();
     let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
+    // SAFETY: same split as `hoist_tree`. `from_lockfile` is only live for `Diff::generate`, which
+    // does not reach `lockfile` through `pm`.
     let summary = unsafe {
         let parsed = to_root.parse_with_json(
             &mut to_lockfile,
@@ -636,7 +636,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
                     &mut to_lockfile,
                     &root,
                     &to_root,
-                    None,
+                    false,
                     Some(&mut mapping[..]),
                 )
             }

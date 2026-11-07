@@ -31,12 +31,15 @@ type Section = {
 /** Runs `bun build` with these arguments in `cwd`. */
 export type Build = (cwd: string, args: string[]) => Promise<{ exitCode: number; stderr: string }>;
 
-/** `bun build` inlines `process.env.NODE_ENV`, which `bun test` sets, so every caller builds without it. */
+/**
+ * `bun build` inlines `process.env.NODE_ENV`, which `bun test` sets, so every caller builds without it. The builds are
+ * small and run side by side, so each one gets two threads and not one for each core.
+ */
 export function buildWith(bun: string, env: Record<string, string | undefined>): Build {
   return async (cwd, args) => {
     await using proc = Bun.spawn({
       cmd: [bun, "build", ...args],
-      env: { ...env, NODE_ENV: undefined, BUN_ENV: undefined, NO_COLOR: "1" },
+      env: { ...env, NODE_ENV: undefined, BUN_ENV: undefined, NO_COLOR: "1", UV_THREADPOOL_SIZE: "2" },
       cwd,
       stdout: "ignore",
       stderr: "pipe",
@@ -269,8 +272,9 @@ export async function generated(page: string, dir: string, build: Build) {
 
 if (import.meta.main) {
   const flag = (name: string) => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
-  // A build runs in another folder, so a relative path has to be resolved here.
-  const bun = resolve(flag("bun") ?? process.execPath);
+  // A build runs in another folder, so a relative path has to be resolved here. A name with no folder is a command.
+  const named = flag("bun") ?? process.execPath;
+  const bun = /[\\/]/.test(named) ? resolve(named) : (Bun.which(named) ?? named);
   let revision: string;
   try {
     revision = Bun.spawnSync({ cmd: [bun, "--revision"] })

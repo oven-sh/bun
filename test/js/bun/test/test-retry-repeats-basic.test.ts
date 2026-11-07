@@ -154,9 +154,9 @@ describe.concurrent("each run is held to the checks made when it ends", () => {
                      test("an assertion in afterEach counts for its run", options, () => {
                        run("afterEach");
                      });`
-                  : // The counts are checked when the body ends. A count that afterEach sets is checked when the run ends.
+                  : // As in Vitest, the counts are checked when the body ends. A count that afterEach sets comes too late.
                     `afterEach(() => expect.assertions(1));
-                     test("a count that afterEach sets is checked in run 2", options, () => {
+                     test("a count that afterEach sets is not checked", options, () => {
                        if (run("afterEach") !== 2) expect(1).toBe(1);
                      });`
               }
@@ -200,11 +200,11 @@ describe.concurrent("each run is held to the checks made when it ends", () => {
           "(fail) no assertion in run 2, after a turn of the event loop (run 2)",
           ...(jest ? [none, "(fail) no assertion in run 2, with a done callback (run 2)"] : []),
           "(pass) one assertion in every run (run 3)",
-          ...(jest
-            ? ["(pass) hooks > an assertion in afterEach counts for its run (run 3)"]
-            : [tooFew, "(fail) hooks > a count that afterEach sets is checked in run 2 (run 2)"]),
+          jest
+            ? "(pass) hooks > an assertion in afterEach counts for its run (run 3)"
+            : "(pass) hooks > a count that afterEach sets is not checked (run 3)",
         ],
-        summary: jest ? ["2 pass", "16 fail"] : ["1 pass", "16 fail"],
+        summary: jest ? ["2 pass", "16 fail"] : ["2 pass", "15 fail"],
         // No run follows the run that failed.
         runs:
           JSON.stringify({
@@ -225,7 +225,7 @@ describe.concurrent("each run is held to the checks made when it ends", () => {
             "turn": 2,
             ...(jest && { "done": 2 }),
             "kept": 3,
-            "afterEach": jest ? 3 : 2,
+            "afterEach": 3,
           }) + "\n",
         exitCode: 1,
       });

@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::{StackCheck, handle_oom};
 
 use crate::Graph::Graph;
-use crate::bun_css::css_parser::{BundlerCssRule, ImportRule};
+use crate::bun_css::css_parser::{BundlerCssRule, ImportRule, NamespaceRule, TopLevelState};
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
@@ -400,12 +400,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // evaluation.
     if has_external_import {
         // Pass 1: Pull out leading "@layer" and external "@import" rules
-        let is_statement = |entry: &CssImportOrder| match &entry.kind {
-            CssImportOrderKind::Layers(layers) => {
-                prints_as_layer_statement(layers.inner().is_empty(), entry.conditions.slice())
-            }
-            _ => false,
-        };
+        let is_statement = is_layer_statement;
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
             if (is_statement(entry) && is_at_layer_prefix)
@@ -502,7 +497,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     gop.value_ptr.push(i);
                 }
-                CssImportOrderKind::Layers(_) => {}
+                CssImportOrderKind::Layers(_) | CssImportOrderKind::Namespaces(_) => {}
             }
         }
     }
@@ -609,7 +604,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     .layer_names
                     .slice_const(),
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
-                CssImportOrderKind::ExternalPath(_) => &[][..],
+                CssImportOrderKind::ExternalPath(_) | CssImportOrderKind::Namespaces(_) => &[][..],
             };
             let mut index: usize = 0;
             while index < layer_duplicates.len() as usize {
@@ -766,7 +761,136 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         CssOrderDebugStep::AfterMergingAdjacentLayerRules,
     );
 
+    add_namespaces(&mut order, css_asts);
+    debug_css_order(this, &order, CssOrderDebugStep::AfterAddingNamespaces);
+
     Ok(order)
+}
+
+/// Adds the entry that prints the `@namespace` rules of the files of `order` once, where one style sheet takes them.
+fn add_namespaces(order: &mut Vec<CssImportOrder>, css_asts: &[crate::bundled_ast::CssCol]) {
+    let sheet_of = |entry: &CssImportOrder| match &entry.kind {
+        CssImportOrderKind::SourceIndex(index) => {
+            Some((index.get(), css_asts[index.get() as usize].as_deref()?))
+        }
+        _ => None,
+    };
+    let files = || order.slice().iter().filter_map(sheet_of);
+    if files().all(|(_, sheet)| sheet.namespaces.is_empty()) {
+        return;
+    }
+
+    // A rule in place is in force as written. Another rule only adds a prefix that is free.
+    let mut namespaces: StringArrayHashMap<(NamespaceRule, u32)> = StringArrayHashMap::new();
+    let mut state = TopLevelState::Start;
+    for entry in order.slice() {
+        let file = sheet_of(entry);
+        let in_place;
+        (state, in_place) = top_level_after(state, entry, file.map(|(_, sheet)| sheet));
+        let Some((file, sheet)) = file else { continue };
+        for rule in sheet.namespaces.slice() {
+            let key = rule.prefix().unwrap_or_default();
+            let takes = match (rule.prefix(), namespaces.get(key)) {
+                (None, _) => in_place,
+                (Some(_), Some(&(_, declared_by))) => in_place || declared_by == file,
+                (Some(_), None) => true,
+            };
+            if takes {
+                handle_oom(namespaces.put(key, (*rule, file)));
+            }
+        }
+    }
+    if namespaces.is_empty() {
+        return;
+    }
+    let rules = namespaces.values().iter().map(|&(rule, _)| rule).collect();
+
+    let is_import =
+        |entry: &CssImportOrder| matches!(entry.kind, CssImportOrderKind::ExternalPath(_));
+    let entries = order.slice().iter();
+    let at = match entries.clone().rposition(is_import) {
+        Some(last_import) => last_import + 1,
+        None => entries
+            .take_while(|entry| is_layer_statement(entry))
+            .count(),
+    };
+    let entry = CssImportOrder {
+        kind: CssImportOrderKind::Namespaces(rules),
+        conditions: Vec::new(),
+        condition_import_records: Vec::new(),
+    };
+    order.insert(at, entry);
+}
+
+/// The state of bun's top-level parser after what `entry` prints, and whether the `@namespace` rules of its file are in place: the parser takes them where the file has them.
+fn top_level_after(
+    state: TopLevelState,
+    entry: &CssImportOrder,
+    sheet: Option<&BundlerStyleSheet>,
+) -> (TopLevelState, bool) {
+    let conditions = entry.conditions.slice();
+    let prints_no_rule = |sheet: &BundlerStyleSheet| {
+        let is_inlined = |rule: &BundlerCssRule| {
+            matches!(rule, BundlerCssRule::Import(_) | BundlerCssRule::Ignored)
+        };
+        sheet.namespaces.is_empty() && sheet.rules.v.iter().all(is_inlined)
+    };
+    let no_names = match (&entry.kind, sheet) {
+        (CssImportOrderKind::ExternalPath(_), _) => return (state.after_import(), false),
+        (CssImportOrderKind::Layers(layers), _) => layers.inner().is_empty(),
+        (CssImportOrderKind::SourceIndex(_), Some(sheet)) if conditions.is_empty() => {
+            return top_level_after_file(state, sheet);
+        }
+        (CssImportOrderKind::SourceIndex(_), Some(sheet)) if prints_no_rule(sheet) => true,
+        _ => return (TopLevelState::Body, false),
+    };
+    let names_layer =
+        |conditions: &ImportConditions| conditions.layer.as_ref().is_some_and(|l| l.v.is_some());
+    let state = if no_names && !conditions.iter().any(names_layer) {
+        state
+    } else if prints_as_layer_statement(no_names, conditions) {
+        state.after_layer_statement()
+    } else {
+        TopLevelState::Body
+    };
+    (state, false)
+}
+
+/// `top_level_after` for a file with no import conditions. It prints its rules but for an `@import`, and but for the `@layer` statements ahead of its first `@import`.
+fn top_level_after_file(
+    mut state: TopLevelState,
+    sheet: &BundlerStyleSheet,
+) -> (TopLevelState, bool) {
+    let mut namespaces = sheet.namespaces.first();
+    let mut in_place = false;
+    let mut prints_layers = sheet.layers_pre_import.is_empty();
+    for rule in sheet.rules.v.iter() {
+        let layer = match rule {
+            BundlerCssRule::Import(_) => {
+                prints_layers = true;
+                continue;
+            }
+            BundlerCssRule::Ignored => continue,
+            BundlerCssRule::Unknown(unknown) if unknown.is_statement() => continue,
+            BundlerCssRule::LayerStatement(layer) => Some(layer),
+            _ => None,
+        };
+        if namespaces.is_some_and(|first| layer.is_none_or(|layer| !first.follows(layer))) {
+            in_place = state <= TopLevelState::Namespaces;
+            state = state.after_namespace();
+            namespaces = None;
+        }
+        match layer {
+            Some(_) if prints_layers => state = state.after_layer_statement(),
+            Some(_) => {}
+            None => return (TopLevelState::Body, in_place),
+        }
+    }
+    if namespaces.is_some() {
+        in_place = state <= TopLevelState::Namespaces;
+        state = state.after_namespace();
+    }
+    (state, in_place)
 }
 
 /// Error for an `@import` (or cross-file `composes`) chain that's too deep for
@@ -858,9 +982,25 @@ pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOr
                     (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
                         a.get() == b.get()
                     }
+                    (CssImportOrderKind::Namespaces(a), CssImportOrderKind::Namespaces(b)) => {
+                        let is_equal = |(a, b): (&NamespaceRule, &NamespaceRule)| {
+                            a.prefix() == b.prefix() && a.url() == b.url()
+                        };
+                        a.len() == b.len() && a.iter().zip(b).all(is_equal)
+                    }
                     _ => false,
                 }
         })
+}
+
+/// Whether an entry prints only "@layer" statements.
+fn is_layer_statement(entry: &CssImportOrder) -> bool {
+    match &entry.kind {
+        CssImportOrderKind::Layers(layers) => {
+            prints_as_layer_statement(layers.inner().is_empty(), entry.conditions.slice())
+        }
+        _ => false,
+    }
 }
 
 /// Whether a list of layer names under these conditions prints only "@layer"
@@ -1009,6 +1149,7 @@ enum CssOrderDebugStep {
     WhileOptimizingRedundantLayerRules,
     AfterOptimizingRedundantLayerRules,
     AfterMergingAdjacentLayerRules,
+    AfterAddingNamespaces,
 }
 
 impl CssOrderDebugStep {
@@ -1021,6 +1162,7 @@ impl CssOrderDebugStep {
             Self::WhileOptimizingRedundantLayerRules => "WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES",
             Self::AfterOptimizingRedundantLayerRules => "AFTER_OPTIMIZING_REDUNDANT_LAYER_RULES",
             Self::AfterMergingAdjacentLayerRules => "AFTER_MERGING_ADJACENT_LAYER_RULES",
+            Self::AfterAddingNamespaces => "AFTER_ADDING_NAMESPACES",
         }
     }
 }

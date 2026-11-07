@@ -681,6 +681,15 @@ pub trait CustomAtRuleParser {
     fn take_layers_pre_import(_this: &mut Self) -> Vec<LayerName> {
         Vec::new()
     }
+
+    /// Takes an `@namespace` rule, or gives it back for the rule list of the sheet.
+    fn on_namespace_rule(_this: &mut Self, rule: NamespaceRule) -> Option<NamespaceRule> {
+        Some(rule)
+    }
+
+    fn take_namespaces(_this: &mut Self) -> Vec<NamespaceRule> {
+        Vec::new()
+    }
 }
 
 /// At rules are rules that have the `@` symbol.
@@ -731,6 +740,8 @@ pub struct BundlerAtRuleParser<'a> {
     pub(crate) layer_names: Vec<LayerName>,
     /// `layer_names` as it was at the first `@import`. `None` until then.
     pub(crate) layers_pre_import: Option<Vec<LayerName>>,
+    /// The `@namespace` rules of the sheet. The bundler prints the rules of a chunk once.
+    pub(crate) namespaces: Vec<NamespaceRule>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
@@ -855,6 +866,18 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         this.layers_pre_import.take().unwrap_or_default()
     }
 
+    fn on_namespace_rule(this: &mut Self, rule: NamespaceRule) -> Option<NamespaceRule> {
+        if !this.track_layers_and_imports {
+            return Some(rule);
+        }
+        this.namespaces.push(rule);
+        None
+    }
+
+    fn take_namespaces(this: &mut Self) -> Vec<NamespaceRule> {
+        core::mem::take(&mut this.namespaces)
+    }
+
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
         this.enclosing_layer.v.set_len(len);
     }
@@ -955,6 +978,35 @@ pub enum TopLevelState {
     Imports = 3,
     Namespaces = 4,
     Body = 5,
+}
+
+impl TopLevelState {
+    /// The state after an `@import` rule. It is `Body` where the parser rejects the rule.
+    pub fn after_import(self) -> Self {
+        if self <= Self::Imports {
+            Self::Imports
+        } else {
+            Self::Body
+        }
+    }
+
+    /// The state after a `@layer` statement. After an `@import` or an `@namespace` rule it is a rule of the body.
+    pub fn after_layer_statement(self) -> Self {
+        if self <= Self::Layers {
+            Self::Layers
+        } else {
+            Self::Body
+        }
+    }
+
+    /// The state after an `@namespace` rule. It is `Body` where the parser rejects the rule.
+    pub fn after_namespace(self) -> Self {
+        if self <= Self::Namespaces {
+            Self::Namespaces
+        } else {
+            Self::Body
+        }
+    }
 }
 
 pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
@@ -1339,13 +1391,17 @@ mod rule_parsers {
                 }
                 AtRulePrelude::Namespace { prefix, url } => {
                     this.state = TopLevelState::Namespaces;
-                    this.rules.v.push(CssRule::Namespace(NamespaceRule {
+                    let rule = NamespaceRule {
                         prefix: prefix.map(|p| Ident {
                             v: std::ptr::from_ref::<[u8]>(p),
                         }),
                         url,
                         loc,
-                    }));
+                    };
+                    if let Some(rule) = AtRuleParserT::on_namespace_rule(this.at_rule_parser, rule)
+                    {
+                        this.rules.v.push(CssRule::Namespace(rule));
+                    }
                     Ok(())
                 }
                 AtRulePrelude::CustomMedia { name, media: query } => {
@@ -1356,11 +1412,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 layer @ AtRulePrelude::Layer(_) => {
-                    if (this.state as u8) <= (TopLevelState::Layers as u8) {
-                        this.state = TopLevelState::Layers;
-                    } else {
-                        this.state = TopLevelState::Body;
-                    }
+                    this.state = this.state.after_layer_statement();
                     let mut nested_parser = this.nested();
                     <NestedRuleParser<'_, AtRuleParserT> as AtRuleParser>::rule_without_block(
                         &mut nested_parser,
@@ -2356,6 +2408,8 @@ pub struct StyleSheet<AtRule> {
     pub layer_names: Vec<LayerName>,
     /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`.
     pub layers_pre_import: Vec<LayerName>,
+    /// The `@namespace` rules of a sheet from `parse_bundler`. They are not in `rules`, and `to_css` does not print them.
+    pub namespaces: Vec<NamespaceRule>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2378,6 +2432,7 @@ impl<AtRule> StyleSheet<AtRule> {
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
             layers_pre_import: Vec::new(),
+            namespaces: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2523,6 +2578,10 @@ mod stylesheet_impl {
             // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
             // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
 
+            debug_assert!(
+                self.namespaces.is_empty(),
+                "the @namespace rules of a parse_bundler sheet print from the chunk"
+            );
             for comment in &self.license_comments {
                 printer.write_str("/*")?;
                 printer.write_comment(comment)?;
@@ -2601,6 +2660,7 @@ mod stylesheet_impl {
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
                 layers_pre_import: None,
+                namespaces: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2702,6 +2762,7 @@ mod stylesheet_impl {
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
             let layers_pre_import = P::take_layers_pre_import(at_rule_parser);
+            let namespaces = P::take_namespaces(at_rule_parser);
             let may_revert_rule = parser.input.may_revert_rule;
 
             Ok((
@@ -2715,6 +2776,7 @@ mod stylesheet_impl {
                     flags: options.flags,
                     layer_names,
                     layers_pre_import,
+                    namespaces,
                     local_scope: parser_extra.local_scope,
                     local_properties,
                     composes,
@@ -2798,6 +2860,7 @@ mod stylesheet_impl {
     }
 
     impl StyleSheet<BundlerAtRule> {
+        /// The sheet keeps its `@namespace` rules in `namespaces`, because a chunk prints the rules of its files once.
         pub fn parse_bundler(
             arena: &'static Bump,
             code: &[u8],
@@ -2819,6 +2882,7 @@ mod stylesheet_impl {
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
                 layers_pre_import: None,
+                namespaces: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };

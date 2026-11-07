@@ -3527,10 +3527,10 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
         "a concurrent test, while another waits inside Bun.build()": {
           source: `
             test.concurrent("a", never, ${short});
-            test.concurrent("b", done => void setTimeout(done, ${2 * short}), ${3 * short});
+            test.concurrent("b", done => void setTimeout(done, ${3 * short}), ${4 * short});
             test.concurrent("c", async () => {
               await sleep(50);
-              await build(${4 * short});
+              await build(${5 * short});
             }, 0);`,
           results: ["(fail) a", "(pass) b", "(pass) c"],
         },

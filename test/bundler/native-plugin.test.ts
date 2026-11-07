@@ -1,6 +1,7 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDir, tempDirWithFiles } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -742,6 +743,82 @@ console.log(JSON.stringify(json))
     const resultLine = stdout.split("\n").find(line => line.startsWith('{"failed"'));
     expect(resultLine).toBe('{"failed":true,"freed":1}');
     expect(exitCode).toBe(0);
+  });
+
+  // A plugin reads text from `fetchSourceCode`, whatever the loader. The bundler still emits a copied file byte for byte.
+  describe("fetchSourceCode of a file that starts with a byte order mark", () => {
+    const files = {
+      utf8: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("decoded text")]),
+      // The odd last byte is not part of the text.
+      utf16le: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("decoded text", "utf16le"), Buffer.from([0x09])]),
+    };
+    const build = (dir: string, filter: RegExp) => {
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+      return Bun.build({
+        outdir: path.join(dir, "dist"),
+        entrypoints: [path.join(dir, "entry.ts")],
+        plugins: [
+          {
+            name: "expect-decoded-text",
+            setup(build) {
+              build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl_expect_decoded_text" });
+            },
+          },
+        ],
+      });
+    };
+
+    it("a file asset is text for the plugin and is emitted byte for byte", async () => {
+      using dir = tempDir("native-plugin-bom-asset", {
+        "entry.ts": `
+          import utf8 from "./utf8.bin" with { type: "file" };
+          import utf16le from "./utf16le.bin" with { type: "file" };
+          console.log(utf8, utf16le);
+        `,
+        "utf8.bin": files.utf8,
+        "utf16le.bin": files.utf16le,
+      });
+
+      const result = await build(String(dir), /\.bin$/);
+      expect(result.success).toBeTrue();
+
+      const dist = path.join(String(dir), "dist");
+      const emitted = Object.fromEntries(
+        readdirSync(dist)
+          .filter(output => output.endsWith(".bin"))
+          .map(output => [output.replace(/-[^.]+/, ""), readFileSync(path.join(dist, output)).toString("hex")]),
+      );
+      expect(emitted).toEqual({
+        "utf8.bin": files.utf8.toString("hex"),
+        "utf16le.bin": files.utf16le.toString("hex"),
+      });
+    });
+
+    it("a text import is text for the plugin and for the bundle", async () => {
+      using dir = tempDir("native-plugin-bom-text", {
+        "entry.ts": `
+          import utf8 from "./utf8.txt";
+          import utf16le from "./utf16le.txt";
+          console.log(JSON.stringify([utf8, utf16le]));
+        `,
+        "utf8.txt": files.utf8,
+        "utf16le.txt": files.utf16le,
+      });
+
+      const result = await build(String(dir), /\.txt$/);
+      expect(result.success).toBeTrue();
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(String(dir), "dist", "entry.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`["decoded text","decoded text"]\n`);
+      expect(exitCode).toBe(0);
+    });
   });
 
   type AdditionalFile = {

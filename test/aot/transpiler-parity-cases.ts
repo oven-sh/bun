@@ -68,6 +68,14 @@ const expectedFailures: Record<string, Record<string, string>> = {
   "test/bundler/transpiler/es-decorators.test.ts": {
     [`${decorators} > accessor with TypeScript annotations > accessor with optional marker (?)`]:
       "TS2564: the accessor has no initializer",
+    "ES decorators lowering matrix > .js > privateAccessorBrand":
+      "`#x in this` is false until the `accessor #x` field has its value",
+    "ES decorators lowering matrix > .js > privateStaticAccessorBrand":
+      "`#x in C` is false until the `static accessor #x` field has its value",
+    "ES decorators lowering matrix > .js > privateAccessorTwice":
+      "`#x in this` is false until the `accessor #x` field has its value",
+    [`${decorators} > members stay where they are written > a direct eval reaches an undecorated accessor #x as a getter and a setter`]:
+      "`#x in this` in code from a string is false until the `accessor #x` field has its value",
     [`${decoratorExpressions} > decorators on both sides of export are rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > export before decorator (.ts)`]: untypedParameters,
     [`${decoratorExpressions} > non-null assertion in decorator is rejected in JavaScript`]: checkerSpeaksFirst,

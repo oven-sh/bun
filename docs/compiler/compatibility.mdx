@@ -205,6 +205,18 @@ const key = {
 undefined[key] = 1; // bun run prints "converted" and throws. An executable only throws.
 ```
 
+## An `accessor` field with a private name
+
+In an executable, `#x in this` is `false` for an `accessor #x` field until the field has its value. Under `bun run` it is `true` from the first field initializer on: the name belongs to a getter and a setter there.
+
+```js accessor.js icon="/icons/javascript.svg"
+class Gauge {
+  before = #level in this;
+  accessor #level = 1;
+}
+console.log(new Gauge().before); // bun run prints true. An executable prints false.
+```
+
 ## A function declared in a block
 
 In a CommonJS file that isn't in strict mode, a function declared inside a block is also visible in the rest of the enclosing function once the block has run, as in Node. Under `bun run` it stays inside the block.

@@ -157,7 +157,9 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        // _padding: u6 fills the rest
+        /// See `Ast::hmr_stable_reexports`.
+        const HMR_STABLE_REEXPORTS = 1 << 10;
+        // _padding: u5 fills the rest
     }
 }
 
@@ -275,6 +277,7 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
+            hmr_stable_reexports: self.flags.contains(Flags::HMR_STABLE_REEXPORTS),
             ..Ast::empty_in(arena)
         }
     }
@@ -297,6 +300,7 @@ impl<'arena> BundledAst<'arena> {
             ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
+        flags.set(Flags::HMR_STABLE_REEXPORTS, ast.hmr_stable_reexports);
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,

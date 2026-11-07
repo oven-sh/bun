@@ -43,6 +43,14 @@ describe("dirname", async () => {
 
   TestBuilder.command`dirname a/`.exitCode(0).stdout(".\n").stderr("").runAsTest("no slash before trailing slash");
 
+  TestBuilder.command`dirname ""`.exitCode(0).stdout(".\n").stderr("").runAsTest("empty string");
+
+  TestBuilder.command`dirname . .. ./a ../a ./`
+    .exitCode(0)
+    .stdout(".\n.\n.\n..\n.\n")
+    .stderr("")
+    .runAsTest("dot components");
+
   // POSIX dirname step 7: strip every trailing slash of the remaining prefix (issue #48111).
   TestBuilder.command`dirname a//b /a//b a///b a//b/ a//b// ///a///b///`
     .exitCode(0)

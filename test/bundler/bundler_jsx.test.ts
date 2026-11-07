@@ -1457,6 +1457,40 @@ describe("bundler", () => {
       });
     }
 
+    // Each component gets its own signature binding, in the scope its `var` is
+    // declared in. Two siblings used to share one name under minification.
+    itBundled("jsx/FastRefreshSiblingSignaturesAreDistinct", {
+      files: {
+        "/index.tsx": /* js */ `
+          const calls = [];
+          let next = 0;
+          globalThis.$RefreshSig$ = () => {
+            const id = next++;
+            return t => (t ? t : calls.push(id));
+          };
+          globalThis.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          function A() { return useThing(); }
+          function B() { return useThing(); }
+          function make() {
+            function C() { return useThing(); }
+            function D() { return useThing(); }
+            if (useThing()) { function E() { return useThing(); } return [C, D, E]; }
+          }
+          const [C, D, E] = make();
+          A(); B(); C(); D(); E();
+          console.log(JSON.stringify(calls));
+        `,
+      },
+      backend: "cli",
+      reactFastRefresh: true,
+      minifyIdentifiers: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(6);
+      },
+      run: { stdout: "[2,0,1,3,4,5]" },
+    });
+
     // The call in the method counts for neither function. The one in the function inside it does.
     itBundled("jsx/FastRefreshFunctionsAroundAndInsideAMethod", {
       files: {

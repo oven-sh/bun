@@ -5306,15 +5306,19 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        // On Windows the shim is a .cmd file, and cmd.exe echoes its lines to stdout.
-        stdout: "ignore",
+        stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
         env: envForBunx(envWithPath(testEnv, emptyDir)),
       });
 
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(splitErrLines(err)).toEqual(["No packages! Deleted empty lockfile", "", "$ node-gyp --version", ""]);
+      // The registry's node-gyp prints nothing.
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
+         done"
+      `);
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
@@ -6674,19 +6678,66 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        // On Windows the shim is a .cmd file, and cmd.exe echoes its lines to stdout.
-        stdout: "ignore",
+        stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
         env: envForBunx(envWithPath(testEnv, "")),
       });
 
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(splitErrLines(err)).toEqual(["No packages! Deleted empty lockfile", "", "$ node-gyp --version", ""]);
+      // The registry's node-gyp prints nothing.
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
+         done"
+      `);
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await file(join(packageDir, "build.node")).text()).toBe(join(packageDir, "build.node"));
+    });
+
+    // On Windows the `node-gyp` that `bun install` provides is a batch file. cmd.exe prints each
+    // command of a batch file to stdout before it runs it, unless the command starts with `@`.
+    // "ensureTempNodeGypScript works" takes the branch of that file that runs `bun x node-gyp`.
+    // This test takes the other branch: `node` runs the file that `npm_config_node_gyp` names.
+    test.skipIf(!isWindows)("node-gyp.cmd prints only the output of node-gyp", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+
+      const fakeNodeGyp = join(packageDir, "fake-node-gyp.js");
+      // node-gyp-build and node-pre-gyp run the file by its name, `node-gyp.cmd`.
+      const scripts = { preinstall: "node-gyp some-arg", install: "node-gyp.cmd other-arg" };
+      await Promise.all([
+        writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts })),
+        writeFile(fakeNodeGyp, `console.log("fake node-gyp:", process.argv.slice(2).join(" "));`),
+      ]);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        // With an empty PATH, the only `node-gyp` and the only `node` are the ones that `bun install` provides.
+        env: { ...envWithPath(env, ""), npm_config_node_gyp: fakeNodeGyp },
+      });
+
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(splitErrLines(err)).toEqual([
+        "No packages! Deleted empty lockfile",
+        "",
+        "$ node-gyp some-arg",
+        "$ node-gyp.cmd other-arg",
+        "",
+      ]);
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
+        fake node-gyp: some-arg
+        fake node-gyp: other-arg
+         done"
+      `);
+      expect(exitCode).toBe(0);
     });
 
     test("bun pm trust and untrusted on missing package", async () => {

@@ -416,15 +416,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
     load_hint: SourceMapLoadHint,
     result: ParseUrlResultHint,
 ) -> Option<ParseUrl> {
-    // This was previously 65535 but that is a size that can risk stack overflow
-    // and due to the many layers of indirections and wrappers this function is called in, it
-    // is difficult to reason about how deeply nested of a callstack this
-    // function is called in. 1024 is a safer number.
-    //
-    // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
-    //       adjust the size
-    let arena = bun_alloc::Arena::new();
-
     let (new_load_hint, mut parsed): (SourceMapLoadHint, ParseUrl) = 'parsed: {
         let mut inline_err: Option<crate::Error> = None;
 
@@ -444,7 +435,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     break 'try_inline;
                 };
 
-                match parse_url(&arena, found_url.slice(), result) {
+                match parse_url(found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
                     Err(err) => {
                         inline_err = Some(err);
@@ -817,13 +808,8 @@ impl SourceMapPieces {
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-/// Temporary allocations are made to the `arena` allocator, which
-/// should be an arena allocator (caller is assumed to call `reset`).
-pub(crate) fn parse_url(
-    arena: &bun_alloc::Arena,
-    source: &[u8],
-    hint: ParseUrlResultHint,
-) -> crate::Result<ParseUrl> {
+pub(crate) fn parse_url(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+    let decoded_json: Vec<u8>;
     let json_bytes: &[u8] = 'json_bytes: {
         const DATA_PREFIX: &[u8] = b"data:application/json";
 
@@ -845,13 +831,9 @@ pub(crate) fn parse_url(
                         }
                         let base64_data = &after[comma + 1..];
 
-                        let len = bun_base64::decode_len(base64_data);
-                        let bytes = arena.alloc_slice_fill_default::<u8>(len);
-                        let decoded = bun_base64::decode(bytes, base64_data);
-                        if !decoded.is_successful() {
-                            return Err(crate::Error::InvalidBase64);
-                        }
-                        break 'json_bytes &bytes[..decoded.count];
+                        decoded_json = bun_base64::decode_alloc(base64_data)
+                            .map_err(|_| crate::Error::InvalidBase64)?;
+                        break 'json_bytes &decoded_json;
                     }
                     b',' => break 'json_bytes &source[DATA_PREFIX.len() + 1..],
                     _ => break 'try_data_url,
@@ -871,19 +853,19 @@ pub(crate) fn parse_url(
 /// The mappings are owned by the global allocator.
 pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
-    use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
     let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path. A source map may be parsed lazily from a thread that never ran the parser (a stack trace
-    // remapped from a collector thread's end phase), so make sure this thread has the stores at all.
-    bun_ast::initialize_store();
-    let _store_scope = DataStoreScope::new();
+    // This can run in a GC end phase: an outer frame may still read this thread's AST store, or the thread has none.
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    // In a debug build, a node that goes to that store panics.
+    let _stmt_guard = bun_ast::stmt::Disabler::scope();
+    let _expr_guard = bun_ast::expr::Disabler::scope();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,

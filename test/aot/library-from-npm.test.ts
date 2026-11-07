@@ -223,9 +223,9 @@ describe.concurrent(
       async root => {
         await bun(root, "library", "compile", "--library", "src/index.ts", "src/make.ts", "--splitting");
         const chunks = readdirSync(join(root, "library/dist"))
-          .filter(name => /^index-\w+\./.test(name))
+          .filter(name => /^shared-\w+\./.test(name))
           .sort();
-        expect(chunks.map(name => name.replace(/-\w+/, ""))).toEqual(["index.aot.ts", "index.js"]);
+        expect(chunks.map(name => name.replace(/-\w+/, ""))).toEqual(["shared.aot.ts", "shared.js"]);
         await bun(root, "app", "add", "--backend=copyfile", "../library/dist");
         const files = {
           aotFiles: 3,

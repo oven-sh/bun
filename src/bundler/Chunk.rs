@@ -313,14 +313,9 @@ impl<'a> Chunk<'a> {
     }
 
     pub(crate) fn get_js_chunk_index_for_html(&self, chunks: &[Chunk]) -> Option<usize> {
-        // Non-entry chunks created under code splitting carry a default
-        // entry_point_id of 0, so the id alone is ambiguous; require
-        // is_entry_point to find the actual entry chunk.
-        let entry_point_id = self.entry_point.entry_point_id();
         chunks.iter().position(|other| {
             matches!(other.content, Content::Javascript(_))
-                && other.entry_point.is_entry_point()
-                && other.entry_point.entry_point_id() == entry_point_id
+                && other.entry_point.is_same_entry_point_as(self.entry_point)
         })
     }
 
@@ -331,12 +326,9 @@ impl<'a> Chunk<'a> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
-        let entry_point_id = self.entry_point.entry_point_id();
         for other in chunks.iter() {
             if let Content::Javascript(js) = &other.content {
-                if other.entry_point.is_entry_point()
-                    && other.entry_point.entry_point_id() == entry_point_id
-                {
+                if other.entry_point.is_same_entry_point_as(self.entry_point) {
                     if let Some(&css_idx) = js.css_chunks.first() {
                         return Some(&chunks[css_idx as usize]);
                     }
@@ -347,8 +339,7 @@ impl<'a> Chunk<'a> {
         // Fallback: match by entry_point_id for cases without a JS chunk.
         for other in chunks.iter() {
             if matches!(other.content, Content::Css(_))
-                && other.entry_point.is_entry_point()
-                && other.entry_point.entry_point_id() == entry_point_id
+                && other.entry_point.is_same_entry_point_as(self.entry_point)
             {
                 return Some(other);
             }
@@ -1269,16 +1260,17 @@ impl EntryPoint {
 
     /// The chunk that entry point `entry_point_id` itself produces.
     pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
-        EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
-    }
-
-    /// A chunk generated on behalf of `entry_point_id` (code-split, dev-server
-    /// CSS/HTML) that is not itself an entry point.
-    pub(crate) fn non_entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
-            (source_index as u64) | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32),
+            (source_index as u64)
+                | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)
+                | Self::IS_ENTRY_POINT_BIT,
         )
+    }
+
+    /// A chunk without an entry point id. `source_index` is the first of its files that the linker reached.
+    pub(crate) fn non_entry_point(source_index: u32) -> Self {
+        EntryPoint(source_index as u64)
     }
 
     #[inline]
@@ -1286,9 +1278,11 @@ impl EntryPoint {
         self.0 as u32
     }
 
+    /// `None` for a chunk that is not an entry point's own.
     #[inline]
-    pub fn entry_point_id(self) -> u32 {
-        ((self.0 >> 32) & Self::ENTRY_POINT_ID_MASK) as u32
+    pub fn entry_point_id(self) -> Option<EntryPointId> {
+        self.is_entry_point()
+            .then_some(((self.0 >> 32) & Self::ENTRY_POINT_ID_MASK) as u32)
     }
 
     #[inline]
@@ -1296,11 +1290,13 @@ impl EntryPoint {
         self.0 & Self::IS_ENTRY_POINT_BIT != 0
     }
 
+    /// Both are chunks of one entry point (its JS, CSS and HTML chunk share the id).
     #[inline]
-    pub fn set_entry_point_id(&mut self, v: EntryPointId) {
-        debug_assert!((v as u64) <= Self::ENTRY_POINT_ID_MASK);
-        self.0 = (self.0 & !(Self::ENTRY_POINT_ID_MASK << 32))
-            | (((v as u64) & Self::ENTRY_POINT_ID_MASK) << 32);
+    pub(crate) fn is_same_entry_point_as(self, other: Self) -> bool {
+        matches!(
+            (self.entry_point_id(), other.entry_point_id()),
+            (Some(a), Some(b)) if a == b
+        )
     }
 }
 

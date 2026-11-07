@@ -127,6 +127,7 @@ pub(crate) mod test {
         CloseParen,
         Var(&'a [u8]),
         VarArgv(u8),
+        SpecialParam(ast::SpecialParam),
         Text(&'a [u8]),
         SingleQuotedText(&'a [u8]),
         DoubleQuotedText(&'a [u8]),
@@ -142,6 +143,7 @@ pub(crate) mod test {
             match the_token {
                 Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
                 Token::VarArgv(int) => TestToken::VarArgv(int),
+                Token::SpecialParam(param) => TestToken::SpecialParam(param),
                 Token::Text(txt) => TestToken::Text(&buf[txt.start as usize..txt.end as usize]),
                 Token::SingleQuotedText(txt) => {
                     TestToken::SingleQuotedText(&buf[txt.start as usize..txt.end as usize])
@@ -214,6 +216,9 @@ pub(crate) mod test {
                     w.write_char('}')
                 }
                 T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::SpecialParam(param) => {
+                    write!(w, "{{\"SpecialParam\":\"{}\"}}", param.as_str())
+                }
                 T::Text(s) => {
                     w.write_str("{\"Text\":")?;
                     encode_json_string(w, s)?;

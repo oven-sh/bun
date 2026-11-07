@@ -1971,7 +1971,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+// The bundled header. macOS compiles against the SDK's sqlite3.h, which can be older.
+#if !LAZY_LOAD_SQLITE
 static_assert(SQLITE_DBSTATUS_MAX == 13, "new SQLITE_DBSTATUS_* op: add it to constants in src/js/bun/sqlite.ts and packages/bun-types/sqlite.d.ts");
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDbStatusFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

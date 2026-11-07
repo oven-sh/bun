@@ -51,18 +51,24 @@ test.each([
   {
     name: "waitForDebugger",
     call: () => inspector.waitForDebugger(),
+    code: "ERR_INSPECTOR_NOT_ACTIVE",
     frame: /^\s+at inspectorWaitForDebugger \(node:inspector:\d+:\d+\)$/m,
   },
-  // Node.js checks the port only if it is a uint32.
-  { name: "open", call: () => inspector.open(65536), frame: /^\s+at inspectorOpen \(node:inspector:\d+:\d+\)$/m },
-])("an error printed from inspector.$name() lists that function", ({ call, frame }) => {
-  let error: unknown;
+  {
+    name: "open",
+    // Node.js checks the port only if it is a uint32.
+    call: () => inspector.open(65536),
+    code: "ERR_OUT_OF_RANGE",
+    frame: /^\s+at inspectorOpen \(node:inspector:\d+:\d+\)$/m,
+  },
+])("an error printed from inspector.$name() lists that function", ({ call, code, frame }) => {
+  let error: any;
   try {
     call();
   } catch (thrown) {
     error = thrown;
   }
-  expect(error).toBeInstanceOf(Error);
+  expect(error?.code).toBe(code);
   // A line of the source preview starts with its number, so only a frame matches.
   expect(Bun.inspect(error)).toMatch(frame);
 });

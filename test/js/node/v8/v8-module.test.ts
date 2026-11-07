@@ -236,6 +236,25 @@ describe("function names", () => {
     }
   });
 
+  test("the functions of promiseHooks have the names and lengths Node.js gives them", () => {
+    const hooks: Record<string, { name: string; length: number }> = {};
+    for (const [key, fn] of Object.entries(v8.promiseHooks)) hooks[key] = { name: fn.name, length: fn.length };
+    // In Node.js v26.3.0 one factory makes the four `on*` functions, so they have no name.
+    expect(hooks).toEqual({
+      createHook: { name: "createHook", length: 0 },
+      onInit: { name: "", length: 1 },
+      onBefore: { name: "", length: 1 },
+      onAfter: { name: "", length: 1 },
+      onSettled: { name: "", length: 1 },
+    });
+    expect(() => v8.promiseHooks.onInit(() => {})).toThrow(
+      expect.objectContaining({
+        code: "ERR_NOT_IMPLEMENTED",
+        message: "node:v8 onInit is not yet implemented in Bun.",
+      }),
+    );
+  });
+
   // The frames of builtin modules in a stack, without their positions.
   function builtinFrames(stack: string) {
     return stack

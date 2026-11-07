@@ -1,6 +1,5 @@
 // Hardcoded module "node:v8"
 
-// This is a stub! None of this is actually implemented yet.
 const { throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
@@ -422,22 +421,22 @@ function setDeserializeMainFunction(_callback, _data) {
   throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
 }
 
+// One factory makes the four hooks, as in node, so that they have no `name` and a `length` of 1:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/promise_hooks.js#L90-L103
+function notImplementedHook(name) {
+  return _hook => {
+    throwNotImplemented("node:v8 " + name);
+  };
+}
+
 const promiseHooks = {
     createHook: () => {
       throwNotImplemented("node:v8 createHook");
     },
-    onInit: () => {
-      throwNotImplemented("node:v8 onInit");
-    },
-    onBefore: () => {
-      throwNotImplemented("node:v8 onBefore");
-    },
-    onAfter: () => {
-      throwNotImplemented("node:v8 onAfter");
-    },
-    onSettled: () => {
-      throwNotImplemented("node:v8 onSettled");
-    },
+    onInit: notImplementedHook("onInit"),
+    onBefore: notImplementedHook("onBefore"),
+    onAfter: notImplementedHook("onAfter"),
+    onSettled: notImplementedHook("onSettled"),
   },
   startupSnapshot = {
     addDeserializeCallback,

@@ -626,10 +626,10 @@ impl JestPrettyFormat {
                 let _ = writer.write_fmt(format_args!("[{}]", value.get_class_name(global)?));
                 return Ok(true);
             }
-            // In a failure message the walk of the Object arm prints what `toEqual` reads of an event.
+            // The walk of the Object arm prints what `toEqual` reads of an event.
             if matches!(tag, Tag::Event) {
                 let dispatcher = match value.get(global, "target") {
-                    Ok(target) => target.unwrap_or(JSValue::ZERO),
+                    Ok(target) => target.filter(|target| *target != value).unwrap_or(JSValue::ZERO),
                     Err(JsError::Thrown) if global.clear_exception_except_termination() => JSValue::ZERO,
                     Err(error) => return Err(error),
                 };

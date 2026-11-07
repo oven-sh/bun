@@ -496,6 +496,59 @@ it.concurrent("should output usage if no arguments are passed", async () => {
   expect(await exited).toBe(1);
 });
 
+// The file name of argv[0] selects the role. A name that only ends in `bunx` is not `bunx`.
+describe("argv[0]", () => {
+  // `--help` prints a different usage line in each role.
+  async function usage(argv0: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "--help"],
+      argv0,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return (stdout + stderr).split(/\r?\n/).find(line => line.startsWith("Usage:"));
+  }
+
+  it.concurrent.each([
+    "bunx",
+    "./bunx",
+    "/usr/local/bin/bunx",
+    ...(isWindows ? ["bunx.exe", "C:\\x\\bunx.exe", "C:/x/bunx", "C:bunx"] : []),
+  ])("%s is bunx", async argv0 => {
+    expect(await usage(argv0)).toStartWith("Usage: bunx ");
+  });
+
+  it.concurrent.each([
+    "mybunx",
+    "/x/my-bunx",
+    // Only Windows has `\` as a path separator and `.exe` as an optional extension.
+    ...(isWindows ? ["mybunx.exe", "C:\\x\\my-bunx.exe"] : ["bin\\bunx"]),
+  ])("%s is bun", async argv0 => {
+    expect(await usage(argv0)).toStartWith("Usage: bun <command> ");
+  });
+
+  // In the bunx role the first word is a package, so `add pkg` gets the package `add` and runs it.
+  it.concurrent("mybunx runs a subcommand, not the package with that name", async () => {
+    using registry = await localRegistry(fixturePackage("add", "1.0.0", "add"), fixturePackage("pkg", "1.0.0", "pkg"));
+    using box = sandbox(registry, { cwd: { "package.json": "{}" } });
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "pkg"],
+      argv0: "mybunx",
+      cwd: box.cwd,
+      env: box.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("installed pkg@1.0.0");
+    expect(registry.requests).toEqual(["/pkg", "/pkg/-/pkg-1.0.0.tgz"]);
+    expect(await Bun.file(join(box.cwd, "package.json")).json()).toEqual({ dependencies: { pkg: "^1.0.0" } });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it.concurrent("should work for @scoped packages", async () => {
   const { x_dir, env } = setup();
   // Like @babel/cli -> `babel`: the bin is named after neither the scope nor the

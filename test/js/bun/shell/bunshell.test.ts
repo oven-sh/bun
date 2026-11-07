@@ -19,6 +19,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import * as pathNamespace from "path";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -141,6 +142,71 @@ describe("bunshell", () => {
       expect(() => $`echo ${nested}`).toThrow(
         "Shell script template arrays cannot be nested more than 100 levels deep",
       );
+    });
+
+    test("the error for an object with no toString() names it as Object.prototype.toString() does", () => {
+      const messageOf = (value: unknown) => {
+        try {
+          $`echo ${value as any}`;
+        } catch (error) {
+          return (error as Error).message;
+        }
+        return "did not throw";
+      };
+      const rejected = (name: string) =>
+        `Invalid JS object used in shell: [object ${name}], you might need to call \`.toString()\` on it`;
+      let conversions = 0;
+      const converts = {
+        [Symbol.toPrimitive]() {
+          conversions++;
+          throw new Error("from Symbol.toPrimitive");
+        },
+      };
+      let tagReads = 0;
+      class TagGetter {
+        get [Symbol.toStringTag]() {
+          tagReads++;
+          return "FromGetter";
+        }
+      }
+      class TagGetterThrows {
+        get [Symbol.toStringTag]() {
+          tagReads++;
+          throw new Error("from the Symbol.toStringTag getter");
+        }
+      }
+      expect({
+        plain: messageOf({ a: 1 }),
+        map: messageOf(new Map()),
+        withoutPrototype: messageOf(Object.create(null)),
+        inAnArray: messageOf([Object.create(null)]),
+        moduleNamespace: messageOf(pathNamespace),
+        converts: messageOf(converts),
+        conversions,
+        tag: messageOf({ [Symbol.toStringTag]: "Own" }),
+        tagGetter: messageOf(new TagGetter()),
+        tagGetterThrows: messageOf(new TagGetterThrows()),
+        tagReads,
+        // It has a toString(), so Bun calls it.
+        toStringThrows: messageOf({
+          toString() {
+            throw new Error("from toString()");
+          },
+        }),
+      }).toEqual({
+        plain: rejected("Object"),
+        map: rejected("Map"),
+        withoutPrototype: rejected("Object"),
+        inAnArray: rejected("Object"),
+        moduleNamespace: rejected("Module"),
+        converts: rejected("Object"),
+        conversions: 0,
+        tag: rejected("Own"),
+        tagGetter: rejected("FromGetter"),
+        tagGetterThrows: "from the Symbol.toStringTag getter",
+        tagReads: 2,
+        toStringThrows: "from toString()",
+      });
     });
   });
 

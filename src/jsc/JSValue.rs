@@ -2273,6 +2273,11 @@ impl JSValue {
         }
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global))
     }
+    /// `Object.prototype.toString.call(self)`, such as `[object Map]`. It reads
+    /// `Symbol.toStringTag`, which can be a getter.
+    pub fn object_prototype_to_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+        crate::cpp::JSC__JSValue__objectPrototypeToString(self, global)?.to_bun_string(global)
+    }
     /// `JSValue.getDescription` — symbol description (empty if none),
     /// borrowed from the Symbol.
     pub fn get_description<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {

@@ -1106,7 +1106,7 @@ describe.concurrent("source locations", () => {
       ].join("\n"),
     });
     expect(stderr).toContain("error: from the factory");
-    expect(stderr).toMatch(/at <anonymous> \(.*hoist\.test\.ts:5:13\)/);
+    expect(stderr).toMatch(/at <anonymous> \(.*hoist\.test\.ts:5:9\)/);
     expect(exitCode).toBe(1);
   });
 

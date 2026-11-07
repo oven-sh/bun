@@ -11,6 +11,13 @@ export const replacements: ReplacementRule[] = [
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
+  // The Bun that bundles these files may print `new Error(x)` as the call `Error(x)`, which throws once script
+  // stores a class in `globalThis.Error`. It does not know the prefixed name, and the prefix goes after bundling.
+  // Not needed once the Bun pinned in scripts/build/ci-images/spec.ts prints `new Error(x)` itself.
+  {
+    from: /\bnew (Error|SyntaxError|RangeError|ReferenceError|EvalError|URIError|AggregateError)\b/g,
+    to: "new __no_intrinsic__%1",
+  },
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 

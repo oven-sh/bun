@@ -1761,7 +1761,8 @@ test.concurrent(
       "delete stack": row([true, null]),
       "define stack": row("defined"),
       "structuredClone": row(["TypeError: boom"]),
-      "Bun.inspect": row([expect.stringContaining("TypeError: boom")]),
+      // The other lines quote the source, which has the word too.
+      "Bun.inspect": row(expect.arrayContaining(["TypeError: boom"])),
       "JSON.stringify": row(expect.any(String)),
     });
     expect(exitCode).toBe(0);

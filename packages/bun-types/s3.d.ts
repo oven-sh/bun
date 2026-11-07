@@ -507,7 +507,9 @@ declare module "bun" {
      * @param begin Starting byte offset
      * @param end Ending byte offset (exclusive)
      * @param contentType Optional MIME type for the slice
-     * @returns A new S3File representing the specified range
+     * @returns A new S3File representing the specified range. A slice of a
+     * zero-length slice (`file.slice(0, 0).slice()`) is an empty `Blob` with
+     * no `name`, `bucket` or `presign`.
      *
      * @example
      * ```ts
@@ -618,7 +620,6 @@ declare module "bun" {
      * }
      * ```
      */
-    readonly readable: ReadableStream<Uint8Array<ArrayBuffer>>;
     stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
 
     /**
@@ -630,7 +631,7 @@ declare module "bun" {
      * console.log(file.name); // "folder/image.jpg"
      * ```
      */
-    readonly name?: string;
+    readonly name: string;
 
     /**
      * The bucket name containing the file.

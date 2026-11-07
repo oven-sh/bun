@@ -303,6 +303,35 @@ impl Stdio {
         matches!(self, Self::Fd(_))
     }
 
+    fn throw_unsupported(global: &JSGlobalObject, i: i32, is_sync: bool) -> jsc::JsError {
+        match i {
+            0 => global.throw_invalid_arguments(format_args!(
+                "stdin must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, Bun.file(), a Blob, Request, Response,{} or a TypedArray",
+                if is_sync { "" } else { " ReadableStream," },
+            )),
+            1 | 2 => global.throw_invalid_arguments(format_args!(
+                "{} must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()",
+                if i == 1 { "stdout" } else { "stderr" },
+            )),
+            _ => global.throw_invalid_arguments(format_args!(
+                "stdio[{i}] must be one of 'pipe', 'inherit', 'ignore',{} null, a file descriptor, or Bun.file()",
+                if is_sync { "" } else { " 'socket-fd'," },
+            )),
+        }
+    }
+
+    /// Streams and bodies are sources; the parent is the reader of stdout/stderr.
+    fn reject_as_output(global: &JSGlobalObject, i: i32, kind: &str) -> JsResult<()> {
+        let name = match i {
+            1 => "stdout",
+            2 => "stderr",
+            _ => return Ok(()),
+        };
+        Err(global.throw_invalid_arguments(format_args!(
+            "{kind} cannot be used for {name}. To read the subprocess's {name}, use 'pipe' and read from subprocess.{name}"
+        )))
+    }
+
     fn extract_body_value(
         out_stdio: &mut Stdio,
         cx: &bun_jsc::JsThread<'_>,
@@ -345,23 +374,10 @@ impl Stdio {
                     )));
                 }
 
-                match i {
-                    0 => {}
-                    1 => {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "ReadableStream cannot be used for stdout yet. For now, do .stdout"
-                        )));
-                    }
-                    2 => {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "ReadableStream cannot be used for stderr yet. For now, do .stderr"
-                        )));
-                    }
-                    _ => {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "ReadableStream cannot be used for stdio[{i}] yet"
-                        )));
-                    }
+                if i != 0 {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "ReadableStream cannot be used for stdio[{i}] yet"
+                    )));
                 }
 
                 let stream_value = body.to_readable_stream(cx)?;
@@ -433,9 +449,7 @@ impl Stdio {
             } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null"
-                )));
+                return Err(Self::throw_unsupported(cx.global(), i, is_sync));
             }
             return Ok(());
         } else if value.is_number() {
@@ -493,8 +507,10 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
+            Self::reject_as_output(cx.global(), i, "Request")?;
             return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
+            Self::reject_as_output(cx.global(), i, "Response")?;
             return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
         }
 
@@ -504,21 +520,16 @@ impl Stdio {
                 return out_stdio.extract_blob(cx.global(), blob, i);
             }
 
-            let name: &'static [u8] = match i {
-                0 => b"stdin",
-                1 => b"stdout",
-                2 => b"stderr",
-                _ => {
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used for stdio[{i}] yet"
-                    )));
-                }
-            };
+            Self::reject_as_output(cx.global(), i, "ReadableStream")?;
+            if i != 0 {
+                return Err(cx.global().throw_invalid_arguments(format_args!(
+                    "ReadableStream cannot be used for stdio[{i}] yet"
+                )));
+            }
 
             if is_sync {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "'{}' ReadableStream cannot be used in sync mode",
-                    bstr::BStr::new(name),
+                    "'stdin' ReadableStream cannot be used in sync mode",
                 )));
             }
 
@@ -527,10 +538,7 @@ impl Stdio {
                     .global()
                     .err(
                         jsc::ErrorCode::INVALID_STATE,
-                        format_args!(
-                            "'{}' ReadableStream has already been used",
-                            bstr::BStr::new(name),
-                        ),
+                        format_args!("'stdin' ReadableStream has already been used"),
                     )
                     .throw());
             }
@@ -557,9 +565,7 @@ impl Stdio {
             return Ok(());
         }
 
-        Err(cx.global().throw_invalid_arguments(format_args!(
-            "stdio must be an array of 'inherit', 'ignore', or null"
-        )))
+        Err(Self::throw_unsupported(cx.global(), i, is_sync))
     }
 
     pub(crate) fn extract_blob(

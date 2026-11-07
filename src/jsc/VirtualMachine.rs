@@ -1864,9 +1864,10 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
-    /// `is_event_loop_alive_excluding_immediates` for the hand-off of a `gc` performance entry, which must not keep the loop alive by itself.
-    pub(crate) fn is_event_loop_kept_alive(&self) -> bool {
-        // `bun test` runs on after an unhandled error, and its tests still get their entries.
+    /// What an unref'd `setImmediate` and the hand-off of `gc` performance entries ask, because neither keeps the loop alive by itself: does something other than a queued immediate keep it alive.
+    #[inline]
+    pub fn is_event_loop_kept_alive(&self) -> bool {
+        // `bun test` runs on after an unhandled error.
         (self.unhandled_error_counter == 0 || isBunTest.load(core::sync::atomic::Ordering::Relaxed))
             && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
     }

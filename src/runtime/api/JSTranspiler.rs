@@ -789,7 +789,7 @@ impl TransformTask {
     fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
-        if self.log.has_any() || self.err.is_some() {
+        if self.log.has_errors() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
                 if let Some(err) = &self.err {
                     if !self.log.has_any() {
@@ -1206,7 +1206,7 @@ impl JSTranspiler {
             return Err(global.throw(format_args!("Failed to parse")));
         };
 
-        if (log_ref.warnings + log_ref.errors) > 0 {
+        if log_ref.has_errors() {
             return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
@@ -1346,7 +1346,7 @@ impl JSTranspiler {
             return Err(global.throw(format_args!("Failed to parse code")));
         };
 
-        if (log_ref.warnings + log_ref.errors) > 0 {
+        if log_ref.has_errors() {
             return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
@@ -1522,7 +1522,7 @@ impl JSTranspiler {
                 return Err(global.throw_error(err, "Failed to scan imports"));
             }
 
-            if (log.warnings + log.errors) > 0 {
+            if log.has_errors() {
                 return Err(
                     global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
                 );

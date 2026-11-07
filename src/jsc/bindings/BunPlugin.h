@@ -149,7 +149,7 @@ public:
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
         // The module records whose methods a `{ spy: true }` mock has replaced in place. See dependencyKeyOfModuleMock().
-        WTF::UncheckedKeyHashMap<JSC::JSCell*, JSC::Weak<JSC::JSCell>> spiedModules = {};
+        WTF::Vector<JSC::Weak<JSC::JSCell>> spiedModules = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };

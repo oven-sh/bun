@@ -2173,7 +2173,7 @@ enum SerializeStatus {
 }
 
 /// Why [`JSValue::serialize`] gave no bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum SerializeError {
     /// A JS exception is pending.
     Js(JsError),
@@ -2190,7 +2190,7 @@ impl From<JsError> for SerializeError {
 /// What an API throws for a value that cannot be cloned. Must be synced with
 /// `CloneErrorClass` in src/jsc/bindings/Serialization.cpp.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub enum CloneErrorClass {
     /// The `DataCloneError` DOMException of structured clone.
     DataCloneError = 0,

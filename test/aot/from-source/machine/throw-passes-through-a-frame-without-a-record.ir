@@ -1,0 +1,41 @@
+# -- source: throw-passes-through-a-frame-without-a-record.js
+# function thrower(value) { if (value) throw new Error("thrown"); return 1; }
+# function middle(value, kept) { thrower(value); report(kept); return kept; }
+# function outer(value) { try { return middle(value, 3); } catch (error) { return error.message; } }
+# function outermost(value, kept) { const result = outer(value); report(kept); return String(kept) + result; }
+# report(id(outermost)(0, 5));
+# report(id(outermost)(1, 5));
+# -- end of source
+# The frame of middle() holds one saved register and nothing else, and nothing in it takes the frame pointer register for the frame: on x86-64 it is `push` and `pop`, with no record.
+# The throw passes through it. Whoever unwinds finds the frame by its size and puts the saved register back out of the word at the place of the record: outermost() keeps `kept` there across the call of outer(), which catches.
+# outer() has a handler, whose landing pad takes the stack pointer from the frame pointer: it keeps its record.
+# f1 = thrower, f2 = middle, f3 = outer, f4 = outermost
+# REQUIRES: x86_64 not-windows unsanitized-code
+# RUN: bytes f2:Body mechanisms=none
+# CHECK-LABEL: unit f2:Body
+# CHECK: frame=0@{{*}} noFrameRecord
+# REQUIRES(HANDLER): x86_64 not-windows unsanitized-code
+# RUN(HANDLER): bytes f3:Body mechanisms=none
+# HANDLER-LABEL: unit f3:Body
+# HANDLER: handlers=1
+# HANDLER-NOT: noFrameRecord
+# REQUIRES(SAVES): x86_64 not-windows unsanitized-code
+# RUN(SAVES): frame f2:Body mechanisms=none
+# SAVES-LABEL: unit f2:Body
+# SAVES: size = 0
+# SAVES-NEXT: no frame record
+# SAVES-NEXT: calleeSaves = [{{*}} at 0]
+# RUN(RUNS): run-in-shell mechanisms=none globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 3
+# RUNS-NEXT: 5
+# RUNS-NEXT: 53
+# RUNS-NEXT: 5
+# RUNS-NEXT: 5thrown
+# RUNS: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# ALL: 3
+# ALL-NEXT: 5
+# ALL-NEXT: 53
+# ALL-NEXT: 5
+# ALL-NEXT: 5thrown
+# ALL: exited with 0

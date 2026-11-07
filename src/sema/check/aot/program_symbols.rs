@@ -37,9 +37,10 @@ impl ProgramSymbols {
             symbols.bun_module_without_values = Some(bun_module);
         }
         symbols.int32 = find_type_alias(files, bun_module, b"int32", declared_in);
-        symbols.is_int32_written = symbols
-            .int32
-            .is_some_and(|int32| is_spelled_by_some_file(files, int32));
+        symbols.is_int32_written = files.is_compile_build()
+            && symbols
+                .int32
+                .is_some_and(|int32| is_spelled_by_some_file(files, int32));
         symbols.int32_tag = symbols
             .int32
             .and_then(|int32| find_tag_literal(files, int32));

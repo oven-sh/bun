@@ -192,7 +192,7 @@ pub(super) struct FlowMemo {
     max_antecedent: Vec<u32>,
     /// The same for a lower bound, up to the start of its function.
     min_antecedent: Vec<u32>,
-    deepest_walk_from: Vec<u32>,
+    some_walk_may_go_too_deep: bool,
     /// While the checker reads types alone. For a function, or for the file outside of them: the position of the first
     /// reference whose walk went too deep. A check of the file has the analysis off for the rest of that body. A question
     /// begins with it on, so each reference behind that one would walk as deep again.
@@ -6003,15 +6003,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         call_statements_by_symbol.sort_by_u32(|&(symbol, _)| symbol.0);
         let memo = &mut self.flow_memo;
-        if longest >= MAX_FLOW_DEPTH {
-            for length in &mut lengths {
-                *length = length.saturating_add(bound.flow_depth_added_by_loops);
-            }
-            memo.deepest_walk_from = lengths;
-        } else {
-            memo.deepest_walk_from = Vec::new();
-            memo.unsettled_call_before = lengths;
-        }
+        memo.some_walk_may_go_too_deep = longest >= MAX_FLOW_DEPTH;
+        memo.unsettled_call_before = lengths;
         memo.narrowing_index_file = Some(file);
         (memo.tests, memo.tests_of) = (tests, Some(file));
         memo.first_narrowing_node_of_property = first_nodes_of_properties;
@@ -6332,9 +6325,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let memo = &self.flow_memo;
         let flow = bound.flow_of_expr(e);
-        let deepest_walk = memo.deepest_walk_from.get(flow.idx());
-        if !self.reads_types_alone && deepest_walk.is_some_and(|&deepest| deepest >= MAX_FLOW_DEPTH)
-        {
+        if !self.reads_types_alone && memo.some_walk_may_go_too_deep {
             return false;
         }
         // Nothing matches `f()["a"]` or `a[i]`, and an assignment to `a` leaves `a[i]` as declared.

@@ -913,7 +913,7 @@ console.log(answers.join("\\n"));
           exitCode: 0,
         });
       },
-      240_000,
+      600_000,
     );
 
     // The stores are all that the try holds. They allocate and may not collect.

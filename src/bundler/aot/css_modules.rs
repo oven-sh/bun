@@ -6,7 +6,7 @@ use bun_sema::hir_from_data::DataValue;
 
 use super::services::BuildContext;
 pub(crate) use crate::bun_css::css_modules::is_module_path;
-use crate::css_module_graph::{StackOverflow, load_exports, without_bom};
+use crate::css_module_graph::{Failure, load_exports, without_bom};
 
 pub(crate) fn exported_names<'s>(
     context: &BuildContext,
@@ -24,7 +24,8 @@ pub(crate) fn exported_names<'s>(
             let names: Vec<_> = exports.iter().map(intern).collect();
             Ok(arena.alloc(DataValue::Object(arena.alloc_slice_copy(&names))))
         }
-        Err(StackOverflow) => {
+        Err(Failure::Path(_)) => bun_core::out_of_memory(),
+        Err(Failure::StackOverflow) => {
             let source = Source::init_path_string(file.path, file.contents);
             log.add_error(
                 Some(&source),

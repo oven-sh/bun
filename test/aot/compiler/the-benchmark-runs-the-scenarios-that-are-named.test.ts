@@ -7,6 +7,8 @@ import { run } from "../harness/run";
 import { test } from "../supported";
 
 const script = join(import.meta.dir, "..", "..", "..", "bench", "compiler", "run.ts");
+// The build of 500 lines takes a second. On a small runner of macOS, where CI starts this file beside one that fills the memory for 100 seconds, it passed 120.
+const whileTheMachineIsBusy = 300_000;
 const benchmark = (...words: string[]) => run([bunExe(), script, ...words], import.meta.dir, bunEnv);
 
 test("a name that the benchmark does not have ends the run, and the names are listed", async () => {
@@ -37,14 +39,18 @@ test("Go is told the name under which its executable is looked for", async () =>
   expect(stdout.split("\n").map(line => / -o (\S+) /.exec(line)?.[1])).toEqual([name, name, undefined]);
 });
 
-test("what is chosen is built and measured, and nothing else", async () => {
-  const { stdout, stderr, exitCode } = await benchmark("--scenarios=typed", "--sizes=300", "--runs=1");
-  // A run that fails shows all that it printed. On Windows the benchmark looked for `app`, where a build writes `app.exe`, and this test said only that a line was missing.
-  const told = stderr.split(/\r?\n/).filter(line => line.startsWith("300 "));
-  expect({ told, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
-    told: [expect.stringMatching(/^300 typed: /)],
-    exitCode: 0,
-    stderr: "",
-  });
-  expect(stdout).toContain("\ntyped     bun build --compile --aot --explain=statistics main.ts --outfile app\n");
-}, 120_000);
+test(
+  "what is chosen is built and measured, and nothing else",
+  async () => {
+    const { stdout, stderr, exitCode } = await benchmark("--scenarios=typed", "--sizes=300", "--runs=1");
+    // A run that fails shows all that it printed. On Windows the benchmark looked for `app`, where a build writes `app.exe`, and this test said only that a line was missing.
+    const told = stderr.split(/\r?\n/).filter(line => line.startsWith("300 "));
+    expect({ told, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      told: [expect.stringMatching(/^300 typed: /)],
+      exitCode: 0,
+      stderr: "",
+    });
+    expect(stdout).toContain("\ntyped     bun build --compile --aot --explain=statistics main.ts --outfile app\n");
+  },
+  whileTheMachineIsBusy,
+);

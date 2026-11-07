@@ -104,6 +104,7 @@ BunTestXdescribe/0: it is not called: it reaches outside JavaScript
 BunTestXtest/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersAppendIterable/0: it is not called: it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those
+CompilerHelpersAskRunOfTestFile/0: it is not called: it is written with the intrinsic that names a native function, and only compiled code has that: the native function has an entry of its own
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it

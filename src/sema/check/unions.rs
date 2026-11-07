@@ -1431,7 +1431,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut joining: smallvec::SmallVec<[(TypeId, Sym); 4]> = smallvec::SmallVec::new();
         let (mut has_void, mut has_undefined, mut has_class) = (false, false, false);
         for &member in members {
-            if self.is_primitive(member) {
+            if self.is_primitive(member) && self.flags(member) & tf::STRUCTURED_OR_INSTANTIABLE == 0
+            {
                 has_void |= member == TypeId::VOID;
                 has_undefined |= member.is_undefined();
                 continue;

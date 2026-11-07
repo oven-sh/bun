@@ -3645,14 +3645,17 @@ fn css_module_exports(
     virtual_source: Option<&bun_ast::Source<'_>>,
     log: &mut bun_ast::Log,
 ) -> crate::Result<JSValue> {
-    use bun_bundler::css_module_graph::{StackOverflow, load_exports, read};
+    use bun_bundler::css_module_graph::{Failure, load_exports, read};
 
     let contents = match virtual_source {
         Some(source) => std::borrow::Cow::Borrowed(&*source.contents),
         None => read(path_text, log).ok_or(crate::Error::ParseError)?.into(),
     };
-    let exports = load_exports(&mut CssModuleHost(jsc_vm), path_text, &contents)
-        .map_err(|StackOverflow| global.throw_stack_overflow())?;
+    let exports = match load_exports(&mut CssModuleHost(jsc_vm), path_text, &contents) {
+        Ok(exports) => exports,
+        Err(Failure::StackOverflow) => return Err(global.throw_stack_overflow().into()),
+        Err(Failure::Path(error)) => return Err(error.into()),
+    };
 
     let object = JSValue::create_empty_object(global, exports.len());
     for (name, value) in &exports {

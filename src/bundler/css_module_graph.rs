@@ -14,7 +14,10 @@ use crate::{Transpiler, generic_path_with_pretty_initialized};
 
 bun_core::declare_scope!(CssModule, hidden);
 
-pub struct StackOverflow;
+pub enum Failure {
+    StackOverflow,
+    Path(crate::Error),
+}
 
 /// Whoever imports a CSS module without bundling it.
 pub trait Host {
@@ -78,7 +81,7 @@ impl CssModuleFile {
         path_text: &[u8],
         contents: Option<&'static [u8]>,
         log: &mut Log,
-    ) -> Result<CssModuleFile, StackOverflow> {
+    ) -> Result<CssModuleFile, Failure> {
         let top_level_dir = FileSystem::get().top_level_dir();
         let interned = host
             .intern(path_text)
@@ -86,12 +89,13 @@ impl CssModuleFile {
         let mut path = Path::init(interned.unwrap_or_else(|| bump.alloc_slice_copy(path_text)));
         // The pretty path must fit a path buffer. Worst case is "../" per `top_level_dir` component plus `path_text`.
         if path_text.len() + 2 * top_level_dir.len() < bun_paths::MAX_PATH_BYTES {
-            path = bun_core::handle_oom(generic_path_with_pretty_initialized(
+            path = generic_path_with_pretty_initialized(
                 &path,
                 host.transpiler().options.target,
                 top_level_dir,
                 bump,
-            ));
+            )
+            .map_err(Failure::Path)?;
         }
         let mut file = CssModuleFile {
             source: Source {
@@ -126,7 +130,7 @@ impl CssModuleFile {
                 Ok(file)
             }
             // With `error_recovery` on, the parser only fails when it runs out of stack.
-            Err(_) => Err(StackOverflow),
+            Err(_) => Err(Failure::StackOverflow),
         }
     }
 }
@@ -155,7 +159,7 @@ impl CssModuleGraph {
         path_text: &[u8],
         contents: &'static [u8],
         log: &mut Log,
-    ) -> Result<(), StackOverflow> {
+    ) -> Result<(), Failure> {
         self.0.push(CssModuleFile::parse(
             host,
             bump,
@@ -222,11 +226,7 @@ impl CssModuleGraph {
     }
 
     /// Pairs each local name in the first file with the space-separated class names it exports.
-    fn exports(
-        &self,
-        scratch: &Arena,
-        log: &mut Log,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StackOverflow> {
+    fn exports(&self, scratch: &Arena, log: &mut Log) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Failure> {
         let Some(sheet) = self.0.first().and_then(|file| file.sheet.as_ref()) else {
             return Ok(Vec::new());
         };
@@ -253,7 +253,7 @@ impl CssModuleGraph {
                 }
             }
             if visitor.out_of_stack {
-                return Err(StackOverflow);
+                return Err(Failure::StackOverflow);
             }
             exports.push((local_name.to_vec(), value));
         }
@@ -266,7 +266,7 @@ pub fn load_exports(
     host: &mut dyn Host,
     path_text: &[u8],
     contents: &[u8],
-) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StackOverflow> {
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Failure> {
     let arena = Arena::new();
     // SAFETY: only `graph` and `skipped` borrow from `arena`; they're declared after it, so they drop first.
     let bump: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };

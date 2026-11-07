@@ -21,9 +21,6 @@ const differs = {
   "the text of a function is what the file says": [
     "imports that stay static > export from, and an import that an export clause names",
   ],
-  "a frame of a stack names another column of its line": [
-    "source locations > an error after the moved statements points at the original line",
-  ],
   "an error of the build has its number in front": [
     "errors > an import statement in a CommonJS file is still rejected",
   ],
@@ -39,7 +36,7 @@ const sections = {
   "a top-level variable in a factory of jest.mock": 18,
   "a top-level variable in a factory of vi.mock": 18,
   "errors": 3,
-  "source locations": 3,
+  "source locations": 4,
 };
 
 test.each(Object.entries(sections))(

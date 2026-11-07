@@ -1214,7 +1214,7 @@ struct Loop {
     nested: u32,
 }
 
-fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, u32, bool) {
+fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, bool) {
     // Longest backward path from each node, ignoring back edges. A back edge points to a higher index, and so does `NONE`.
     let mut below = vec![0u32; flow.len()];
     let (mut loops, mut reduced): (Vec<Loop>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
@@ -1241,7 +1241,7 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, u32, b
         }
     }
     if loops.is_empty() {
-        return (longest, 0, false);
+        return (longest, false);
     }
     for it in &mut loops {
         let back = flow[it.label as usize].antecedents(edges).iter();
@@ -1275,7 +1275,7 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, u32, b
     }
     let deepest = deeper_from.iter().map(|it| it.1).max().unwrap_or(0);
     if longest.saturating_add(deepest) < MAX_FLOW_DEPTH {
-        return (longest + deepest, deepest, depends_on_order);
+        return (longest + deepest, depends_on_order);
     }
     // The longest path and the deepest loop may be in different functions, which makes that sum too high. It only matters
     // near the limit, so only then pair each loop with the longest path that really leads to its label.
@@ -1290,7 +1290,7 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, u32, b
         .iter()
         .map(|it| it.1.saturating_add(above[it.0 as usize] + 1));
     let depth = longest.max(through_loops.max().unwrap_or(0));
-    (depth, deepest, depends_on_order)
+    (depth, depends_on_order)
 }
 
 /// One `finally` block that control can fall out of, as `has_loop_types_that_depend_on_order` sees it.
@@ -1754,7 +1754,6 @@ pub struct BoundIn<S: Storage> {
     /// Upper bound on how deep `getTypeAtFlowNode` calls can nest in a walk of `flow`. See
     /// [`can_reach_flow_depth_limit`](Self::can_reach_flow_depth_limit).
     pub flow_depth: u32,
-    pub flow_depth_added_by_loops: u32,
     /// TypeScript caches the type of a reference at a loop label, from whichever walk gets there first. A walk that starts
     /// after a `finally` block sees fewer antecedents for that block than other walks do. If such a walk can fill the cache,
     /// the cached type depends on which reference was checked first. `has_loop_types_that_depend_on_order`, the function,
@@ -2844,7 +2843,6 @@ impl BoundBuilder {
             flow_edges,
             flow_shared,
             flow_depth,
-            flow_depth_added_by_loops,
             has_loop_types_that_depend_on_order,
             expr_kinds,
             expr_kind_counts,
@@ -2942,7 +2940,6 @@ impl BoundBuilder {
         flow_edges.clear();
         flow_shared.clear();
         *flow_depth = Default::default();
-        *flow_depth_added_by_loops = Default::default();
         *has_loop_types_that_depend_on_order = Default::default();
         expr_kinds.clear();
         expr_kind_counts.clear();
@@ -3091,7 +3088,6 @@ impl BoundBuilder {
             flow_edges: block.take(&mut self.flow_edges, arena),
             flow_shared: block.take(&mut self.flow_shared, arena),
             flow_depth: self.flow_depth,
-            flow_depth_added_by_loops: self.flow_depth_added_by_loops,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: block.take(&mut self.expr_kinds, arena),
             expr_kind_counts: block.take(&mut self.expr_kind_counts, arena),
@@ -3254,7 +3250,6 @@ impl Bound<'_> {
             flow_edges: Fixed::shared(&self.flow_edges),
             flow_shared: Fixed::shared(&self.flow_shared),
             flow_depth: self.flow_depth,
-            flow_depth_added_by_loops: self.flow_depth_added_by_loops,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
@@ -3341,7 +3336,6 @@ impl<'s> Bound<'s> {
                     jsdoc_param_errors: Default::default(),
                     names_resolved_for_arguments: Default::default(),
                     flow_depth: 0,
-                    flow_depth_added_by_loops: 0,
                     has_loop_types_that_depend_on_order: false,
                     runtime: Default::default(),
                 }

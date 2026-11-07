@@ -124,6 +124,8 @@ Ineligibility propagates: if `your-app` depends on `internal-utils` which is a w
 
 Bun folds resolved peer dependencies (required and optional) into each global entry as dep symlinks. These peer dependencies contribute to the entry's hash. Bun synthesizes an implicit `"*"` optional peer for packages that list a name only in `peerDependenciesMeta` without a matching `peerDependencies` entry (matching pnpm and yarn). As a result, a package like `webpack` that declares `webpack-cli` only in `peerDependenciesMeta` still gets a `webpack-cli` symlink in its global entry when one is installed in the project.
 
+The hash doesn't depend on `--filter`. With the global store, `bun install --filter` also installs an optional peer dependency that only a workspace outside the filter depends on.
+
 ## Tradeoffs
 
 ### Phantom-dependency fallback

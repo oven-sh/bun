@@ -1,5 +1,6 @@
 #include "node.h"
 #include "V8HandleScope.h"
+#include "ErrorCode.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
@@ -121,7 +122,8 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
 
     if (mod->nm_version != REPORTED_NODEJS_ABI_VERSION) {
-        auto* error = JSC::createError(globalObject,
+        // Node has the same code. Its text names the file and "this version of Node.js": https://github.com/nodejs/node/blob/v26.3.0/src/node_binding.cc#L546-L556
+        auto* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_DLOPEN_FAILED,
             WTF::makeString("The module '"_s,
                 keyStr,
                 "' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION "_s,
@@ -155,7 +157,8 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
     } else if (mod->nm_register_func) {
         mod->nm_register_func(exports, module, mod->nm_priv);
     } else {
-        auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
+        // Node has the same code. Its text is "Module has no declared entry point.": https://github.com/nodejs/node/blob/v26.3.0/src/node_binding.cc#L569
+        auto* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_DLOPEN_FAILED, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
         JSC::throwException(globalObject, scope, error);
         return;
     }

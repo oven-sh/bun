@@ -478,11 +478,12 @@ const computedOnce = [
 // Programs read these to find out which runtime they are on. The compiler folds those reads (src/aot/load/locked_builtin_defines.rs), so they are locked.
 const runtimeIdentity = ["isBun", "release", "versions"];
 
-// Every `get` and `getIfPropertyExists` on the object in BunProcess.cpp and ZigGlobalObject.cpp.
+// Every `get` and `getIfPropertyExists` on the object in src/jsc. The handler of `.node` files calls `dlopen`.
 const lookedUpByNativeCode = [
   "_fatalException",
   "_kill",
   "argv",
+  "dlopen",
   "emit",
   "env",
   "execArgv",
@@ -621,11 +622,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       dlopen: {
-        args: { module: b.any.optional, filename: b.any.optional },
+        args: { module: b.any.optional, filename: b.any.optional, flags: b.any.optional },
         returns: b.any,
         capability: "js",
         throws: true,
-        uses: { module: [b.everything], filename: [b.runs("ToPrimitive")] },
+        uses: { module: [b.everything], filename: [b.runs("ToPrimitive")], flags: [b.runs("ToPrimitive")] },
         implementation: b.hostCall,
       },
       binding: {

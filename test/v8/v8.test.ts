@@ -304,16 +304,24 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   });
 
   describe("error handling", () => {
+    // Node gives both errors this code. The second load of each runs the registration that the first one saved.
+    const dlopenFailed = (message: string) =>
+      expect.objectContaining({ name: "Error", code: "ERR_DLOPEN_FAILED", message });
+
     it("throws an error for modules built using the wrong ABI version", () => {
-      expect(() => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"))).toThrow(
-        "The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42.",
+      const load = () => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"));
+      const error = dlopenFailed(
+        `The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42. This version of Bun requires NODE_MODULE_VERSION ${process.versions.modules}. Please try re-compiling or re-installing the module.`,
       );
+      expect(load).toThrow(error);
+      expect(load).toThrow(error);
     });
 
     it("throws an error for modules with no entrypoint", () => {
-      expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
-        "The module 'no_entrypoint' has no declared entry point.",
-      );
+      const load = () => require(join(directories.badModules, "build/Release/no_entrypoint.node"));
+      const error = dlopenFailed("The module 'no_entrypoint' has no declared entry point.");
+      expect(load).toThrow(error);
+      expect(load).toThrow(error);
     });
   });
 

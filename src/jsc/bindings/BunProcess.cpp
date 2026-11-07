@@ -490,8 +490,23 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     auto argCount = callFrame->argumentCount();
     if (argCount < 2) {
-        JSC::throwTypeError(globalObject, scope, "dlopen requires 2 arguments"_s);
-        return {};
+        return ERR::MISSING_ARGS(scope, globalObject, "process.dlopen needs at least 2 arguments"_s);
+    }
+
+    // As in Node, the flags come first and an explicit undefined is 0: https://github.com/nodejs/node/blob/v26.3.0/src/node_binding.cc#L461-L464
+#if OS(WINDOWS)
+    // LoadLibrary takes no mode. Node converts the argument on Windows and never reads the result.
+    [[maybe_unused]] int32_t flags = 0;
+#else
+    int32_t flags = RTLD_LAZY;
+#endif
+    if (argCount > 2) {
+        flags = callFrame->uncheckedArgument(2).toInt32(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            // Node throws this in place of what the conversion threw.
+            TRY_CLEAR_EXCEPTION(scope, {});
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "flag argument must be an integer."_s);
+        }
     }
 
     JSC::JSValue moduleValue = callFrame->uncheckedArgument(0);
@@ -624,9 +639,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 #endif
+#ifdef __GNU_LIBRARY__
+    // Node crashes: glibc does not relocate a library that it opens for sprof(1), and dlsym() on the handle faults. https://github.com/bminor/glibc/blob/glibc-2.41/elf/dl-open.c#L553-L555
+    static constexpr int32_t glibcModeForSprof = 0x40000000;
+    if (flags & glibcModeForSprof) [[unlikely]]
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, "invalid mode parameter"_s);
+#endif
+#ifdef RTLD_DEEPBIND
+    // A library opened with this flag finds libc's functions before the ones that this executable defines for it.
+    if (definesLibcFunctionsForLibraries())
+        flags &= ~RTLD_DEEPBIND;
+#endif
     // Keep the addon's name in crash reports until this call returns, because its init functions run after dlopen().
     auto endDlOpenAction = WTF::makeScopeExit([guard = CrashHandler__beginDlOpenAction(utf8.legacyCStringPointer())] { CrashHandler__endDlOpenAction(guard); });
-    void* handle = dlopen(utf8.legacyCStringPointer(), RTLD_LAZY);
+    void* handle = dlopen(utf8.legacyCStringPointer(), flags);
 #endif
 
     if (!handle) {
@@ -662,7 +688,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         if (messageBuffer)
             LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
 #else
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        const char* loaderError = dlerror();
+        // With RTLD_NOLOAD, dlopen() returns NULL and sets no error when the library is not loaded. Node crashes.
+        WTF::String msg = loaderError
+            ? WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(loaderError), strlen(loaderError) })
+            : makeString(filename, ": the library is not loaded"_s);
 #endif
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
@@ -770,7 +800,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         closeDLHandle(handle);
 
         if (!scope.exception()) [[likely]] {
-            JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
+            throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Module did not self-register: '"_s, filename, "'."_s));
         }
         return {};
     }

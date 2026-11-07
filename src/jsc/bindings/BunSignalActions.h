@@ -13,6 +13,9 @@ namespace Bun {
 int setSignalAction(int signalNumber, const struct sigaction* action, struct sigaction* previousAction);
 void (*setSignalHandler(int signalNumber, void (*handler)(int)))(int);
 
+// True while a library has to find functions of libc in this executable first: a sanitizer's, or the ones above beside compiled code.
+bool definesLibcFunctionsForLibraries();
+
 } // namespace Bun
 
 #endif // !OS(WINDOWS)

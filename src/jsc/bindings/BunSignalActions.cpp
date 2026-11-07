@@ -403,6 +403,16 @@ static ALWAYS_INLINE bool isInExecutable(void* address)
 
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
+bool definesLibcFunctionsForLibraries()
+{
+#if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
+    return JSC::AOT::Image::isRegistered();
+#else
+    // AddressSanitizer ends the process when a library is opened past its functions: https://github.com/google/sanitizers/issues/611
+    return ASAN_ENABLED;
+#endif
+}
+
 } // namespace Bun
 
 #if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC

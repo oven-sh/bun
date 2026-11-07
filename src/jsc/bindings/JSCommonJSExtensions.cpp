@@ -26,7 +26,19 @@ JSC_DEFINE_HOST_FUNCTION(jsLoaderJSON, (JSC::JSGlobalObject * globalObject, JSC:
 {
     return builtinLoader(globalObject, callFrame, BunLoaderTypeJSON);
 }
-#define jsLoaderNode Process_functionDlopen
+// Node's handler, which calls whatever process.dlopen holds: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L2038-L2041
+JSC_DEFINE_HOST_FUNCTION(jsLoaderNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = defaultGlobalObject(globalObject)->processObject();
+    JSValue dlopen = process->get(globalObject, Identifier::fromString(vm, "dlopen"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer args;
+    args.append(callFrame->argument(0));
+    args.append(callFrame->argument(1));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, dlopen, process, args, "process.dlopen is not a function"_s)));
+}
 
 // The few places that call the above functions directly are usually because the
 // developer is using a package to allow injecting a transpiler into Node.js. An
@@ -167,8 +179,6 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
             loader = BunLoaderTypeJS;
         } else if (untaggedPtr == &jsLoaderJSON) {
             loader = BunLoaderTypeJSON;
-        } else if (untaggedPtr == &jsLoaderNode) {
-            loader = BunLoaderTypeNAPI;
         } else if (untaggedPtr == &jsLoaderTS) {
             loader = BunLoaderTypeTS;
         }

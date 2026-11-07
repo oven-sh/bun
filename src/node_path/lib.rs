@@ -2177,7 +2177,26 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
 
 /// Based on Node v21.6.1 path.win32.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
+#[inline]
 pub fn resolve_windows_t<'a, T: PathCharCwd>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+) -> MaybeSlice<'a, T> {
+    resolve_windows_walk_t::<T, false>(paths, buf, buf2)
+}
+
+/// Whether the walk of `path.win32.resolve` stops inside `paths`, so that it reads nothing else.
+#[cold]
+pub fn resolve_windows_stops_in_paths_t<T: PathCharCwd>(paths: &[&[T]], buf2: &mut [T]) -> bool {
+    !matches!(
+        resolve_windows_walk_t::<T, true>(paths, &mut [], buf2),
+        Ok([])
+    )
+}
+
+/// With `IN_PATHS`, the walk resolves no path: it returns an empty one only if it read them all.
+fn resolve_windows_walk_t<'a, T: PathCharCwd, const IN_PATHS: bool>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -2232,6 +2251,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
             path_ptr = p.as_ptr();
             path_len = p.len();
+        } else if IN_PATHS {
+            return Ok(&[]);
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
             cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
@@ -2541,6 +2562,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
         }
         i_i64 -= 1;
+    }
+    if IN_PATHS {
+        // The walk stopped inside `paths`. Any path that is not empty says so.
+        return Ok(l::<T>(CHAR_STR_DOT));
     }
 
     // Exit early for empty path.

@@ -682,6 +682,7 @@ impl ShellMvBatchedTask {
             let _ = bun_sys::unlinkat(dst_dir, dst);
             return Err(e);
         }
+        bun_sys::release_preallocation(out.fd(), st.st_size as _);
         #[cfg(unix)]
         {
             // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.

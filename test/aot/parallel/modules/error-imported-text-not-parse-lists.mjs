@@ -1,4 +1,4 @@
-// The text of a data: URL does not parse, and the loader rejects the import with an AggregateError. Its stack begins with the function that called import().
+// The text of a data: URL does not parse, and the loader rejects the import with a SyntaxError. Its stack has one frame: the position in the text, wherever import() was called.
 const show = where => error =>
   console.log(
     where + ":",

@@ -1656,7 +1656,7 @@ impl BunTest {
             // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
             let slot: &mut Option<crate::cli::test_command::TestFailure> =
                 unsafe { &mut *failure_ctx.cast() };
-            crate::cli::test_command::TestFailure::record_log_message(slot, exception);
+            crate::cli::test_command::TestFailure::record_log_message(slot, global_this, exception);
             if let Some(failure) = slot
                 && handle_status == HandleUncaughtExceptionResult::ShowHandledError
             {

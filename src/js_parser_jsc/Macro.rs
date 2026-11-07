@@ -692,6 +692,10 @@ impl<'a> Run<'a> {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                 let _ =
                     unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                // The error of a file that does not parse fails the macro, as a `BuildMessage` does below.
+                if BuildMessage::load_diagnostics(self.global, value).is_some() {
+                    return Err(MacroError::MacroFailed);
+                }
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -895,6 +899,8 @@ impl<'a> Run<'a> {
                 }
 
                 let promise = value.as_any_promise().expect("Unexpected promise type");
+                // A rejection is reported below, not by the rejection tracker.
+                promise.set_handled(self.global.vm());
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();

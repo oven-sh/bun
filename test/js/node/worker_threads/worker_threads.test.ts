@@ -342,6 +342,37 @@ test("support worker eval that throws", async () => {
   await worker.terminate();
 });
 
+// The worker's module loader rejects with a SyntaxError that has the position. It used to be a
+// BuildMessage, which reached the parent as a SyntaxError with the message alone, and for a file
+// with two diagnostics as an Error that said "2 errors building".
+test("a file that does not parse reaches the parent as a SyntaxError with its position", async () => {
+  using dir = tempDir("worker-syntax-error", {
+    "one.js": `const x;\n`,
+    "two.js": `const x;\nconst y;\n`,
+    "imports-one.mjs": `import "./one.js";\n`,
+  });
+  const at = (file: string) => join(String(dir), file);
+  const reported = async (file: string) => {
+    const worker = new Worker(at(file));
+    const [error] = await once(worker, "error");
+    const { name, message, line, column, sourceURL, stack } = error;
+    return { name, message, line, column, sourceURL, stack };
+  };
+  const expected = (file: string) => ({
+    name: "SyntaxError",
+    message: 'The constant "x" must be initialized',
+    line: 1,
+    column: 7,
+    sourceURL: at(file),
+    stack: `SyntaxError: The constant "x" must be initialized\n    at <parse> (${at(file)}:1:7)`,
+  });
+  expect(await Promise.all(["one.js", "two.js", "imports-one.mjs"].map(reported))).toEqual([
+    expected("one.js"),
+    expected("two.js"),
+    expected("one.js"),
+  ]);
+});
+
 describe("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv

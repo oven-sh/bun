@@ -1376,7 +1376,7 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "BuildMessage.rs"]
 pub mod build_message;
-pub use self::build_message::BuildMessage;
+pub use self::build_message::{BuildMessage, LoadDiagnostics};
 
 #[path = "ResolveMessage.rs"]
 pub mod resolve_message;

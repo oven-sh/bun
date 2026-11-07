@@ -13,7 +13,9 @@ const {
   RegExpPrototypeSymbolReplace,
   RegExpPrototypeSymbolSplit,
   StringPrototypeIncludes,
+  StringPrototypeSlice,
   StringPrototypeSplit,
+  StringPrototypeStartsWith,
 } = require("internal/repl/node-primordials");
 
 // ---- internal/util ----------------------------------------------------
@@ -35,6 +37,30 @@ function SideEffectFreeRegExpPrototypeSymbolSplit(regexp: RegExp, str: string, l
   return RegExpPrototypeSymbolSplit(regexp, str, limit);
 }
 
+// Node's decorateErrorStack() puts the file, the source line and a caret above the message of a parse error.
+function parseErrorLocation(err: object): string {
+  try {
+    if ((err as { name?: unknown }).name !== "SyntaxError") return "";
+    const position = (err as { position?: { file?: unknown; line?: unknown; column?: unknown; lineText?: unknown } })
+      .position;
+    if (typeof position?.file !== "string" || typeof position.line !== "number") return "";
+    const { lineText, column } = position;
+    // Like Node, no source line when it is excessively long.
+    if (
+      typeof lineText !== "string" ||
+      lineText.length > 1024 ||
+      typeof column !== "number" ||
+      !(column >= 1 && column <= lineText.length + 1)
+    ) {
+      return `${position.file}:${position.line}\n`;
+    }
+    const indent = RegExpPrototypeSymbolReplace(/[^\t]/g, StringPrototypeSlice(lineText, 0, column - 1), " ");
+    return `${position.file}:${position.line}\n${lineText}\n${indent}^\n\n`;
+  } catch {
+    return "";
+  }
+}
+
 function decorateErrorStack<E extends { stack?: unknown } | null | undefined>(err: E) {
   // JSC materializes stacks eagerly so Node's overrideStackTrace never runs;
   // reproduce it by normalizing "<anonymous> (loc)" frames and cutting at the
@@ -47,7 +73,9 @@ function decorateErrorStack<E extends { stack?: unknown } | null | undefined>(er
     if (RegExpPrototypeExec(/^\s+at REPL\d*:\d+:\d+$/, lines[i]) !== null) anonIdx = i;
   }
   if (anonIdx !== -1) lines = ArrayPrototypeSlice(lines, 0, anonIdx);
-  const newStack = ArrayPrototypeJoin(lines, "\n");
+  let newStack = ArrayPrototypeJoin(lines, "\n");
+  const location = parseErrorLocation(err);
+  if (location !== "" && !StringPrototypeStartsWith(newStack, location)) newStack = location + newStack;
   if (newStack !== err.stack) {
     // Errors with a non-writable .stack (Object.freeze, getter-only) must
     // not turn into a TypeError that escapes the REPL's error handler.

@@ -1382,6 +1382,20 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Error => {
+                    // The module loader's `SyntaxError` prints as a `BuildMessage` does below: the text of its diagnostics.
+                    if let Some(diagnostics) =
+                        crate::api::BuildMessage::load_diagnostics(self.global_this, value)
+                    {
+                        for (i, msg) in diagnostics.iter().enumerate() {
+                            if i > 0 {
+                                writer.write_all(b"\n\n");
+                            }
+                            let mut bridge = AsFmt::new(&mut *writer.ctx);
+                            let _ = msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+                        }
+                        return Ok(());
+                    }
+
                     let classname = value.get_class_name(self.global_this)?;
                     let mut message_string = bun_core::String::EMPTY;
 

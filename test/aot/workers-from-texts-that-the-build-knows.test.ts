@@ -16,7 +16,7 @@ const compiledOnly = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" }
 
 const listen = `
   worker.onmessage = event => (console.log("message", event.data), worker.terminate());
-  worker.onerror = event => (console.log("error", /^[A-Za-z]*Error: .*|Cannot find module/m.exec(event.message)?.[0]), event.preventDefault());
+  worker.onerror = event => (console.log("error", /^[A-Za-z]*Error: .*|^error: (?!Cannot find module).*|Cannot find module/m.exec(event.message)?.[0]), event.preventDefault());
 `;
 
 async function build(folder: string, ...entries: string[]) {
@@ -274,8 +274,8 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
   );
 
   test.each([
-    ["a syntax error", "postMessage((", "TS1109", "SyntaxError: Unexpected end of file"],
-    ["words that are no program", "this is no program", "TS1005", "undefined"],
+    ["a syntax error", "postMessage((", "TS1109", "error: Unexpected end of file"],
+    ["words that are no program", "this is no program", "TS1005", 'error: Expected ";" but found "is"'],
     ["an import that is not found", `import "./no-such-file.js"; postMessage(1)`, "TS100150", "Cannot find module"],
   ])(
     "a text with %s is left out, and the build says so",

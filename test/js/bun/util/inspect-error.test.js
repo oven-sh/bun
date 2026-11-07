@@ -51,16 +51,16 @@ error: my message
 `);
 });
 
-test("BuildMessage", async () => {
+test("the SyntaxError of a file that does not parse", async () => {
   try {
     await import("./inspect-error-fixture-bad.js");
     expect.unreachable();
   } catch (e) {
-    expect(
-      Bun.inspect(e)
-        .replaceAll("\\", "/")
-        .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
-    ).toMatchInlineSnapshot(`
+    // The same text every time, not only the first.
+    const text = Bun.inspect(e);
+    expect([Bun.inspect(e), Bun.inspect({ e })]).toEqual([text, "{\n  e: " + text + ",\n}"]);
+    expect(text.replaceAll("\\", "/").replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"))
+      .toMatchInlineSnapshot(`
 "2 | const duplicateConstDecl = 456;
           ^
 error: "duplicateConstDecl" has already been declared
@@ -578,33 +578,42 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Without any user code: a module with two or more build errors rejects its
-  // first load with an AggregateError of BuildMessages. JSC settles every later
-  // load of it from the module registry with a copy made by
-  // JSModuleLoader::duplicateError, which keeps the error type and message but
-  // not the `errors` property.
+  // Without any user code: a module with build errors rejects its first load
+  // with a SyntaxError that keeps every diagnostic, and the module registry
+  // settles every later importer of the module with that same error. It used
+  // to be an AggregateError of BuildMessages, and a later importer got a copy
+  // of it that had the message and no `errors`.
   const broken = {
     "broken.ts": "export function f() {\n  const v = {b: {},),r,};\n}\n",
   };
+  const brokenErrors = [
+    'error: Expected identifier but found ")"',
+    'error: Expected "}" but found "r"',
+    'error: Expected identifier but found "}"',
+    "error: This constant must be initialized",
+  ];
+  const errorsPrinted = text => text.split("\n").filter(line => line.startsWith("error: "));
 
-  test("the error a second load of a module that failed to build rejects with", async () => {
+  test("the error a second importer of a module that failed to build rejects with", async () => {
     const { stdout, stderr, exitCode } = await run(["main.ts"], {
       ...broken,
+      "a.ts": `import "./broken.ts";`,
+      "b.ts": `import "./broken.ts";`,
       "main.ts": `
         const seen = [];
-        for (let i = 0; i < 2; i++) {
+        for (const importer of ["./a.ts", "./b.ts"]) {
           try {
-            await import("./broken.ts");
+            await import(importer);
           } catch (e) {
             seen.push(e.constructor.name);
-            if (i === 1) console.error(e);
+            console.error(e);
           }
         }
         console.log(JSON.stringify(seen));
       `,
     });
-    expect(stdout).toBe('["AggregateError","AggregateError"]\n');
-    expect(stderr).toContain("broken.ts");
+    expect(stdout).toBe('["SyntaxError","SyntaxError"]\n');
+    expect(errorsPrinted(stderr)).toEqual([...brokenErrors, ...brokenErrors]);
     expect(exitCode).toBe(0);
   });
 
@@ -618,6 +627,8 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     });
     expect(stderr).toContain("a.test.ts:");
     expect(stderr).toContain("b.test.ts:");
+    // The report of each file has every diagnostic.
+    expect(errorsPrinted(stderr)).toEqual([...brokenErrors, ...brokenErrors]);
     expect(stderr).toContain("across 2 files");
     expect(exitCode).toBe(1);
   });
@@ -707,4 +718,36 @@ code();`;
   expect(stdout).toBe("");
   expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
   expect(exitCode).toBe(1);
+});
+
+// The console prints the code frame of a file that Bun's parser refuses wherever its error is: as
+// a cause, as a property of another error, and as a member of an AggregateError.
+test.concurrent("the SyntaxError of a file that does not parse is printed in full inside another error", async () => {
+  using dir = tempDir("inspect-error-load-error", {
+    "bad.js": "const x;\n",
+    "bad-too.js": "let y = ;\n",
+    "main.js": `const load = file => import(file).then(() => "loaded", e => e);
+const [bad, badToo] = [await load("./bad.js"), await load("./bad-too.js")];
+const withCause = new Error("with a cause", { cause: bad });
+const withProperty = new Error("with a property");
+withProperty.inner = bad;
+const text = value => Bun.inspect(value).replaceAll(import.meta.dir, "<dir>").replaceAll("\\\\", "/");
+console.log(JSON.stringify([withCause, withProperty, new AggregateError([bad, badToo], "two files")].map(text)));
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const frame = '1 | const x;\n          ^\nerror: The constant "x" must be initialized\n    at <dir>/bad.js:1:7\n';
+  const [cause, property, members] = JSON.parse(stdout);
+  expect(cause).toEndWith("error: with a cause\n      at <dir>/main.js:3:23\n\n" + frame);
+  expect(property).toEndWith("error: with a property\n      at <dir>/main.js:4:26\n\n" + frame);
+  expect(members).toBe(frame + "1 | let y = ;\n            ^\nerror: Unexpected ;\n    at <dir>/bad-too.js:1:9\n");
+  expect(exitCode).toBe(0);
 });

@@ -525,11 +525,15 @@ describe("errors", () => {
   });
 
   it("async transpiler errors work", async () => {
-    expect(async () => {
-      globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
-      await import("async:fail");
-      throw -1;
-    }).toThrow('4 errors building "async:fail"');
+    globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
+    const error = await import("async:fail").then(
+      () => -1,
+      error => error,
+    );
+    expect(error).toBeInstanceOf(SyntaxError);
+    // The first of the four.
+    expect(error.message).toBe('Expected ";" but found ":"');
+    expect(Bun.inspect(error).match(/^error: /gm)).toHaveLength(4);
   });
 
   it("onLoad returns the rejected promise", async () => {
@@ -2857,9 +2861,74 @@ it.concurrent(
       stderr: stderr.replaceAll(String(dir), "<dir>").replaceAll("\\", "/").split("\n\nBun v")[0],
       exitCode,
     }).toEqual({
-      stdout: "BuildMessage Unexpected ; 1 17\n",
+      stdout: "SyntaxError Unexpected ; 1 17\n",
       stderr: `1 | export default (;\n                    ^\nerror: Unexpected ;\n    at <dir>/syntax-error.ts:1:17`,
       exitCode: 1,
+    });
+  },
+);
+
+// JavaScriptCore ties the error of a failed load to the module that failed. When an async onLoad callback rejected
+// with such an error of another module, JavaScriptCore kept the error on a registry entry for the plugin's module
+// that nothing fetches, and a static importer of the plugin's module waited for that entry forever. A rejected fetch
+// registers nothing: each later load fetches the module again.
+it.concurrent(
+  "a module whose onLoad callback rejects with the load error of another module is loaded again by each importer",
+  async () => {
+    using dir = tempDir("plugin-foreign-load-error", {
+      "bad-1.js": `const x;\n`,
+      "bad-2.js": `const x;\nconst y;\n`,
+      "bad-3.js": `throw new Error("evaluation failed");\n`,
+      ...Object.fromEntries(
+        [1, 2, 3].flatMap(n => [
+          [`imports-bad-${n}.js`, `import "./bad-${n}.js";\n`],
+          [`plugin-${n}.virtual`, ``],
+          [`imports-plugin-${n}.js`, `import "./plugin-${n}.virtual";\n`],
+        ]),
+      ),
+      "entry.js": `
+      const calls = { 1: 0, 2: 0, 3: 0 };
+      Bun.plugin({
+        name: "plugin",
+        setup(build) {
+          build.onLoad({ filter: /\\.virtual$/ }, async ({ path }) => {
+            const n = /plugin-(\\d)\\.virtual$/.exec(path)[1];
+            calls[n]++;
+            await import("./imports-bad-" + n + ".js");
+            return { contents: "", loader: "js" };
+          });
+        },
+      });
+      const out = {};
+      for (const n of [1, 2, 3]) {
+        const loads = [];
+        for (const specifier of ["./plugin-N.virtual", "./plugin-N.virtual", "./imports-plugin-N.js"]) {
+          loads.push(await import(specifier.replace("N", n)).then(() => "loaded", error => error.name + ": " + error.message));
+        }
+        out[n] = { loads, calls: calls[n] };
+      }
+      console.log(JSON.stringify(out));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const refused = 'SyntaxError: The constant "x" must be initialized';
+    const threw = "Error: evaluation failed";
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify({
+          1: { loads: [refused, refused, refused], calls: 3 },
+          2: { loads: [refused, refused, refused], calls: 3 },
+          3: { loads: [threw, threw, threw], calls: 3 },
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
     });
   },
 );
@@ -2947,8 +3016,8 @@ describe.concurrent("`contents` from a plugin is loaded like a file with the sam
       "toml",
       "toml",
       `\na = = 1`,
-      "BuildMessage: Expected a value but found '=' at TOML-that-is-not-valid.toml:2:5",
-      "BuildMessage: Expected a value but found '=' at TOML-that-is-not-valid.toml:2:5",
+      "SyntaxError: Expected a value but found '=' at TOML-that-is-not-valid.toml:2:5",
+      "SyntaxError: Expected a value but found '=' at TOML-that-is-not-valid.toml:2:5",
     ],
     "YAML": ["yaml", "yaml", `a: 1\nb:\n  c: 2\n`, { ...object, default: object }, object],
     "a YAML sequence": ["yaml", "yaml", `- 1\n- 2\n`, { __esModule: true, default: [1, 2] }, [1, 2]],
@@ -3231,7 +3300,7 @@ describe.concurrent("`contents` from a plugin is loaded like a file with the sam
     );
     const files = { ...extra, "plugin.ts": plugin, "entry.ts": entry };
     expect(await run(files, ["--preload", "./plugin.ts", "entry.ts"])).toEqual({
-      stdout: JSON.stringify([{ a: 1 }, '{"a":1}', 1, 1, '{"a":1}', 1, "BuildMessage"]) + "\n",
+      stdout: JSON.stringify([{ a: 1 }, '{"a":1}', 1, 1, '{"a":1}', 1, "SyntaxError"]) + "\n",
       stderr: "",
       exitCode: 0,
     });

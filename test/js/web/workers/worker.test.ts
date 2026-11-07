@@ -116,6 +116,31 @@ describe("web worker", () => {
     });
   });
 
+  // The message is what the console prints for the error, as for every other error: here the code
+  // frame of each diagnostic, with the file and the position.
+  test("the error event of a file that does not parse has the code frame of each diagnostic", async () => {
+    using dir = tempDir("web-worker-syntax-error", {
+      "one.js": `const x;\n`,
+      "two.js": `const x;\nconst y;\n`,
+    });
+    const at = (file: string) => path.join(String(dir), file);
+    const messages = ["one.js", "two.js"].map(file => {
+      const worker = new Worker(at(file));
+      const { resolve, promise } = Promise.withResolvers();
+      worker.onerror = e => {
+        e.preventDefault();
+        resolve(e.message);
+      };
+      return promise;
+    });
+    const frame = (file: string, line: number, name: string) =>
+      `${line} | const ${name};\n          ^\nerror: The constant "${name}" must be initialized\n    at ${at(file)}:${line}:7`;
+    expect(await Promise.all(messages)).toEqual([
+      frame("one.js", 1, "x"),
+      frame("two.js", 1, "x") + "\n\n" + frame("two.js", 2, "y"),
+    ]);
+  });
+
   test("worker", done => {
     const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
       smol: true,

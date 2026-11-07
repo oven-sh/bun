@@ -1057,6 +1057,18 @@ declare class ResolveMessage {
   toString(): string;
 }
 
+/**
+ * A diagnostic of Bun's bundler and transpiler. {@link Bun.build} lists them
+ * in `logs`. {@link Bun.Transpiler} throws one, or an `AggregateError` of
+ * several.
+ *
+ * A file that Bun's parser refuses fails `import`, `import()` and `require()`
+ * with a `SyntaxError`, not with a `BuildMessage`. That `SyntaxError` has
+ * three more properties, with the values of its first error: `position`
+ * ({@link Position}), `notes` (an array of `BuildMessage`) and `level`
+ * (`"error"`). The `SyntaxError` of a file that JavaScriptCore's parser
+ * refuses, or of a `.json` file, does not have them.
+ */
 declare class BuildMessage {
   readonly name: "BuildMessage";
   readonly position: Position | null;

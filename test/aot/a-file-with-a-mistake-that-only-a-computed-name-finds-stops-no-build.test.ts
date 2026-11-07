@@ -62,13 +62,13 @@ test("the program builds, and runs as under bun run", async () => {
       label => label + " threw SyntaxError: JSON Parse error: Unrecognized token '/'",
     ),
     ...["broken.js", "broken.js once more", "broken.js required"].map(
-      label => label + " threw BuildMessage: Unexpected ;",
+      label => label + " threw SyntaxError: Unexpected ;",
     ),
     ...["broken.ts", "broken.ts once more", "broken.ts required"].map(
-      label => label + " threw BuildMessage: Unexpected =",
+      label => label + " threw SyntaxError: Unexpected =",
     ),
     ...["broken.toml", "broken.toml once more", "broken.toml required"].map(
-      label => label + " threw BuildMessage: Unterminated array; expected ']'",
+      label => label + " threw SyntaxError: Unterminated array; expected ']'",
     ),
     "of a package threw SyntaxError: JSON Parse error: Unrecognized token '/'",
     "of a package, required threw SyntaxError: JSON Parse error: Unrecognized token '/'",

@@ -1415,21 +1415,114 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 }
 
 /// Removes the packages that `before` placed and that aren't in the install tree for any dependency
-/// type or platform.
-pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
+/// type or platform. `unrecorded`: there was no bun.lock, see `plan_unrecorded_copies`.
+pub(crate) fn remove_collapsed_copies(
+    manager: &mut PackageManager,
+    before: &Lockfile,
+    unrecorded: bool,
+) {
+    let cache = unrecorded
+        .then(|| crate::package_manager::directories::try_get_cache_directory(manager).ok())
+        .flatten();
     let Ok(saved) = hoist_install_tree(manager, true) else {
         return;
     };
-    plan_and_remove_collapsed_copies(manager, before);
+    plan_and_remove_collapsed_copies(manager, before, cache);
     restore_tree(&mut manager.lockfile, saved);
 }
 
-fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
+/// Nothing records what an earlier install placed. This plans the removal of the folders below an
+/// installed package that the tree doesn't place there and that hide a package it places further
+/// up.
+fn plan_unrecorded_copies(
+    manager: &PackageManager,
+    new: &HoistedTree<'_>,
+    new_paths: &[(&[u8], tree::Id)],
+    selected: Option<&[PackageID]>,
+    cache: sys::Fd,
+    plan: &mut Plan,
+) {
+    let lockfile = new.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let importers = selected.map(|_| tree_importers(lockfile));
+    // Its tarball or its scripts may have put folders at any depth below the package.
+    let fills_its_folder = |alias: &[u8], pkg_id: PackageID| {
+        let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
+            return true;
+        };
+        let runs_scripts = if res.tag == ResolutionTag::Workspace {
+            lockfile.packages.items_meta()[pkg_id as usize].has_install_script()
+        } else {
+            let name = lockfile.packages.items_name()[pkg_id as usize].slice(buf);
+            lockfile.has_trusted_dependency(alias, name, res)
+        };
+        runs_scripts || tarball_may_contain(manager, cache, pkg_id, None)
+    };
+    // A tree comes after its parent.
+    let mut left_alone: Vec<bool> = Vec::with_capacity(new.folders.len());
+    for tree_idx in 0..new.folders.len() {
+        let tree = &new.trees[tree_idx];
+        let owner = tree_owner(lockfile, tree_idx);
+        left_alone.push(
+            tree_idx != 0
+                && (left_alone[tree.parent as usize]
+                    || fills_its_folder(tree.folder_name(deps, buf), owner)),
+        );
+        let folder_path = new.path(tree_idx);
+        if folder_path.is_empty() || left_alone[tree_idx] {
+            continue;
+        }
+        if let (Some(selected), Some(importers)) = (selected, &importers) {
+            if selected.binary_search(&importers[tree_idx]).is_err() {
+                continue;
+            }
+        }
+        let tree_id = tree_idx as tree::Id;
+        let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
+            continue;
+        };
+        for &(alias, pkg_id) in new.expected(tree_idx) {
+            let Some(nested) =
+                descend(&dir, alias).and_then(|package| open_real_subdir(&package, ROOT_DIR))
+            else {
+                continue;
+            };
+            if fills_its_folder(alias, pkg_id) {
+                continue;
+            }
+            let nested_path = join(&join(folder_path, alias), ROOT_DIR);
+            // A name that two dependency groups resolve to different packages has a tree for each.
+            let start = new_paths.partition_point(|(path, _)| *path < &*nested_path);
+            let nested_trees = (new_paths[start..].iter())
+                .take_while(|(path, _)| *path == &*nested_path)
+                .map(|&(_, id)| id);
+            scan_folder(
+                nested,
+                &nested_path,
+                false,
+                &|entry: &Entry| {
+                    entry.kind != EntryKind::Directory
+                        || (nested_trees.clone())
+                            .any(|id| new.expected_in(id, entry.alias).is_some())
+                        || !new.collapsed_into_ancestor(tree_id, entry.alias)
+                        || !new.is_installed(tree_id, alias)
+                        || !new.owners_installed(tree_id)
+                },
+                plan,
+            );
+        }
+    }
+}
+
+/// `cache` is the cache directory if there was no bun.lock.
+fn plan_and_remove_collapsed_copies(
+    manager: &PackageManager,
+    before: &Lockfile,
+    cache: Option<sys::Fd>,
+) {
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
-    if before.buffers.trees.is_empty() && workspace_names.is_empty() {
-        return;
-    }
     let quiet = manager.options.log_level == LogLevel::Silent;
     let old = HoistedTree::init(before, true);
     let new = HoistedTree::init(after, quiet);
@@ -1621,6 +1714,10 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
     );
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
+    if let Some(cache) = cache {
+        let selected = selected_after.as_deref();
+        plan_unrecorded_copies(manager, &new, &new_paths, selected, cache, &mut plan);
+    }
     let buf = after.buffers.string_bytes.as_slice();
     let pkg_names = after.packages.items_name();
     let self_contained = after.self_contained_workspace_ids();
@@ -1685,7 +1782,10 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 let resolutions = before.buffers.resolutions.as_slice();
                 reachable::packages_from(before, resolutions, &roots, true, options)
             });
-        if !removes_other_entries && all_stay && reached.is_none() {
+        // As in `plan_unrecorded_copies`: not the links, and nothing that a script may have made.
+        let removes_other_folders =
+            cache.is_some() && !after.packages.items_meta()[pkg_id].has_install_script();
+        if !removes_other_entries && !removes_other_folders && all_stay && reached.is_none() {
             continue;
         }
         let links = plan.linked_folders.len();
@@ -1715,7 +1815,8 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 } else {
                     // Other package managers link sibling workspaces into this folder, so an entry
                     // with the name of a workspace is kept.
-                    !removes_other_entries
+                    !(removes_other_entries
+                        || (removes_other_folders && entry.kind == EntryKind::Directory))
                         || contains(&workspace_names, entry.alias)
                         || !new.collapsed_into_ancestor(0, entry.alias)
                 }
@@ -1753,19 +1854,25 @@ pub(crate) fn remove_copies_of_the_older_layout(
 }
 
 /// Returns true if `node_modules/<alias>` may have shipped inside the package's own tarball, so it
-/// must not be deleted. The caller handles bundled dependencies.
+/// must not be deleted. The caller handles bundled dependencies. Without an alias, returns true if
+/// any `node_modules` may have shipped, bundled dependencies included.
 fn tarball_may_contain(
     manager: &PackageManager,
     cache: sys::Fd,
     pkg_id: PackageID,
-    alias: &[u8],
+    alias: Option<&[u8]>,
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
     let entry: Box<[u8]> = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
-        ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
+        ResolutionTag::Workspace | ResolutionTag::Folder => return false,
+        ResolutionTag::Git if alias.is_some() => return false,
+        // See `git_runner::strip_node_modules`.
+        ResolutionTag::Git => {
+            crate::package_manager::cached_git_folder_name(manager, res.git(), None)
+        }
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
             crate::package_manager::cached_npm_package_folder_name(
@@ -1783,10 +1890,15 @@ fn tarball_may_contain(
     }
     .as_bytes()
     .into();
+    let exists =
+        |path: &[u8]| sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&zname(path)));
+    let folder = join(&entry, b"node_modules");
+    let Some(alias) = alias else {
+        return exists(&folder).unwrap_or(true) || !exists(&entry).unwrap_or(false);
+    };
     // An installed package is never downloaded again, so a missing cache entry won't come back.
     // Treat it as not having the folder.
-    let folder = zname(&join(&join(&entry, b"node_modules"), alias));
-    sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
+    exists(&join(&folder, alias)).unwrap_or(true)
 }
 
 /// The path of a tree's `node_modules`, relative to the project root.
@@ -1856,7 +1968,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
                     || !only_older.contains(&name_hash)
-                    || tarball_may_contain(manager, cache, owner, entry.alias)
+                    || tarball_may_contain(manager, cache, owner, Some(entry.alias))
             },
             &mut plan,
         );

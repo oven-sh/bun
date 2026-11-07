@@ -1188,6 +1188,11 @@ declare namespace $Node {
     /** `true`: all of it was taken. `false`: the rest waits for `drain`. A negative number: -errno. */
     $write(data: string | ArrayBufferView | ArrayBuffer, encoding?: string): boolean | number;
     $end(data?: string | ArrayBufferView | ArrayBuffer, encoding?: string): boolean;
+    /** A `TLSSocket` over a `Duplex`: the duplex's `data`, `end`, `drain` and `close`. */
+    $duplexOnData(chunk: unknown): void;
+    $duplexOnEnd(): void;
+    $duplexOnWritable(): void;
+    $duplexOnClose(): void;
     write(data: string | ArrayBufferView | ArrayBuffer, byteOffset?: number, byteLength?: number): number;
     end(data?: string | ArrayBufferView | ArrayBuffer, byteOffset?: number, byteLength?: number): number;
     flush(): void;

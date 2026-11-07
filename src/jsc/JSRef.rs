@@ -212,6 +212,15 @@ impl JsRef {
         matches!(self, JsRef::Finalized)
     }
 
+    /// The wrapper's finalizer ran, or a collection condemned it and the sweep has yet to run it.
+    pub fn is_collected(&self) -> bool {
+        match self {
+            JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null() && !weak.is_live_cell(),
+            JsRef::Strong(_) => false,
+            JsRef::Finalized => true,
+        }
+    }
+
     pub fn is_not_empty(&self) -> bool {
         match self {
             JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null(),

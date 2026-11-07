@@ -5,7 +5,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
-    AnySocket, BunSocket, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
+    AnySocket, BunSocket, DuplexChunk, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
 };
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
@@ -985,7 +985,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         let callback = handlers.on_timeout();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.wrapper_gone() {
             return Ok(());
         }
 
@@ -1022,6 +1022,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[inline]
     pub(crate) fn has_handlers(&self) -> bool {
         self.handlers.get().is_some()
+    }
+
+    /// The wrapper is finalizing or collected: dispatch nothing, and never make a second one.
+    pub(crate) fn wrapper_gone(&self) -> bool {
+        self.flags.get().contains(Flags::FINALIZING) || self.this_value.get().is_collected()
     }
 
     /// True when this socket still points at `handlers` — false once a
@@ -1117,7 +1122,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
-            || this.flags.get().contains(Flags::FINALIZING)
+            || this.wrapper_gone()
         {
             drop(cleanup);
             return Ok(());
@@ -1289,8 +1294,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             // sockets without default data), in which case the ref is still
             // empty and there's nothing to upgrade.
             if self.this_value.get().is_not_empty() {
-                self.this_value
-                    .with_mut(|r| r.upgrade(&handlers.global_object));
+                if self.socket.get().upgraded_duplex().is_some() {
+                    // The stream's listeners hold the wrapper, like node's TLSWrap over a JSStream.
+                    self.this_value.with_mut(|r| r.downgrade());
+                } else {
+                    self.this_value
+                        .with_mut(|r| r.upgrade(&handlers.global_object));
+                }
             }
         }
     }
@@ -1403,7 +1413,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
         // is nothing to dispatch to.
-        if !this.has_handlers() {
+        if !this.has_handlers() || this.wrapper_gone() {
             return Ok(());
         }
         log!(
@@ -1618,9 +1628,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
-        if matches!(self.this_value.get(), JsRef::Finalized) {
-            // The JS wrapper was already garbage-collected. Creating a new one
-            // here would result in a second `finalize` (and double-deref) later.
+        if self.this_value.get().is_collected() {
+            // A second wrapper would mean a second `finalize` and a double deref.
             return JSValue::UNDEFINED;
         }
         let value = self.to_js(global);
@@ -1724,7 +1733,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is nothing to dispatch to. Nor from the GC finalizer's own close
         // (an SSL shutdown reports the never-finished handshake): a finalizer
         // dispatches nothing and may not inspect other cells mid-sweep.
-        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
+        if !this.has_handlers() || this.wrapper_gone() {
             return Ok(());
         }
         let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
@@ -2180,7 +2189,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        if this.flags.get().contains(Flags::FINALIZING) {
+        if this.wrapper_gone() {
             return Ok(());
         }
 
@@ -2263,7 +2272,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let callback = handlers.on_data();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.wrapper_gone() {
             return Ok(());
         }
 
@@ -4254,9 +4263,13 @@ impl DuplexUpgradeContext {
                     Self::release_connection(this);
                     return;
                 }
-                // The transport closed while this task was queued: an engine
-                // started now could never handshake, and nothing would free it.
-                if this.upgrade.pending_close.replace(false) {
+                // The GC condemned the wrapper, and the stream with it: no close may touch the stream.
+                let wrapper_gone = this.tls_this_ptr().is_some_and(|tls| tls.wrapper_gone());
+                if wrapper_gone {
+                    this.upgrade.abandon_js_side();
+                }
+                // The transport closed, or nothing can reach the engine: one started now could never handshake.
+                if this.upgrade.pending_close.replace(false) || wrapper_gone {
                     this.upgrade.finish_close();
                     return;
                 }
@@ -4675,16 +4688,43 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, context) };
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
-    let array = JSValue::create_empty_array(global, 2)?;
-    array.put_index(global, 0, tls_js_value)?;
-    // data, end, drain and close events must be reported
-    array.put_index(
-        global,
-        1,
-        duplex_context_ref.upgrade.get_js_handlers(global)?,
-    )?;
+    Ok(tls_js_value)
+}
 
-    Ok(array)
+/// node:net's listeners on the `Duplex` call these. `socket` is detached before the engine is freed.
+impl TLSSocket {
+    fn upgraded_duplex(&self) -> Option<&UpgradedDuplex> {
+        // SAFETY: the engine is `.upgrade` of the live `DuplexUpgradeContext`
+        // that `socket` was set from, the same allocation as the opaque handle.
+        self.socket
+            .get()
+            .upgraded_duplex()
+            .map(|d| unsafe { &*d.cast::<UpgradedDuplex>() })
+    }
+
+    pub(crate) fn duplex_on_data<'a>(&self, cx: &mut JsScope<'a>, chunk: DuplexChunk<'a>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.received_data(cx, chunk);
+        }
+    }
+
+    pub(crate) fn duplex_on_end(&self, _: &mut JsScope<'_>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.received_end();
+        }
+    }
+
+    pub(crate) fn duplex_on_writable(&self, _: &mut JsScope<'_>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.writable();
+        }
+    }
+
+    pub(crate) fn duplex_on_close(&self, _: &mut JsScope<'_>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.transport_closed();
+        }
+    }
 }
 
 pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {

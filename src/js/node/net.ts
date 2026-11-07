@@ -598,14 +598,11 @@ const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
   hostname: string,
   tls: unknown,
 ) => void;
-// The second part: what the duplex's 'data', 'end', 'drain' and 'close' events are to call.
+// The socket's `$duplexOn*` take the duplex's 'data', 'end', 'drain' and 'close'.
 const upgradeDuplexToTLS: (
   duplex: $Node.Duplex,
   options: $Node.TLSUpgradeOptions<$Node.Socket | ConnectData>,
-) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]] = $bindgen(
-  "socket_body.bind.ts",
-  "upgradeDuplexToTLS",
-);
+) => SocketHandle = $bindgen("socket_body.bind.ts", "upgradeDuplexToTLS");
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred") as unknown as (
   socket: SocketHandle,
@@ -858,20 +855,30 @@ function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
   self.connecting = false;
   self.emit("connect");
 }
+// These listeners hold the handle: the engine lives as long as the stream that feeds it, like node's TLSWrap over a JSStream.
+function onUpgradedData(handle: SocketHandle, chunk: unknown) {
+  handle.$duplexOnData(chunk);
+}
 // A net.Socket emits 'end' after its owner's destroy(), which is no EOF from the peer.
-function onUpgradedEnd(connection: $Node.Socket, eof: () => void) {
-  if (!connection.destroyed) eof();
+function onUpgradedEnd(connection: $Node.Socket, handle: SocketHandle) {
+  if (!connection.destroyed) handle.$duplexOnEnd();
+}
+function onUpgradedDrain(handle: SocketHandle) {
+  handle.$duplexOnWritable();
+}
+function onUpgradedTransportClose(handle: SocketHandle) {
+  handle.$duplexOnClose();
 }
 function attachTLSEngine(
   self: $Node.Socket,
   connection: $Node.Socket,
   options: $Node.TLSUpgradeOptions<$Node.Socket | ConnectData>,
 ) {
-  const [handle, events] = upgradeDuplexToTLS(connection, options);
-  connection.on("data", events[0]);
-  connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
-  connection.on("drain", events[2]);
-  connection.on("close", events[3]);
+  const handle = upgradeDuplexToTLS(connection, options);
+  connection.on("data", onUpgradedData.bind(null, handle));
+  connection.on("end", onUpgradedEnd.bind(null, connection, handle));
+  connection.on("drain", onUpgradedDrain.bind(null, handle));
+  connection.on("close", onUpgradedTransportClose.bind(null, handle));
   connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();

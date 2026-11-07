@@ -292,3 +292,34 @@ describe("a TLS socket over a Duplex keeps its native context", () => {
     await run([fixture, "ends"], JSON.stringify(expected), env);
   });
 });
+
+// Every event of a TLS socket over a Duplex comes from the Duplex's listeners,
+// which hold the socket. Once nothing in JS reaches the socket, nothing ever
+// will: the GC collects it with its engine and context, as node collects a
+// TLSWrap over a JSStream. Nothing here calls destroy() (#47869).
+describe("a TLS socket over a Duplex that nothing references is collected", () => {
+  const fixture = join(import.meta.dir, "tls-duplex-gc-fixture.mjs");
+  const env = { TLS_KEY: tlsCert.key, TLS_CERT: tlsCert.cert };
+  const all = (of: number) => JSON.stringify({ collected: of, of, live: 0, wrappers: 0 });
+
+  test("after the handshake", async () => {
+    await run([fixture, "after the handshake"], all(16), env);
+  });
+
+  test("with the handshake pending", async () => {
+    await run([fixture, "with the handshake pending"], all(8), env);
+  });
+
+  test("before the engine starts", async () => {
+    await run([fixture, "before the engine starts"], all(8), env);
+  });
+
+  test("only once the transport goes", async () => {
+    const held = { collected: 0, live: 16, wrappers: 16 };
+    await run([fixture, "only once the transport goes"], JSON.stringify({ ...JSON.parse(all(16)), held }), env);
+  });
+
+  test("and the transport stays", async () => {
+    await run([fixture, "and the transport stays"], all(16), env);
+  });
+});

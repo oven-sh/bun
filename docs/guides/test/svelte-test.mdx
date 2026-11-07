@@ -112,3 +112,15 @@ Use `bun test` to run your tests.
 ```bash terminal icon="terminal"
 bun test
 ```
+
+---
+
+Use `bun test --changed` to run only the test files that depend on the files you changed since the last commit.
+
+```bash terminal icon="terminal"
+bun test --changed
+```
+
+To find those test files, Bun reads the `import` statements in the `<script>` blocks of a component. If `Counter.svelte` imports `./Button.svelte`, a change to `Button.svelte` runs `hello-svelte.test.ts`. This works for any file that keeps its imports in `<script>` blocks.
+
+Bun does not run your plugin to find the test files, so it does not see an import that only the plugin adds. After a change to `svelte-loader.ts` or `bunfig.toml`, run `bun test`.

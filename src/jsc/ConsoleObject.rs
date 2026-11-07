@@ -2160,6 +2160,15 @@ pub mod formatter {
                 });
             }
 
+            if js_type == jsc::JSType::InternalFunction
+                && value.is_placeholder_for_omitted_builtin()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Function,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.intersects(TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::SNAPSHOT)
@@ -4221,7 +4230,12 @@ pub mod formatter {
             }
             // `func_name` is "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
             let (printable, func_name) = if self.is_snapshot {
-                (value.get_name_property(self.global_this)?, BunString::EMPTY)
+                let printable = if value.is_placeholder_for_omitted_builtin() {
+                    value.get_name(self.global_this)?
+                } else {
+                    value.get_name_property(self.global_this)?
+                };
+                (printable, BunString::EMPTY)
             } else {
                 let printable = value.get_name(self.global_this)?;
                 let proto = value.get_prototype(self.global_this)?;

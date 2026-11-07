@@ -48,7 +48,7 @@ test("a package's resolver answers", () => {
 });
 `;
 
-test("a test run sees that a package stores a resolver, and builds the layer once", async () => {
+test("a test run sees that a package stores a resolver, and builds once", async () => {
   using dir = tempDir("aot-a-package-stores-a-resolver", {
     "package.json": `{ "name": "a-package-stores-a-resolver", "type": "module" }`,
     "node_modules/hook/package.json": `{ "name": "hook", "version": "1.0.0", "main": "lib/index.js" }`,
@@ -68,7 +68,7 @@ test("a test run sees that a package stores a resolver, and builds the layer onc
   };
   const [plain, compiled] = await Promise.all([
     seenWith({}),
-    seenWith({ BUN_JSC_logAOTPhaseTimes: "1", BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2" }, "--aot", "--parallel=2"),
+    seenWith({ BUN_JSC_logAOTPhaseTimes: "1", BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, "--aot", "--parallel=2"),
   ]);
   expect(plain).toEqual({ seen: ["SEEN function"], startsOver: [], exitCode: 0 });
   expect(compiled).toEqual(plain);

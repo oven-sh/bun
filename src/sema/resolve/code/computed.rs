@@ -46,11 +46,9 @@ struct CandidateSearch<'a, 'h> {
     request: ComputedCodeRequest<'a>,
     directory: &'a [u8],
     extensions: Vec<Vec<u8>>,
-    /// The walk began at a path, in the package of the importer: the folder of another package is not part of that.
     stays_out_of_other_packages: bool,
-    /// An executable, and the tsconfig lets the name mean a file of the project: the files of an installed package stay on disk, where
-    /// `bun build --compile` without `--aot` leaves them, and the name counts as one made at run time.
     leaves_installed_packages_on_disk: bool,
+    start_names_nothing: bool,
     tried: FxHashSet<Vec<u8>>,
     runtime_modules: Vec<ComputedCandidate<'h>>,
     candidates: Vec<ComputedCandidate<'h>>,
@@ -71,7 +69,6 @@ impl<'h> Resolver<'h> {
         search.finish(outcome)
     }
 
-    /// What one of a few specifiers finds. Each is a text, or the start and the end of one. Those of `request` are not read.
     pub fn resolve_alternative_code<'a>(
         &self,
         request: &ComputedCodeRequest<'a>,
@@ -81,19 +78,79 @@ impl<'h> Resolver<'h> {
         let outcome = alternatives.iter().try_for_each(|&(start, end)| {
             search.request.prefix = start;
             search.request.suffix = end.unwrap_or_default();
-            match end {
+            let tried = match end {
                 Some(_) => search.find_candidates(),
-                // A path finds what a walk over the folders finds, and a walk passes by folders: `./names/.hidden.js` is found.
-                None if is_path(start) && lies_in_folder_left_out_of_walks(start) => Ok(()),
                 None => search.try_specifier(start),
+            };
+            match tried {
+                Err(ComputedUnknown::ExternalCandidate) if end.is_none() && !is_path(start) => {
+                    Ok(())
+                }
+                Ok(()) | Err(_) => tried,
             }
         });
         search.finish(outcome)
     }
+
+    pub fn leads_into_package_left_outside(&self, request: &CodeRequest<'_>, path: &[u8]) -> bool {
+        let own_folder = match request.directory.starts_with(b"/") {
+            true => request.directory,
+            false => self.code_options().working_directory.as_slice(),
+        };
+        is_path(request.specifier)
+            && self.is_in_package_left_outside(request, own_folder, dirname::<Posix>(path))
+    }
+
+    fn is_in_package_left_outside(
+        &self,
+        request: &CodeRequest<'_>,
+        own_folder: &[u8],
+        folder: &[u8],
+    ) -> bool {
+        let host = self.code_host();
+        if !host.leaves_packages_outside() {
+            return false;
+        }
+        let Some(name) = self.find_name_of_other_package(own_folder, folder) else {
+            return false;
+        };
+        let claim = host.resolve_code(&CodeRequest {
+            specifier: &name,
+            ..*request
+        });
+        matches!(
+            claim,
+            HostResolution::External {
+                kind: ExternalKind::UncompiledCode,
+                ..
+            }
+        )
+    }
+
+    fn find_name_of_other_package(&self, own_folder: &[u8], folder: &[u8]) -> Option<Vec<u8>> {
+        const INSTALLED_IN: &[u8] = b"/node_modules/";
+        let folder = [strings::without_trailing_slash(folder), b"/"].concat();
+        if let Some(at) = strings::last_index_of(&folder, INSTALLED_IN) {
+            let start = at + INSTALLED_IN.len();
+            let name = written_package_name(&folder[start..]).filter(|name| !name.is_empty())?;
+            let is_own = is_inside(own_folder, &folder[..start + name.len()]);
+            return (!is_own).then(|| name.to_vec());
+        }
+        let package = self.find_named_manifest_above(&folder)?;
+        let own = self.find_named_manifest_above(own_folder);
+        let is_own = own.is_some_and(|own| own.directory == package.directory);
+        (!is_own).then(|| package.name.to_vec())
+    }
+
+    fn find_named_manifest_above(&self, folder: &[u8]) -> Option<&'h CodeManifest<'h>> {
+        let is_named = |manifest: &&CodeManifest<'h>| !manifest.name.is_empty();
+        ancestors(strings::without_trailing_slash(folder))
+            .find_map(|it| self.code_manifest(it).filter(is_named))
+    }
 }
 
 impl<'a, 'h> CandidateSearch<'a, 'h> {
-    #[allow(clippy::large_types_passed_by_value)] // kept in the search
+    #[allow(clippy::large_types_passed_by_value)]
     fn new(
         resolver: &'a Resolver<'h>,
         request: ComputedCodeRequest<'a>,
@@ -115,6 +172,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             extensions: extensions.concat(),
             stays_out_of_other_packages: false,
             leaves_installed_packages_on_disk: false,
+            start_names_nothing: false,
             tried: FxHashSet::default(),
             runtime_modules: Vec::new(),
             candidates: Vec::new(),
@@ -195,22 +253,35 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         {
             return Err(ComputedUnknown::ConfigPaths);
         }
-        let names_folder = strings::split(written_directory, b"/")
-            .any(|segment| !segment.is_empty() && !is_dot_segment(segment));
         let is_root_of_disk = strings::without_trailing_slash(&root).len() <= root_length(&root);
-        if is_root_of_disk || !names_folder && !self.lies_in_own_package(&root) {
+        if is_root_of_disk || !names_folder(written_directory) && !self.lies_in_own_package(&root) {
             return Err(ComputedUnknown::NoConstantPrefix);
         }
-        self.try_empty_middle()?;
         self.stays_out_of_other_packages = true;
-        let outcome =
-            self.walk_directory(&root, written_directory, name_prefix, SpecifierForm::Path);
+        let names_nothing = self.names_nothing(&root, written_directory, name_prefix);
+        self.start_names_nothing = names_nothing;
+        let outcome = self.try_empty_middle();
+        self.start_names_nothing = false;
+        let form = SpecifierForm::Path;
+        let outcome = outcome.and_then(|()| {
+            self.walk_directory(&root, written_directory, name_prefix, form, names_nothing)
+        });
         self.stays_out_of_other_packages = false;
         outcome
     }
 
-    /// `"/" + name`, `"../../../" + name`: steps that lead out of the package of the importer, and name no folder there, say nothing of where the file lies.
-    /// It is a name made at run time. Without a package: out of the folder where the build runs, or else that of the importer.
+    fn names_nothing(&self, root: &[u8], written: &[u8], name_prefix: &[u8]) -> bool {
+        let folder_of_text = match self.request.site.folder {
+            [] => self.directory,
+            folder => strings::without_trailing_slash(folder),
+        };
+        self.stays_out_of_other_packages
+            && name_prefix.is_empty()
+            && (bun_paths::is_absolute(written) || !names_folder(written))
+            && is_inside(folder_of_text, strings::without_trailing_slash(root))
+            && !is_in_node_modules(&self.resolver.host.realpath(folder_of_text))
+    }
+
     fn lies_in_own_package(&self, root: &[u8]) -> bool {
         let resolver = self.resolver;
         let is_named = |manifest: &&CodeManifest<'h>| !manifest.name.is_empty();
@@ -250,7 +321,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         Ok(())
     }
 
-    /// `"paths": { "*": ["./*"] }`, a `baseUrl`: "pkg/build/" + name may lie in the project as well as in an installed package.
     fn add_configured_candidates(&mut self) -> Result<(), ComputedUnknown> {
         let Some(config) = self.resolver.enclosing_code_config(self.directory) else {
             return Ok(());
@@ -270,7 +340,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         outcome
     }
 
-    /// The prefix ends inside the name of a package: every installed package whose name begins so may be meant.
     fn add_candidates_by_start_of_name(&mut self) -> Result<(), ComputedUnknown> {
         let (resolver, prefix) = (self.resolver, self.request.prefix);
         self.add_configured_candidates()?;
@@ -298,7 +367,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                     self.add_exported_candidates(manifest, exports, &name)?;
                 }
             }
-            // It comes to the folder of each package, which is its name, and finds nothing in one that has `exports`.
             self.walk_below(&node_modules, b"", SpecifierForm::Path)?;
         }
         for node_path in &resolver.code_options().node_paths {
@@ -424,7 +492,8 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         let (subdirectory, name_prefix) = split_after_last_slash(remaining);
         let root = join_unrooted(directory, subdirectory);
         let written_root = [written, subdirectory].concat();
-        self.walk_directory(&root, &written_root, name_prefix, form)
+        let names_nothing = self.names_nothing(&root, subdirectory, name_prefix);
+        self.walk_directory(&root, &written_root, name_prefix, form, names_nothing)
     }
 
     fn walk_directory(
@@ -433,20 +502,22 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         written_root: &[u8],
         name_prefix: &[u8],
         form: SpecifierForm,
+        names_nothing: bool,
     ) -> Result<(), ComputedUnknown> {
-        for entry in self.list_entries(root, name_prefix)? {
-            match entry {
-                WalkedEntry::File(relative) => {
-                    self.try_file(&[written_root, relative.as_slice()].concat(), form)?;
-                }
-                WalkedEntry::Directory(relative) => {
-                    let written = [written_root, relative.as_slice()].concat();
-                    self.try_spelling(&written, form)?;
-                    self.try_spelling(strings::without_trailing_slash(&written), form)?;
-                }
+        let entries = self.list_entries(root, name_prefix)?;
+        self.start_names_nothing = names_nothing;
+        let outcome = entries.into_iter().try_for_each(|entry| match entry {
+            WalkedEntry::File(relative) => {
+                self.try_file(&[written_root, relative.as_slice()].concat(), form)
             }
-        }
-        Ok(())
+            WalkedEntry::Directory(relative) => {
+                let written = [written_root, relative.as_slice()].concat();
+                self.try_spelling(&written, form)?;
+                self.try_spelling(strings::without_trailing_slash(&written), form)
+            }
+        });
+        self.start_names_nothing = false;
+        outcome
     }
 
     fn list_entries(
@@ -498,8 +569,16 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 if is_root && !name.starts_with(name_prefix) && !has_matching_spelling(&name) {
                     continue;
                 }
-                // LICENSE, Makefile, a lock file.
-                if !has_extension(&name) {
+                let may_be_named = || {
+                    let spellings = specifier_spellings(&name, extensions);
+                    let mut spellings = spellings.iter();
+                    spellings.any(|it| matches_pattern(it, name_prefix, self.request.suffix))
+                };
+                if is_root && name_prefix.starts_with(b".") && may_be_named() {
+                    let path = inside(&directory, &name);
+                    (resolver.code_host()).note_file_left_out(&self.request, &path, false);
+                }
+                if !has_extension(&name) || name.starts_with(b".") {
                     continue;
                 }
                 entries.push(WalkedEntry::File(
@@ -555,22 +634,54 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         {
             return Ok(());
         }
-        let resolution = self.resolver.resolve_code(&CodeRequest {
+        if request.site.opens_database && (text.starts_with(b"./") || text.starts_with(b"../")) {
+            if let Some(path) = self.resolver.code_host().create_file_of_database(text) {
+                let candidate = ComputedCandidate::File(self.resolver.code_file(&path, None));
+                self.candidates.push(candidate);
+                self.spellings.push((text.to_vec(), candidate));
+                return Ok(());
+            }
+        }
+        let request = CodeRequest {
             specifier: text,
             importer: request.importer,
             directory: request.directory,
             kind: request.kind,
             form: request.form,
-        });
-        let candidate = match resolution {
-            // LICENSE, Makefile, a lock file.
-            CodeResolution::File(file) if !has_extension(split_after_last_slash(file.path).1) => {
+        };
+        let is_written_out = self.request.suffix.is_empty() && text == self.request.prefix;
+        let candidate = match self.resolver.resolve_code(&request) {
+            CodeResolution::File(file)
+                if !has_extension(split_after_last_slash(file.path).1)
+                    && !(is_written_out && self.request.site.type_attribute.is_some()) =>
+            {
+                return Ok(());
+            }
+            CodeResolution::File(file)
+                if (self.resolver).leads_into_package_left_outside(&request, file.path) =>
+            {
                 return Ok(());
             }
             CodeResolution::File(file)
                 if self.leaves_installed_packages_on_disk && is_in_node_modules(file.path) =>
             {
                 return Err(ComputedUnknown::ConfigPaths);
+            }
+            CodeResolution::File(file)
+                if self.start_names_nothing
+                    && !ends_in_extension(self.request.suffix)
+                    && file.host_module.is_none()
+                    && (self.resolver.code_host()).is_data_file(
+                        file.path,
+                        request.kind,
+                        self.request.site.type_attribute,
+                    ) =>
+            {
+                self.tried.remove(text);
+                let needs_extension = !self.extensions.iter().any(|it| file.path.ends_with(it));
+                let host = self.resolver.code_host();
+                host.note_file_left_out(&self.request, file.path, needs_extension);
+                return Ok(());
             }
             CodeResolution::File(file) => ComputedCandidate::File(file),
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
@@ -602,14 +713,19 @@ fn is_left_out_of_walks(folder: &[u8]) -> bool {
     folder == b"node_modules" || folder.starts_with(b".") && !is_dot_segment(folder)
 }
 
-fn lies_in_folder_left_out_of_walks(path: &[u8]) -> bool {
-    strings::split(split_after_last_slash(path).0, b"/").any(is_left_out_of_walks)
-}
-
 fn is_path(specifier: &[u8]) -> bool {
     bun_paths::is_absolute(specifier)
         || specifier.starts_with(b"./")
         || specifier.starts_with(b"../")
+}
+
+fn names_folder(written: &[u8]) -> bool {
+    strings::split(written, b"/").any(|segment| !segment.is_empty() && !is_dot_segment(segment))
+}
+
+fn ends_in_extension(written_end: &[u8]) -> bool {
+    let name = split_after_last_slash(written_end).1;
+    strings::last_index_of_char(name, b'.').is_some_and(|dot| dot + 1 < name.len())
 }
 
 fn has_extension(name: &[u8]) -> bool {
@@ -727,7 +843,6 @@ fn compare_candidates(a: &ComputedCandidate<'_>, b: &ComputedCandidate<'_>) -> O
     }
 }
 
-// `@scope/name` or `name`, up to the slash behind it.
 pub(super) fn written_package_name(specifier: &[u8]) -> Option<&[u8]> {
     let slash = strings::index_of_char_usize(specifier, b'/');
     if !specifier.starts_with(b"@") {
@@ -739,7 +854,6 @@ pub(super) fn written_package_name(specifier: &[u8]) -> Option<&[u8]> {
     Some(&specifier[..name_len])
 }
 
-// The folder of a package in `node_modules`: its written name without a version, `name` of `name@1.0.0`.
 pub(super) fn installed_name(specifier: &[u8]) -> Option<&[u8]> {
     if specifier.is_empty() {
         return None;

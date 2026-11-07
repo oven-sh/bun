@@ -30,6 +30,7 @@ impl<'a> SectionWriter<'a> {
         self.words[list as usize].reserve(word_count);
     }
 
+    #[inline]
     pub fn next_index(&self, list: ProgramList) -> u32 {
         (self.first_indices[list as usize] + self.counts[list as usize]) as u32
     }
@@ -38,7 +39,11 @@ impl<'a> SectionWriter<'a> {
         debug_assert!(list != ProgramList::Bytes);
         debug_assert_eq!(words.len() * 4, count * list.element_size());
         let first = self.next_index(list);
-        self.words[list as usize].extend_from_slice(words);
+        match words {
+            [] => {}
+            [word] => self.words[list as usize].push(*word),
+            _ => self.words[list as usize].extend_from_slice(words),
+        }
         self.counts[list as usize] += count as u64;
         WireSpan {
             first,

@@ -257,8 +257,8 @@ test("values that console.log prints differently", () => {
     ]
   `);
   expect([
-    Object.assign(new Date(0), { toJSON: () => "x".repeat(34) }),
-    Object.assign(new Date(0), { toJSON: () => "x".repeat(35) }),
+    Object.assign(new Date(0), { toJSON: () => Buffer.alloc(34, "x").toString() }),
+    Object.assign(new Date(0), { toJSON: () => Buffer.alloc(35, "x").toString() }),
     Object.defineProperty(new Set([1]), "size", { value: "1" }),
   ]).toMatchInlineSnapshot(`
     [

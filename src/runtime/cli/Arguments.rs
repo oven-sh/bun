@@ -716,6 +716,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
         ),
         parse_param!(
+            "--include <STR>...               Embed a file, directory, or glob as a lazily loaded module in the compiled executable, preserving its relative path (requires --compile)"
+        ),
+        parse_param!(
             "--aot                            Compile JavaScript and TypeScript to machine code at build time. Requires --compile"
         ),
         parse_param!(
@@ -2807,6 +2810,17 @@ fn parse_build_command_options(
                 Global::crash();
             }
             ctx.bundler_options.compile_assets = slice_to_owned(assets);
+        }
+    }
+
+    {
+        let includes = args.options(b"--include");
+        if !includes.is_empty() {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--include requires --compile", ());
+                Global::crash();
+            }
+            ctx.bundler_options.compile_include = slice_to_owned(includes);
         }
     }
 

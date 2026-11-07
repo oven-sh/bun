@@ -246,6 +246,11 @@ pub struct BundlerOptions {
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
     pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
+    /// `--include <path|glob>`: raw, unexpanded arguments. Expanded into extra
+    /// bundler entry points (directory recursion / glob matching happens against
+    /// the real filesystem, so it can't happen here in the pure CLI-parsing layer)
+    /// by `build_command::expand_compile_includes`.
+    pub compile_include: Vec<Box<[u8]>>,
     /// `bun compile`, `--compile --aot`. `None`: the program is bundled, not compiled ahead of time.
     pub aot: Option<Box<crate::aot_options::AotOptions>>,
     /// `--trim` of a build that is not compiled ahead of time. With `aot` the request is `AotOptions::trim`, and this one is the default.
@@ -311,6 +316,7 @@ impl Default for BundlerOptions {
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
+            compile_include: Vec::new(),
             aot: None,
             trim: Default::default(),
             windows: bundle_enums::WindowsOptions::default(),

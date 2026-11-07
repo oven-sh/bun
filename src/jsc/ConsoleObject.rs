@@ -4010,11 +4010,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
             // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (tag only produced for cells).
             let cell = jsc::JSCell::opaque_ref(value.to_cell().expect("GetterSetter is a cell"));
@@ -4024,6 +4019,15 @@ pub mod formatter {
             } else {
                 let gs = cell.get_getter_setter();
                 (!gs.is_getter_null(), !gs.is_setter_null())
+            };
+            // Neither a getter nor a setter. Node prints `undefined`: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L2588-L2590
+            if !has_getter && !has_setter {
+                return self.print_undefined::<C>(writer_);
+            }
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
             };
             if has_getter && has_setter {
                 writer.print(format_args!(

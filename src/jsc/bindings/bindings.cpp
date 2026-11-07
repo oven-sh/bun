@@ -5898,11 +5898,114 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+static JSC::JSGlobalProxy* globalOfAnotherRealm(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto* proxy = dynamicDowncast<JSGlobalProxy>(object);
+    return proxy && proxy->target() != globalObject ? proxy : nullptr;
+}
+
 static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
     auto* realm = prototype->realmMayBeNull();
     return (realm && (prototype == realm->objectPrototype() || prototype == realm->functionPrototype()))
-        || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
+        || globalOfAnotherRealm(globalObject, prototype);
+}
+
+static void sortByCodePoint(JSC::PropertyNameArray::PropertyNameVector& names)
+{
+    std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
+}
+
+// A read of a property that holds the sandbox gives the context's global, so the print shows a global. Node prints the sandbox: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L2551-L2555
+static bool isSandboxOf(JSC::JSGlobalProxy* contextGlobal, JSC::JSValue value)
+{
+    while (contextGlobal) {
+        auto* context = dynamicDowncast<Bun::NodeVMGlobalObject>(contextGlobal->target());
+        JSC::JSObject* sandbox = context ? context->contextifiedObject() : nullptr;
+        if (!sandbox)
+            return false;
+        if (value == sandbox)
+            return true;
+        // The own slot of a Proxy is the slot of its target.
+        while (auto* proxyObject = dynamicDowncast<ProxyObject>(sandbox)) {
+            if (proxyObject->isRevoked())
+                return false;
+            sandbox = proxyObject->target();
+        }
+        contextGlobal = dynamicDowncast<JSGlobalProxy>(sandbox);
+    }
+    return false;
+}
+
+// A [[Get]] on the global of a node:vm context calls the sandbox's getter, so a walk that calls no getter takes each property's own slot.
+static NEVER_INLINE void forEachOwnPropertyOfRealmGlobal(JSC::JSGlobalProxy* proxy, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool sorted)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // The global of another realm shows what the program put on it, not the realm's builtins.
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    proxy->methodTable()->getOwnPropertyNames(proxy, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+
+    auto& names = properties.data()->propertyNameVector();
+    if (sorted)
+        sortByCodePoint(names);
+
+    for (const Identifier& property : names) {
+        if (property == vm.propertyNames->constructor)
+            continue;
+
+        JSC::JSValue propertyValue;
+        bool readThrew = false;
+        if (callGetters) {
+            JSC::PropertySlot slot(proxy, PropertySlot::InternalMethodType::Get);
+            bool hasProperty = proxy->getPropertySlot(globalObject, property, slot);
+            if (!scope.exception()) {
+                if (!hasProperty)
+                    continue;
+                propertyValue = slot.getValue(globalObject, property);
+            }
+            if (scope.exception()) [[unlikely]] {
+                if (!scope.tryClearException())
+                    return;
+                readThrew = true;
+            }
+        }
+
+        if (!callGetters || readThrew) {
+            JSC::PropertySlot slot(proxy, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasProperty = proxy->methodTable()->getOwnPropertySlot(proxy, globalObject, property, slot);
+            // The trap of a Proxy sandbox can throw.
+            if (scope.exception()) [[unlikely]] {
+                if (!scope.tryClearException())
+                    return;
+                continue;
+            }
+            if (!hasProperty)
+                continue;
+
+            if (slot.isAccessor()) {
+                propertyValue = slot.getterSetter();
+            } else if (readThrew) {
+                continue;
+            } else {
+                propertyValue = slot.getValue(globalObject, property);
+                if (scope.exception()) [[unlikely]] {
+                    if (!scope.tryClearException())
+                        return;
+                    propertyValue = jsUndefined();
+                }
+                if (isSandboxOf(proxy, propertyValue))
+                    propertyValue = proxy;
+            }
+        }
+
+        JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+        EncodedSlice key = toEncodedSlice(property.impl());
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), false);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 }
 
 template<bool nonIndexedOnly>
@@ -6104,20 +6207,24 @@ restart:
         }
     }
 
+    if constexpr (!nonIndexedOnly) {
+        if (auto* proxy = globalOfAnotherRealm(globalObject, object)) [[unlikely]] {
+            forEachOwnPropertyOfRealmGlobal(proxy, globalObject, arg2, iter, callOwnGetters, false);
+            return;
+        }
+    }
+
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
     {
 
         JSObject* iterating = prototypeObject.getObject();
-        // The global of another realm shows what the program put on it, not the realm's builtins.
-        auto* globalProxy = dynamicDowncast<JSGlobalProxy>(object);
-        const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
 
         while (iterating && (iterating == object || !endsPrototypeWalk(globalObject, iterating)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, isOtherGlobal ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             }
 
             RETURN_IF_EXCEPTION(scope, void());
@@ -6221,7 +6328,7 @@ restart:
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
                 break;
-            if (iterating == globalObject || isOtherGlobal)
+            if (iterating == globalObject)
                 break;
             JSValue prototype = iterating->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -6284,6 +6391,14 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     if (!object)
         return;
 
+    // withNonEnumerable reproduces older Bun, which listed no property of a global proxy.
+    if (!withNonEnumerable) {
+        if (auto* proxy = globalOfAnotherRealm(globalObject, object)) [[unlikely]] {
+            forEachOwnPropertyOfRealmGlobal(proxy, globalObject, arg2, iter, callGetters, true);
+            return;
+        }
+    }
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -6300,7 +6415,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     }
 
     auto vector = properties.data()->propertyNameVector();
-    std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
+    sortByCodePoint(vector);
     auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {

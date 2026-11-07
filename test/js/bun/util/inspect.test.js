@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
@@ -90,6 +91,12 @@ it("getter/setters", () => {
   };
 
   expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
+});
+
+it("accessor with no getter and no setter", () => {
+  const obj = Object.defineProperty({}, "foo", { get: undefined, set: undefined, enumerable: true });
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: undefined," + "\n" + "}");
 });
 
 it("Timeout", () => {
@@ -1057,6 +1064,597 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+describe("printing the global of a node:vm context", () => {
+  const { constants, createContext, runInContext, runInNewContext } = vm;
+  // The class name in front of the braces is not under test.
+  const withoutClassName = text => text.replace(/^\w+ (?=\{)/gm, "");
+
+  function counter() {
+    let calls = 0;
+    const descriptor = { get: () => ++calls, enumerable: true, configurable: true };
+    return { descriptor, calls: () => calls };
+  }
+
+  it("lists the accessors of the sandbox and calls none of them", () => {
+    const calls = [];
+    const symbol = Symbol("symbol");
+    const sandbox = { data: 1 };
+    Object.defineProperties(sandbox, {
+      getter: { get: () => (calls.push("getter"), 42), enumerable: true },
+      throws: {
+        get() {
+          calls.push("throws");
+          throw new Error("the getter ran");
+        },
+        enumerable: true,
+      },
+      pair: { get: () => calls.push("pair"), set: () => calls.push("pair"), enumerable: true },
+      setter: { set: () => calls.push("setter"), enumerable: true },
+      none: { get: undefined, set: undefined, enumerable: true },
+      lazy: {
+        get() {
+          calls.push("lazy");
+          Object.defineProperty(this, "lazy", { value: "computed", enumerable: true });
+          return "computed";
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      hidden: { get: () => calls.push("hidden"), enumerable: false },
+      [symbol]: { get: () => calls.push("symbol"), enumerable: true },
+      7: { get: () => calls.push("index"), enumerable: true },
+    });
+    sandbox.self = sandbox;
+    Object.setPrototypeOf(sandbox, {
+      get inherited() {
+        return calls.push("inherited");
+      },
+    });
+    const context = createContext(sandbox);
+    const contextGlobal = runInContext("globalThis", context);
+
+    expect(withoutClassName(Bun.inspect(contextGlobal))).toBe(
+      "{\n" +
+        '  "7": [Getter],\n' +
+        "  data: 1,\n" +
+        "  getter: [Getter],\n" +
+        "  throws: [Getter],\n" +
+        "  pair: [Getter/Setter],\n" +
+        "  setter: [Setter],\n" +
+        "  none: undefined,\n" +
+        "  lazy: [Getter],\n" +
+        "  self: [Global Object],\n" +
+        "  [Symbol(symbol)]: [Getter],\n" +
+        "}",
+    );
+    // `sorted` changes the order of the lines and nothing else.
+    expect(withoutClassName(Bun.inspect(contextGlobal, { sorted: true }))).toBe(
+      "{\n" +
+        '  "7": [Getter],\n' +
+        "  data: 1,\n" +
+        "  getter: [Getter],\n" +
+        "  lazy: [Getter],\n" +
+        "  none: undefined,\n" +
+        "  pair: [Getter/Setter],\n" +
+        "  self: [Global Object],\n" +
+        "  setter: [Setter],\n" +
+        "  [Symbol(symbol)]: [Getter],\n" +
+        "  throws: [Getter],\n" +
+        "}",
+    );
+    expect(calls).toEqual([]);
+    expect(Object.getOwnPropertyDescriptor(sandbox, "lazy").get).toBeFunction();
+
+    // A read is not a print: it calls the getter.
+    expect([
+      runInContext("getter", context),
+      runInContext("globalThis.getter", context),
+      runInContext("this.getter", context),
+      contextGlobal.getter,
+    ]).toEqual([42, 42, 42, 42]);
+    expect(calls).toEqual(["getter", "getter", "getter", "getter"]);
+  });
+
+  describe.each([
+    ["Bun.inspect(value)", undefined],
+    ["Bun.inspect(value, { sorted: true })", { sorted: true }],
+  ])("%s", (_, options) => {
+    const print = value => withoutClassName(Bun.inspect(value, options));
+
+    it.each([
+      ["the global", contextGlobal => contextGlobal],
+      ["a Proxy of the global", contextGlobal => new Proxy(contextGlobal, {})],
+      ["the result of an inspect.custom function", contextGlobal => ({ [Bun.inspect.custom]: () => contextGlobal })],
+    ])("%s", (_, wrap) => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.defineProperty({ a: 1 }, "other", descriptor);
+      expect(print(wrap(runInContext("globalThis", createContext(sandbox))))).toBe("{\n  a: 1,\n  other: [Getter],\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("a cell of Bun.inspect.table()", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.defineProperty({ a: 1 }, "other", descriptor);
+      const table = Bun.inspect.table([{ cell: runInContext("globalThis", createContext(sandbox)) }], options);
+      expect(table).toContain("{ a: 1, other: [Getter] }");
+      expect(calls()).toBe(0);
+    });
+
+    it("a print between two reads leaves the count of getter calls alone", () => {
+      const { descriptor, calls } = counter();
+      const context = createContext(Object.defineProperty({}, "other", descriptor));
+      const contextGlobal = runInContext("globalThis", context);
+
+      const seen = [];
+      print(contextGlobal);
+      seen.push(calls());
+      print(contextGlobal);
+      seen.push(calls());
+      seen.push(contextGlobal.other, runInContext("other", context));
+      expect(seen).toEqual([0, 0, 1, 2]);
+    });
+
+    it("a read of a getter that returns the sandbox gives the global", () => {
+      const sandbox = {
+        get me() {
+          return sandbox;
+        },
+      };
+      const context = createContext(sandbox);
+      const contextGlobal = runInContext("globalThis", context);
+      expect(print(contextGlobal)).toBe("{\n  me: [Getter],\n}");
+      expect([runInContext("me === globalThis", context), contextGlobal.me === contextGlobal]).toEqual([true, true]);
+    });
+
+    // A read of a property that holds the sandbox gives the global, and the print shows a global. Node prints the sandbox.
+    // This printer lists inherited properties, so the sandbox of this test would print with the host's globals.
+    it("a sandbox that inherits from globalThis and holds itself prints as the global", () => {
+      const sandbox = Object.create(globalThis);
+      sandbox.global = sandbox;
+      expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  global: [Global Object],\n}");
+    });
+
+    describe.each([
+      ["the global of another context", innerGlobal => innerGlobal],
+      ["a Proxy of the global of another context", innerGlobal => new Proxy(innerGlobal, {})],
+    ])("a sandbox that is %s", (_, sandboxOf) => {
+      it.each([
+        ["a plain object", () => ({ data: 1 }), "{\n  data: 1,\n  me: [Global Object],\n}"],
+        ["an object that inherits from globalThis", () => Object.create(globalThis), "{\n  me: [Global Object],\n}"],
+      ])("whose sandbox is %s and holds itself", (_, make, printed) => {
+        const innerSandbox = make();
+        innerSandbox.me = innerSandbox;
+        const innerGlobal = runInContext("this", createContext(innerSandbox));
+        expect(print(runInContext("this", createContext(sandboxOf(innerGlobal))))).toBe(printed);
+      });
+    });
+
+    it("a Proxy sandbox whose target holds itself prints the target, as a read gives it", () => {
+      const target = { data: 1 };
+      target.me = target;
+      const context = createContext(new Proxy(target, {}));
+      const contextGlobal = runInContext("this", context);
+      expect(contextGlobal.me).toBe(target);
+      expect(print(contextGlobal)).toBe("{\n  data: 1,\n  me: {\n    data: 1,\n    me: [Circular],\n  },\n}");
+    });
+
+    // `var` puts an enumerable name on the global. The sandbox answers for its value from a slot that is not enumerable.
+    it("a name that a script declares and the sandbox holds in a non-enumerable slot", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.create(globalThis);
+      Object.defineProperties(sandbox, {
+        accessor: { ...descriptor, enumerable: false },
+        global: { value: sandbox, writable: true, configurable: true },
+        value: { value: 5, writable: true, configurable: true },
+      });
+      const context = createContext(sandbox);
+      runInContext("var accessor, global, value;", context);
+      expect(print(runInContext("this", context))).toBe(
+        "{\n  accessor: [Getter],\n  global: [Global Object],\n  value: 5,\n}",
+      );
+      expect(calls()).toBe(0);
+    });
+
+    it.each([
+      [
+        "on the sandbox before createContext()",
+        descriptor => runInContext("globalThis", createContext(Object.defineProperty({}, "other", descriptor))),
+      ],
+      [
+        "on the sandbox after createContext()",
+        descriptor => {
+          const sandbox = createContext({});
+          Object.defineProperty(sandbox, "other", descriptor);
+          return runInContext("globalThis", sandbox);
+        },
+      ],
+      [
+        "on globalThis by a script in the context",
+        descriptor => {
+          const context = createContext({ descriptor });
+          return runInContext(
+            "Object.defineProperty(globalThis, 'other', descriptor); delete globalThis.descriptor; globalThis",
+            context,
+          );
+        },
+      ],
+      [
+        "on the global from outside the context",
+        descriptor => Object.defineProperty(runInContext("globalThis", createContext({})), "other", descriptor),
+      ],
+      [
+        "on the sandbox of runInNewContext()",
+        descriptor => runInNewContext("this", Object.defineProperty({}, "other", descriptor)),
+      ],
+      [
+        "on the object that createContext() makes",
+        descriptor => runInContext("globalThis", Object.defineProperty(createContext(), "other", descriptor)),
+      ],
+      // This context has no sandbox.
+      [
+        "on a context made with DONT_CONTEXTIFY",
+        descriptor => Object.defineProperty(createContext(constants.DONT_CONTEXTIFY), "other", descriptor),
+      ],
+    ])("an accessor defined %s", (_, globalWith) => {
+      const { descriptor, calls } = counter();
+      expect(print(globalWith(descriptor))).toBe("{\n  other: [Getter],\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("an accessor under an index key of a context made with DONT_CONTEXTIFY", () => {
+      const { descriptor, calls } = counter();
+      const contextGlobal = Object.defineProperty(createContext(constants.DONT_CONTEXTIFY), 7, descriptor);
+      expect(print(contextGlobal)).toBe('{\n  "7": [Getter],\n}');
+      expect(calls()).toBe(0);
+    });
+
+    it("a name that a script declares and the sandbox only inherits prints the global's own value", () => {
+      const { descriptor, calls } = counter();
+      const context = createContext(Object.create(Object.defineProperty({}, "other", descriptor)));
+      runInContext("var other;", context);
+      expect(print(runInContext("globalThis", context))).toBe("{\n  other: undefined,\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("a property that changes between two prints", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.defineProperty({}, "other", descriptor);
+      const contextGlobal = runInContext("globalThis", createContext(sandbox));
+      const printed = [print(contextGlobal)];
+      Object.defineProperty(sandbox, "other", { get: () => 2, set() {}, enumerable: true, configurable: true });
+      printed.push(print(contextGlobal));
+      Object.defineProperty(sandbox, "other", { value: 3, enumerable: true, configurable: true });
+      printed.push(print(contextGlobal));
+      delete sandbox.other;
+      printed.push(print(contextGlobal));
+      expect(printed).toEqual([
+        "{\n  other: [Getter],\n}",
+        "{\n  other: [Getter/Setter],\n}",
+        "{\n  other: 3,\n}",
+        "{}",
+      ]);
+      expect(calls()).toBe(0);
+    });
+
+    it("a property that the print of an earlier property changes", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = {
+        a: {
+          [Bun.inspect.custom]() {
+            Object.defineProperty(sandbox, "b", descriptor);
+            delete sandbox.c;
+            return "changes b and c";
+          },
+        },
+        b: 1,
+        c: 2,
+      };
+      expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  a: changes b and c,\n  b: [Getter],\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("a property named constructor prints as it does for any other object", () => {
+      const sandbox = { constructor: 1, a: 2 };
+      expect(print(runInNewContext("this", sandbox))).toBe(print(sandbox));
+    });
+
+    it("a native getter of the sandbox that throws prints undefined, as for any other object", () => {
+      const database = new DatabaseSync(":memory:");
+      database.close();
+      expect(() => database.isTransaction).toThrow("database is not open");
+      expect(print(database)).toContain("  isTransaction: undefined,\n");
+      expect(print(runInContext("this", createContext(database)))).toContain("  isTransaction: undefined,\n");
+    });
+
+    // `var x` puts the name on the global, so that the print lists it. The Proxy answers for its value.
+    describe("when the sandbox is a Proxy", () => {
+      const contextGlobalOf = (target, handler) => {
+        const context = createContext(new Proxy(target, handler));
+        runInContext("var x;", context);
+        return runInContext("this", context);
+      };
+
+      it("an accessor of the target is listed and not called", () => {
+        const { descriptor, calls } = counter();
+        expect(print(contextGlobalOf(Object.defineProperty({}, "x", descriptor), {}))).toBe("{\n  x: [Getter],\n}");
+        expect(calls()).toBe(0);
+      });
+
+      it.each([
+        ["an accessor", target => Object.defineProperty(target, "x", counter().descriptor), "[Getter]"],
+        ["a value", target => Object.assign(target, { x: 1 }), "1"],
+      ])("the getOwnPropertyDescriptor trap answers for %s, not the get trap", (_, define, printed) => {
+        const traps = [];
+        const contextGlobal = contextGlobalOf(define({}), {
+          get(target, key) {
+            traps.push(`get ${String(key)}`);
+            return key === "x" ? "from the get trap" : undefined;
+          },
+          getOwnPropertyDescriptor(target, key) {
+            traps.push(`getOwnPropertyDescriptor ${String(key)}`);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        traps.length = 0;
+        expect(print(contextGlobal)).toBe(`{\n  x: ${printed},\n}`);
+        expect(traps).toContain("getOwnPropertyDescriptor x");
+        expect(traps).not.toContain("get x");
+      });
+
+      // The print asks the trap for a name two times: to list the name, then to look it up.
+      it("a getOwnPropertyDescriptor trap that throws at the lookup leaves the name out", () => {
+        let asked = 0;
+        const contextGlobal = contextGlobalOf(
+          { x: 1 },
+          {
+            getOwnPropertyDescriptor(target, key) {
+              if (key === "x" && ++asked === 2) throw new Error("the trap threw");
+              return Reflect.getOwnPropertyDescriptor(target, key);
+            },
+          },
+        );
+        asked = 0;
+        expect(print(contextGlobal)).toBe("{}");
+        expect(asked).toBe(2);
+      });
+
+      it("a vm timeout in the getOwnPropertyDescriptor trap at the lookup ends the print and the script", () => {
+        let asked = 0;
+        const target = { x: 1 };
+        Object.defineProperty(target, "printThis", {
+          value(contextGlobal) {
+            asked = 0;
+            return print(contextGlobal);
+          },
+        });
+        const sandbox = new Proxy(target, {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "x" && ++asked === 2) for (;;);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        expect(() => runInContext("printThis(this)", createContext(sandbox), { timeout: 20 })).toThrow(
+          expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+        );
+        expect(asked).toBe(2);
+        expect(print(runInNewContext("this", { after: 1 }))).toBe("{\n  after: 1,\n}");
+      });
+
+      it("an ownKeys trap that throws: the print throws the error", () => {
+        let throws = false;
+        const ownKeys = target => {
+          if (throws) throw new Error("from the ownKeys trap");
+          return Reflect.ownKeys(target);
+        };
+        const contextGlobal = runInContext("this", createContext(new Proxy({ a: 1 }, { ownKeys })));
+        throws = true;
+        expect(() => print(contextGlobal)).toThrow("from the ownKeys trap");
+      });
+    });
+  });
+
+  // bun:test prints what a read gives: its snapshots, diffs and matcher messages call getters on purpose.
+  describe("bun:test snapshots, diffs and matcher messages", () => {
+    const messageOf = fn => {
+      try {
+        fn();
+      } catch (error) {
+        return Bun.stripANSI(error.message);
+      }
+    };
+
+    it("a getter of the sandbox gets the sandbox as its receiver, and a getter that throws leaves the accessor", () => {
+      const sandbox = {
+        data: 1,
+        get receiver() {
+          return this === sandbox ? "the sandbox" : "another object";
+        },
+        get throws() {
+          throw new Error("from the getter");
+        },
+      };
+      const contextGlobal = runInContext("this", createContext(sandbox));
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "data": 1,
+          "receiver": "the sandbox",
+          "throws": [native code],
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toEqual({}))).toBe(
+        'expect(received).toEqual(expected)\n\n- {}\n+ JSGlobalProxy {\n+   "data": 1,\n+   "receiver": "the sandbox",\n+   "throws": [native code],\n+ }\n\n- Expected  - 1\n+ Received  + 5\n',
+      );
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        'expect(received).toBeNull()\n\nReceived: {\n  data: 1,\n  receiver: "the sandbox",\n  throws: [Getter],\n}\n',
+      );
+    });
+
+    it.each([
+      [
+        "a name that a script declares and the sandbox only inherits",
+        () => {
+          const inherited = {
+            get other() {
+              return "from the inherited getter";
+            },
+          };
+          const context = createContext(Object.create(inherited));
+          runInContext("var other;", context);
+          return context;
+        },
+        "from the inherited getter",
+      ],
+      [
+        "the get trap of a sandbox that is a Proxy",
+        () => {
+          const get = (target, key, receiver) =>
+            key === "other" ? "from the get trap" : Reflect.get(target, key, receiver);
+          return createContext(new Proxy({ other: "of the target" }, { get }));
+        },
+        "from the get trap",
+      ],
+    ])("prints what a read gives: %s", (_, makeContext, read) => {
+      const contextGlobal = runInContext("this", makeContext());
+      expect(contextGlobal.other).toBe(read);
+      expect(messageOf(() => expect(contextGlobal).toEqual({}))).toBe(
+        `expect(received).toEqual(expected)\n\n- {}\n+ JSGlobalProxy {\n+   "other": "${read}",\n+ }\n\n- Expected  - 1\n+ Received  + 3\n`,
+      );
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        `expect(received).toBeNull()\n\nReceived: {\n  other: "${read}",\n}\n`,
+      );
+    });
+
+    // This context has no sandbox. A getter of its global throws when it is called, not when it is looked up.
+    it("a getter of a context made with DONT_CONTEXTIFY that throws leaves the accessor, also under an index key", () => {
+      const symbol = Symbol("symbol");
+      const contextGlobal = Object.defineProperties(createContext(constants.DONT_CONTEXTIFY), {
+        ok: { get: () => 1, enumerable: true },
+        throws: {
+          get() {
+            throw new Error("from the getter");
+          },
+          enumerable: true,
+        },
+        [symbol]: { get: () => "of the symbol", enumerable: true },
+        7: { get: () => "seven", enumerable: true },
+        8: {
+          get() {
+            throw new Error("from the index getter");
+          },
+          enumerable: true,
+        },
+      });
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "7": "seven",
+          "8": [native code],
+          "ok": 1,
+          [Symbol(symbol)]: "of the symbol",
+          "throws": [native code],
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        'expect(received).toBeNull()\n\nReceived: {\n  "7": "seven",\n  "8": [Getter],\n  ok: 1,\n  throws: [Getter],\n  [Symbol(symbol)]: "of the symbol",\n}\n',
+      );
+    });
+
+    it("a key that an earlier getter deletes is left out", () => {
+      const make = () => {
+        const sandbox = {
+          get a() {
+            delete sandbox.b;
+            return 1;
+          },
+          b: 2,
+          c: 3,
+        };
+        return runInContext("this", createContext(sandbox));
+      };
+      expect(make()).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "a": 1,
+          "c": 3,
+        }
+      `);
+      expect(messageOf(() => expect(make()).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: {\n  a: 1,\n  c: 3,\n}\n",
+      );
+    });
+
+    // The global's own slot holds the value of `var other`. No read gives that value, so the print does not show it.
+    it("a read that throws where the global has no accessor of its own leaves the key out", () => {
+      const inherited = {
+        get other() {
+          throw new Error("from the inherited getter");
+        },
+      };
+      const context = createContext(Object.create(inherited));
+      runInContext("var other; var fine = 1;", context);
+      const contextGlobal = runInContext("this", context);
+      expect(() => contextGlobal.other).toThrow("from the inherited getter");
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "fine": 1,
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: {\n  fine: 1,\n}\n",
+      );
+    });
+
+    it("a vm timeout in a getter ends the print and the script", () => {
+      const sandbox = {
+        a: 1,
+        get spins() {
+          for (;;);
+        },
+        z: 2,
+      };
+      Object.defineProperty(sandbox, "check", { value: contextGlobal => expect(contextGlobal).toBeNull() });
+      expect(() => runInContext("check(this)", createContext(sandbox), { timeout: 20 })).toThrow(
+        expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+      );
+      expect(messageOf(() => expect(runInNewContext("this", { after: 1 })).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: {\n  after: 1,\n}\n",
+      );
+    });
+  });
+
+  it("an error message that prints the global", () => {
+    const { descriptor, calls } = counter();
+    const contextGlobal = runInContext(
+      "globalThis",
+      createContext(Object.defineProperty({ a: 1 }, "other", descriptor)),
+    );
+    expect(() => createContext({}, { microtaskMode: contextGlobal })).toThrow("{ a: 1, other: [Getter] }");
+    expect(calls()).toBe(0);
+  });
+
+  it.concurrent("console methods", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const util = require("node:util");
+      let calls = 0;
+      const sandbox = Object.defineProperty({ a: 1 }, "other", { get: () => ++calls, enumerable: true });
+      const contextGlobal = vm.runInContext("globalThis", vm.createContext(sandbox));
+      console.log(contextGlobal);
+      console.error(contextGlobal);
+      console.log("%o", contextGlobal);
+      console.log(new Proxy(contextGlobal, {}));
+      console.log({ [util.inspect.custom]: () => contextGlobal });
+      console.log("calls:", calls);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = "{\n  a: 1,\n  other: [Getter],\n}\n";
+    expect({ stdout: withoutClassName(stdout), stderr: withoutClassName(stderr), exitCode }).toEqual({
+      stdout: printed.repeat(4) + "calls: 0\n",
+      stderr: printed,
+      exitCode: 0,
+    });
+  });
 });
 
 describe.skipIf(!isASAN)("object mutated while being formatted", () => {

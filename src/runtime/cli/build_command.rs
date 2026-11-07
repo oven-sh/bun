@@ -219,6 +219,7 @@ impl BuildCommand {
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
+                pages: &mut core::iter::empty(),
                 sources: &mut core::iter::empty(),
             };
             if !type_check(checked, log_ref) {

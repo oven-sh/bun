@@ -5290,7 +5290,6 @@ extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* glo
 static void destroyVM(JSC::VM& vm)
 {
     auto identifier = vm.identifier();
-    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
     // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because
     // this path does not return through them; release on their behalf so ~VM — and with it
@@ -5387,6 +5386,7 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     gcUnprotect(globalObject);
     globalObject = nullptr;
 
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     destroyVM(vm);
     runLoop->threadWillExit();
     // `context` is released here, after ~VM: contextDestroyed() reaches observers at a defined

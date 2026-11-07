@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
@@ -72,6 +72,39 @@ describe("which code runs", () => {
   });
 });
 
+// A run under --aot generates no code, so the limits on generated code are the build's to find: docs/compiler/debugging.mdx says so.
+test("a function whose stack frame is too large stops the build, and --aot runs the program", async () => {
+  const held = 132_000;
+  const names = Array.from({ length: held }, (_, index) => `v${index}`);
+  using dir = tempDir("aot-flag-runs-from-source", {
+    "main.js": `let calls = 0;
+      function one() { return ++calls; }
+      function take(value) { calls += value; }
+      function wide() {
+        ${names.map(name => `const ${name} = one();`).join("\n")}
+        ${names.map(name => `take(${name});`).join("\n")}
+        return calls;
+      }
+      console.log(wide());`,
+  });
+  const built = await bun(
+    String(dir),
+    "build",
+    "--compile",
+    "--aot",
+    "main.js",
+    "--outfile",
+    join(String(dir), "program"),
+  );
+  expect(built.stderr).toMatch(/error: TS100057: 'wide' .*needs a stack frame of \d+ bytes, over the limit/);
+  expect(built.exitCode).toBe(1);
+  const ran = await bun(String(dir), "run", "--aot", "main.js");
+  expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+    stdout: `${held + (held * (held + 1)) / 2}\n`,
+    exitCode: 0,
+  });
+});
+
 describe("what stops a build stops the run, and is printed as the build prints it", () => {
   const stopped: Record<string, { text: string; code: string }> = {
     "a type error": { text: `console.log("ran"); const port: number = "8080"; console.log(port);`, code: "TS2322" },
@@ -81,10 +114,16 @@ describe("what stops a build stops the run, and is printed as the build prints i
       code: "TS100014",
     },
     "an invalid regular expression": { text: `console.log("ran"); console.log(/(/.source);`, code: "TS1005" },
+    // This one is found where the code of the program is made, so a run that has such a promise anywhere goes that far.
+    "an int32 that the compiler cannot prove": {
+      text: `import type { int32 } from "bun"; console.log("ran"); function half(n: int32): number { return n / 2; } const given: number[] = JSON.parse("[3]"); console.log(half(given[0]!));`,
+      code: "TS100031",
+    },
   };
   test.concurrent.each(Object.keys(stopped))("%s", async name => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
+      "bun.d.ts": `declare module "bun" { type int32 = number & { readonly "bun.int32"?: true }; }`,
       "main.ts": declarations + stopped[name].text,
     });
     const errors = (said: string) => said.split("\n").filter(line => line.startsWith("error: "));
@@ -200,26 +239,38 @@ describe("bun test --aot", () => {
     expect(passed(stderr)).toEqual(["mocked", "spied"]);
     expect(exitCode).toBe(0);
   });
-  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. These objects and names are made when the tests run.
-  test("a spy on a read-only member of a built-in object is refused by name", async () => {
+  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. Here the names are made when the tests run.
+  // The prototype of a value from somewhere is an object that the build cannot follow, so nothing is opened for that spy. The look at the global object lets the library in, which takes `normalize` for what the realm was created with.
+  test("a spy on a member that compiled code takes for a constant is refused by name", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, spyOn, test } from "bun:test";
         const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
         test("on a prototype", () => { spyOn(Object.getPrototypeOf(made("a")), made("norm", "alize")); });
-        test("on a namespace object", () => { spyOn((globalThis as any)[made("Ma", "th")], made("m", "ax")); });
-        test("unchanged", () => { expect(["a".normalize(), Math.max(1, 2)]).toEqual(["a", 2]); });`,
+        test("unchanged", () => { expect(["a".normalize(), typeof (globalThis as any)[made("Ma", "th")]]).toEqual(["a", "object"]); });`,
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
     expect(passed(stderr)).toEqual(["unchanged"]);
-    for (const [object, name] of [
-      ["String.prototype", "normalize"],
-      ["Math", "max"],
-    ])
-      expect(stderr).toContain(
-        `TypeError: Cannot spy on ${object}.${name} because built-in objects are read-only in compiled code, and the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in ${object}.${name} = f or spyOn(${object}, "${name}") (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)`,
-      );
+    expect(stderr).toContain(
+      `TypeError: Cannot spy on String.prototype.normalize because built-in objects are read-only in compiled code, and the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in String.prototype.normalize`,
+    );
     expect(exitCode).toBe(1);
+  });
+  // What the global object holds under a name that nobody can read is one of the objects that it holds, and the build knows them all: their members are no constants in this run.
+  test("a spy on a member of what the global object holds under a made name is laid, and compiled code calls it", async () => {
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "one.test.ts": `import { expect, mock, spyOn, test } from "bun:test";
+        const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
+        const largest = (left: number, right: number) => Math.max(left, right);
+        test("on a namespace object", () => { spyOn((globalThis as any)[made("Ma", "th")], made("m", "ax")).mockReturnValue(7); });
+        test("on a prototype", () => { spyOn((globalThis as any)[made("Str", "ing")].prototype, made("norm", "alize")).mockReturnValue("spied"); });
+        test("seen", () => { expect(["a".normalize(), Math.max(1, 2), largest(1, 2)]).toEqual(["spied", 7, 7]); });
+        test("restored", () => { mock.restore(); expect(["a".normalize(), Math.max(1, 2), largest(1, 2)]).toEqual(["a", 2, 2]); });`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
+    expect(passed(stderr)).toEqual(["on a namespace object", "on a prototype", "restored", "seen"]);
+    expect(exitCode).toBe(0);
   });
   test("a spy replaces a member that a program may replace, and a function of the global object", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
@@ -413,7 +464,7 @@ describe("the debugger", () => {
   });
 });
 
-describe("--watch", () => {
+describe.concurrent("--watch", () => {
   const value = (text: string) => `export const value: number = ${text};\n`;
   const shape = (side: string) => `export type Shape = { side: ${side} };\n`;
   const files = {
@@ -425,6 +476,8 @@ describe("--watch", () => {
     "value.ts": value("1"),
     "shape.ts": shape("number"),
   };
+  // A run under --watch starts again in a second or two, ten times that under a sanitizer.
+  const secondsToSayIt = isASAN ? 90 : 30;
   // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first: then it says how the process ended.
   function listen(stream: ReadableStream<Uint8Array>, getEnd: () => Promise<string>) {
     const heard = { text: "", ended: false };
@@ -441,9 +494,18 @@ describe("--watch", () => {
     return {
       heard,
       async until(holds: (text: string) => boolean) {
+        // What is never said is not waited for until the limit of the test: five such cases, tried four times, took two shards of CI with them.
+        const deadline = Date.now() + secondsToSayIt * 1000;
         while (!holds(heard.text)) {
           if (heard.ended) throw new Error(`the stream ended after:\n${heard.text}\n${await getEnd()}`);
-          await new Promise<void>(resolve => (wake = resolve));
+          const left = deadline - Date.now();
+          if (left <= 0) throw new Error(`it is not said within ${secondsToSayIt} s. So far:\n${heard.text}`);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await new Promise<void>(resolve => {
+            wake = resolve;
+            timer = setTimeout(resolve, left);
+          });
+          clearTimeout(timer);
         }
       },
     };

@@ -1,0 +1,21 @@
+A star of a barrel brings a name that node:querystring has too, so the barrel lacks it. While a mock stands for node:querystring the file gives the name. Nobody in the run imports a name of that module: its mock was copied, not asked, and beside a mock under a computed name the barrel lacked the name all the same. The next test file mocks nothing: the name is ambiguous again.
+#### a.test.js
+import { test, vi } from "bun:test";
+vi.mock("node:querystring", () => ({ escape: "mock escape", parse: "mock parse" }));
+import { seen } from "./src/user.js";
+test("a", () => console.log("| CASE a", seen()));
+#### z.test.js
+import { test } from "bun:test";
+import { seen } from "./src/user.js";
+test("z", () => console.log("| CASE z", seen()));
+#### package.json
+{ "name": "p", "type": "module" }
+#### src/barrel.js
+export * from "./clash.js";
+export * from "node:querystring";
+#### src/clash.js
+export const escape = "clash escape";
+export const other = "other";
+#### src/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "escape=" + typeof barrel.escape + " parse=" + typeof barrel.parse + " has=" + ("escape" in barrel);

@@ -1,0 +1,22 @@
+# nothing but this code has the object, and the state knows what lies in the slot: a store of that very value, or of the same written constant, changes no memory and is not built
+# f1 = same, f2 = other
+# -- source: store-of-what-the-slot-of-a-fresh-object-holds-builds-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# function same(value: unknown) { const box = { value, count: 1 }; box.value = value; box.count = 1; return box; }
+# function other(value: unknown, next: unknown) { const box = { value, count: 1 }; box.value = next; box.count = 2; return box; }
+# sink(same, other);
+# -- end of source
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}fields=[1, 0]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: key="value"
+# NEVER-NOT: key="count"
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: key="value"
+# ALL-NOT: key="count"
+# another value, another constant of the same kind: both stores stand
+# RUN(OTHER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# OTHER-LABEL: code f2:Body
+# OTHER: = PutSlot {{*}}key="value"
+# OTHER: = PutSlot {{*}}key="count"

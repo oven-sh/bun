@@ -179,6 +179,30 @@ function emitErrorCloseNT(self: $Node.StreamWithState, err: Error) {
   emitCloseNT(self);
 }
 
+let emitOfEmitters: $Node.EventEmitter["emit"] | undefined;
+
+// stream.emit(type) for a type other than "error", where emit() is the one of node:events: the same reads in the same order, and no list of arguments.
+// false: what lies under `emit` cannot be called: the caller says so in its own words.
+function emitsToListeners(stream: $Node.StreamWithState, type: string): boolean {
+  const emitOfStream = stream.emit;
+  if (emitOfStream !== (emitOfEmitters ??= require("internal/shared").originals.eventEmitter!.emit)) {
+    ("unlikely");
+    if (typeof emitOfStream !== "function") return false;
+    emitOfStream.$call(stream, type);
+    return true;
+  }
+  const events = stream._events;
+  if (events === undefined) return true;
+  const handler = events[type];
+  if (handler === undefined) return true;
+  if (typeof handler === "function") {
+    handler.$call(stream);
+    return true;
+  }
+  for (let i = 0, length = handler.length; i < length; i++) handler[i].$call(stream);
+  return true;
+}
+
 function emitCloseNT(self: $Node.StreamWithState) {
   const r: ReadableState | undefined = self._readableState;
   const w: WritableState | undefined = self._writableState;
@@ -191,7 +215,7 @@ function emitCloseNT(self: $Node.StreamWithState) {
   }
 
   if ((w && (w[kState] & Flag.EmitClose) !== 0) || (r && (r[kState] & Flag.EmitClose) !== 0)) {
-    self.emit("close");
+    if (!(IS_COMPILED_AHEAD_OF_TIME && emitsToListeners(self, "close"))) self.emit("close");
   }
 }
 

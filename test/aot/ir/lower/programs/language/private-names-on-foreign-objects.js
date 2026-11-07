@@ -26,45 +26,32 @@ say(log);
 // CHECK-LABEL: function {{*}}name="Stamp"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_3]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#a"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = String string="a"
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v4 = PrivateGet v2, v3 layout=[[L_2]] field=1
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = Add v1, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v7
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v3 = PrivateGet v0, v2 layout=[[L_2]] field=1
+// CHECK-NEXT: v4 = Add v1, v3
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#a"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_2]], v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: PrivateSet v2, v4, v3 layout=[[L_2]] field=1
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: PrivateSet v0, v2, v1 layout=[[L_2]] field=1
+// CHECK-NEXT: v4 = Undefined
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="setM"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer integer=1
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v3 = PrivateGet v0, v2 layout=[[L_2]]
@@ -72,47 +59,37 @@ say(log);
 // CHECK-NEXT: Throw v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inextensible"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=ObjectPreventExtensions
-// CHECK-NEXT: v2 = Data data=[[d_7]]
+// CHECK-NEXT: v2 = Data data=[[d_6]]
 // CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.preventExtensions"
 // CHECK-NEXT: ReturnCall v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="promise"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v1 = PropGet v0 key="Promise" [isFreeName]
 // CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]}
 // CHECK-NEXT: v3 = PropGet v2 key="resolve"
 // CHECK-NEXT: v4 = Convert v3 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
 // CHECK-NEXT: v5 = Call v4, v2 calleeKey="resolve" calleeName="Promise.resolve"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|null|Promise flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="regexp"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|RegExp flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = NewRegExp pattern="x"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|RegExp flags=[IsExpected]}
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="symbolObject"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=Symbol
 // CHECK-NEXT: v2 = Call v1 calleeName="Symbol" callNumber=32
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|symbol flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v0, -, v3 calleeName="Object"
-// CHECK-NEXT: ReturnCall v4
+// CHECK-NEXT: v3 = Call v0, -, v2 calleeName="Object"
+// CHECK-NEXT: ReturnCall v3
 // CHECK-NEXT: }

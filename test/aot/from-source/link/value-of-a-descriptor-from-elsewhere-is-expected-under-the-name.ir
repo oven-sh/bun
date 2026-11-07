@@ -1,0 +1,24 @@
+# -- source: main.js
+# var descriptor = { value: undefined, enumerable: false };
+# function Inner(n) { this.n = n; }
+# function Holder(n) { lay(this, n); }
+# function lay(inst, n) { descriptor.value = new Inner(n); Object.defineProperty(inst, "_z", descriptor); descriptor.value = undefined; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { if (i === 5) change(descriptor, new Other(i)); total += new Holder(i)._z.n; } return total; }
+# function Other(n) { this.n = n; }
+# print(run(10));
+# -- end of source
+# The descriptor is made once, elsewhere, and filled in front of each definition, so the body that defines `_z` does not see what it lays: object and descriptor go to unseen code, and nothing is proven of the field.
+# What the layout of the descriptor is seen to hold under `value` is what the field is expected to hold, and the read behind it is tested for that. Two layouts have the name `n`, so the name alone says nothing. f5 = run
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "_z" proven
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "_z" proven={{*}}|L0 writers-known
+# RUN(WALK): walk f5 mechanisms=all
+# WALK-LABEL: code f5:Body
+# WALK: GetSlot {{*}}key="n" receivers=[L0]
+# RUN(ANSWERS): run-in-shell globalThis.change = () => { };
+# ANSWERS: 45
+# ANSWERS-NEXT: exited with 0
+# RUN(CHANGED): run-in-shell globalThis.change = (descriptor) => { Object.defineProperty(descriptor, "value", { get() { return { n: 1000 }; }, set(value) { } }); };
+# CHANGED: 5010
+# CHANGED-NEXT: exited with 0

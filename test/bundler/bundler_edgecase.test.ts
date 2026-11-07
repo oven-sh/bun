@@ -4483,6 +4483,39 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "true 1 true later" },
     });
   }
+  itBundled("edgecase/ParenthesizedOptionalChainTagAndNewCallee", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = null, k = "t", c = "K", o = { t: s => s[0], K: class { constructor() { this.v = 1 } }, f() { return o }, g() { return s => o.K } }, r = [];
+        r.push((o?.t)\`A\`);
+        r.push((o?.["t"])\`D\`);
+        r.push((o?.[k])\`F\`);
+        r.push((o?.f().t)\`B\`);
+        r.push((o.f?.().t)\`C\`);
+        r.push((o?.t as any)\`E\`);
+        r.push(new (o?.K)().v);
+        r.push(new (o?.[c])().v);
+        r.push(new (o?.f().K)().v);
+        r.push(new (o?.K)!().v);
+        r.push(new (o.g()\`K\`)().v);
+        try { (a?.t)\`x\` } catch (e) { r.push(e.name) }
+        try { new (a?.K)() } catch (e) { r.push(e.name) }
+        console.log(JSON.stringify(r));
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: `["A","D","F","B","C","E",1,1,1,1,1,"TypeError","TypeError"]` },
+  });
+  itBundled("edgecase/UnparenthesizedOptionalChainInNewTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        new a?.b();
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Cannot use an unparenthesized optional chain inside the target of "new"'],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -4120,6 +4120,206 @@ console.log(resolve.length)
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
   });
 
+  it("parenthesized optional chain as template tag", () => {
+    expectPrinted_("(a?.b)`x`", "(a?.b)`x`");
+    expectPrinted_("(a?.[0])`x`", "(a?.[0])`x`");
+    expectPrinted_("(a?.b.c)`x`", "(a?.b.c)`x`");
+    expectPrinted_("(a?.b())`x`", "(a?.b())`x`");
+    expectPrinted_("(a?.b()).c`x`", "(a?.b()).c`x`");
+    expectPrinted_("(a.b?.().c)`x`", "(a.b?.().c)`x`");
+    expectPrinted_("(a.b?.())`x`", "(a.b?.())`x`");
+    expectPrinted_("((a?.b))`x`", "(a?.b)`x`");
+    expectPrinted_("((0 >= a.b)?.())`x`", "((0 >= a.b)?.())`x`");
+    ts.expectPrinted_("(a?.b)!`x`", "(a?.b)`x`");
+    ts.expectPrinted_("(a?.b as any)`x`", "(a?.b)`x`");
+    ts.expectPrinted_("(<any>a?.b)`x`", "(a?.b)`x`");
+    ts.expectPrinted_("(a?.b satisfies any)`x`", "(a?.b)`x`");
+    expectPrinted_("class X extends (a?.b)`t` {}", "class X extends (a?.b)`t` {\n}");
+    expectPrinted_("a.b`x`", "a.b`x`");
+    expectPrinted_("a()`x`", "a()`x`");
+  });
+
+  it("parenthesized optional chain as new callee", () => {
+    expectPrinted_("new (a?.b)()", "new (a?.b)");
+    expectPrinted_("new (a?.b)().c", "new (a?.b)().c");
+    expectPrinted_("new (a?.b)(1)", "new (a?.b)(1)");
+    expectPrinted_("new (a?.[0])()", "new (a?.[0])");
+    expectPrinted_("new (a?.b.c)()", "new (a?.b.c)");
+    expectPrinted_("new (a?.b())()", "new (a?.b())");
+    expectPrinted_("new (a?.b()).c()", "new (a?.b()).c");
+    expectPrinted_("new (a.b?.().c)()", "new (a.b?.().c)");
+    expectPrinted_("new ((a.h())?.c)", "new (a.h()?.c)");
+    expectPrinted_("new ((a.arr[1])?.b)()", "new (a.arr[1]?.b)");
+    expectPrinted_("new (a()?.[0])()", "new (a()?.[0])");
+    expectPrinted_("new (new (a?.b)())()", "new new (a?.b)()");
+    ts.expectPrinted_("new (a?.b)!()", "new (a?.b)");
+    ts.expectPrinted_("new (a?.b as any)(2)", "new (a?.b)(2)");
+    ts.expectPrinted_("new (a?.b!)()", "new (a?.b)");
+    expectPrinted_("new a.b()", "new a.b");
+    expectPrinted_("new (a.b.c)()", "new a.b.c");
+    expectPrinted_("new (a())()", "new (a())");
+    expectPrinted_("new (a().b)()", "new (a()).b");
+    expectPrinted_("new (a()[b])()", "new (a())[b]");
+    expectPrinted_("new (a().b())()", "new (a().b())");
+    expectPrinted_("new (a?.b.c).d()", "new (a?.b.c).d");
+    expectPrinted_("new (a?.b().c).d()", "new (a?.b().c).d");
+    expectPrinted_("new ((a?.b)[c])()", "new (a?.b)[c]");
+    expectPrinted_("new ((a?.()).b)()", "new (a?.()).b");
+    expectPrinted_("new ((a?.[b]).c)()", "new (a?.[b]).c");
+    expectPrinted_("new ((a?.[b])[c])()", "new (a?.[b])[c]");
+    expectPrinted_("new (a?.[b][c]).d()", "new (a?.[b][c]).d");
+  });
+
+  it("tagged template as new callee", () => {
+    expectPrinted_("new (a()`x`)()", "new (a())`x`");
+    expectPrinted_("new (a()`x`.b)()", "new (a())`x`.b");
+    expectPrinted_("new (a.b`x`)()", "new a.b`x`");
+    expectPrinted_("new (a`x`)()", "new a`x`");
+    expectPrinted_("new a`x`()", "new a`x`");
+    expectPrinted_("new ((a?.b)`x`)()", "new (a?.b)`x`");
+    expectPrinted_("new ((a?.b())`x`)()", "new (a?.b())`x`");
+    expectPrinted_("new ((a?.b)`x`.c)()", "new (a?.b)`x`.c");
+    expectPrinted_("new (import(x)`y`)()", "new (import(x))`y`");
+    expectPrinted_('new (require("m")`y`)()', 'new (require("m"))`y`');
+    expectPrinted_("a()`x`", "a()`x`");
+  });
+
+  it("optional chain under a conditional in a new callee", () => {
+    // The chain must stay whole: `(a.b?.()).c` is another program.
+    // The pair around it is not needed: the conditional hands the flags of `new` to its test and its last branch.
+    expectPrinted_("new ((a.b?.().c) ? y : z)()", "new ((a.b?.().c) ? y : z)");
+    expectPrinted_("new (y ? z : (a.b?.().c))()", "new (y ? z : (a.b?.().c))");
+    expectPrinted_("new (((a.b?.().c) ? y : z)`x`)()", "new ((a.b?.().c) ? y : z)`x`");
+    expectPrinted_("new ((y ? z : (a.b?.().c))`x`)()", "new (y ? z : (a.b?.().c))`x`");
+  });
+
+  it("optional chain that a fold leaves as a new callee or a template tag", () => {
+    expectPrinted_("new (true && a?.b)()", "new (a?.b)");
+    expectPrinted_("new (null ?? a?.b)()", "new (a?.b)");
+    expectPrinted_("new (1 ? a?.b : 0)()", "new (a?.b)");
+    expectPrintedMin_("new (0, a?.b)()", "new (a?.b)");
+    expectPrinted_("new (true && a()`x`)()", "new (a())`x`");
+    // These rows are about the parentheses. The receiver of a tag that a fold leaves is https://github.com/oven-sh/bun/issues/44578.
+    expectPrinted_("(true && a?.b)`x`", "(a?.b)`x`");
+    expectPrintedMin_("(0, a?.b)`x`", "(a?.b)`x`");
+  });
+
+  // The rows of esbuild's TestTemplate at e0755b4692 that have a tag or `new`.
+  // bun prints `new x` where esbuild prints `new x()`.
+  it("esbuild: template tags and new", () => {
+    expectPrinted_("new foo`bar`()", "new foo`bar`");
+    expectPrinted_("new (foo`bar`)()", "new foo`bar`");
+    expectPrinted_("(new foo)`bar`()", "new foo()`bar`()");
+    expectPrinted_("new foo()`bar`()", "new foo()`bar`()");
+    expectPrinted_("(new foo())`bar`()", "new foo()`bar`()");
+    expectPrinted_("new (foo()`bar`)()", "new (foo())`bar`");
+
+    expectPrinted_("tag``", "tag``");
+    for (const chain of ["a?.b", "a?.(b)", "a?.[b]", "a?.b.c", "a?.(b).c", "a?.[b].c"]) {
+      expectPrinted_("(" + chain + ")``", "(" + chain + ")``");
+      for (const template of ["``", "`${d}`", "\n``", "\n`${d}`"]) {
+        expectParseError(chain + template, "Template literals cannot have an optional chain as a tag");
+      }
+    }
+  });
+
+  // esbuild's TestPreserveOptionalChainParentheses at e0755b4692.
+  it("esbuild: optional chain parentheses", () => {
+    expectPrinted_("a?.b.c", "a?.b.c");
+    expectPrinted_("(a?.b).c", "(a?.b).c");
+    expectPrinted_("a?.b.c.d", "a?.b.c.d");
+    expectPrinted_("(a?.b.c).d", "(a?.b.c).d");
+    expectPrinted_("a?.b[c]", "a?.b[c]");
+    expectPrinted_("(a?.b)[c]", "(a?.b)[c]");
+    expectPrinted_("a?.b(c)", "a?.b(c)");
+    expectPrinted_("(a?.b)(c)", "(a?.b)(c)");
+    expectPrinted_("new (a?.b)", "new (a?.b)");
+
+    expectPrinted_("a?.[b][c]", "a?.[b][c]");
+    expectPrinted_("(a?.[b])[c]", "(a?.[b])[c]");
+    expectPrinted_("a?.[b][c][d]", "a?.[b][c][d]");
+    expectPrinted_("(a?.[b][c])[d]", "(a?.[b][c])[d]");
+    expectPrinted_("a?.[b].c", "a?.[b].c");
+    expectPrinted_("(a?.[b]).c", "(a?.[b]).c");
+    expectPrinted_("a?.[b](c)", "a?.[b](c)");
+    expectPrinted_("(a?.[b])(c)", "(a?.[b])(c)");
+    expectPrinted_("new (a?.[b])", "new (a?.[b])");
+
+    expectPrinted_("a?.(b)(c)", "a?.(b)(c)");
+    expectPrinted_("(a?.(b))(c)", "(a?.(b))(c)");
+    expectPrinted_("a?.(b)(c)(d)", "a?.(b)(c)(d)");
+    expectPrinted_("(a?.(b)(c))(d)", "(a?.(b)(c))(d)");
+    expectPrinted_("a?.(b).c", "a?.(b).c");
+    expectPrinted_("(a?.(b)).c", "(a?.(b)).c");
+    expectPrinted_("a?.(b)[c]", "a?.(b)[c]");
+    expectPrinted_("(a?.(b))[c]", "(a?.(b))[c]");
+    expectPrinted_("new (a?.(b))", "new (a?.(b))");
+
+    expectPrinted_("new a()?.b", "new a()?.b");
+    expectPrinted_("new a()?.[b]", "new a()?.[b]");
+    expectPrinted_("new a()?.(b)", "new a()?.(b)");
+    expectPrinted_("new a.b()?.c", "new a.b()?.c");
+    expectPrinted_("new a.b()?.[c]", "new a.b()?.[c]");
+    expectPrinted_("new a.b()?.(c)", "new a.b()?.(c)");
+
+    const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
+    for (const code of ["new a?.b", "new a?.[b]", "new a?.(b)", "new a.b?.c", "new a.b?.[c]", "new a.b?.(c)"]) {
+      expectParseError(code, message);
+    }
+  });
+
+  it("rejects an unparenthesized optional chain in the target of new", () => {
+    const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
+    for (const code of ["new a?.b", "new a?.[b]", "new a?.(b)", "new a.b?.c", "new a.b?.[c]", "new a.b?.(c)"]) {
+      ts.expectParseError(code, message);
+    }
+    for (const code of ["new (a)?.b()", "new new a?.b()()", "new new a()?.b()", "new {y: C}?.y()", "new {}?.()"]) {
+      expectParseError(code, message);
+      ts.expectParseError(code, message);
+    }
+    for (const code of ["new a!?.b()", "new a?.<T>()", "new a<T>?.b()"]) {
+      ts.expectParseError(code, message);
+    }
+    expect(() => transpiler.scan("new a?.b()")).toThrow(message);
+
+    // One error for each target, not one for each `?.`. Two errors throw an AggregateError.
+    expect(() => transpiler.transformSync("new a?.b?.c()", "js")).toThrow(message);
+    expect(() => transpilerMinifySyntax.transformSync("new {}?.a?.b()", "js")).toThrow(message);
+
+    expectPrinted_("new a[b?.c]()", "new a[b?.c]");
+    expectPrinted_("new a(b?.c)", "new a(b?.c)");
+    expectPrinted_("new a`${b?.c}`", "new a`${b?.c}`");
+    expectPrinted_("new class { x = a?.b }", "new class {\n  x = a?.b;\n}");
+    expectPrinted_("function f() { return new.target?.b; }", "function f() {\n  return new.target?.b;\n}");
+    ts.expectPrinted_("new a<T>()?.b", "new a()?.b");
+  });
+
+  // https://github.com/oven-sh/bun/issues/31812
+  it("runs a new expression whose callee needs parentheses", async () => {
+    const run = async code => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const ok = { stdout: "A {}\n", stderr: "", exitCode: 0 };
+    expect(
+      await Promise.all([
+        run("const foo = () => (args) => class A {}; console.log(new (foo()`bar`)());"),
+        run("const baz = () => ({ qux: class A {} }); console.log(new (baz()?.qux)());"),
+        run("const f = r => { const C = r?.W; return new C(); }; console.log(f({ W: class A {} }));"),
+        run("const a = { b: null }; console.log(new ((a.b?.().c) ? class Y {} : class A {})());"),
+        run(
+          "const a = { b: null }, y = () => class Y {}, z = () => class A {}; console.log(new (((a.b?.().c) ? y : z)`x`)());",
+        ),
+      ]),
+    ).toEqual([ok, ok, ok, ok, ok]);
+  });
+
   it("useDefineForConst TypeScript class initialization", () => {
     var { expectPrinted_ } = ts;
     expectPrinted_(

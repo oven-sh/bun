@@ -4191,7 +4191,7 @@ class Scenes {
           isAName ? `${object}.${name}` : `${object}[${name}]`,
           `${object}?.[key${id}]`,
         ]);
-      // An optional chain can be neither the tag of a template nor, for `bun run`, what `new` constructs.
+      // An optional chain cannot be the tag of a template.
       const call = (member: string) =>
         this.pick([
           `${member}?.(0)`,
@@ -4201,7 +4201,8 @@ class Scenes {
           `${member}(0)`,
           `${member}?.(0)?.x`,
           `${member}?.call(null, 0)`,
-          ...(member.includes("?.") ? [] : [`new (${member})(0)`, `${member}\`t\``]),
+          `new (${member})(0)`,
+          ...(member.includes("?.") ? [] : [`${member}\`t\``]),
         ]);
       this.emit(1, `const key${id}${any} = ${key};`, `const make${id} = ()${any} => (${made});`);
       for (let use = this.pick([1, 2, 2]); use > 0; use--) {

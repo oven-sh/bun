@@ -471,8 +471,7 @@ export const knownToday: Record<string, string> = {
     'each file: the build: 6 | import { real } from "./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"',
   "esbuild/ts: ts/SideEffectsFalseWarningTypeDeclarations":
     'each file: the build: 2 | import"some-ts"; |     ^ | error: TS100151: Could not resolve: "some-ts". Maybe you need to "bun ; |     ^; bundled: code bytes 150 -> 12, operations 8 -> 0',
-  "esbuild/ts: ts/TypeScriptDecorators":
-    "written: the build: 3 |         @new y?.[_ + 'x']() |                   ^ | error: TS1209: Invalid ",
+  "esbuild/ts: ts/TypeScriptDecorators": "each file: code bytes 95281 -> 91753",
   "files are linked: a constant read before its file has run [js]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a constant read before its file has run [ts]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a namespace of another file [ts]": "bundled: operations 15 -> 11",

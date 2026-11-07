@@ -3673,11 +3673,13 @@ pub(crate) mod __gated_printer {
                             return;
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        let parent_ends_chain =
+                            ExprFlag::ForbidCall | ExprFlag::HasNonOptionalChainParent;
+                        if !flags.is_disjoint(parent_ends_chain) {
                             wrap = true;
                             self.print(b"(");
                         }
-                        flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags.remove_all(parent_ends_chain);
                     }
                     flags &= ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall;
 
@@ -3737,11 +3739,13 @@ pub(crate) mod __gated_printer {
                             return;
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        let parent_ends_chain =
+                            ExprFlag::ForbidCall | ExprFlag::HasNonOptionalChainParent;
+                        if !flags.is_disjoint(parent_ends_chain) {
                             wrap = true;
                             self.print(b"(");
                         }
-                        flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags.remove_all(parent_ends_chain);
                     }
 
                     // The index target is not directly followed by `of`.
@@ -4185,7 +4189,7 @@ pub(crate) mod __gated_printer {
                         self.add_source_mapping(expr.loc);
                         // Optional chains are forbidden in template tags
                         // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
+                        let is_optional_chain = match &tag.data {
                             ExprData::EDot(d) => d.optional_chain.is_some(),
                             ExprData::EIndex(i) => i.optional_chain.is_some(),
                             ExprData::ECall(c) => c.optional_chain.is_some(),
@@ -4198,7 +4202,7 @@ pub(crate) mod __gated_printer {
                         } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
                             self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                            self.print_expr(*tag, Level::Postfix, flags & ExprFlag::ForbidCall);
                         }
                     } else {
                         self.add_source_mapping(expr.loc);

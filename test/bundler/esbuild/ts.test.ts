@@ -894,7 +894,7 @@ describe("bundler", () => {
       `,
       "/all_computed.ts": /* ts */ `
         @x?.[_ + 'y']()
-        @new y?.[_ + 'x']()
+        @new y()?.[_ + 'x']()
         export default class Foo {
           @x @y [mUndef()]
           @x @y [mDef()] = 1

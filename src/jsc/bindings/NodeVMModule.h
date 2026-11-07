@@ -3,6 +3,7 @@
 #include "NodeVM.h"
 
 #include "JavaScriptCore/AbstractModuleRecord.h"
+#include "JavaScriptCore/JSCellButterfly.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 
 namespace Bun {
@@ -75,12 +76,16 @@ protected:
     WriteBarrier<Unknown> m_evaluationResult;
     WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
-    WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
+    // One module for each request of the record, by request index. link() makes a new list and never writes to one again.
+    WriteBarrier<JSC::JSCellButterfly> m_linkedModules;
     WriteBarrier<JSC::Exception> m_evaluationException;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 
-    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
+    unsigned linkedModuleCount() const { return m_linkedModules ? m_linkedModules->length() : 0; }
+    NodeVMModule* linkedModule(unsigned index) const { return uncheckedDowncast<NodeVMModule>(m_linkedModules->get(index)); }
+
+    void evaluateDependencies(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

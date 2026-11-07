@@ -333,12 +333,18 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     }
 
     if (length != 0) {
-        const auto& requested = record->requestedModules();
         for (unsigned i = 0; i < length; i++) {
             JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
             JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
+
+            // A getter above can link the record, or fail a link that replaces it. A linked record keeps its modules: isModuleGraphLinked() stops at it.
+            record = m_moduleRecord.get();
+            if (record->status() >= JSC::CyclicModuleRecord::Status::Linked) {
+                m_linkCalled = true;
+                return jsUndefined();
+            }
 
             // getDirectIndex returns an empty JSValue for holes; empty passes
             // isCell() with a null cell, so it must be rejected before any use.
@@ -370,6 +376,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             // (specifier + attributes) so a `with { type: "json" }` /
             // HostDefined import ends up in the right (specifier, type) bucket
             // for innerModuleLinking's typed lookup.
+            const auto& requested = record->requestedModules();
             if (i < requested.size()) [[likely]]
                 record->setImportedModule(globalObject, requested[i], resolvedRecord);
             else
@@ -405,9 +412,9 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     return jsUndefined();
 }
 
-// JSC's record->link() walks the whole dependency graph via innerModuleLinking,
+// JSC's record->link() walks the unlinked records via innerModuleLinking,
 // which calls JSModuleLoader::getImportedModule() for every request of every
-// reachable record and asserts the request is present in that record's
+// such record and asserts the request is present in that record's
 // loadedModules() (populated by setImportedModule() during link()). When a
 // module is linked *and evaluated* from inside the linker callback of a cyclic
 // graph, instantiate() can run while a dependency is still mid-link(): its
@@ -427,6 +434,10 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
 
     while (!worklist.isEmpty()) {
         AbstractModuleRecord* record = worklist.takeLast();
+        // Link() reads no request of these: a record that is not cyclic has none, and innerModuleLinking returns at a linked one.
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (!cyclic || cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked)
+            continue;
         if (!visited.add(record).isNewEntry)
             continue;
 

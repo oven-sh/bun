@@ -165,12 +165,6 @@ impl PrintErr {
         "CSSPrintError"
     }
 }
-impl core::fmt::Display for PrintErr {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("CSS print error")
-    }
-}
-impl core::error::Error for PrintErr {}
 
 /// Return shape used by every `to_css`
 /// path. Distinct from `css_parser::PrintResult<T> = Maybe<T, PrinterError>`,

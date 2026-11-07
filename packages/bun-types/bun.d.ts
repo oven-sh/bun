@@ -11204,7 +11204,13 @@ declare module "bun" {
     httpOnly: boolean;
 
     /**
-     * Returns `true` if the cookie has expired
+     * Returns `true` if the cookie has expired.
+     *
+     * `maxAge` takes precedence over `expires`. A cookie with only `expires` is
+     * expired as soon as the clock behind `Date.now()` reaches `expires`.
+     *
+     * In `bun:test`, `setSystemTime()` and fake timers move that clock. A spy
+     * on `Date.now` does not.
      */
     isExpired(): boolean;
 

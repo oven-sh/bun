@@ -872,7 +872,7 @@ static inline JSC::EncodedJSValue jsCookiePrototypeFunction_isExpiredBody(JSC::J
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
 
-    bool expired = impl.isExpired();
+    bool expired = impl.isExpired(lexicalGlobalObject);
     return JSValue::encode(JSC::jsBoolean(expired));
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, setSystemTime, test } from "bun:test";
 
 describe("Bun.Cookie and Bun.CookieMap", () => {
   // Basic Cookie tests
@@ -103,6 +103,93 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     // A non-positive Max-Age is the "delete this cookie" signal.
     expect(new Bun.Cookie("name", "value", { maxAge: 0 }).isExpired()).toBe(true);
     expect(new Bun.Cookie("name", "value", { maxAge: -1 }).isExpired()).toBe(true);
+  });
+
+  const day = 86_400_000;
+
+  // Every way to give a cookie an Expires attribute.
+  const cookieThatExpiresAt: [string, (expires: Date) => Bun.Cookie][] = [
+    ["options.expires as a Date", expires => new Bun.Cookie("name", "value", { expires })],
+    ["options.expires in seconds", expires => new Bun.Cookie("name", "value", { expires: expires.getTime() / 1000 })],
+    ["options.expires as a string", expires => new Bun.Cookie("name", "value", { expires: expires.toUTCString() })],
+    ["a CookieInit object", expires => new Bun.Cookie({ name: "name", value: "value", expires })],
+    ["a cookie string", expires => new Bun.Cookie(`name=value; Expires=${expires.toUTCString()}`)],
+    ["Cookie.parse()", expires => Bun.Cookie.parse(`name=value; Expires=${expires.toUTCString()}`)],
+    ["Cookie.from()", expires => Bun.Cookie.from("name", "value", { expires })],
+    [
+      "the expires setter",
+      expires => {
+        const cookie = new Bun.Cookie("name", "value");
+        cookie.expires = expires;
+        return cookie;
+      },
+    ],
+    [
+      "maxAge set back to undefined",
+      expires => {
+        const cookie = new Bun.Cookie("name", "value", { maxAge: 3600, expires });
+        cookie.maxAge = undefined;
+        return cookie;
+      },
+    ],
+    ["a subclass", expires => new (class extends Bun.Cookie {})("name", "value", { expires })],
+  ];
+
+  test.each(cookieThatExpiresAt)("Cookie.isExpired() follows setSystemTime() with %s", (_, create) => {
+    const realNow = Date.now();
+    const cookies = [create(new Date(realNow - day)), create(new Date(realNow + day))];
+    const isExpired = () => cookies.map(cookie => cookie.isExpired());
+    try {
+      setSystemTime(realNow - 2 * day);
+      expect(isExpired()).toEqual([false, false]);
+      setSystemTime(realNow + 2 * day);
+      expect(isExpired()).toEqual([true, true]);
+    } finally {
+      setSystemTime();
+    }
+    expect(isExpired()).toEqual([true, false]);
+  });
+
+  test("Cookie.isExpired() is true from the millisecond of `expires` on", () => {
+    // `expires` is in the real future, so only the fake clock can expire the cookie.
+    const expires = Date.now() + day;
+    const cookie = new Bun.Cookie("name", "value", { expires: new Date(expires) });
+    const answers: boolean[] = [];
+    jest.useFakeTimers({ now: expires - 1 });
+    try {
+      answers.push(cookie.isExpired());
+      jest.advanceTimersByTime(1);
+      answers.push(cookie.isExpired());
+      jest.advanceTimersByTime(1);
+      answers.push(cookie.isExpired());
+    } finally {
+      jest.useRealTimers();
+    }
+    expect(answers).toEqual([false, true, true]);
+  });
+
+  test("Cookie.isExpired() under setSystemTime() still gives Max-Age precedence over Expires", () => {
+    const realNow = Date.now();
+    const yesterday = new Date(realNow - day);
+    const tomorrow = new Date(realNow + day);
+    const isExpired = (options?: Bun.CookieInit) => new Bun.Cookie("name", "value", options).isExpired();
+    try {
+      setSystemTime(realNow + 2 * day);
+      expect({
+        expires: isExpired({ expires: tomorrow }),
+        maxAgeAndExpires: isExpired({ maxAge: 3600, expires: tomorrow }),
+        session: isExpired(),
+      }).toEqual({ expires: true, maxAgeAndExpires: false, session: false });
+
+      setSystemTime(realNow - 2 * day);
+      expect({
+        expires: isExpired({ expires: yesterday }),
+        maxAgeAndExpires: isExpired({ maxAge: 0, expires: yesterday }),
+        session: isExpired(),
+      }).toEqual({ expires: false, maxAgeAndExpires: true, session: false });
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("Cookie.parse works with all attributes", () => {

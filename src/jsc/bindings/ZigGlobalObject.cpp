@@ -18,6 +18,8 @@
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/DateConstructor.h"
+#include "JavaScriptCore/DatePrototype.h"
 #include "JavaScriptCore/DeferredWorkTimer.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
@@ -5416,20 +5418,47 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
 
 const JSC::ClassInfo NativeGlobals::s_info = { "NativeGlobals"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NativeGlobals) };
 
+// `@natives.DateNow`, `@natives.DatePrototypeGetTime` (dateFunctions in src/codegen/replacements.ts): the function of that name in JavaScriptCore's own table, made as reifyStaticProperty() makes the public one.
+static JSC::JSFunction* createDateFunction(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName)
+{
+    StringView name = propertyName.publicName();
+    if (!name.startsWith("Date"_s))
+        return nullptr;
+    name = name.substring(4);
+    const JSC::ClassInfo* info = JSC::DateConstructor::info();
+    if (name.startsWith("Prototype"_s)) {
+        info = JSC::DatePrototype::info();
+        name = name.substring(9);
+    }
+    const JSC::HashTable* table = info->staticPropHashTable;
+    RELEASE_ASSERT(table && !name.isEmpty());
+    // `DateUTC` is `UTC`, `DateNow` is `now`.
+    String member = name.toString();
+    const JSC::HashTableValue* entry = table->entry(JSC::Identifier::fromString(vm, member));
+    if (!entry) {
+        member = makeString(toASCIILower(name[0]), name.substring(1));
+        entry = table->entry(JSC::Identifier::fromString(vm, member));
+    }
+    RELEASE_ASSERT(entry);
+    unsigned attributes = entry->attributes();
+    RELEASE_ASSERT(attributes & PropertyAttribute::Function);
+    RELEASE_ASSERT(!(attributes & PropertyAttribute::Builtin) && !(attributes & PropertyAttribute::DOMJITFunction));
+    return JSC::JSFunction::create(vm, globalObject, entry->functionLength(), member, entry->function(), JSC::ImplementationVisibility::Public, entry->intrinsic());
+}
+
 bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObject* lexicalGlobalObject, JSC::PropertyName propertyName, JSC::PropertySlot& slot)
 {
     if (Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot))
         return true;
 
     const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
-    if (!entry)
-        return false;
-
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSC::JSGlobalObject* globalObject = object->globalObject();
     char* fields = std::bit_cast<char*>(globalObject);
     JSValue value;
-    if (entry->attributes() & PropertyAttribute::CellProperty)
+    if (!entry)
+        value = createDateFunction(vm, globalObject, propertyName);
+    else if (entry->attributes() & PropertyAttribute::CellProperty)
         value = std::bit_cast<JSC::LazyCellProperty*>(fields + entry->lazyCellPropertyOffset())->get(globalObject);
     else if (entry->attributes() & PropertyAttribute::ClassStructure)
         value = std::bit_cast<JSC::LazyClassStructure*>(fields + entry->lazyClassStructureOffset())->constructor(globalObject);

@@ -126,11 +126,24 @@ export const nativeFunctions = [
   "queueMicrotask",
 ];
 
+// `$DateNow` becomes `@natives.DateNow`: a copy of the engine's `Date.now`, whatever script has stored on `Date` or `Date.prototype`.
+export const dateFunctions = ["DateNow", "DatePrototypeGetTime", "DatePrototypeToISOString", "DatePrototypeToString"];
+
 /** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
 export function assertNoDestructuredGlobalThis(source: string, file: string) {
   if (/}\s*=\s*globalThis\b/.test(source)) {
     throw new Error(
       `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
+
+/** A built-in module first runs after script, so `const now = Date.now` keeps a mock that is on at that moment. `code` has no comments. */
+export function assertNoCapturedDateFunction(code: string, file: string) {
+  const capture = /\bDate\.now\b(?!\s*\()|\bDate\.prototype\b/.exec(code);
+  if (capture) {
+    throw new Error(
+      `${file}: \`${capture[0]}\` reads what script has stored on Date. Bind the engine's own function to a const (\`const DatePrototypeGetTime = $DatePrototypeGetTime;\`) and call it with \`DatePrototypeGetTime.$call(date)\`. There are ${dateFunctions.map(name => `\`$${name}\``).join(", ")}. Another one has to be a function in JavaScriptCore's table of DateConstructor or DatePrototype, which toUTCString, toGMTString, toTemporalInstant, [Symbol.toPrimitive] and constructor are not: add it to dateFunctions in src/codegen/replacements.ts, to the rows of src/codegen/builtins/host/bun-syntax.builtins.ts and to src/js/builtins.d.ts. For anything else, call the method on the date itself`,
     );
   }
 }
@@ -214,6 +227,10 @@ for (const name of nativeGlobals) {
 
 for (const name of nativeFunctions) {
   define[name] = "__intrinsic__natives." + name;
+}
+
+for (const name of dateFunctions) {
+  define["$" + name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {

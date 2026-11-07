@@ -494,6 +494,12 @@ declare var $Buffer: {
   new (string: string, encoding?: BufferEncoding): Buffer;
 };
 
+/** The engine's own functions, whatever script has stored on `Date` or `Date.prototype`: dateFunctions in src/codegen/replacements.ts. */
+declare const $DateNow: typeof Date.now;
+declare const $DatePrototypeGetTime: typeof Date.prototype.getTime;
+declare const $DatePrototypeToISOString: typeof Date.prototype.toISOString;
+declare const $DatePrototypeToString: typeof Date.prototype.toString;
+
 declare interface Error {
   code?: string;
 }

@@ -5161,3 +5161,75 @@ if (isBun) {
     });
   });
 }
+
+if (isBun) {
+  // A built-in module first runs at its first use, which can be while a spy on Date is on. The test files of a run share the
+  // built-in modules, so the next file meets what the module kept.
+  describe("a later test file prints and times dates as before", () => {
+    const later = `
+      import { expect, test } from "bun:test";
+      import assert from "node:assert";
+      import { format, inspect } from "node:util";
+      import { GCProfiler } from "node:v8";
+
+      test("util.inspect() of a record with a date", () => {
+        expect(inspect({ createdAt: new Date(0) })).toBe("{ createdAt: 1970-01-01T00:00:00.000Z }");
+      });
+      test("util.format('%o') of a date", () => {
+        expect(format("%o", new Date(0))).toBe("1970-01-01T00:00:00.000Z");
+      });
+      test("the message of a failed deepStrictEqual() shows both dates", () => {
+        expect(() => assert.deepStrictEqual({ at: new Date(0) }, { at: new Date(1) })).toThrow("1970-01-01T00:00:00.001Z");
+      });
+      test("v8.GCProfiler reports the time", () => {
+        const profiler = new GCProfiler();
+        profiler.start();
+        expect(profiler.stop().startTime).toBeGreaterThan(1e12);
+      });
+    `;
+    test.concurrent.each([
+      [
+        "jest.spyOn(globalThis, 'Date'), restored after each test",
+        `
+          import { afterEach, expect, jest, test } from "bun:test";
+          import util from "node:util";
+          afterEach(() => {
+            jest.restoreAllMocks();
+          });
+          test("the order is stamped with the fixed date", () => {
+            const fixed = new Date("2020-01-01T00:00:00.000Z");
+            jest.spyOn(globalThis, "Date").mockImplementation(() => fixed);
+            expect(util.format("placed at %s", new Date().toISOString())).toBe("placed at 2020-01-01T00:00:00.000Z");
+          });
+        `,
+      ],
+      [
+        "spyOn(Date, 'now') that no test restores",
+        `
+          import { expect, spyOn, test } from "bun:test";
+          const now = spyOn(Date, "now");
+          test("the profiled code reads the clock", () => {
+            const profiler = new (require("node:v8").GCProfiler)();
+            profiler.start();
+            profiler.stop();
+            expect(Date.now()).toBeGreaterThan(1e12);
+            expect(now).toHaveBeenCalled();
+          });
+        `,
+      ],
+    ])("after %s", async (_, earlier) => {
+      const { bunEnv, bunExe, tempDir } = require("harness");
+      using dir = tempDir("spy-on-date-then-another-file", { "a.test.js": earlier, "b.test.js": later });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 5 pass\n 0 fail\n");
+      expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    });
+  });
+}

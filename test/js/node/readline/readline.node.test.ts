@@ -1,9 +1,10 @@
 // @ts-nocheck
+import { runInBunAndNode, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
 import { PassThrough, Readable, Writable } from "node:stream";
-const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
+const { beforeEach, describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
   CSI,
@@ -2117,5 +2118,42 @@ describe("readline.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
+  });
+
+  // Node.js reads its DateNow primordial between a CR and an LF. The fixture also runs under Node.js when it is installed.
+  it("should join a CR and an LF in two chunks when Date is mocked at the first load of node:readline", async () => {
+    using dir = tempDir("readline-mocked-date", {
+      "fixture.cjs": `
+        const RealDate = Date;
+        const now = Date.now;
+        let calls = 0;
+        let reads = 0;
+        if (process.argv[2] === "Date.now") Date.now = () => (calls++, 1700000000000);
+        else if (process.argv[2] === "mock.timers") require("node:test").mock.timers.enable({ apis: ["Date"] });
+        else Object.defineProperty(globalThis, "Date", { configurable: true, get: () => (reads++, () => calls++) });
+
+        const readline = require("node:readline");
+        const { PassThrough } = require("node:stream");
+        function linesOfSplitCRLF() {
+          const input = new PassThrough();
+          const rl = readline.createInterface({ input, crlfDelay: Infinity });
+          const lines = [];
+          rl.on("line", line => lines.push(line));
+          input.emit("data", "a\\r");
+          input.emit("data", "\\nb\\n");
+          rl.close();
+          return lines;
+        }
+        const whileMocked = linesOfSplitCRLF();
+        if (process.argv[2] === "mock.timers") require("node:test").mock.timers.reset();
+        RealDate.now = now;
+        Object.defineProperty(globalThis, "Date", { configurable: true, writable: true, value: RealDate });
+        console.log(JSON.stringify({ whileMocked, afterRestore: linesOfSplitCRLF(), calls, reads }));
+      `,
+    });
+    // Date.now replaced, the global Date replaced (a getter counts the reads), and the Date mock of node:test.
+    const runs = await runInBunAndNode(String(dir), "fixture.cjs", ["Date.now", "Date", "mock.timers"], "26.3.0");
+    const stdout = `{"whileMocked":["a","b"],"afterRestore":["a","b"],"calls":0,"reads":0}`;
+    expect(runs).toEqual(runs.map(({ exe, arg }) => ({ exe, arg, stdout, stderr: "", exitCode: 0 })));
   });
 });

@@ -9,7 +9,7 @@ const { SafeSet } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
-const DateNow = Date.now;
+const DateNow = $DateNow;
 
 // #handleMethod return marker for inspector-protocol errors: the callback
 // receives the plain `{ code, message }` object (Node delivers protocol

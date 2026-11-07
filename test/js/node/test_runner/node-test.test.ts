@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, runInBunAndNode, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -520,4 +520,41 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+// Node.js checks and reads `now` with its DatePrototypeGetTime primordial. The fixture also runs under Node.js when it is installed.
+test("mock.timers.enable({ now }) takes the time of a Date when Date is mocked at the first load of mock.timers", async () => {
+  using dir = tempDir("node-test-mock-timers-mocked-date", {
+    "fixture.cjs": `
+      const RealDate = Date;
+      const { getTime } = Date.prototype;
+      let calls = 0;
+      let reads = 0;
+      if (process.argv[2] === "Date.prototype.getTime") Date.prototype.getTime = () => (calls++, 42);
+      else Object.defineProperty(globalThis, "Date", { configurable: true, get: () => (reads++, () => calls++) });
+
+      const { mock } = require("node:test");
+      function enable(now) {
+        try {
+          mock.timers.enable({ apis: ["setTimeout"], now });
+          mock.timers.reset();
+          return "enabled";
+        } catch (error) {
+          return error.code;
+        }
+      }
+      const whileMocked = [enable(new RealDate(5000)), enable({})];
+      RealDate.prototype.getTime = getTime;
+      Object.defineProperty(globalThis, "Date", { configurable: true, writable: true, value: RealDate });
+      const afterRestore = [enable(new RealDate(5000)), enable({})];
+      mock.timers.enable({ apis: ["Date"], now: new RealDate(5000) });
+      const now = Date.now();
+      mock.timers.reset();
+      console.log(JSON.stringify({ whileMocked, afterRestore, now, calls, reads }));
+    `,
+  });
+  // Date.prototype.getTime replaced, and the global Date replaced (a getter counts the reads).
+  const runs = await runInBunAndNode(String(dir), "fixture.cjs", ["Date.prototype.getTime", "Date"], "26.3.0");
+  const stdout = `{"whileMocked":["enabled","ERR_INVALID_ARG_TYPE"],"afterRestore":["enabled","ERR_INVALID_ARG_TYPE"],"now":5000,"calls":0,"reads":0}`;
+  expect(runs).toEqual(runs.map(({ exe, arg }) => ({ exe, arg, stdout, stderr: "", exitCode: 0 })));
 });

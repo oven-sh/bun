@@ -31,7 +31,7 @@ const {
 
 const setNewContextsHaveGC = $newCppFunction("NodeVM.cpp", "jsFunctionSetNewContextsHaveGC", 1);
 
-const DateNow = Date.now;
+const DateNow = $DateNow;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const Uint8ArrayCtor = Uint8Array;
 const BufferAllocUnsafe = Buffer.allocUnsafe;

@@ -21,7 +21,7 @@ const ArrayPrototypeSortFn = Array.prototype.sort;
 const ArrayPrototypeSpliceFn = Array.prototype.splice;
 const ArrayPrototypeToSortedFn = Array.prototype.toSorted;
 const ArrayPrototypeUnshiftFn = Array.prototype.unshift;
-const DateNowFn = Date.now;
+const DateNowFn = $DateNow;
 const FunctionPrototypeBindFn = Function.prototype.bind;
 const JSONStringifyFn: (this: JSON, value: unknown, replacer?: null, space?: string | number) => string =
   JSON.stringify;
@@ -90,7 +90,7 @@ export default {
     ArrayPrototypeToSortedFn.$call(a, fn),
   ArrayPrototypeUnshift: <T extends unknown>(a: T[], ...items: T[]): number => ArrayPrototypeUnshiftFn.$apply(a, items),
   Boolean,
-  DateNow: () => DateNowFn.$call(Date),
+  DateNow: DateNowFn,
   Error,
   FunctionPrototypeBind: <This extends unknown, Args extends unknown[], Result>(
     fn: (this: This, ...args: Args) => Result,

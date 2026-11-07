@@ -161,7 +161,23 @@ inline bool isBunDefinedGetter(JSC::JSObject *getter) {
     return JSC::AOT::belongsToBuiltinModule(getter);
 #endif
   auto *function = dynamicDowncast<JSC::JSFunction>(getter);
-  return function && (function->isNonBoundHostFunction() || function->isBuiltinFunction());
+  if (!function)
+    return false;
+  // A function of Bun's is still user code as a getter when user code installed it (`get: process.exit`) or when it wraps a user function (`get: util.deprecate(fn)`, a bound function, an N-API or FFI accessor), so its class and its executable's own name decide, not its visible `name`.
+  WTF::String name;
+  if (function->isHostFunction()) {
+    if (function->classInfo() != JSC::JSFunction::info())
+      return false;
+    name = uncheckedDowncast<JSC::NativeExecutable>(function->executable())->name();
+  } else {
+    JSC::FunctionExecutable *executable = function->jsExecutable();
+    if (!executable->isBuiltinFunction())
+      return false;
+    if (executable->isGetter())
+      return true;
+    name = executable->ecmaName().string();
+  }
+  return name == "get"_s || name.startsWith("get "_s);
 }
 
 // The lazy modules each mirror an object that already exists (the Bun object, process, the Module

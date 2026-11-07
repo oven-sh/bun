@@ -1,0 +1,24 @@
+# handedOver().on("message", 1)
+# Nobody knows the object that the call answers. Native code makes no instance of %EventEmitter% but `process`, and nobody was handed `process`, so the `on` that is found there is not the native one.
+# What hangs on that method in the table (the functions of the channel, and with them node:net, node:dgram and the streams) stays out of the image.
+# listener-method-of-process-is-found-once-process-is-in-unknown-hands.ir is the program that needs it
+# LIBRARY: own
+# RUN: valueflow-why escaped-builtin=Process used-builtin=EventEmitterPrototypeOn
+# CHECK: escaped-builtin=Process
+# CHECK-NEXT: not held
+# CHECK-NEXT: used-builtin=EventEmitterPrototypeOn
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Call v1
+    v3 = PropGet v2 key="on"
+    v4 = String string="message"
+    v5 = Integer integer=1
+    v6 = Call v3, v2, v4, v5
+    Return
+}

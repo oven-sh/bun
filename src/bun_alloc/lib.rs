@@ -33,30 +33,6 @@ impl Alignment {
     }
 }
 
-// ── `max_align_t` alignment ────────────────────────────────────────────────
-// The `libc` crate does not expose `max_align_t` on every target Bun ships
-// (missing on Windows MSVC and on FreeBSD aarch64), so those targets carry a
-// local mirror of `max_align_t`. Remaining non-Windows targets keep
-// `libc::max_align_t` (which carries `long double`, align 16 on x86_64/aarch64;
-// the {f64,i64,*const ()} fallback would silently downgrade to 8).
-#[cfg(windows)]
-#[repr(C)]
-struct MaxAlignT {
-    _f: f64,
-    _i: i64,
-    _p: *const (),
-}
-#[cfg(windows)]
-pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
-// On AArch64
-// AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
-// only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
-// for the aarch64 port.
-#[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
-pub(crate) const MAX_ALIGN_T: usize = 16;
-#[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
-pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
-
 pub struct AllocatorVTable {
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
@@ -177,7 +153,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
@@ -186,8 +161,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   `bun_runtime::allocators`; callers import from
 //   there directly.
 //
-#[path = "MaxHeapAllocator.rs"]
-pub mod max_heap_allocator;
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -255,7 +228,6 @@ pub mod default_alloc {
     }
 }
 
-pub use max_heap_allocator::MaxHeapAllocator;
 pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
@@ -445,13 +417,6 @@ pub fn buf_print_len(
 }
 
 // ── RAII Mutex ────────────────────────────────────────────────────────────
-// The BSS containers below need to hold the lock across `&mut self` method calls, so
-// the returned [`MutexGuard`] deliberately erases its borrow of `self` — it
-// stores the `std::sync::MutexGuard` lifetime-extended to `'static` (lifetimes
-// are erased at codegen, so this is a layout no-op). This is sound because
-// every `Mutex` here lives inside a `'static` BSS singleton (see `instance()`
-// below), so the pointee always outlives the guard.
-//
 // LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
 // futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
 // futex-backed since Rust 1.62) is the dependency-free stand-in.
@@ -461,29 +426,11 @@ impl Mutex {
         Self(std::sync::Mutex::new(()))
     }
     #[inline]
-    pub(crate) fn lock(&self) -> MutexGuard {
-        let g = self
-            .0
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.0
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // SAFETY: lifetime extension only — `std::sync::MutexGuard<'a, ()>` and
-        // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
-        // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
-        // is in fact valid for `'static`.
-        let _guard = unsafe {
-            core::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(
-                g,
-            )
-        };
-        MutexGuard { _guard }
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-}
-
-/// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
-/// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
-#[must_use = "if unused the Mutex will immediately unlock"]
-pub(crate) struct MutexGuard {
-    _guard: std::sync::MutexGuard<'static, ()>,
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
@@ -557,6 +504,27 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         layout: core::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
+        // `mi_realloc` leaves a block where it is while it stays half full, and a list that grew by doubling is always more than half
+        // full: `shrink_to_fit` and `into_boxed_slice` gave nothing back. Whoever shrinks a block keeps it, so it moves to a block of its
+        // size. Of a large block the end was never touched and takes no memory.
+        const LARGEST_BLOCK_MOVED: usize = 64 << 10;
+        if new_size < layout.size()
+            && new_size > 0
+            && layout.size() <= LARGEST_BLOCK_MOVED
+            && layout.align() <= MI_MAX_ALIGN_SIZE
+            // SAFETY: `ptr` is a live mimalloc allocation.
+            && mimalloc::mi_good_size(new_size) < unsafe { mimalloc::mi_usable_size(ptr.cast()) }
+        {
+            let moved: *mut u8 = mimalloc::mi_malloc(new_size).cast();
+            if !moved.is_null() {
+                // SAFETY: both blocks hold `new_size` bytes and are distinct, and `ptr` is not used again.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(ptr, moved, new_size);
+                    mimalloc::mi_free(ptr.cast());
+                }
+                return moved;
+            }
+        }
         // SAFETY: `GlobalAlloc::realloc` contract — `ptr` is a live mimalloc
         // allocation with `layout`; `mi_realloc*` preserves the `min(old, new)` prefix.
         unsafe {
@@ -568,26 +536,6 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         }
         .cast()
     }
-}
-
-/// Resize a mimalloc-owned buffer, taking a raw pointer for callers that
-/// cannot soundly materialize a `&mut [u8]` over their buffer (e.g. it contains
-/// uninitialized or padding bytes). Returns the new base pointer;
-/// `min(old_size, new_size)` prefix bytes are preserved.
-///
-/// # Safety
-/// `ptr` must be a live allocation from the default (mimalloc) allocator with
-/// alignment ≤ `MI_MAX_ALIGN_SIZE`. After return, `ptr` is invalidated.
-pub unsafe fn realloc_raw(
-    ptr: *mut u8,
-    new_size: usize,
-) -> core::result::Result<*mut u8, AllocError> {
-    // SAFETY: caller guarantees `ptr` is a mimalloc-owned block.
-    let new_ptr = unsafe { mimalloc::mi_realloc(ptr.cast(), new_size) };
-    if new_ptr.is_null() {
-        return Err(AllocError);
-    }
-    Ok(new_ptr.cast::<u8>())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -677,16 +625,11 @@ pub fn page_size() -> usize {
 
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
 ///
-/// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
-/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
-/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
-/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
-/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
-/// pre-/post-FFI `ref_count()` loads). `Cell<u32>` is `repr(transparent)` over
-/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
+/// `m_ref_count` and `m_hash_and_flags` are interior-mutable: Rust, C++ and other threads write them behind a `&Self`.
 #[repr(C)]
 pub struct WTFStringImplStruct {
-    pub(crate) m_ref_count: core::cell::Cell<u32>,
+    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:162).
+    pub(crate) m_ref_count: AtomicU32,
     pub(crate) m_length: u32,
     pub m_ptr: WTFStringImplPtr,
     pub(crate) m_hash_and_flags: core::cell::Cell<u32>,
@@ -736,21 +679,12 @@ impl WTFStringImplStruct {
     }
     #[inline]
     pub fn ref_count(&self) -> u32 {
-        self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT
+        self.m_ref_count.load(Ordering::Relaxed) / Self::S_REF_COUNT_INCREMENT
     }
-    /// Atomic view of `m_ref_count`. The C++ field is
-    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:163); we model it as
-    /// `Cell<u32>` for the read-only accessors above but `ref`/`deref` must
-    /// issue real atomic RMWs to match `WTF::StringImpl::ref`/`deref` exactly.
-    /// `Cell<u32>` is `repr(transparent)` over `UnsafeCell<u32>` and
-    /// `AtomicU32` is `repr(C, align(4))` over `UnsafeCell<u32>`: same size,
-    /// same alignment (`m_ref_count` is the first field of a `#[repr(C)]`
-    /// struct so it is 4-aligned), so the in-place reborrow is sound.
     #[inline(always)]
-    fn ref_count_atomic(&self) -> &AtomicU32 {
-        // SAFETY: layout-compatible reborrow of `UnsafeCell<u32>` as
-        // `AtomicU32`; see doc comment above.
-        unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
+    fn is_static(&self) -> bool {
+        let count = self.m_ref_count.load(Ordering::Relaxed);
+        count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
     }
     /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
     ///
@@ -759,10 +693,14 @@ impl WTFStringImplStruct {
     /// binary), so the one-instruction body is reimplemented here.
     /// `Relaxed` matches WebKit's
     /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
+    /// A static string can be in read-only memory, so its count is never written.
     #[inline]
     pub fn r#ref(&self) {
+        if self.is_static() {
+            return;
+        }
         let old = self
-            .ref_count_atomic()
+            .m_ref_count
             .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
         debug_assert!(old > 0); // hasAtLeastOneRef — also true for static (flag bit set)
         debug_assert!(
@@ -775,14 +713,14 @@ impl WTFStringImplStruct {
     ///
     /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
     /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`;
-    /// WTF relies on the static-string flag bit (0x1) to keep static strings'
-    /// counters from ever equalling `s_refCountIncrement`, so no separate
-    /// `isStatic()` check is needed.
+    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`.
     #[inline]
     pub fn deref(&self) {
+        if self.is_static() {
+            return;
+        }
         let old = self
-            .ref_count_atomic()
+            .m_ref_count
             .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
         debug_assert!(old > 0); // hasAtLeastOneRef
         if old != Self::S_REF_COUNT_INCREMENT {
@@ -853,7 +791,7 @@ impl WTFStringImplStruct {
 unsafe extern "C" {
     // `&WTFStringImplStruct` is ABI-identical to the C++ `StringImpl*` (thin
     // non-null pointer to a `#[repr(C)]` struct). C++-side mutation lands in
-    // `m_ref_count` / `m_hash_and_flags`, both `Cell<u32>`, so writes through
+    // `m_ref_count` / `m_hash_and_flags`, both interior-mutable, so writes through
     // a `&`-derived pointer are sound. The type encodes the only validity
     // precondition, so `safe fn` discharges the link-time proof.
     // `ref`/`deref` are inlined in Rust above; only the cold last-ref
@@ -897,22 +835,18 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 }
 
 /// Zeros
-/// `len` bytes at `p` in a way the optimizer cannot elide. Uses bulk
+/// `bytes` in a way the optimizer cannot elide. `fill` on bytes is a bulk
 /// `write_bytes` (lowers to `memset`) instead of a per-byte volatile loop so
 /// debug builds don't pay O(len) iteration overhead — the SSLConfig leak test
 /// secure-zeros ~300 MiB of cert material across 1200 iterations and the
 /// per-byte loop alone took ~3 s in debug. `black_box` on the pointer after
 /// the memset forces the compiler to assume the zeroed region is observed,
 /// preventing dead-store elimination in release builds.
-///
-/// # Safety
-/// `p` must be valid for writes of `len` bytes.
 #[inline]
-pub unsafe fn secure_zero(p: *mut u8, len: usize) {
-    // SAFETY: caller contract.
-    unsafe { core::ptr::write_bytes(p, 0, len) };
-    // Treat `p` as escaped so the preceding stores cannot be eliminated.
-    core::hint::black_box(p);
+pub fn secure_zero(bytes: &mut [u8]) {
+    bytes.fill(0);
+    // Treat the pointer as escaped so the preceding stores cannot be eliminated.
+    core::hint::black_box(bytes.as_mut_ptr());
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
@@ -921,14 +855,8 @@ pub unsafe fn secure_zero(p: *mut u8, len: usize) {
 /// allocator reuses it. Zero it before dropping.
 ///
 /// Uses [`secure_zero`] so the zeroing cannot be elided by the optimizer.
-pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
-    // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
-    // over its storage is sound for `T: Copy` (no drop glue, no invariants on
-    // the bit pattern we're discarding).
-    unsafe {
-        let len = core::mem::size_of_val::<[T]>(&slice);
-        secure_zero(slice.as_mut_ptr().cast::<u8>(), len);
-    }
+pub fn free_sensitive(mut slice: Box<[u8]>) {
+    secure_zero(&mut slice);
     drop(slice);
 }
 
@@ -946,10 +874,13 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     // SAFETY: p is a NUL-terminated `default_alloc::malloc`'d buffer per
     // `dupe_z` contract. An interior NUL truncating `strlen` only shortens the
     // zero pass — the free is still exact (`mi_free`/`libc::free` are
-    // size-agnostic).
+    // size-agnostic). The caller gives the allocation up, so the `&mut [u8]` is exclusive.
     unsafe {
         let len = libc::strlen(p);
-        secure_zero(p.cast::<u8>().cast_mut(), len);
+        secure_zero(core::slice::from_raw_parts_mut(
+            p.cast::<u8>().cast_mut(),
+            len,
+        ));
         crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
     }
 }
@@ -1329,15 +1260,7 @@ macro_rules! get_zone {
     ($name:literal) => {{
         static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
             ::std::sync::OnceLock::new();
-        *ZONE.get_or_init(|| {
-            // SAFETY: concat!($name, "\0") is a valid NUL-terminated string
-            // literal in static memory — valid for process lifetime.
-            unsafe {
-                $crate::heap_breakdown::Zone::init(
-                    concat!($name, "\0").as_ptr().cast::<::core::ffi::c_char>(),
-                )
-            }
-        })
+        *ZONE.get_or_init(|| $crate::heap_breakdown::Zone::init($name))
     }};
 }
 
@@ -1468,10 +1391,9 @@ impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
         debug_assert!((self.used as usize) < COUNT);
         let index = self.used as usize;
         // Raw write — slot may be uninit; no drop glue runs.
-        self.items[index].write(value);
+        let slot = self.items[index].write(value);
         self.used = self.used.wrapping_add(1);
-        // SAFETY: just initialized on the line above.
-        unsafe { self.items[index].assume_init_mut() }
+        slot
     }
 }
 
@@ -1591,13 +1513,6 @@ pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub(crate) backing_buf: [MaybeUninit<ValueType>; COUNT],
 }
 
-// SAFETY: `head` is a self-referential `NonNull` into `self.tail` or a heap block owned by
-// `self`; all mutation goes through `self.mutex`. The raw pointer is the only `!Sync` field;
-// the type is logically a mutex-guarded global singleton.
-unsafe impl<ValueType: Send, const COUNT: usize> Send for BSSList<ValueType, COUNT> {}
-// SAFETY: see the `Send` impl directly above — all access is mutex-serialized.
-unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COUNT> {}
-
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// The per-store overflow-block size is `count / 4`; this shared constant must
@@ -1640,8 +1555,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         if index as usize >= BSS_LIST_CHUNK_SIZE {
             return Err(AllocError);
         }
-        // SAFETY: `index < BSS_LIST_CHUNK_SIZE` checked above.
-        Ok(unsafe { self.data.as_mut_ptr().add(index as usize) })
+        Ok(&raw mut self.data[index as usize])
     }
 }
 
@@ -1718,9 +1632,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with
@@ -1753,8 +1665,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         this: *mut Self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
-        // `&mut *this` formed below does not alias a live guard borrow.
+        // is sound.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: the inner mutex is held, so this call has exclusive access
         // to `*this` (the receiver is raw precisely so nothing exclusive is
@@ -1934,8 +1845,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &A,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
-        // `&mut *this` formed below does not alias a live guard borrow.
+        // is sound.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
@@ -2013,8 +1923,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &A,
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
-        // `&mut *this` formed below does not alias a live guard borrow.
+        // is sound.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
@@ -2258,13 +2167,12 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let _key = Self::key_hash(denormalized_key);
-        // Hold the lock across `at_index` —
+        // Hold the lock across `slot_at` —
         // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
-        // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
-        // so it does not conflict with the `&mut self` borrow in `at_index`.
+        // we dereference `index`.
         let _guard = self.mutex.lock();
         let index = self.index.get(&_key).copied()?;
-        self.at_index(index)
+        Self::slot_at(&mut self.overflow_list, &mut self.backing_buf, index)
     }
 
     pub fn mark_not_found(&mut self, result: Result) {
@@ -2273,16 +2181,25 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
+        Self::slot_at(&mut self.overflow_list, &mut self.backing_buf, index)
+    }
+
+    /// `at_index` on the two fields it reads, for a caller that holds the guard of `mutex`.
+    fn slot_at<'a>(
+        overflow_list: &'a mut OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
+        backing_buf: &'a mut [MaybeUninit<ValueType>; COUNT],
+        index: IndexType,
+    ) -> Option<&'a mut ValueType> {
         if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
             return None;
         }
 
         if index.is_overflow() {
-            Some(self.overflow_list.at_index_mut(index))
+            Some(overflow_list.at_index_mut(index))
         } else {
             // SAFETY: a non-sentinel, non-overflow index was assigned by `put`, which
             // initialized this slot via `.write()`.
-            Some(unsafe { self.backing_buf[index.index() as usize].assume_init_mut() })
+            Some(unsafe { backing_buf[index.index() as usize].assume_init_mut() })
         }
     }
 
@@ -2318,9 +2235,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         } else {
             let idx = result.index.index() as usize;
             // Raw write — fresh slots are uninit; no drop glue runs.
-            self.backing_buf[idx].write(value);
-            // SAFETY: just initialized on the line above.
-            unsafe { self.backing_buf[idx].assume_init_mut() }
+            self.backing_buf[idx].write(value)
         };
         self.index.insert(result.hash, result.index);
         Ok(ret)

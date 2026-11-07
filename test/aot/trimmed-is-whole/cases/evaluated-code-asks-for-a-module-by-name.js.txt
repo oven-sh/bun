@@ -1,0 +1,25 @@
+// Code in a string asks process.getBuiltinModule for a module that the program imports. The program itself never names process.getBuiltinModule.
+import { EventEmitter } from "node:events";
+const name = ["node:", "events"].join("");
+const door = ["process.getBuiltin", "Module"].join("");
+function show(module) { console.log(typeof module, module?.EventEmitter === EventEmitter); }
+//// new-Function
+show(new Function("name", `return ${door}(name)`)(name));
+//// Function-called
+show(Function("name", `return ${door}(name)`)(name));
+//// indirect-eval
+show((0, eval)(door)(name));
+//// direct-eval
+show(eval(`${door}(name)`));
+//// function-constructor-property
+show((() => {}).constructor("name", `return ${door}(name)`)(name));
+//// Reflect-construct
+show(Reflect.construct(Function, ["name", `return ${door}(name)`])(name));
+//// async-function-constructor
+show(await (async () => {}).constructor("name", `return ${door}(name)`)(name));
+//// vm-runInThisContext
+show((await import("node:vm")).runInThisContext(door)(name));
+//// vm-Script
+show(new (await import("node:vm")).Script(door).runInThisContext()(name));
+//// a-module-that-does-not-exist
+show(new Function(`return ${door}("node:nothing")`)());

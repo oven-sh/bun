@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -299,6 +299,19 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
+it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path buffer until it is normalized", () => {
+  using dir = tempDir("resolve-long-specifier", { "index.js": "" });
+  expect(Bun.resolveSync(`${dir}${Buffer.alloc(5000, "/").toString()}index.js`, String(dir))).toBe(
+    join(String(dir), "index.js"),
+  );
+});
+
+it("Bun.resolveSync takes undefined for its third argument", () => {
+  using dir = tempDir("resolve-undefined-esm", { "index.js": "" });
+  // @ts-expect-error
+  expect(Bun.resolveSync("./index.js", String(dir), undefined)).toBe(join(String(dir), "index.js"));
+});
+
 it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
@@ -332,6 +345,15 @@ it.if(isWindows)("directory cache key computation", () => {
   expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+});
+
+// The failed resolution busts the directory cache for the dirname, which for `C:\\\x` is `C:\\`.
+it.if(isWindows)("import() of a missing file at the drive root rejects", async () => {
+  const drive = process.cwd().slice(0, 2);
+  for (const separators of [2, 3, 4]) {
+    await expect(import(drive + "\\".repeat(separators) + "doesnotexist.ts")).rejects.toThrow();
+  }
+  await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
 });
 
 describe("NODE_PATH test", () => {
@@ -734,6 +756,166 @@ describe("package.json exports target percent-encoding", () => {
   });
 });
 
+describe.concurrent("an absolute specifier about as long as a path buffer", () => {
+  const limit = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+  // The parent directory exists, so the resolver goes on to append each extension to the long name.
+  const specifiers = `
+    const root = import.meta.dir + require("node:path").sep;
+    const specifiers = [];
+    for (let length = ${limit} - 16; length <= ${limit} + 4; length++) {
+      for (const suffix of ["", ".js", ".mjs", ".css", "/"]) {
+        specifiers.push(root + Buffer.alloc(length - root.length - suffix.length, "c").toString() + suffix);
+      }
+    }
+  `;
+
+  it("is not found", async () => {
+    using dir = tempDir("resolver-long-absolute-specifier", {
+      "index.js": `
+        ${specifiers}
+        const outcomes = {};
+        for (const specifier of specifiers) {
+          const ways = {
+            "Bun.resolveSync()": () => Bun.resolveSync(specifier, root),
+            "require.resolve()": () => require.resolve(specifier),
+            "require()": () => require(specifier),
+            "import()": () => import(specifier),
+          };
+          for (const [way, resolve] of Object.entries(ways)) {
+            try {
+              await resolve();
+              outcomes[way + " resolved"] = true;
+            } catch (e) {
+              outcomes[way + " " + e.name + " " + e.code] = true;
+            }
+          }
+        }
+        console.log(Object.keys(outcomes).join("\\n"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "Bun.resolveSync() ResolveMessage ERR_MODULE_NOT_FOUND",
+        "require.resolve() ResolveMessage MODULE_NOT_FOUND",
+        "require() ResolveMessage MODULE_NOT_FOUND",
+        "import() ResolveMessage ERR_MODULE_NOT_FOUND",
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is an entry point that Bun.build() does not find", async () => {
+    using dir = tempDir("resolver-long-absolute-entry-point", {
+      "index.js": `
+        ${specifiers}
+        const { success, logs } = await Bun.build({ entrypoints: specifiers, throw: false });
+        const notFound = specifiers.filter(specifier =>
+          logs.some(log => log.message === 'ModuleNotFound resolving "' + specifier + '" (entry point)'),
+        );
+        console.log(success, notFound.length === specifiers.length);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "false true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is not found when it comes from appending a require.extensions key that long", async () => {
+    using dir = tempDir("resolver-long-extension", {
+      "directory/other.js": "",
+      "index.js": `
+        require.extensions["." + Buffer.alloc(${limit}, "x")] = require.extensions[".js"];
+        for (const specifier of ["./missing", "./directory"]) {
+          try {
+            require(specifier);
+            console.log(specifier, "resolved");
+          } catch (e) {
+            console.log(specifier, e.name, e.code);
+          }
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "./missing ResolveMessage MODULE_NOT_FOUND\n./directory ResolveMessage MODULE_NOT_FOUND\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.skipIf(isWindows)(
+    "is not found either when it is a directory whose index.js path is longer than the buffer",
+    async () => {
+      using dir = tempDir("resolver-long-directory", {
+        "index.js": `
+        const { mkdirSync, writeFileSync } = require("node:fs");
+        const outcomes = {};
+        for (let length = ${limit} - "index.js".length; length < ${limit} - 1; length++) {
+          let directory = import.meta.dir + "/" + length;
+          while (directory.length < length) {
+            directory += "/" + Buffer.alloc(Math.min(200, length - directory.length - 1), "c");
+          }
+          mkdirSync(directory, { recursive: true });
+          // No system call takes the path of this file.
+          process.chdir(directory);
+          writeFileSync("index.js", "");
+          process.chdir(import.meta.dir);
+          for (const suffix of ["", "/", "/index", "/index.js"]) {
+            try {
+              Bun.resolveSync(directory + suffix, import.meta.dir);
+              outcomes["resolved"] = true;
+            } catch (e) {
+              outcomes[e.name + " " + e.code] = true;
+            }
+          }
+        }
+        console.log(Object.keys(outcomes).join("\\n"));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "ResolveMessage ERR_MODULE_NOT_FOUND\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 describe("package.json exports targets longer than the maximum path length", () => {
   it.concurrent("reports a resolution error for an oversized string exports target", async () => {
     using dir = tempDir("resolver-exports-long-target", {
@@ -841,6 +1023,81 @@ describe("package.json exports targets longer than the maximum path length", () 
   );
 });
 
+describe("package.json sideEffects entries longer than the maximum path length", () => {
+  // Parsing a package.json joins every "sideEffects" entry onto the package directory.
+  const longSegment = Buffer.alloc(100_000, "s").toString();
+
+  it.concurrent.each([
+    ["exact", [`./${longSegment}.js`]],
+    ["glob", [`./${longSegment}/*.js`]],
+    ["mixed", ["./index.js", `./${longSegment}.js`, `./${longSegment}/*.js`]],
+  ])("requires a package whose sideEffects array has an oversized %s entry", async (_kind, sideEffects) => {
+    using dir = tempDir("resolver-side-effects-long-entry", {
+      "node_modules/long-side-effects/package.json": JSON.stringify({
+        name: "long-side-effects",
+        main: "index.js",
+        sideEffects,
+      }),
+      "node_modules/long-side-effects/index.js": "module.exports = 3;\n",
+      "index.js": `console.log(require("long-side-effects"));\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// The resolver uses more stack per nesting level of an `exports` target than the JSON parser does.
+describe("package.json exports targets nested too deeply", () => {
+  const targets = {
+    array: Buffer.alloc(40000, "[").toString() + '"./t.js"' + Buffer.alloc(40000, "]").toString(),
+    conditions:
+      Array.from({ length: 30000 }, (_, i) => (i % 2 ? '{"node":' : '{"default":')).join("") +
+      '"./t.js"' +
+      Buffer.alloc(30000, "}").toString(),
+  };
+
+  it.concurrent.each(Object.entries(targets))("nested %s doesn't overflow the stack", async (shape, target) => {
+    using dir = tempDir(`resolver-exports-deep-${shape}`, {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": `{"name":"test-pkg","exports":{".":${target}}}`,
+      "node_modules/test-pkg/t.js": "module.exports = 1;\n",
+      "index.js": `
+        try {
+          require.resolve("test-pkg");
+          console.log("resolved");
+        } catch (e) {
+          console.log("caught " + e.code);
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The target resolves if the stack is large enough.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^(caught MODULE_NOT_FOUND|resolved)\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A package.json `imports` entry whose value is a bare package specifier
 // (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
 // for a second pass. Per the Node.js packages spec these are URL-like
@@ -899,6 +1156,141 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   });
 });
 
+// A symlink in node_modules whose target no longer exists (for example an
+// optional dependency that was removed after its install script failed) is
+// not a module. Like Node, the resolver treats it as if the entry did not
+// exist and keeps looking, instead of resolving to it and failing to read it.
+describe("dangling symlinks in node_modules", () => {
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+      return "resolved";
+    } catch (e: any) {
+      return { name: e.name, code: e.code };
+    }
+  };
+
+  it.concurrent("are reported as a missing module", async () => {
+    using dir = tempDir("resolver-dangling-node-modules-link", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/.keep": "",
+      "index.js": `
+        const codes = { require: null, import: null, resolve: null };
+        try {
+          require("dangling-pkg");
+        } catch (e) {
+          codes.require = e.code;
+        }
+        try {
+          require.resolve("dangling-pkg");
+        } catch (e) {
+          codes.resolve = e.code;
+        }
+        try {
+          await import("dangling-pkg");
+        } catch (e) {
+          codes.import = e.code;
+        }
+        console.log(JSON.stringify(codes));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync(join("..", "does-not-exist"), join(root, "node_modules", "dangling-pkg"));
+
+    expect(codeOf(() => Bun.resolveSync("dangling-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      require: "MODULE_NOT_FOUND",
+      resolve: "MODULE_NOT_FOUND",
+      import: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("are reported as a missing module when a package.json exports target points at one", async () => {
+    using dir = tempDir("resolver-dangling-exports-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/exports-pkg/package.json": JSON.stringify({
+        name: "exports-pkg",
+        version: "1.0.0",
+        exports: { ".": "./index.js", "./sub": "./sub.js" },
+      }),
+      "node_modules/exports-pkg/sub.js": `module.exports = "sub";`,
+      "index.js": `
+        try {
+          require("exports-pkg");
+        } catch (e) {
+          console.log(e.code);
+        }
+        console.log(require("exports-pkg/sub"));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync("removed.js", join(root, "node_modules", "exports-pkg", "index.js"));
+
+    expect(codeOf(() => Bun.resolveSync("exports-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(Bun.resolveSync("exports-pkg/sub", root)).toBe(join(root, "node_modules", "exports-pkg", "sub.js"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("MODULE_NOT_FOUND\nsub\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("do not shadow the same package in a parent node_modules", async () => {
+    using dir = tempDir("resolver-dangling-node-modules-link-shadow", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/shadowed-pkg/package.json": JSON.stringify({ name: "shadowed-pkg", version: "1.0.0" }),
+      "node_modules/shadowed-pkg/index.js": `module.exports = "from the parent node_modules";`,
+      "app/node_modules/.keep": "",
+      "app/index.js": `console.log(require("shadowed-pkg"));`,
+    });
+    const root = String(dir);
+    symlinkSync(join("..", "..", "removed-pkg"), join(root, "app", "node_modules", "shadowed-pkg"));
+
+    expect(Bun.resolveSync("shadowed-pkg", join(root, "app"))).toBe(
+      join(root, "node_modules", "shadowed-pkg", "index.js"),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: join(root, "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from the parent node_modules\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after
@@ -908,7 +1300,6 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   // Root bypasses DAC, so chmod 0 won't yield EACCES. When running as root on
   // Linux we drop to `nobody` via runuser (and chown the temp dir so the
   // fixture can chmod it back). Otherwise we run the fixture directly.
-  const isRoot = !isWindows && process.getuid?.() === 0;
   const nobody = (() => {
     try {
       // /etc/passwd format: name:x:uid:gid:gecos:home:shell
@@ -1801,6 +2192,43 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("does not find a file whose folder fits a path buffer and whose own path does not", async () => {
+  using dir = tempDir("resolver-deep-folder", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+      fs.mkdirSync("pages");
+      process.chdir("pages");
+      const root = process.cwd();
+      let folder = root;
+      for (let rest = ${isMacOS ? 1024 : 4096} - 4 - root.length; rest > 0; ) {
+        const name = Buffer.alloc((rest > 201 ? 100 : rest) - 1, "d").toString();
+        fs.mkdirSync(name);
+        process.chdir(name);
+        folder += "/" + name;
+        rest -= name.length + 1;
+      }
+      fs.writeFileSync("index.js", "");
+      for (const load of [
+        () => require(folder + "/index.js"),
+        () => require(folder),
+        () => new Bun.FileSystemRouter({ dir: root, style: "nextjs" }),
+      ]) {
+        try { load(); console.log("loaded"); } catch (e) { console.log(e.code ?? e.message.slice(0, 27)); }
+      }`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("MODULE_NOT_FOUND\nMODULE_NOT_FOUND\nENAMETOOLONG opening route:\n");
   expect(exitCode).toBe(0);
 });
 

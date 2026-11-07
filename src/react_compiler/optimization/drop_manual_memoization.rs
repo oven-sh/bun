@@ -12,10 +12,7 @@
 //!
 //! Analogous to TS `Inference/DropManualMemoization.ts`.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
@@ -62,17 +59,17 @@ struct ManualMemoCallee {
 
 struct IdentifierSidemap {
     /// Maps identifier id -> InstructionId of FunctionExpression instructions
-    functions: HashSet<IdentifierId>,
+    functions: IdBitSet<IdentifierId>,
     /// Maps identifier id -> ManualMemoCallee for useMemo/useCallback callees
     manual_memos: IdMap<IdentifierId, ManualMemoCallee>,
     /// Set of identifier ids that loaded 'React' global
-    react: HashSet<IdentifierId>,
+    react: IdBitSet<IdentifierId>,
     /// Maps identifier id -> deps list info for array expressions
     maybe_deps_lists: IdMap<IdentifierId, MaybeDepsListInfo>,
     /// Maps identifier id -> ManualMemoDependency for dependency tracking
-    maybe_deps: HashMap<IdentifierId, ManualMemoDependency>,
+    maybe_deps: IdMap<IdentifierId, ManualMemoDependency>,
     /// Set of identifier ids that are results of optional chains
-    optionals: HashSet<IdentifierId>,
+    optionals: IdBitSet<IdentifierId>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,11 +99,15 @@ pub(crate) fn drop_manual_memoization(
         || env.enable_preserve_existing_memoization_guarantees;
 
     let optionals = find_optional_places(func)?;
+    let may_have_manual_memo = may_have_manual_memo(func);
+    if !may_have_manual_memo && !cfg!(debug_assertions) {
+        return Ok(());
+    }
     let mut sidemap = IdentifierSidemap {
-        functions: HashSet::new(),
+        functions: IdBitSet::default(),
         manual_memos: IdMap::new(),
-        react: HashSet::new(),
-        maybe_deps: HashMap::new(),
+        react: IdBitSet::default(),
+        maybe_deps: IdMap::new(),
         maybe_deps_lists: IdMap::new(),
         optionals,
     };
@@ -119,18 +120,10 @@ pub(crate) fn drop_manual_memoization(
     // queued_inserts maps InstructionId -> new Instruction to insert after that instruction
     let mut queued_inserts: IdMap<InstructionId, Instruction> = IdMap::new();
 
-    // Collect all block instruction lists up front to avoid borrowing func immutably
-    // while needing to mutate it
-    let all_block_instructions: Vec<HirVec<InstructionId>> = func
-        .body
-        .blocks
-        .values()
-        .map(|block| block.instructions.clone())
-        .collect();
-
-    for block_instructions in &all_block_instructions {
-        for &instr_id in block_instructions {
-            let instr = &func.instructions[instr_id.0 as usize];
+    let instructions = &mut func.instructions;
+    for block in func.body.blocks.values() {
+        for &instr_id in &block.instructions {
+            let instr = &instructions[instr_id.0 as usize];
 
             // Extract the identifier we need to look up, and whether it's a call/method
             let lookup_id = match &instr.value {
@@ -143,7 +136,7 @@ pub(crate) fn drop_manual_memoization(
 
             if let Some(manual_memo) = manual_memo {
                 process_manual_memo_call(
-                    func,
+                    instructions,
                     env,
                     instr_id,
                     &manual_memo,
@@ -153,10 +146,11 @@ pub(crate) fn drop_manual_memoization(
                     &mut queued_inserts,
                 );
             } else {
-                collect_temporaries(func, env, instr_id, &mut sidemap);
+                collect_temporaries(instr, env, instr_id, &mut sidemap);
             }
         }
     }
+    debug_assert!(may_have_manual_memo || sidemap.manual_memos.is_empty());
 
     // Phase 2: Insert manual memoization markers as needed
     if !queued_inserts.is_empty() {
@@ -165,7 +159,7 @@ pub(crate) fn drop_manual_memoization(
             let mut next_instructions: Option<HirVec<InstructionId>> = None;
             for i in 0..block.instructions.len() {
                 let instr_id = block.instructions[i];
-                if let Some(insert_instr) = queued_inserts.remove(instr_id) {
+                if let Some(insert_instr) = queued_inserts.swap_remove(instr_id) {
                     if next_instructions.is_none() {
                         next_instructions =
                             Some(AstAlloc::vec_from_slice(&block.instructions[..i]));
@@ -200,7 +194,7 @@ pub(crate) fn drop_manual_memoization(
 
 #[allow(clippy::too_many_arguments)]
 fn process_manual_memo_call(
-    func: &mut HirFunction,
+    instructions: &mut [Instruction],
     env: &mut Environment,
     instr_id: InstructionId,
     manual_memo: &ManualMemoCallee,
@@ -209,7 +203,7 @@ fn process_manual_memo_call(
     next_manual_memo_id: &mut u32,
     queued_inserts: &mut IdMap<InstructionId, Instruction>,
 ) {
-    let instr = &func.instructions[instr_id.0 as usize];
+    let instr = &instructions[instr_id.0 as usize];
 
     let memo_details = extract_manual_memoization_args(instr, manual_memo.kind, sidemap, env);
 
@@ -223,15 +217,15 @@ fn process_manual_memo_call(
         deps_loc,
     } = memo_details;
 
-    let loc = func.instructions[instr_id.0 as usize].value.loc().cloned();
+    let loc = instructions[instr_id.0 as usize].value.loc().cloned();
 
     // Replace the instruction value with the memoization replacement
     let replacement = get_manual_memoization_replacement(&fn_place, loc.clone(), manual_memo.kind);
-    func.instructions[instr_id.0 as usize].value = replacement;
+    instructions[instr_id.0 as usize].value = replacement;
 
     if is_validation_enabled {
         // Bail out when we encounter manual memoization without inline function expressions
-        if !sidemap.functions.contains(&fn_place.identifier) {
+        if !sidemap.functions.contains(fn_place.identifier) {
             let mut diag = CompilerDiagnostic::new(
                 ErrorCategory::UseMemo,
                 "Expected the first argument to be an inline function expression",
@@ -251,7 +245,7 @@ fn process_manual_memo_call(
         }
 
         let memo_decl: Place = if manual_memo.kind == ManualMemoKind::UseMemo {
-            func.instructions[instr_id.0 as usize].lvalue.clone()
+            instructions[instr_id.0 as usize].lvalue.clone()
         } else {
             Place {
                 identifier: fn_place.identifier,
@@ -278,13 +272,32 @@ fn process_manual_memo_call(
     }
 }
 
+/// Whether anything in the function can be taken for `useMemo` or `useCallback` by `collect_temporaries`.
+/// All else that it collects is read only at a call of one of them.
+fn may_have_manual_memo(func: &HirFunction) -> bool {
+    let is_manual_memo = |name: &[u8]| name == b"useMemo" || name == b"useCallback";
+    func.body.blocks.values().any(|block| {
+        block.instructions.iter().any(|instr_id| {
+            match &func.instructions[instr_id.0 as usize].value {
+                InstructionValue::LoadGlobal { binding, .. } => {
+                    get_hook_detection_name(binding).is_some_and(is_manual_memo)
+                }
+                InstructionValue::PropertyLoad {
+                    property: PropertyLiteral::String(name),
+                    ..
+                } => is_manual_memo(name.slice()),
+                _ => false,
+            }
+        })
+    })
+}
+
 fn collect_temporaries(
-    func: &HirFunction,
+    instr: &Instruction,
     env: &Environment,
     instr_id: InstructionId,
     sidemap: &mut IdentifierSidemap,
 ) {
-    let instr = &func.instructions[instr_id.0 as usize];
     let lvalue_id = instr.lvalue.identifier;
 
     match &instr.value {
@@ -315,14 +328,14 @@ fn collect_temporaries(
                     detected = true;
                 }
             }
-            if !detected && is_react_namespace_binding(binding) {
+            if !detected && is_react_namespace_binding(binding, env) {
                 sidemap.react.insert(lvalue_id);
             }
         }
         InstructionValue::PropertyLoad {
             object, property, ..
         } => {
-            if sidemap.react.contains(&object.identifier) {
+            if sidemap.react.contains(object.identifier) {
                 if let PropertyLiteral::String(prop_name) = property {
                     if prop_name == b"useMemo" {
                         sidemap.manual_memos.insert(
@@ -367,7 +380,7 @@ fn collect_temporaries(
         _ => {}
     }
 
-    let is_optional = sidemap.optionals.contains(&lvalue_id);
+    let is_optional = sidemap.optionals.contains(lvalue_id);
     let maybe_dep =
         collect_maybe_memo_dependencies(&instr.value, &sidemap.maybe_deps, is_optional, env);
     if let Some(dep) = maybe_dep {
@@ -391,7 +404,7 @@ fn collect_temporaries(
 /// Returns the variable + property reads represented by the instruction value.
 pub(crate) fn collect_maybe_memo_dependencies(
     value: &InstructionValue,
-    maybe_deps: &HashMap<IdentifierId, ManualMemoDependency>,
+    maybe_deps: &IdMap<IdentifierId, ManualMemoDependency>,
     optional: bool,
     env: &Environment,
 ) -> Option<ManualMemoDependency> {
@@ -409,7 +422,7 @@ pub(crate) fn collect_maybe_memo_dependencies(
             loc,
             ..
         } => {
-            if let Some(object_dep) = maybe_deps.get(&object.identifier) {
+            if let Some(object_dep) = maybe_deps.get(object.identifier) {
                 Some(ManualMemoDependency {
                     root: object_dep.root.clone(),
                     path: {
@@ -428,7 +441,7 @@ pub(crate) fn collect_maybe_memo_dependencies(
             }
         }
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
-            if let Some(source) = maybe_deps.get(&place.identifier) {
+            if let Some(source) = maybe_deps.get(place.identifier) {
                 Some(source.clone())
             } else if matches!(
                 &env.identifiers[place.identifier.0 as usize].name,
@@ -454,7 +467,7 @@ pub(crate) fn collect_maybe_memo_dependencies(
             // source depslists
             let lvalue_id = lvalue.place.identifier;
             let rvalue_id = val.identifier;
-            if let Some(aliased) = maybe_deps.get(&rvalue_id) {
+            if let Some(aliased) = maybe_deps.get(rvalue_id) {
                 let lvalue_name = &env.identifiers[lvalue_id.0 as usize].name;
                 if !matches!(lvalue_name, Some(IdentifierName::Named(_))) {
                     // Note: we can't insert into maybe_deps here since we only have
@@ -624,7 +637,7 @@ fn extract_manual_memoization_args(
     let deps_info = maybe_deps_list.unwrap();
     let mut deps_list: HirVec<ManualMemoDependency> = AstAlloc::vec();
     for dep in &deps_info.deps {
-        let maybe_dep = sidemap.maybe_deps.get(&dep.identifier);
+        let maybe_dep = sidemap.maybe_deps.get(dep.identifier);
         if let Some(d) = maybe_dep {
             deps_list.push(d.clone());
         } else {
@@ -654,10 +667,10 @@ fn extract_manual_memoization_args(
 // findOptionalPlaces
 // =============================================================================
 
-fn find_optional_places(func: &HirFunction) -> Result<HashSet<IdentifierId>, CompilerDiagnostic> {
+fn find_optional_places(func: &HirFunction) -> Result<IdBitSet<IdentifierId>, CompilerDiagnostic> {
     use crate::hir::Terminal;
 
-    let mut optionals = HashSet::new();
+    let mut optionals = IdBitSet::default();
     for block in func.body.blocks.values() {
         if let Terminal::Optional {
             optional: true,
@@ -730,10 +743,14 @@ fn is_known_react_module(module: &[u8]) -> bool {
 /// `PropertyLoad` of `useMemo`/`useCallback` should be treated as a manual-memo
 /// callee). Matches upstream's `binding.name === 'React'` check plus
 /// namespace/default imports from a known React module.
-fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
+fn is_react_namespace_binding(binding: &NonLocalBinding, env: &Environment) -> bool {
     match binding.kind {
         NonLocalKind::ImportNamespace { module, .. }
-        | NonLocalKind::ImportDefault { module, .. } => is_known_react_module(module.slice()),
+        | NonLocalKind::ImportDefault { module, .. }
+            if env.config.react_is_known_by_its_module =>
+        {
+            is_known_react_module(module.slice())
+        }
         _ => binding.name() == b"React",
     }
 }
@@ -745,12 +762,8 @@ fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
 /// - `ImportSpecifier` from known React module: use the `imported` name
 /// - `ImportSpecifier` from unknown module: return None (TS returns a generic
 ///   custom hook type with hookKind 'Custom', not 'useMemo'/'useCallback')
-/// - `ModuleLocal`: use the binding name. Bun's `resolve_identifier` currently
-///   classifies named/namespace imports as `ModuleLocal` whenever the symbol's
-///   `namespace_alias` is unset (the common case under `bun build`), so the
-///   module/imported pair is not available here; falling back to the local
-///   name matches upstream's `globals.get(name)` lookup for the un-aliased
-///   case and for bundler-flattened `React.useMemo` accesses.
+/// - `ModuleLocal`: return None (the module's own declaration, whatever its name: TS
+///   returns the custom hook type)
 /// - `ImportDefault`/`ImportNamespace` from known React module: use the local name
 /// - `ImportDefault`/`ImportNamespace` from unknown module: return None
 fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
@@ -773,7 +786,6 @@ fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
                 None
             }
         }
-        NonLocalKind::ModuleLocal { name } => Some(name.slice()),
-        NonLocalKind::BunOpaque(_) => None,
+        NonLocalKind::ModuleLocal { .. } | NonLocalKind::BunOpaque(_) => None,
     }
 }

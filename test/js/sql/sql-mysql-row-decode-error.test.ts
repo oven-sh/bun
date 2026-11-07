@@ -12,7 +12,7 @@
 // rejected with that one query's error.
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isCI, isDockerEnabled } from "harness";
+import { describeWithContainer } from "harness";
 import {
   MYSQL_SERVER_MORE_RESULTS_EXISTS,
   MYSQL_SERVER_STATUS_AUTOCOMMIT,
@@ -196,7 +196,7 @@ describe.concurrent("mysql mock", () => {
     const mock = await mockServer({
       "call bad()": [
         mysqlBinaryResultSet(1, date, [[undecodableDate]], moreResults),
-        response(false, [["leftover", 777]]),
+        mysqlBinaryResultSet(5, [{ name: "leftover", type: MYSQL_TYPE_LONG }], [[mysqlBinaryLong(777)]]),
       ],
       "select 3 as n": numberRow(3),
       "select 4 as n": numberRow(4),
@@ -312,43 +312,37 @@ describe.concurrent("mysql mock", () => {
 // MariaDB has no JSON type. A JSON column is LONGTEXT with a JSON_VALID check
 // constraint, and JSON_VALID accepts escapes that JSON.parse refuses. So a
 // healthy MariaDB with default settings can send a JSON column that this client
-// cannot parse. The gate on the container is the one in sql-mariadb-json.test.ts.
-const mariadbProvided =
-  !!process.env.BUN_TEST_SERVICE_mariadb_plain || !!process.env.BUN_DOCKER_COORDINATOR || (isCI && isDockerEnabled());
-if (!mariadbProvided) {
-  describe.todo("mariadb");
-} else {
-  describeWithContainer("mariadb", { image: "mariadb_plain" }, container => {
-    test("a JSON column that JSON.parse refuses rejects only the query that reads it", async () => {
-      await container.ready;
-      await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
-      const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-      await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT, doc JSON)`;
-      for (const [id, doc] of ['{"a":1}', `{"name":"O\\'Brien"}`, '{"b":2}'].entries()) {
-        await sql`INSERT INTO ${sql(table)} VALUES (${id + 1}, ${doc})`;
-      }
-      const refused = { name: "SyntaxError", message: "JSON Parse error: Invalid escape character '" };
+// cannot parse.
+describeWithContainer("mariadb", { image: "mariadb_plain" }, container => {
+  test("a JSON column that JSON.parse refuses rejects only the query that reads it", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+    const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+    await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT, doc JSON)`;
+    for (const [id, doc] of ['{"a":1}', `{"name":"O\\'Brien"}`, '{"b":2}'].entries()) {
+      await sql`INSERT INTO ${sql(table)} VALUES (${id + 1}, ${doc})`;
+    }
+    const refused = { name: "SyntaxError", message: "JSON Parse error: Invalid escape character '" };
 
-      // One statement text. After this first run it is prepared, so the three
-      // executions below are all written before the first reply arrives.
-      const from = (id: number) => sql`SELECT id, doc FROM ${sql(table)} WHERE id >= ${id} ORDER BY id`;
-      await from(3);
-      expect(await settle([from(3), from(1), from(3)])).toEqual([
-        [{ id: 3, doc: { b: 2 } }],
-        refused,
-        [{ id: 3, doc: { b: 2 } }],
-      ]);
+    // One statement text. After this first run it is prepared, so the three
+    // executions below are all written before the first reply arrives.
+    const from = (id: number) => sql`SELECT id, doc FROM ${sql(table)} WHERE id >= ${id} ORDER BY id`;
+    await from(3);
+    expect(await settle([from(3), from(1), from(3)])).toEqual([
+      [{ id: 3, doc: { b: 2 } }],
+      refused,
+      [{ id: 3, doc: { b: 2 } }],
+    ]);
 
-      // The same over the text protocol, where nothing is pipelined.
-      expect(
-        await settle([
-          sql`SELECT id, doc FROM ${sql(table)} ORDER BY id`.simple(),
-          sql`SELECT id, doc FROM ${sql(table)} WHERE id = 3`.simple(),
-        ]),
-      ).toEqual([refused, [{ id: 3, doc: { b: 2 } }]]);
+    // The same over the text protocol, where nothing is pipelined.
+    expect(
+      await settle([
+        sql`SELECT id, doc FROM ${sql(table)} ORDER BY id`.simple(),
+        sql`SELECT id, doc FROM ${sql(table)} WHERE id = 3`.simple(),
+      ]),
+    ).toEqual([refused, [{ id: 3, doc: { b: 2 } }]]);
 
-      // A temporary table lives and dies with its connection.
-      expect([...(await from(3))]).toEqual([{ id: 3, doc: { b: 2 } }]);
-    });
+    // A temporary table lives and dies with its connection.
+    expect([...(await from(3))]).toEqual([{ id: 3, doc: { b: 2 } }]);
   });
-}
+});

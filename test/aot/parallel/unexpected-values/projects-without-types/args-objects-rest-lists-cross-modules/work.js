@@ -1,0 +1,14 @@
+exports.size = function (list) { return list.length; };
+exports.first = function (list) { return list[0]; };
+exports.total = function (list) { var sum = 0; for (var i = 0; i < list.length; i++) sum += list[i]; return sum; };
+exports.walked = function (list) { var sum = 0; for (var item of list) sum += item; return sum; };
+exports.mapped = function (list) { return list.map(function (item) { return item * 2; }); };
+exports.borrowedMap = function (list) { return Array.prototype.map.call(list, function (item) { return item * 2; }); };
+exports.spread = function (list) { return Math.max(...list); };
+exports.applied = function (list) { return Math.max.apply(null, list); };
+exports.isList = function (list) { return Array.isArray(list); };
+exports.tag = function (list) { return Object.prototype.toString.call(list); };
+exports.stored = function (list) { list[0] = 100; return list[0]; };
+exports.grown = function (list) { list[list.length] = 7; return list.length; };
+exports.callee = function (list) { return typeof list.callee; };
+exports.keys = function (list) { return Reflect.ownKeys(list).map(String).join(); };

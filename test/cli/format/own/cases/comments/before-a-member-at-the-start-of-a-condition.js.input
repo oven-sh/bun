@@ -1,0 +1,9 @@
+x = a
+// c
+.b ? c.d : e.a;
+a
+// c
+.b ? c.d : e.a;
+f(a
+// c
+.b.c + d);

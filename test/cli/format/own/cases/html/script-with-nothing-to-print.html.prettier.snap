@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+<script>
+
+</script>
+<script lang="ts">
+
+</script>
+<script>
+  <!--
+
+  -->
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script>
+
+</script>
+<script lang="ts">
+
+</script>
+<script>
+  <!--
+
+  -->
+</script>
+
+===================== End =====================

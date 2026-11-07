@@ -361,7 +361,7 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
         await uploading.promise;
         controller.abort(reason);
       }
-      await expect(upload).rejects.toBe(reason);
+      expect(await settle(upload)).toBe(reason);
     },
   );
 

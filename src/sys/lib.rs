@@ -8539,9 +8539,6 @@ pub mod elf {
         /// `dlpi_addr` — link-map base address (subtract from the lookup address
         /// to get an image-relative offset).
         pub base_address: usize,
-        /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
-        /// as Android does for the main program).
-        pub name: Box<[u8]>,
         /// End address (exclusive) of the `PT_LOAD` segment that contains the lookup address.
         pub segment_end: usize,
         /// `dlpi_phdr` — `program_header_count` headers, mapped until the object is unloaded.
@@ -8555,27 +8552,52 @@ pub mod elf {
     /// depend on how a libc names or orders the main program).
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
+        find_loaded_module_under_lock(address, |_| ())
+    }
+
+    /// [`find_loaded_module`], with a copy of the loader's name for the object: nothing for the main program with glibc.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub fn find_loaded_module_and_name(address: usize) -> Option<(LoadedModule, Box<[u8]>)> {
+        let mut name = Box::default();
+        let module = find_loaded_module_under_lock(address, |info| {
+            // Android's libc has NULL for the main program.
+            if !info.dlpi_name.is_null() {
+                // SAFETY: a NUL-terminated string, which the loader frees only when it unloads the object.
+                name = Box::from(unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }.to_bytes());
+            }
+        })?;
+        Some((module, name))
+    }
+
+    /// `found` sees the object while the loader still holds its lock, so the object cannot be unloaded under it.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    fn find_loaded_module_under_lock<F: FnMut(&libc::dl_phdr_info)>(
+        address: usize,
+        found: F,
+    ) -> Option<LoadedModule> {
         use core::ffi::{c_int, c_void};
 
-        struct Ctx {
+        struct Ctx<F> {
             address: usize,
             result: Option<LoadedModule>,
+            found: F,
         }
         let mut ctx = Ctx {
             address,
             result: None,
+            found,
         };
 
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type `dl_iterate_phdr` expects — never callable by name
         // from safe Rust. Body wraps its raw-ptr ops explicitly.
-        extern "C" fn callback(
+        extern "C" fn callback<F: FnMut(&libc::dl_phdr_info)>(
             info: *mut libc::dl_phdr_info,
             _size: libc::size_t,
             data: *mut c_void,
         ) -> c_int {
             // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-            let context = unsafe { bun_core::callback_ctx::<Ctx>(data) };
+            let context = unsafe { bun_core::callback_ctx::<Ctx<F>>(data) };
             // SAFETY: dl_iterate_phdr passes a valid info pointer.
             let info = unsafe { &*info };
             // The base address is too high
@@ -8594,20 +8616,9 @@ pub mod elf {
                 let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
                 let seg_end = seg_start + phdr.p_memsz as usize;
                 if context.address >= seg_start && context.address < seg_end {
-                    // Android libc uses NULL instead of an empty string to mark
-                    // the main program.
-                    let name = if info.dlpi_name.is_null() {
-                        Box::default()
-                    } else {
-                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
-                            .to_bytes()
-                            .to_vec()
-                            .into_boxed_slice()
-                    };
+                    (context.found)(info);
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
-                        name,
                         segment_end: seg_end,
                         program_headers: info.dlpi_phdr,
                         program_header_count: info.dlpi_phnum as usize,
@@ -8619,7 +8630,7 @@ pub mod elf {
         }
 
         // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
-        unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
+        unsafe { libc::dl_iterate_phdr(Some(callback::<F>), (&raw mut ctx).cast::<c_void>()) };
         ctx.result
     }
 }

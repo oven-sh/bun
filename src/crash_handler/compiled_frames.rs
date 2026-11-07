@@ -19,24 +19,33 @@ unsafe extern "C" {
 }
 
 const SECONDS_TO_DESCRIBE_FRAMES: u32 = 2;
-const OBJECT_NAME: &[u8] = b"aot";
+/// The object of a frame in compiled code, as the link of a crash report names it.
+pub(crate) const OBJECT_NAME: &[u8] = b"aot";
 const ID_DIGITS_IN_REPORT: usize = 16;
 
 /// The start of a build ID, as a report has it.
 pub type ShortBuildId = [u8; ID_DIGITS_IN_REPORT];
 
-fn own_short_build_id() -> Option<ShortBuildId> {
+pub(crate) fn own_short_build_id() -> Option<ShortBuildId> {
     let mut digits = [0u8; ID_DIGITS_IN_REPORT];
     digits.copy_from_slice(&write_hexadecimal(&build_id()?)[..ID_DIGITS_IN_REPORT]);
     Some(digits)
 }
 
-/// The object of a frame in compiled code, as the link of a crash report names it.
-pub(crate) fn object_name(names_build: bool) -> Box<[u8]> {
-    match own_short_build_id().filter(|_| names_build) {
-        Some(id) => [OBJECT_NAME, &id[..]].concat().into_boxed_slice(),
-        None => Box::from(OBJECT_NAME),
-    }
+pub(crate) type ObjectNameWithBuild = [u8; OBJECT_NAME.len() + ID_DIGITS_IN_REPORT];
+
+/// `OBJECT_NAME` with the start of the build ID, for the one frame of a link that says which build its offsets are in.
+pub(crate) fn object_name_with_build(
+    id: Option<ShortBuildId>,
+    name: &mut ObjectNameWithBuild,
+) -> &[u8] {
+    let Some(id) = id else {
+        return OBJECT_NAME;
+    };
+    let (object, build) = name.split_at_mut(OBJECT_NAME.len());
+    object.copy_from_slice(OBJECT_NAME);
+    build.copy_from_slice(&id);
+    name
 }
 
 pub(crate) fn offset_in_code(address: usize) -> Option<i32> {
@@ -191,13 +200,21 @@ pub(crate) fn removed_feature_entered(pc: usize) -> Option<Feature> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::removed_feature_entered;
 
-    /// The engine's, as in an executable without compiled code.
+    /// The one address that the engine below takes for compiled code, and its offset there.
+    pub(crate) const COMPILED_ADDRESS: usize = 0x1000;
+    pub(crate) const COMPILED_OFFSET: i32 = 0x20;
+
+    /// The engine's, as in an executable without compiled code but for `COMPILED_ADDRESS`.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__AOT__offsetInCode(_address: *const core::ffi::c_void) -> i64 {
-        -1
+    extern "C" fn Bun__AOT__offsetInCode(address: *const core::ffi::c_void) -> i64 {
+        if address as usize == COMPILED_ADDRESS {
+            i64::from(COMPILED_OFFSET)
+        } else {
+            -1
+        }
     }
 
     #[test]

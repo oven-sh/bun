@@ -3587,7 +3587,6 @@ pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c
 
 /// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
 #[inline]
-#[cfg(not(windows))]
 fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     let p = OS_ARGV.load(core::sync::atomic::Ordering::Relaxed);
     if p.is_null() {
@@ -3724,6 +3723,24 @@ impl Iterator for ArgvIter {
 #[inline]
 pub fn argv() -> Argv {
     Argv(argv_view())
+}
+
+/// `argv()` without allocation or wait, for the crash handler: `main`'s arguments until the first `argv()` call returns.
+pub fn argv_without_init() -> impl Iterator<Item = &'static [u8]> {
+    let is_ready = ARGV_INIT.is_completed();
+    let view: &'static [&'static ZStr] = if is_ready {
+        // SAFETY: as in `argv_view`.
+        unsafe { ARGV.read() }
+    } else {
+        &[]
+    };
+    let of_main = raw_os_argv().filter(|_| !is_ready).unwrap_or(&[]);
+    view.iter()
+        .map(|arg| arg.as_bytes())
+        .chain(of_main.iter().map(|&arg| {
+            // SAFETY: `init_argv` guarantees NUL-terminated strings that live for the process.
+            unsafe { core::ffi::CStr::from_ptr(arg) }.to_bytes()
+        }))
 }
 
 // ─── BUN_OPTIONS argv injection ──────────────────────────────────────────────

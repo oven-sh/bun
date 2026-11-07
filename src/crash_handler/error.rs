@@ -13,9 +13,6 @@ pub enum Error {
     Sys(#[from] bun_errno::SystemErrno),
 
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
-
-    #[error(transparent)]
     Core(#[from] bun_core::Error),
 }
 
@@ -34,7 +31,6 @@ impl Error {
             Self::Unexpected => "Unexpected",
             Self::EndOfFile => "EndOfFile",
             Self::Sys(e) => <&'static str>::from(e),
-            Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
         }
     }

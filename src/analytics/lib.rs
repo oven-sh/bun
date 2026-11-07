@@ -85,19 +85,15 @@ pub mod features {
 
     // Note (cyclebreak): `bun.jsc.ModuleLoader.HardcodedModule` lives in
     // `bun_resolve_builtins` (T5) and pulling it here would create a forward
-    // dep (analytics is T1). The only operations we need are `insert` and
-    // ordered iteration of the module *names* for the crash-report formatter,
-    // so store the `&'static str` name (= `@tagName(HardcodedModule)`) instead
-    // of the enum value. Writers (`runtime/jsc_hooks.rs`) call
-    // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
-    // PERF: BTreeSet is O(log n) insert — fine for ≤~80 entries written once
-    // each at module-load time.
-    static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
-        bun_core::Mutex::new(std::collections::BTreeSet::new());
+    // dep (analytics is T1), so the writer (`runtime/jsc_hooks.rs`) passes the discriminant and the name.
+    pub const BUILTIN_MODULE_SLOTS: usize = 128;
+    /// The crash handler reads this, and the crash may be in a writer: no lock and no allocation.
+    static BUILTIN_MODULES: [OnceLock<&'static str>; BUILTIN_MODULE_SLOTS] =
+        [const { OnceLock::new() }; BUILTIN_MODULE_SLOTS];
 
-    /// Record a builtin-module load.
-    pub fn insert_builtin_module(name: &'static str) {
-        BUILTIN_MODULES.lock().insert(name);
+    /// Record a builtin-module load. `index` is the discriminant of the `HardcodedModule`.
+    pub fn insert_builtin_module(index: usize, name: &'static str) {
+        let _ = BUILTIN_MODULES[index].set(name);
     }
 
     macro_rules! define_features {
@@ -201,22 +197,21 @@ pub mod features {
 
                     // See BUILTIN_MODULES above — stores `&'static str` names
                     // directly (cyclebreak), so no `@tagName` conversion needed.
+                    // Sorted by name. Each pass finds the next one, so nothing is collected.
+                    let mut last: Option<&'static str> = None;
+                    while let Some(name) = BUILTIN_MODULES
+                        .iter()
+                        .filter_map(|slot| slot.get().copied())
+                        .filter(|name| last.is_none_or(|last| *name > last))
+                        .min()
                     {
-                        let builtins = BUILTIN_MODULES.lock();
-                        let mut iter = builtins.iter();
-                        if let Some(first) = iter.next() {
-                            writer.write_str("Builtins: \"")?;
-                            writer.write_str(first)?;
-                            writer.write_str("\" ")?;
-
-                            for key in iter {
-                                writer.write_str("\"")?;
-                                writer.write_str(key)?;
-                                writer.write_str("\" ")?;
-                            }
-
-                            writer.write_str("\n")?;
-                        }
+                        writer.write_str(if last.is_none() { "Builtins: \"" } else { "\"" })?;
+                        writer.write_str(name)?;
+                        writer.write_str("\" ")?;
+                        last = Some(name);
+                    }
+                    if last.is_some() {
+                        writer.write_str("\n")?;
                     }
                     Ok(())
                 }

@@ -15,6 +15,7 @@ import {
 } from "harness";
 import { readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -200,6 +201,21 @@ test("the crash report lists the CPU features", async () => {
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
+  expect(exitCode).not.toBe(0);
+});
+
+// The module loader records each builtin module that a program loads, and the report lists them by name.
+test("the crash report lists the builtin modules that were loaded", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.split(/\r?\n/).find(line => line.startsWith("Builtins: "))).toBe(
+    'Builtins: "bun:internal-for-testing" "bun:main" ',
+  );
   expect(exitCode).not.toBe(0);
 });
 
@@ -689,6 +705,298 @@ int eventfd(unsigned int initval, int flags) {
     expect({ stdout, stderr }).toEqual({ stdout: "", stderr: expect.stringContaining(message) });
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
+  });
+});
+
+// The last line of a report: a link that starts with BUN_CRASH_REPORT_URL.
+const linkOfReport = /^ \S*\/\d+\.\d+\.\d+\/\S+$/m;
+// The link of a report. A report without one stands for it, so that a failed assertion shows the report.
+const linkIn = (report: string) => linkOfReport.exec(report)?.[0] ?? report;
+
+// The end of a whole link, as `encode_trace_string` writes it: the zero after the last frame, the character of the
+// reason, and the address of a fault in two halves of 32 bits. A link that the encoder leaves early has another end.
+function endOfLink(reason: "2" | "3" | "4" | "9" | "a" | "b", address?: bigint) {
+  const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const vlq = (half: bigint) => {
+    const value = Number(BigInt.asIntN(32, half));
+    let rest = (value < 0 ? (-value << 1) | 1 : value << 1) >>> 0;
+    let encoded = "";
+    do {
+      encoded += digits[(rest & 31) | (rest > 31 ? 32 : 0)];
+      rest >>>= 5;
+    } while (rest);
+    return encoded;
+  };
+  return "A" + reason + (address === undefined ? "" : vlq(address >> 32n) + vlq(address & 0xffff_ffffn));
+}
+
+// An upload is a process that outlives the one that crashed (curl, or PowerShell on Windows). No event says that it
+// failed, so the wait for its request has a time limit.
+const withinTheTimeOfAnUpload = (requests: Promise<void>) => Promise.race([requests, Bun.sleep(30_000)]);
+
+// The thread of an out-of-memory crash gets nothing more from the allocator. The handler has to write the whole report
+// all the same, and end the process with the signal of the cause. An allocation of its own ends the process after
+// "oh no" with `memory allocation of 8 bytes failed` and SIGABRT.
+//
+// AddressSanitizer's allocator returns NULL while the process holds more than `soft_rss_limit_mb`. It compares the two
+// ten times a second, on Linux only.
+describe.if(isLinux && isASAN)("crash report when malloc returns NULL", () => {
+  // More than a debug build holds before the fixture asks for memory.
+  const softRssLimitMb = 1024;
+  const colors = { NO_COLOR: undefined, FORCE_COLOR: "1" };
+
+  async function crash(approach: string, env: NodeJS.Dict<string>, ...where: ["in-signal-handler"] | []) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash-without-memory.js"),
+        approach,
+        ...where,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: {
+        ...noReportEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `soft_rss_limit_mb=${softRssLimitMb}`, "allocator_may_return_null=1"]
+          .filter(Boolean)
+          .join(":"),
+        ...env,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { report: Bun.stripANSI(stderr), signalCode: proc.signalCode };
+  }
+
+  // Each child holds a gigabyte, so they run one after another.
+  describe.each([
+    ["without colors", {}],
+    ["with colors", colors],
+  ])("%s", (_, env) => {
+    test.each([
+      ["segfault", "Segmentation fault at address 0xDEADBEEF", "SIGSEGV", endOfLink("2", 0xdeadbeefn)],
+      ["abort", "abort() called", "SIGABRT", endOfLink("a")],
+      ["trap", "Trap instruction at address 0x0", "SIGTRAP", endOfLink("b", 0n)],
+      ["panic", "invoked crashByPanic() handler", "SIGABRT", undefined],
+      ["rustPanic", "invoked crashByRustPanic() handler", "SIGABRT", undefined],
+      ["outOfMemory", "Bun has run out of memory", "SIGABRT", endOfLink("9")],
+    ] as const)("%s", async (approach, message, signal, end) => {
+      const { report, signalCode } = await crash(approach, env);
+
+      expect(report).toContain(message);
+      expect(report).toMatch(linkOfReport);
+      const link = linkIn(report);
+      if (end === undefined) {
+        // A panic. zlib has no memory to compress the message with, so the link holds it in a block that is not
+        // compressed.
+        const stream = Buffer.from(link.slice(link.lastIndexOf("0eAEB") + 1), "base64");
+        expect(inflateSync(stream).toString()).toBe(message);
+      } else {
+        expect(link).toEndWith(end);
+      }
+      expect(signalCode).toBe(signal);
+    });
+  });
+
+  // The object of a frame outside the executable has a name, 31 bytes for libc, and the handler may not copy it.
+  test.if(isGlibc)("segfault with a frame of libc on the stack", async () => {
+    const { report, signalCode } = await crash("segfault", {}, "in-signal-handler");
+
+    expect(report).toContain("Segmentation fault at address 0xDEADBEEF");
+    expect(linkIn(report)).toEndWith(endOfLink("2", 0xdeadbeefn));
+    expect(signalCode).toBe("SIGSEGV");
+  });
+
+  // The upload comes after the report: a `fork()`, and curl in the child.
+  test("segfault is uploaded", async () => {
+    let uploaded = false;
+    const acked = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        if (request.url.endsWith("/ack")) {
+          uploaded = true;
+          acked.resolve();
+        }
+        return new Response("OK");
+      },
+    });
+
+    const { report, signalCode } = await crash("segfault", {
+      BUN_CRASH_REPORT_URL: server.url.toString(),
+      BUN_ENABLE_CRASH_REPORTING: "1",
+      GITHUB_ACTIONS: undefined,
+      CI: undefined,
+    });
+
+    expect(report).toContain(" " + server.url);
+    expect(signalCode).toBe("SIGSEGV");
+    await withinTheTimeOfAnUpload(acked.promise);
+    expect(uploaded).toBe(true);
+  });
+});
+
+// A real out-of-memory crash, with mimalloc and no test hook. mimalloc may take 256 MiB from the system and no more, and
+// the program fills them. The collections that the fill starts wake the marking threads, and the first request of one
+// of them gets nothing from `fastMalloc`: a crash on a thread that is not the main one, whose stack ends in libc. `-e`
+// keeps the compiler threads of JavaScriptCore out. It also leaves one marking thread, so the variable asks for 64.
+// A child whose marking threads do not start exits 0.
+//
+// A child crashes every time. A handler that asks for memory can be lucky: about one time in 23 the allocator has a
+// block of that size, and the report is whole. Five children do not pass by luck.
+//
+// Release builds only: with AddressSanitizer the variables of mimalloc do nothing, and the report of a debug build is
+// a symbolized trace, which allocates.
+test.if(!isASAN && !isDebug)("out-of-memory crash on a thread of the garbage collector", async () => {
+  const program = `
+    const hold = [];
+    for (const size of [1 << 24, 1 << 20, 1 << 16]) {
+      for (;;) {
+        try {
+          hold.push(new ArrayBuffer(size));
+        } catch {
+          break;
+        }
+      }
+    }
+    for (let i = 0; i < 1000; i++) Bun.gc(true);
+  `;
+  // The signal of each cause, and the character of the cause in the link.
+  const ofCause = {
+    "Segmentation fault": { signal: "SIGSEGV", reason: "2" },
+    "Bus error": { signal: "SIGBUS", reason: "4" },
+    "Illegal instruction": { signal: "SIGILL", reason: "3" },
+    "Trap instruction": { signal: "SIGTRAP", reason: "b" },
+  } as const;
+
+  // The link of each child starts with the number of the child, and the server notes whose uploads arrive. More than
+  // one marking thread can crash in a child, and each of them writes a report and uploads it.
+  const numbers = ["0", "1", "2", "3", "4"];
+  const uploaded = new Set<string>();
+  const acked = Promise.withResolvers<void>();
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const number = /^\/(\d)\/.+\/ack$/.exec(new URL(request.url).pathname)?.[1];
+      if (number && uploaded.add(number).size === numbers.length) acked.resolve();
+      return new Response("OK");
+    },
+  });
+
+  const children = numbers.map(number =>
+    Bun.spawn({
+      cmd: isWindows ? [bunExe(), "-e", program] : noCoreCmd([bunExe(), "-e", program]),
+      env: {
+        ...bunEnv,
+        MIMALLOC_DISALLOW_OS_ALLOC: "1",
+        MIMALLOC_RESERVE_OS_MEMORY: "256MiB",
+        // Windows: do not wait for the system to find memory.
+        MIMALLOC_RETRY_ON_OOM: "0",
+        BUN_JSC_numberOfGCMarkers: "64",
+        BUN_CRASH_REPORT_URL: server.url + number,
+        BUN_ENABLE_CRASH_REPORTING: "1",
+        GITHUB_ACTIONS: undefined,
+        CI: undefined,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    }),
+  );
+  const reports = await Promise.all(
+    children.map(async proc => {
+      const [stderr, exited] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // "panic: ", the cause and its address. Windows has the name of the thread after "panic", and every system has
+      // "(main thread)" there for the main thread, which is not the thread of this crash. If the line is not there,
+      // all of stderr says why.
+      const [, cause = stderr, address = "0"] =
+        /^panic(?:\((?!main thread\)).*\))?: (.+) at address 0x([0-9A-F]+)/m.exec(stderr) ?? [];
+      return { cause, address: BigInt("0x" + address), link: linkIn(stderr), exited };
+    }),
+  );
+
+  for (const { cause, address, link, exited } of reports) {
+    expect(cause).toBeOneOf(Object.keys(ofCause));
+    const { signal, reason } = ofCause[cause as keyof typeof ofCause];
+    expect(link).toEndWith(endOfLink(reason, address));
+    // Windows has no signals: the handler ends the process with the code 3. A failed request of Rust ends a process
+    // there with `__fastfail` and the code 0xC0000409, before any report.
+    expect(exited).toBe(isWindows ? 3 : 128 + osConstants.signals[signal]);
+  }
+  await withinTheTimeOfAnUpload(acked.promise);
+  expect([...uploaded].sort()).toEqual(numbers);
+});
+
+// A process that starts without memory: mimalloc may take nothing from the system. The request that ends the process
+// is the first one of Rust, inside the first read of the arguments. That read holds a `Once`, and the handler runs on
+// the same thread: it may not wait for the `Once`, so it prints the arguments as `main` received them.
+//
+// Linux only: on macOS nobody has looked at which request of a start fails first, and on Windows a failed request of
+// Rust ends the process with `__fastfail`, where no handler runs. Release builds only: with AddressSanitizer Rust does
+// not allocate with mimalloc, and the report of a debug build is a symbolized trace, which allocates.
+test.if(isLinux && !isASAN && !isDebug)("a process that starts without memory writes the whole report", async () => {
+  const exe = path.basename(bunExe());
+  await using proc = Bun.spawn({
+    // A release build prints 196 bytes of the arguments, and the whole path of the executable can be longer.
+    cmd: noCoreCmd(["./" + exe, "-e", "0"]),
+    cwd: path.dirname(bunExe()),
+    env: { ...noReportEnv, MIMALLOC_DISALLOW_OS_ALLOC: "1" },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const report = Bun.stripANSI(stderr);
+
+  expect(report).toContain(`Args: "./${exe}" "-e" "0"\n`);
+  expect(report).toContain("abort() called");
+  expect(linkIn(report)).toEndWith(endOfLink("a"));
+  expect(proc.signalCode).toBe("SIGABRT");
+});
+
+// A crash inside the allocator. A free list of mimalloc, for blocks of one size, points to an address that is never
+// mapped, and the next request for that size follows it: what a write to a block that was freed leaves behind. The
+// handler runs on that thread, so a request of its own for that size crashes again, inside the report. The process
+// then still ends with the signal of the cause, and only the missing link tells.
+//
+// Release builds only: a debug build of mimalloc encodes the links of its free lists, and with AddressSanitizer the
+// blocks are not mimalloc's.
+describe.if(!isASAN && !isDebug)("crash report when a free list of the allocator is corrupt", () => {
+  // The sizes of mimalloc's smallest blocks.
+  const sizes = [
+    8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768, 896, 1024,
+  ];
+
+  test.each([
+    ["without colors", {}],
+    ["with colors", { NO_COLOR: undefined, FORCE_COLOR: "1" }],
+  ])("%s", async (_, env) => {
+    const reports = await Promise.all(
+      sizes.map(async size => {
+        const cmd = [bunExe(), path.join(import.meta.dir, "fixture-crash-corrupt-free-list.js"), String(size)];
+        await using proc = Bun.spawn({
+          cmd: isWindows ? cmd : noCoreCmd(cmd),
+          env: { ...noReportEnv, ...env },
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        const [stderr, exited] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const report = Bun.stripANSI(stderr);
+        const link = linkIn(report);
+        return {
+          size,
+          // The address is the one that the fixture planted. If the line is not there, all of stderr says why.
+          cause: /^panic\(main thread\): (.+)$/m.exec(report)?.[1] ?? report,
+          // `true`, or what the report has in place of a whole link.
+          link: link.endsWith(endOfLink("2", 0x414141414140n)) || link,
+          exited,
+        };
+      }),
+    );
+
+    expect(reports).toEqual(
+      sizes.map(size => ({
+        size,
+        cause: "Segmentation fault at address 0x414141414140",
+        link: true,
+        // Windows has no signals: the handler ends the process with the code 3.
+        exited: isWindows ? 3 : 128 + osConstants.signals.SIGSEGV,
+      })),
+    );
   });
 });
 

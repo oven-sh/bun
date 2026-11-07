@@ -3951,10 +3951,14 @@ fn get_hardcoded_module(
     specifier: &bun_core::String,
     hardcoded: HardcodedModule,
 ) -> Option<ResolvedSource> {
-    // The analytics-side set stores `&'static str` names
+    // The analytics-side table stores `&'static str` names
     // (cycle break — see `bun_analytics::features::BUILTIN_MODULES`), so feed
     // it the `strum::IntoStaticStr` tag name.
-    bun_analytics::features::insert_builtin_module(<&'static str>::from(hardcoded));
+    const _: () = assert!(HardcodedModule::COUNT <= bun_analytics::features::BUILTIN_MODULE_SLOTS);
+    bun_analytics::features::insert_builtin_module(
+        hardcoded as usize,
+        <&'static str>::from(hardcoded),
+    );
 
     match hardcoded {
         HardcodedModule::BunMain => {

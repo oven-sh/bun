@@ -517,6 +517,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_errno",
+ "bun_hash",
  "bun_io",
  "bun_paths",
  "bun_ptr",

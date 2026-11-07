@@ -1387,7 +1387,11 @@ pub struct ScopedLogger {
 }
 
 impl ScopedLogger {
+    /// `BUN_DEBUG_<tagname>` is built on the stack: the crash handler logs too, on a thread that may get no memory.
+    const TAG_MAX: usize = 64;
+
     pub const fn new(tagname: &'static str, visibility: Visibility) -> Self {
+        assert!(tagname.len() <= Self::TAG_MAX);
         Self {
             tagname,
             really_disable: AtomicBool::new(matches!(visibility, Visibility::Hidden)),
@@ -1396,14 +1400,13 @@ impl ScopedLogger {
     }
 
     fn evaluate_is_visible(&self) {
-        // BUN_DEBUG_<tagname> — tag length is uncapped, so size the buffer
-        // from the tag instead of a fixed `[u8; 64]`.
+        // BUN_DEBUG_<tagname>
+        const PREFIX: &[u8] = b"BUN_DEBUG_";
         let tag = self.tagname.as_bytes();
-        let prefix = b"BUN_DEBUG_";
-        let key_len = prefix.len() + tag.len();
-        let mut env_key = vec![0u8; key_len + 1]; // +1 NUL
-        env_key[..prefix.len()].copy_from_slice(prefix);
-        env_key[prefix.len()..key_len].copy_from_slice(tag);
+        let key_len = PREFIX.len() + tag.len();
+        let mut env_key = [0u8; PREFIX.len() + ScopedLogger::TAG_MAX + 1]; // +1 NUL
+        env_key[..PREFIX.len()].copy_from_slice(PREFIX);
+        env_key[PREFIX.len()..key_len].copy_from_slice(tag);
         let key = crate::ZStr::from_buf(&env_key, key_len);
 
         if let Some(val) = crate::getenv_z_any_case(key) {
@@ -1417,12 +1420,13 @@ impl ScopedLogger {
             );
         } else {
             // --debug-<tagname> / --debug-all
-            let pfx = b"--debug-";
-            let mut flag = vec![0u8; pfx.len() + tag.len()];
-            flag[..pfx.len()].copy_from_slice(pfx);
-            flag[pfx.len()..].copy_from_slice(tag);
-            let flag_slice = flag.as_slice();
-            for arg in argv() {
+            const FLAG: &[u8] = b"--debug-";
+            let mut flag = [0u8; FLAG.len() + ScopedLogger::TAG_MAX];
+            flag[..FLAG.len()].copy_from_slice(FLAG);
+            flag[FLAG.len()..][..tag.len()].copy_from_slice(tag);
+            let flag_slice = &flag[..FLAG.len() + tag.len()];
+            // Not `argv()`: the crash handler logs too, and the crash can be inside the first `argv()` call.
+            for arg in crate::argv_without_init() {
                 if strings::eql_case_insensitive_ascii(arg, flag_slice, true)
                     || strings::eql_case_insensitive_ascii(arg, b"--debug-all", true)
                 {

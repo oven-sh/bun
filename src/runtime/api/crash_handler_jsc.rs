@@ -95,6 +95,12 @@ pub(crate) fn panic() {
     crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
 }
 
+/// A `panic!` of Rust with a literal message: std formats any other message on the heap before the hook runs.
+pub(crate) fn rust_panic() {
+    crash_handler::suppress_core_dumps_if_necessary();
+    panic!("invoked crashByRustPanic() handler");
+}
+
 pub(crate) fn abort() {
     crash_handler::suppress_core_dumps_if_necessary();
     // Under ASAN the POSIX signal handlers are not installed; invoke the

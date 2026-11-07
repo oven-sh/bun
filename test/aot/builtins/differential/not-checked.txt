@@ -58,6 +58,7 @@ CrashHandlerJscCrashHandlerOutOfMemory/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerPanic/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerRaiseIgnoringPanicHandler/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerRootError/0: the process ended or did not come back
+CrashHandlerJscCrashHandlerRustPanic/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfault/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfaultHoldingThreadSuspendLock/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfaultInDll/0: the process ended or did not come back

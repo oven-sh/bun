@@ -177,6 +177,37 @@ test.concurrent("--trim requires --compile", async () => {
   expect(built.exitCode).not.toBe(0);
 });
 
+describe.concurrent("--trim-without takes the names of features, not the names that compile.trim takes", () => {
+  function rejection(names: string) {
+    return run(
+      [bunExe(), "build", "--compile", "--trim", `--trim-without=${names}`, "hello.ts", "--outfile", "unknown"],
+      folder,
+    );
+  }
+
+  test("suggests the feature name that is closest to a compile.trim name", async () => {
+    for (const [name, closest] of [
+      ["profiler", "Profilers"],
+      ["Sqlite3", "Sqlite"],
+    ]) {
+      const { stderr, exitCode } = await rejection(name);
+      expect(stderr).toBe(`error: compile.trim: unknown name "${name}". Did you mean "${closest}"?\n`);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("lists the feature names, not the compile.trim names", async () => {
+    const { stderr, exitCode } = await rejection("jit,fetch");
+    const [unknown, valid] = stderr.split(". Valid names are ");
+    expect(unknown).toBe('error: compile.trim: unknown names "jit" and "fetch"');
+    // Every name is one of a Feature: a capital letter first, no dash, so never the "jit" or "fetch" of compile.trim.
+    expect(valid).toMatch(/^"[A-Z][A-Za-z0-9]*"(, "[A-Z][A-Za-z0-9]*")*\n$/);
+    expect(valid.split(", ")).toContain('"JIT"');
+    expect(valid.split(", ")).toContain('"Fetch"');
+    expect(exitCode).toBe(1);
+  });
+});
+
 (canTrim ? describe.concurrent : describe.skip)("--trim", () => {
   test("--trim-without rejects an unknown feature name", async () => {
     const built = await run(

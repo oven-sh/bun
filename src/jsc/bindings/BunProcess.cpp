@@ -563,16 +563,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Handle known yet-to-be-working in Bun
-    {
-        static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
-        static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
-        if (filename.endsWith(better_sqlite3_node)) {
-            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                better_sqlite3_message);
-        }
-    }
-
 #if !OS(WINDOWS)
     // glibc's dlopen() alloca()s a copy of a name without a '/'. A path this long can't be opened anyway.
     if (filename.length() >= PATH_MAX) [[unlikely]] {
@@ -662,7 +652,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         if (messageBuffer)
             LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
 #else
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        WTF::String msg = node::loaderErrorMessage(WTF::String::fromUTF8(dlerror()), filename);
 #endif
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
@@ -699,7 +689,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
         // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
         for (auto* mod : pendingV8Modules) {
-            node::executePendingV8Module(globalObject, mod, strongModule.get());
+            node::executePendingV8Module(globalObject, mod, strongModule.get(), filename);
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -731,7 +721,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
         for (auto& registration : *cachedModules) {
             if (auto* v8Module = std::get_if<Bun::V8ModuleRegistration>(&registration)) {
-                node::executePendingV8Module(globalObject, v8Module->module, strongModule.get());
+                node::executePendingV8Module(globalObject, v8Module->module, strongModule.get(), filename);
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
                 napi_module_register(std::get<napi_module*>(registration));

@@ -1314,9 +1314,8 @@ fn step_sequence_one(
     };
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
-    let has_started = sequence.attempt > 0 || !sequence.started_at.eql(&Timespec::EPOCH);
     // SAFETY: group points into this.groups; read-only.
-    if !has_started && unsafe { group.as_ref() }.verdict_due {
+    if sequence.started_at.eql(&Timespec::EPOCH) && unsafe { group.as_ref() }.verdict_due {
         // The hooks of a test that timed out run first, as they can take most of the limit of one that starts now.
         return Ok(Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH }));
     }

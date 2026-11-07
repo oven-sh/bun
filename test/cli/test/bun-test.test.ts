@@ -3783,7 +3783,7 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
           source: `
             let attempts = 0;
             test("t", async () => {
-              if (++attempts > 1) return;
+              if (++attempts > 1) return sleep(200);
               Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${short + 250})"] });
               await sleep(100);
               throw new Error("thrown late by the first attempt");

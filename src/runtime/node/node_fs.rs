@@ -3121,7 +3121,6 @@ pub(crate) mod args {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         pub path: PathOrFileDescriptor<'a>,
         pub(crate) len: u64, // u63
-        pub(crate) flags: i32,
     }
     impl Truncate<'static> {
         pub(crate) fn from_js(
@@ -3138,11 +3137,7 @@ pub(crate) mod args {
             } else {
                 validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
             };
-            Ok(Truncate {
-                path,
-                len,
-                flags: 0,
-            })
+            Ok(Truncate { path, len })
         }
     }
 
@@ -8405,7 +8400,7 @@ impl NodeFS {
         }
     }
 
-    fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
+    fn truncate_inner(&mut self, path: &PathLike, len: u64) -> Maybe<ret::Truncate> {
         if let Some(error) = change_in_executable(path.slice(), sys::Tag::truncate) {
             return Err(error);
         }
@@ -8417,7 +8412,7 @@ impl NodeFS {
         {
             let file = sys::open(
                 path.slice_z(&mut self.sync_error_buf),
-                sys::O::WRONLY | flags,
+                sys::O::WRONLY,
                 0o644,
             );
             let Ok(fd) = file else {
@@ -8437,7 +8432,6 @@ impl NodeFS {
         }
         #[cfg(not(windows))]
         {
-            let _ = flags;
             // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
             Maybe::<ret::Truncate>::errno_sys_p(
                 unsafe {
@@ -8459,7 +8453,7 @@ impl NodeFS {
             PathOrFileDescriptor::Fd(fd) => {
                 Syscall::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64)
             }
-            PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len, args.flags),
+            PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len),
         }
     }
 

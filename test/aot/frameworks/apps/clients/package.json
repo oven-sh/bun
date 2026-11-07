@@ -1,0 +1,14 @@
+{
+  "name": "clients",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1161.0",
+    "@aws-sdk/client-lambda": "3.1161.0",
+    "@aws-sdk/client-s3": "3.1161.0",
+    "@octokit/rest": "22.0.1",
+    "@slack/web-api": "8.3.0",
+    "@supabase/supabase-js": "2.118.0",
+    "stripe": "23.1.0",
+    "twilio": "6.2.0"
+  }
+}

@@ -479,6 +479,155 @@ fn no_file_waits_behind_a_read_by_plugin() {
     }
 }
 
+#[test]
+fn early_loaders_go_on_while_each_waiting_file_has_a_sleeper() {
+    let mut state = WalkState {
+        in_progress: 1,
+        ..Default::default()
+    };
+    assert!(state.has_idle_threads());
+    state.to_read.push_back(0);
+    assert!(!state.has_idle_threads());
+    state.asleep = 1;
+    assert!(state.has_idle_threads());
+    state.own_to_read.push_back(1);
+    assert!(!state.has_idle_threads());
+    state.asleep = 2;
+    assert!(state.has_idle_threads());
+    state.ready.push_back((2, Cow::Borrowed(&b""[..])));
+    assert!(!state.has_idle_threads());
+    state.asleep = 3;
+    state.in_progress = 0;
+    assert!(!state.has_idle_threads());
+}
+
+#[test]
+fn each_unit_of_work_wakes_a_sleeper_that_takes_it() {
+    const SLEEPERS: usize = 4;
+    #[derive(Default)]
+    struct Counts {
+        asleep: usize,
+        units: usize,
+        taken: usize,
+    }
+    let counts = Guarded::new(Counts::default());
+    let sleepers = Condvar::new();
+    let is_reached_in_time = |is_reached: &dyn Fn(&Counts) -> bool| {
+        let began = Instant::now();
+        while !is_reached(&counts.lock()) {
+            if began.elapsed() > Duration::from_secs(30) {
+                return false;
+            }
+            std::thread::yield_now();
+        }
+        true
+    };
+    let give = |units: usize| {
+        counts.lock().units += units;
+        notify_for_work(&sleepers, units, SLEEPERS);
+    };
+    let mut two_were_taken = false;
+    std::thread::scope(|scope| {
+        for _ in 0..SLEEPERS {
+            scope.spawn(|| {
+                let mut counts = counts.lock();
+                counts.asleep += 1;
+                while counts.units == 0 {
+                    sleepers.wait_guarded(&mut counts);
+                }
+                counts.units -= 1;
+                counts.taken += 1;
+            });
+        }
+        if is_reached_in_time(&|counts| counts.asleep == SLEEPERS) {
+            give(0);
+            give(2);
+            two_were_taken = is_reached_in_time(&|counts| counts.taken == 2);
+        }
+        give(SLEEPERS);
+    });
+    assert!(two_were_taken);
+    assert_eq!(counts.lock().taken, SLEEPERS);
+}
+
+#[test]
+fn time_without_files_for_plugins_lies_between_an_answer_and_the_next_file() {
+    let at = Duration::from_millis;
+    let mut times = PluginReadTimes::default();
+    times.note_queued(at(10));
+    times.note_queued(at(20));
+    times.note_answered(at(15), at(30));
+    times.note_answered(at(30), at(50));
+    times.note_queued(at(90));
+    times.note_answered(at(95), at(100));
+    assert_eq!(times.queued, Some((at(10), at(90))));
+    assert_eq!(times.last_answer, at(100));
+    assert_eq!(times.without_files, at(40));
+    assert_eq!(times.waited, at(40));
+}
+
+#[test]
+fn every_file_of_a_wide_graph_is_loaded_on_many_threads() {
+    const FILES: usize = 200;
+    let text_of = |index: usize| {
+        let next = index + 1..FILES.min(index + 4);
+        let imports: Vec<String> = next.map(|it| format!("import \"./file-{it}\"")).collect();
+        imports.join("\n")
+    };
+    let files: Vec<(&'static str, &'static str)> = (0..FILES)
+        .map(|index| {
+            let path: &'static str = format!("/file-{index}.ts").leak();
+            let text: &'static str = text_of(index).leak();
+            (path, text)
+        })
+        .collect();
+    let files: &'static [(&'static str, &'static str)] = files.leak();
+    for threads in [1, 2, 16, 64] {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let host = StatementsHost {
+                threads,
+                ..host_of(files)
+            };
+            let walked = walk(&host, &["/file-0.ts"]);
+            let _ = sender.send(walked.entries.len());
+        });
+        let loaded = receiver.recv_timeout(Duration::from_secs(30));
+        assert_eq!(loaded, Ok(FILES), "{threads} threads");
+    }
+}
+
+#[test]
+fn file_with_many_imports_is_walked_alike_on_any_number_of_threads() {
+    const IMPORTS: usize = 300;
+    let imports = (0..IMPORTS).map(|it| format!("import \"./file-{it}\""));
+    let imports: Vec<String> = imports.collect();
+    let main: &'static str = imports.join("\n").leak();
+    let mut files: Vec<(&'static str, &'static str)> = vec![("/main.ts", main)];
+    files.extend((0..IMPORTS).map(|index| {
+        let path: &'static str = format!("/file-{index}.ts").leak();
+        (path, "")
+    }));
+    let files: &'static [(&'static str, &'static str)] = files.leak();
+    let walk_on = |threads: usize| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let host = StatementsHost {
+                threads,
+                ..host_of(files)
+            };
+            let _ = sender.send(walk(&host, &["/main.ts"]));
+        });
+        receiver.recv_timeout(Duration::from_secs(30))
+    };
+    let alone = walk_on(1);
+    let count = alone.as_ref().map(|walked| walked.entries.len());
+    assert_eq!(count.ok(), Some(IMPORTS + 1));
+    for threads in [2, 16, 64] {
+        assert_eq!(walk_on(threads), alone, "{threads} threads");
+    }
+}
+
 const WITH_ASSETS: &[(&str, &str)] = &[
     (
         "/main.ts",

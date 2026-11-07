@@ -1,33 +1,50 @@
 use core::ops::Range;
 
-use smallvec::SmallVec;
-
 use super::entry_parameters::EntryPosition;
 use super::finish::FinishScratch;
 use super::generated::{
-    BlockFrequency, BlockRole, EntryParameter, Function, Opcode, TerminatorKind,
-    visit_terminator_fields, visit_value_fields,
+    BlockFrequency, BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION,
+    TerminatorKind, ValueHead, visit_terminator_fields, visit_value_fields,
 };
-use super::ids::{BlockId, Id, TypeId, ValueId};
+use super::ids::{BlockId, Id, TypeId, ValueId, optional_id_to_word};
 use super::ssa::SsaState;
 
 pub(super) const MAX_SPARE_VALUES: usize = 1 << 16;
 pub(super) const MAX_SPARE_FIELD_WORDS: usize = 1 << 18;
 pub(super) const MAX_SPARE_BLOCKS: usize = 1 << 12;
 pub(super) const ENTRY_BLOCK: BlockId = BlockId::from_word(0);
+pub(super) const NO_VALUE: u32 = u32::MAX;
+pub(super) const IS_PARAMETER: u32 = u32::MAX - 1;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct LocalVariable(pub(super) u32);
+
+#[derive(Copy, Clone, Debug)]
+pub struct Place {
+    pub(super) block: BlockId,
+    pub(super) behind: u32,
+    position: Option<u32>,
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Handler {
     pub(super) block: BlockId,
     pub(super) visible_variable_count: u32,
+    pub(super) reads_fields: bool,
 }
 
 impl Handler {
+    #[inline]
     pub fn block(self) -> BlockId {
         self.block
+    }
+
+    #[inline]
+    pub fn reading_fields(self) -> Handler {
+        Handler {
+            reads_fields: true,
+            ..self
+        }
     }
 }
 
@@ -39,10 +56,12 @@ pub struct Edge<'a> {
 }
 
 impl<'a> Edge<'a> {
+    #[inline]
     pub fn to(block: BlockId) -> Edge<'a> {
         Edge::with_arguments(block, &[])
     }
 
+    #[inline]
     pub fn with_arguments(block: BlockId, arguments: &'a [ValueId]) -> Edge<'a> {
         Edge {
             block,
@@ -51,6 +70,7 @@ impl<'a> Edge<'a> {
         }
     }
 
+    #[inline]
     pub fn with_proofs(block: BlockId, proofs: &'a [u32]) -> Edge<'a> {
         Edge {
             block,
@@ -62,13 +82,16 @@ impl<'a> Edge<'a> {
 
 #[derive(Default)]
 pub struct BuilderScratch {
+    pub(super) words: Vec<u32>,
     pub(super) values: Vec<PendingValue>,
-    pub(super) field_words: Vec<u32>,
     pub(super) blocks: Vec<PendingBlock>,
+    pub(super) targets: Vec<PendingTarget>,
+    pub(super) listed_values: Vec<ValueId>,
     pub(super) ssa: SsaState,
     pub(super) finish: FinishScratch,
 }
 
+#[inline]
 pub(super) fn recycle_vector<T>(mut vector: Vec<T>, max_spare_capacity: usize) -> Vec<T> {
     if vector.capacity() > max_spare_capacity {
         return Vec::new();
@@ -77,34 +100,114 @@ pub(super) fn recycle_vector<T>(mut vector: Vec<T>, max_spare_capacity: usize) -
     vector
 }
 
-pub(super) enum PendingDefinition {
-    Parameter { declared: Option<TypeId> },
-    Operation { opcode: Opcode, fields: Range<u32> },
+pub(super) struct PushedWords<'a>(pub(super) &'a mut Vec<u32>);
+
+impl Extend<u32> for PushedWords<'_> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = u32>>(&mut self, words: I) {
+        for word in words {
+            self.0.push(word);
+        }
+    }
 }
 
+#[inline]
+pub(super) fn push_words(words: &mut Vec<u32>, pushed: &[u32]) {
+    for &word in pushed {
+        words.push(word);
+    }
+}
+
+#[derive(Copy, Clone)]
 pub(super) struct PendingValue {
-    pub(super) definition: PendingDefinition,
-    pub(super) position: Option<u32>,
+    pub(super) at: u32,
+    pub(super) word_count: u32,
+    pub(super) next: u32,
 }
 
-const _: () = assert!(size_of::<PendingValue>() <= 24);
+const _: () = assert!(size_of::<PendingValue>() == 12);
 
+#[derive(Copy, Clone, Default)]
+pub(super) struct ListInArena {
+    start: u32,
+    length: u32,
+    capacity: u32,
+}
+
+impl ListInArena {
+    #[inline]
+    pub(super) fn len(self) -> usize {
+        self.length as usize
+    }
+
+    #[inline]
+    pub(super) fn is_empty(self) -> bool {
+        self.length == 0
+    }
+
+    #[inline]
+    pub(super) fn items<T>(self, arena: &[T]) -> &[T] {
+        &arena[self.start as usize..][..self.length as usize]
+    }
+
+    #[inline]
+    pub(super) fn items_mut<T>(self, arena: &mut [T]) -> &mut [T] {
+        &mut arena[self.start as usize..][..self.length as usize]
+    }
+
+    #[inline]
+    pub(super) fn clear(&mut self) {
+        self.length = 0;
+    }
+
+    #[inline]
+    pub(super) fn push<T: Copy>(&mut self, arena: &mut Vec<T>, item: T) {
+        if self.length == self.capacity {
+            self.move_to_end(arena, item);
+        }
+        arena[(self.start + self.length) as usize] = item;
+        self.length += 1;
+    }
+
+    fn move_to_end<T: Copy>(&mut self, arena: &mut Vec<T>, filler: T) {
+        let start = arena.len();
+        for index in 0..self.len() {
+            let item = arena[self.start as usize + index];
+            arena.push(item);
+        }
+        let capacity = (2 * self.capacity).max(2);
+        for _ in self.length..capacity {
+            arena.push(filler);
+        }
+        self.start = start as u32;
+        self.capacity = capacity;
+    }
+
+    #[inline]
+    pub(super) fn pop<T: Copy>(&mut self, arena: &[T]) -> Option<T> {
+        let last = self.items(arena).last().copied()?;
+        self.length -= 1;
+        Some(last)
+    }
+}
+
+#[derive(Clone)]
 pub(super) struct PendingTarget {
     pub(super) block: BlockId,
-    pub(super) arguments: SmallVec<[ValueId; 4]>,
-    pub(super) variable_arguments: SmallVec<[ValueId; 4]>,
-    pub(super) trailing_arguments: SmallVec<[ValueId; 4]>,
-    pub(super) proofs: SmallVec<[u32; 4]>,
+    pub(super) arguments: Range<u32>,
+    pub(super) variable_arguments: ListInArena,
+    pub(super) trailing_arguments: Range<u32>,
+    pub(super) proofs: Range<u32>,
 }
 
 impl PendingTarget {
     pub(super) fn new(block: BlockId) -> PendingTarget {
         PendingTarget {
             block,
-            arguments: SmallVec::new(),
-            variable_arguments: SmallVec::new(),
-            trailing_arguments: SmallVec::new(),
-            proofs: SmallVec::new(),
+            arguments: 0..0,
+            variable_arguments: ListInArena::default(),
+            trailing_arguments: 0..0,
+            proofs: 0..0,
         }
     }
 }
@@ -113,7 +216,7 @@ pub(super) struct PendingTerminator {
     pub(super) kind: TerminatorKind,
     pub(super) position: Option<u32>,
     pub(super) fields: Range<u32>,
-    pub(super) targets: SmallVec<[PendingTarget; 2]>,
+    pub(super) targets: Range<u32>,
 }
 
 impl PendingTerminator {
@@ -122,90 +225,61 @@ impl PendingTerminator {
             kind: TerminatorKind::Unreachable,
             position: None,
             fields: 0..0,
-            targets: SmallVec::new(),
+            targets: 0..0,
         }
     }
 }
 
-#[derive(Default)]
 pub(super) struct PendingBlock {
-    pub(super) parameters: SmallVec<[ValueId; 4]>,
-    pub(super) variable_parameters: SmallVec<[ValueId; 4]>,
-    pub(super) edge_results: SmallVec<[ValueId; 4]>,
-    pub(super) values: SmallVec<[ValueId; 8]>,
+    pub(super) parameters: ListInArena,
+    pub(super) variable_parameters: ListInArena,
+    pub(super) edge_results: ListInArena,
+    pub(super) first_value: u32,
+    pub(super) last_value: u32,
+    pub(super) value_count: u32,
+    pub(super) value_word_count: u32,
     pub(super) terminator: Option<PendingTerminator>,
     pub(super) handler: Option<PendingTarget>,
     pub(super) covering: Option<Handler>,
     pub(super) role: BlockRole,
-    pub(super) subject: Option<ValueId>,
     pub(super) frequency: BlockFrequency,
+    pub(super) subject: Option<ValueId>,
     pub(super) visible_variable_count: u32,
+}
+
+impl Default for PendingBlock {
+    fn default() -> PendingBlock {
+        PendingBlock {
+            parameters: ListInArena::default(),
+            variable_parameters: ListInArena::default(),
+            edge_results: ListInArena::default(),
+            first_value: NO_VALUE,
+            last_value: NO_VALUE,
+            value_count: 0,
+            value_word_count: 0,
+            terminator: None,
+            handler: None,
+            covering: None,
+            role: BlockRole::Ordinary,
+            frequency: BlockFrequency::Normal,
+            subject: None,
+            visible_variable_count: 0,
+        }
+    }
 }
 
 pub struct FunctionBuilder {
     pub(super) function: Function,
+    pub(super) words: Vec<u32>,
     pub(super) values: Vec<PendingValue>,
-    pub(super) field_words: Vec<u32>,
     pub(super) blocks: Vec<PendingBlock>,
+    pub(super) targets: Vec<PendingTarget>,
+    pub(super) listed_values: Vec<ValueId>,
     pub(super) current_block: BlockId,
     pub(super) position: Option<u32>,
-    written_position: Option<u32>,
-    // In the order of the values. Only a value that is written elsewhere than at its position has an entry.
-    pub(super) written_positions: Vec<(ValueId, u32)>,
-    is_written_position_for_callers: bool,
-    pub(super) values_written_for_callers: Vec<ValueId>,
     stands_in_tail_position: bool,
-    pub(super) values_in_tail_position: Vec<ValueId>,
-    recorded_position: Option<u32>,
-    number_of_records: u32,
-    are_records_suspended: bool,
-    is_at_recorded_position: bool,
-    values_before_first_record: Vec<ValueId>,
     pub(super) ssa: SsaState,
     pub(super) finish_scratch: FinishScratch,
-}
-
-fn has_recorded_position(opcode: Opcode) -> bool {
-    matches!(
-        opcode,
-        Opcode::PropGet
-            | Opcode::PropSet
-            | Opcode::PropHas
-            | Opcode::PropDelete
-            | Opcode::ElemGet
-            | Opcode::ElemSet
-            | Opcode::ElemHas
-            | Opcode::ElemDelete
-            | Opcode::SuperGet
-            | Opcode::SuperSet
-            | Opcode::PrivateGet
-            | Opcode::PrivateSet
-            | Opcode::PrivateHas
-            | Opcode::Add
-            | Opcode::Sub
-            | Opcode::Mul
-            | Opcode::Div
-            | Opcode::Mod
-            | Opcode::Pow
-            | Opcode::BitAnd
-            | Opcode::BitOr
-            | Opcode::BitXor
-            | Opcode::LShift
-            | Opcode::RShift
-            | Opcode::URShift
-            | Opcode::Less
-            | Opcode::LessEq
-            | Opcode::Greater
-            | Opcode::GreaterEq
-            | Opcode::InstanceOf
-            | Opcode::Call
-            | Opcode::CallList
-            | Opcode::CallDirect
-            | Opcode::Construct
-            | Opcode::ConstructList
-            | Opcode::SuperConstruct
-            | Opcode::SuperConstructList
-    )
 }
 
 impl FunctionBuilder {
@@ -213,22 +287,14 @@ impl FunctionBuilder {
         debug_assert!(function.body.code.is_empty());
         let mut builder = FunctionBuilder {
             function,
+            words: scratch.words,
             values: scratch.values,
-            field_words: scratch.field_words,
             blocks: scratch.blocks,
+            targets: scratch.targets,
+            listed_values: scratch.listed_values,
             current_block: ENTRY_BLOCK,
             position: None,
-            written_position: None,
-            written_positions: Vec::new(),
-            is_written_position_for_callers: false,
-            values_written_for_callers: Vec::new(),
             stands_in_tail_position: false,
-            values_in_tail_position: Vec::new(),
-            recorded_position: None,
-            number_of_records: 0,
-            are_records_suspended: false,
-            is_at_recorded_position: false,
-            values_before_first_record: Vec::new(),
             ssa: scratch.ssa,
             finish_scratch: scratch.finish,
         };
@@ -243,13 +309,15 @@ impl FunctionBuilder {
         builder
     }
 
+    #[inline]
     pub fn function(&self) -> &Function {
         &self.function
     }
 
     pub fn entry_value(&self, position: EntryPosition) -> Option<ValueId> {
         let index = self.function.entry_parameter_index(position)?;
-        Some(self.blocks[ENTRY_BLOCK.index()].parameters[index])
+        let parameters = self.blocks[ENTRY_BLOCK.index()].parameters;
+        Some(parameters.items(&self.listed_values)[index])
     }
 
     pub fn capture(&self, index: u32) -> ValueId {
@@ -299,6 +367,10 @@ impl FunctionBuilder {
         block
     }
 
+    pub fn set_frequency(&mut self, block: BlockId, frequency: BlockFrequency) {
+        self.blocks[block.index()].frequency = frequency;
+    }
+
     pub fn create_handler(
         &mut self,
         role: BlockRole,
@@ -315,15 +387,13 @@ impl FunctionBuilder {
         Handler {
             block,
             visible_variable_count,
+            reads_fields: false,
         }
     }
 
+    #[inline]
     pub fn handler_of(&self, block: BlockId) -> Option<Handler> {
         self.blocks[block.index()].covering
-    }
-
-    pub fn set_frequency(&mut self, block: BlockId, frequency: BlockFrequency) {
-        self.blocks[block.index()].frequency = frequency;
     }
 
     pub fn add_parameter(&mut self, block: BlockId, declared: Option<TypeId>) -> ValueId {
@@ -333,14 +403,16 @@ impl FunctionBuilder {
             "parameters that every edge fills with an argument precede edge results"
         );
         let parameter = self.add_parameter_value(declared);
-        self.blocks[block.index()].parameters.push(parameter);
+        let parameters = &mut self.blocks[block.index()].parameters;
+        parameters.push(&mut self.listed_values, parameter);
         parameter
     }
 
     pub fn add_edge_result(&mut self, block: BlockId) -> ValueId {
         self.assert_takes_parameters(block);
         let parameter = self.add_parameter_value(None);
-        self.blocks[block.index()].edge_results.push(parameter);
+        let edge_results = &mut self.blocks[block.index()].edge_results;
+        edge_results.push(&mut self.listed_values, parameter);
         parameter
     }
 
@@ -355,115 +427,60 @@ impl FunctionBuilder {
         );
     }
 
+    #[inline]
     pub(super) fn add_parameter_value(&mut self, declared: Option<TypeId>) -> ValueId {
-        let value = ValueId::new(self.values.len());
+        let value = self.next_value_id();
         self.values.push(PendingValue {
-            definition: PendingDefinition::Parameter { declared },
-            position: None,
+            at: optional_id_to_word(declared),
+            word_count: 0,
+            next: IS_PARAMETER,
         });
         value
     }
 
+    #[inline]
+    fn next_value_id(&self) -> ValueId {
+        let index = self.values.len();
+        assert!(
+            index < IS_PARAMETER as usize,
+            "the id of a value lies below IS_PARAMETER"
+        );
+        ValueId::new(index)
+    }
+
+    #[inline]
     pub fn switch_to(&mut self, block: BlockId) {
         self.current_block = block;
     }
 
+    #[inline]
     pub fn current_block(&self) -> BlockId {
         self.current_block
     }
 
+    #[inline]
     pub fn is_open(&self) -> bool {
         self.blocks[self.current_block.index()].terminator.is_none()
     }
 
+    #[inline]
     pub fn is_unreachable(&self) -> bool {
         let block = self.current_block;
         !self.is_open()
             || (block != ENTRY_BLOCK && self.ssa.is_sealed(block) && !self.has_predecessors(block))
     }
 
+    #[inline]
     pub fn has_predecessors(&self, block: BlockId) -> bool {
         self.ssa.predecessor_count(block) > 0
     }
 
+    #[inline]
     pub fn set_position(&mut self, position: Option<u32>) {
         self.position = position;
-        self.written_position = None;
-        self.is_at_recorded_position = false;
     }
 
-    // JSC's bytecode has a position of its own only for some operations. What throws elsewhere is reported at the last position in front of it,
-    // else at the first one of the function, else at `start`.
-    pub fn set_position_to_last_recorded(&mut self, start: u32) {
-        self.set_position(Some(self.recorded_position.unwrap_or(start)));
-        self.is_at_recorded_position = true;
-    }
-
-    pub fn is_at_last_recorded_position(&self) -> bool {
-        self.is_at_recorded_position
-    }
-
-    pub fn number_of_values(&self) -> usize {
-        self.values.len()
-    }
-
-    // What was emitted at the last recorded position from the value `first` on belongs behind what has been recorded since.
-    pub fn move_to_last_recorded_position(&mut self, first: usize) {
-        let Some(position) = self.recorded_position else {
-            return;
-        };
-        for value in &mut self.values[first..] {
-            value.position = Some(position);
-        }
-    }
-
-    // What Bun's transpiler does not print leaves no record. Returns what held before.
-    pub fn suspend_records(&mut self, suspend: bool) -> bool {
-        std::mem::replace(&mut self.are_records_suspended, suspend)
-    }
-
-    pub fn record_position(&mut self, position: u32) {
-        if self.are_records_suspended {
-            return;
-        }
-        if self.recorded_position.is_none() {
-            for value in self.values_before_first_record.drain(..) {
-                self.values[value.index()].position = Some(position);
-            }
-        }
-        self.recorded_position = Some(position);
-        self.number_of_records += 1;
-    }
-
-    pub fn number_of_records(&self) -> u32 {
-        self.number_of_records
-    }
-
-    pub fn last_recorded_position(&self) -> Option<u32> {
-        self.recorded_position
-    }
-
-    // JSC compiles what follows as a function of its own, with records of its own.
-    pub fn begin_code_with_records_of_its_own(&mut self) {
-        self.recorded_position = None;
-        self.values_before_first_record.clear();
-    }
-
-    // Until the next position: where the source text has what is emitted. The position is where an error is reported.
-    pub fn set_written_position(&mut self, written: u32) {
-        let differs = self.position.is_some_and(|position| position != written);
-        self.written_position = differs.then_some(written);
-        self.is_written_position_for_callers = false;
-    }
-
-    // Until the next position: where what is emitted is reported while something that it calls runs. The position is where its own errors are reported.
-    // That there is such a place says what is emitted, so it is written where the two are one place too.
-    pub fn set_position_for_callers(&mut self, position: u32) {
-        self.written_position = self.position.map(|_| position);
-        self.is_written_position_for_callers = true;
-    }
-
-    // What is emitted from here on stands for a call in tail position: a stack trace that passes through it does not list the function.
+    #[inline]
     pub fn set_tail_position(&mut self, stands: bool) -> bool {
         std::mem::replace(&mut self.stands_in_tail_position, stands)
     }
@@ -486,30 +503,128 @@ impl FunctionBuilder {
             self.seal(block);
             self.switch_to(block);
         }
-        let fields = self.append_field_words(fields);
-        let value = ValueId::new(self.values.len());
-        self.values.push(PendingValue {
-            definition: PendingDefinition::Operation { opcode, fields },
+        let mark = if self.stands_in_tail_position {
+            STANDS_IN_TAIL_POSITION
+        } else {
+            0
+        };
+        let head = ValueHead {
+            opcode: opcode as u32 | mark,
             position: self.position,
-        });
-        if let Some(written) = self.written_position {
-            self.written_positions.push((value, written));
-            if self.is_written_position_for_callers {
-                self.values_written_for_callers.push(value);
-            }
+        };
+        self.append_value(self.current_block, head, fields, false)
+    }
+
+    pub fn place(&self) -> Place {
+        Place {
+            block: self.current_block,
+            behind: self.blocks[self.current_block.index()].last_value,
+            position: self.position,
         }
-        if self.stands_in_tail_position {
-            self.values_in_tail_position.push(value);
+    }
+
+    pub fn build_at(
+        &mut self,
+        place: Place,
+        build: impl FnOnce(&mut FunctionBuilder) -> ValueId,
+    ) -> ValueId {
+        let position = core::mem::replace(&mut self.position, place.position);
+        let (source, from) = (self.current_block, self.place().behind);
+        let value = build(self);
+        self.position = position;
+        let id = value.to_word();
+        debug_assert_eq!(
+            self.current_block, source,
+            "an open block takes the operation"
+        );
+        debug_assert_eq!(self.blocks[source.index()].last_value, id, "one operation");
+        if source == place.block && from == place.behind {
+            return value;
         }
-        if self.is_at_recorded_position {
-            if self.recorded_position.is_none() {
-                self.values_before_first_record.push(value);
-            }
-        } else if let (true, Some(position)) = (has_recorded_position(opcode), self.position) {
-            self.record_position(position);
+        let word_count = self.values[value.index()].word_count;
+        let pending = &mut self.blocks[source.index()];
+        pending.last_value = from;
+        pending.value_count -= 1;
+        pending.value_word_count -= word_count;
+        match from {
+            NO_VALUE => pending.first_value = NO_VALUE,
+            _ => self.values[from as usize].next = NO_VALUE,
         }
-        self.blocks[self.current_block.index()].values.push(value);
+        let pending = &mut self.blocks[place.block.index()];
+        pending.value_count += 1;
+        pending.value_word_count += word_count;
+        let next = match place.behind {
+            NO_VALUE => core::mem::replace(&mut pending.first_value, id),
+            behind => core::mem::replace(&mut self.values[behind as usize].next, id),
+        };
+        if next == NO_VALUE {
+            pending.last_value = id;
+        }
+        self.values[value.index()].next = next;
         value
+    }
+
+    pub(super) fn append_operation(
+        &mut self,
+        block: BlockId,
+        opcode: Opcode,
+        position: Option<u32>,
+        fields: &[u32],
+        at_front: bool,
+    ) -> ValueId {
+        let head = ValueHead {
+            opcode: opcode.to_wire(),
+            position,
+        };
+        self.append_value(block, head, fields, at_front)
+    }
+
+    #[inline]
+    fn append_value(
+        &mut self,
+        block: BlockId,
+        head: ValueHead,
+        fields: &[u32],
+        at_front: bool,
+    ) -> ValueId {
+        let value = self.next_value_id();
+        head.append_to(&mut PushedWords(&mut self.words));
+        push_words(&mut self.words, fields);
+        let word_count = (ValueHead::WORDS + fields.len()) as u32;
+        let at = self.end_of_words() - word_count;
+
+        let id = value.to_word();
+        let mut next = NO_VALUE;
+        let pending = &mut self.blocks[block.index()];
+        if pending.first_value == NO_VALUE {
+            pending.first_value = id;
+            pending.last_value = id;
+        } else if at_front {
+            next = pending.first_value;
+            pending.first_value = id;
+        } else {
+            self.values[pending.last_value as usize].next = id;
+            pending.last_value = id;
+        }
+        pending.value_count += 1;
+        pending.value_word_count += word_count;
+        self.values.push(PendingValue {
+            at,
+            word_count,
+            next,
+        });
+        value
+    }
+
+    pub(super) fn opcode_of(&self, value: ValueId) -> Option<Opcode> {
+        let pending = self.values[value.index()];
+        if pending.next == IS_PARAMETER {
+            return None;
+        }
+        let head = self.words[pending.at as usize];
+        let opcode = Opcode::from_wire(head & !STANDS_IN_TAIL_POSITION);
+        debug_assert!(opcode.is_some(), "an operation begins with its opcode");
+        opcode
     }
 
     pub fn terminate(&mut self, kind: TerminatorKind, fields: &[u32], edges: &[Edge<'_>]) {
@@ -525,22 +640,29 @@ impl FunctionBuilder {
         let block = self.current_block;
         if self.is_unreachable() {
             self.blocks[block.index()].terminator = Some(PendingTerminator::unreachable());
+            self.ssa.end_block(block);
             return;
         }
-        let targets = edges.iter().map(|edge| self.create_target(edge)).collect();
+        let first_target = self.targets.len() as u32;
+        for edge in edges {
+            let target = self.create_target(edge);
+            self.targets.push(target);
+        }
         for edge in edges {
             self.ssa.add_predecessor(edge.block, block);
         }
-        let fields = self.append_field_words(fields);
+        let fields = self.append_words(fields);
         self.blocks[block.index()].terminator = Some(PendingTerminator {
             kind,
             position: self.position,
             fields,
-            targets,
+            targets: first_target..self.targets.len() as u32,
         });
+        self.ssa.end_block(block);
     }
 
-    fn create_target(&self, edge: &Edge<'_>) -> PendingTarget {
+    #[inline]
+    fn create_target(&mut self, edge: &Edge<'_>) -> PendingTarget {
         let target = &self.blocks[edge.block.index()];
         let parameter_count = target.parameters.len();
         debug_assert!(edge.block != ENTRY_BLOCK, "no edge targets block 0");
@@ -565,23 +687,41 @@ impl FunctionBuilder {
         let (arguments, trailing_arguments) = edge.arguments.split_at(explicit_argument_count);
         PendingTarget {
             block: edge.block,
-            arguments: SmallVec::from_slice(arguments),
-            variable_arguments: SmallVec::new(),
-            trailing_arguments: SmallVec::from_slice(trailing_arguments),
-            proofs: SmallVec::from_slice(edge.proofs),
+            arguments: self.append_pending_ids(arguments),
+            variable_arguments: ListInArena::default(),
+            trailing_arguments: self.append_pending_ids(trailing_arguments),
+            proofs: self.append_words(edge.proofs),
         }
     }
 
-    fn append_field_words(&mut self, fields: &[u32]) -> Range<u32> {
-        let start = self.field_word_count();
-        self.field_words.extend_from_slice(fields);
-        start..self.field_word_count()
+    #[inline]
+    fn append_pending_ids(&mut self, values: &[ValueId]) -> Range<u32> {
+        if values.is_empty() {
+            return 0..0;
+        }
+        let start = self.end_of_words();
+        for value in values {
+            self.words.push(value.to_word());
+        }
+        start..self.end_of_words()
     }
 
-    fn field_word_count(&self) -> u32 {
-        u32::try_from(self.field_words.len()).expect("the field words of a function fit 32 bits")
+    #[inline]
+    fn append_words(&mut self, words: &[u32]) -> Range<u32> {
+        if words.is_empty() {
+            return 0..0;
+        }
+        let start = self.end_of_words();
+        push_words(&mut self.words, words);
+        start..self.end_of_words()
     }
 
+    #[inline]
+    fn end_of_words(&self) -> u32 {
+        u32::try_from(self.words.len()).expect("the words of a function fit 32 bits")
+    }
+
+    #[inline]
     pub fn create_variable(&mut self, declared: Option<TypeId>) -> LocalVariable {
         self.ssa.create_variable(declared)
     }

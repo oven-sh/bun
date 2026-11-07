@@ -1926,3 +1926,23 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+const braceLeftOpenCRLF = "const port = 3000;\r\nfunction start() {\r\n";
+devTest("a brace left open in a CR LF file is shown on the file's last line", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    // Not a string: the harness would trim the final line break.
+    "index.ts": Buffer.from(braceLeftOpenCRLF),
+  },
+  async test(dev) {
+    const errors = ["index.ts:2:19: error: Unexpected end of file"];
+    await using c = await dev.client("/", { errors });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("loaded");`);
+    });
+    await c.expectMessage("loaded");
+    await dev.write("index.ts", braceLeftOpenCRLF, { dedent: false, errors });
+  },
+});

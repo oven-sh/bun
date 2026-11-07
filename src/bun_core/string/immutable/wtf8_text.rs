@@ -31,6 +31,14 @@ pub fn wtf8_codepoint_at(text: &[u8], at: usize) -> (u32, usize) {
     (UNICODE_REPLACEMENT, 1)
 }
 
+/// If `at` is in the middle of a code point, returns that code point's start. Otherwise returns `at`.
+pub fn wtf8_codepoint_start(text: &[u8], at: usize) -> usize {
+    (1..=3)
+        .filter_map(|back| at.checked_sub(back))
+        .find(|&start| wtf8_codepoint_at(text, start).1 > at - start)
+        .unwrap_or(at)
+}
+
 /// The code points of `text`, each with the offset in bytes where it starts: `[...text]`. See
 /// [`wtf8_codepoint_at`].
 #[inline]

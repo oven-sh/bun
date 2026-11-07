@@ -6,6 +6,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -95,6 +96,12 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
         JSCell::deleteProperty(target, globalObject, name);
         return;
     }
+    if (auto* record = dynamicDowncast<InternalFieldTuple>(original)) [[unlikely]] {
+        original = putBackWhatRestoredSpyReplaced(globalObject, globalObject, name, record);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!original)
+            return;
+    }
     PropertyDescriptor descriptor;
     toPropertyDescriptor(globalObject, original, descriptor);
     RETURN_IF_EXCEPTION(scope, );
@@ -131,7 +138,7 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
             JSObject* object = constructObjectFromPropertyDescriptor(globalObject, descriptor);
             RETURN_IF_EXCEPTION(scope, );
             object->setPrototypeDirect(vm, jsNull());
-            original = object;
+            original = withWhatSpiesReplaced(globalObject, globalObject, name, descriptor, object);
         }
         JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
         RETURN_IF_EXCEPTION(scope, );

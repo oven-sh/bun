@@ -19,6 +19,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -864,6 +865,27 @@ public:
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
+    bool isInstalledOn(JSObject* target, const Identifier& key) const { return m_spyTarget.get() == target && m_spyIdentifier == key; }
+    // What didInstall() was given.
+    JSValue spyOriginal() const { return m_spyOriginal.get(); }
+    unsigned spyAttributes() const { return m_spyAttributes; }
+
+    // The write of putBackOriginal(), given the spyOriginal() and spyAttributes() of a spy that is not on a module namespace object.
+    static ALWAYS_INLINE void putBack(JSGlobalObject* globalObject, JSObject* target, const Identifier& key, JSValue original, unsigned attributes)
+    {
+        bool isOpaque = attributes & SpyAttributeOpaque;
+        // Callers look the property up before this: the global of a node:vm context asks its sandbox, which may be a Proxy.
+        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
+        if (original) {
+            putOwnPropertyStorage(globalObject, target, key, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
+        } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
+            // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
+            DeletePropertySlot slot;
+            NodeVMGlobalObject::Base::deleteProperty(target, globalObject, key, slot);
+        } else {
+            JSCell::deleteProperty(target, globalObject, key);
+        }
+    }
 
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
@@ -1013,18 +1035,8 @@ private:
                 return;
         }
 
-        // Behind the lookup above: the global of a node:vm context asks its sandbox, which may be a Proxy.
-        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
         scope.release();
-        if (original) {
-            putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
-        } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
-            // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
-            DeletePropertySlot slot;
-            NodeVMGlobalObject::Base::deleteProperty(target, globalObject, identifier, slot);
-        } else {
-            JSCell::deleteProperty(target, globalObject, identifier);
-        }
+        putBack(globalObject, target, identifier, original, attributes);
     }
 
     Recorded m_recorded;
@@ -2427,6 +2439,121 @@ MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(JSC
     auto* obj = create(globalObject->vm(), static_cast<Zig::GlobalObject*>(globalObject)->mockModule.mockWithImplementationCleanupDataStructure.getInitializedOnMainThread(globalObject));
     obj->finishCreation(globalObject->vm(), fn, impl, tail, fallback);
     return obj;
+}
+
+// The mock that `function` is, or that the bound getter of a method spy returns.
+static JSMockFunction* mockOf(JSValue function)
+{
+    auto* mock = tryJSDynamicCast<JSMockFunction*>(function);
+    if (!mock) {
+        auto* getter = tryJSDynamicCast<JSBoundFunction*>(function);
+        mock = getter ? tryJSDynamicCast<JSMockFunction*>(getter->boundThis()) : nullptr;
+    }
+    return mock;
+}
+
+// What a property holds, as spyOn() puts a spy there: a value, or a getter and a setter.
+struct PropertyHalves {
+    JSValue getterOrValue;
+    JSValue setter;
+
+    explicit PropertyHalves(const PropertyDescriptor& descriptor)
+        : getterOrValue(descriptor.value())
+    {
+        if (!getterOrValue) {
+            getterOrValue = descriptor.getter();
+            setter = descriptor.setter();
+        }
+    }
+
+    // `storage` is getOwnPropertyStorage() of the property, or empty.
+    explicit PropertyHalves(JSValue storage)
+    {
+        auto* accessor = tryJSDynamicCast<GetterSetter*>(storage);
+        getterOrValue = accessor ? JSValue(accessor->getter()) : storage;
+        setter = accessor ? JSValue(accessor->setter()) : JSValue();
+    }
+
+    bool holds(JSMockFunction* spy) const { return mockOf(getterOrValue) == spy || mockOf(setter) == spy; }
+};
+
+static JSMockFunction* spyInstalledAs(JSValue function, JSObject* target, const Identifier& key)
+{
+    JSMockFunction* spy = mockOf(function);
+    return spy && spy->isInstalledOn(target, key) ? spy : nullptr;
+}
+
+// A record is the tuples ((spy, (spyOriginal(), spyAttributes())), next). `next` is the record of the spy that this one was installed over, or `saved`.
+__attribute__((minsize)) static NEVER_INLINE JSValue recordWhatSpiesReplaced(JSGlobalObject* globalObject, JSObject* target, const Identifier& key, const PropertyDescriptor& own, JSValue saved)
+{
+    auto& vm = globalObject->vm();
+    Structure* structure = globalObject->internalFieldTupleStructure();
+
+    PropertyHalves halves(own);
+    InternalFieldTuple* first = nullptr;
+    InternalFieldTuple* last = nullptr;
+    while (true) {
+        JSMockFunction* spy = spyInstalledAs(halves.getterOrValue, target, key);
+        JSMockFunction* spyOfSetter = spyInstalledAs(halves.setter, target, key);
+        // With a spy on each half, the one that was installed last replaced an accessor that has the other one.
+        if (!spy || (spyOfSetter && PropertyHalves(spyOfSetter->spyOriginal()).holds(spy)))
+            spy = spyOfSetter;
+        if (!spy)
+            break;
+
+        JSValue replaced = spy->spyOriginal();
+        auto* undo = InternalFieldTuple::create(vm, structure, replaced, jsNumber(spy->spyAttributes()));
+        auto* entry = InternalFieldTuple::create(vm, structure, spy, undo);
+        auto* record = InternalFieldTuple::create(vm, structure, entry, saved);
+        if (last)
+            last->putInternalField(vm, 1, record);
+        else
+            first = record;
+        last = record;
+        halves = PropertyHalves(replaced);
+    }
+    return first ? JSValue(first) : saved;
+}
+
+JSValue withWhatSpiesReplaced(JSGlobalObject* globalObject, JSObject* target, const Identifier& key, const PropertyDescriptor& own, JSValue saved)
+{
+    // The spy of a data property is its value, and a mock is an InternalFunction. Most stubs replace something else.
+    JSValue value = own.value();
+    if (value && (!value.isCell() || value.asCell()->type() != InternalFunctionType))
+        return saved;
+    return recordWhatSpiesReplaced(globalObject, target, key, own, saved);
+}
+
+__attribute__((minsize)) NEVER_INLINE JSValue putBackWhatRestoredSpyReplaced(JSGlobalObject* globalObject, JSObject* target, const Identifier& key, InternalFieldTuple* record)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    JSValue saved = record;
+    while (auto* next = dynamicDowncast<InternalFieldTuple>(saved))
+        saved = next->getInternalField(1);
+    PropertyDescriptor descriptor;
+    toPropertyDescriptor(globalObject, saved, descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // The restored spies are undone as putBackOriginal() undoes them, the one that was installed last first: a spy on an accessor only if the accessor still has it.
+    PropertyHalves halves(descriptor);
+    InternalFieldTuple* undo = nullptr;
+    for (auto* next = record; next; next = dynamicDowncast<InternalFieldTuple>(next->getInternalField(1))) {
+        auto* entry = uncheckedDowncast<InternalFieldTuple>(next->getInternalField(0));
+        auto* spy = uncheckedDowncast<JSMockFunction>(entry->getInternalField(0));
+        auto* replaced = uncheckedDowncast<InternalFieldTuple>(entry->getInternalField(1));
+        bool isOnAccessor = replaced->getInternalField(1).asUInt32() & JSMockFunction::SpyAttributeAccessor;
+        if (!spy->isRestoredSpy() || (isOnAccessor && !halves.holds(spy)))
+            continue;
+        undo = replaced;
+        halves = PropertyHalves(undo->getInternalField(0));
+    }
+    if (!undo)
+        return saved;
+
+    scope.release();
+    JSMockFunction::putBack(globalObject, target, key, undo->getInternalField(0), undo->getInternalField(1).asUInt32());
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))

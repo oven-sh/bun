@@ -926,6 +926,59 @@ test(
   timeout,
 );
 
+// A search for a prime p == rem (mod add) that cannot end must still stop on terminate(). The worker
+// loads node:crypto before it says "go", so that terminate() lands while it is in the search and not
+// while it loads the module.
+test(
+  "terminate() stops a prime search on a progression that has no prime",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        async function run(body) {
+          const w = new Worker('const crypto = require("node:crypto"); require("node:worker_threads").parentPort.postMessage("go");' + body, { eval: true });
+          w.on("error", (e) => { console.error(e); process.exit(1); });
+          await new Promise((r) => w.once("message", r));
+          // There is no signal for "the worker is in the search", so give it a moment; landing earlier must pass too.
+          await Bun.sleep(100);
+          return await w.terminate();
+        }
+        (async () => {
+          const codes = await Promise.all([
+            // Every p == 3 (mod 6) is a multiple of 3, and (p - 1) / 2 is one for every p == 1 (mod 6): the sieve rejects each candidate.
+            run('crypto.generatePrimeSync(64, { add: 6n, rem: 3n });'),
+            run('crypto.generatePrime(64, { add: 6n, rem: 3n }, () => {}); setInterval(() => {}, 1000);'),
+            run('crypto.generatePrimeSync(64, { safe: true, add: 6n, rem: 1n });'),
+            run('crypto.generatePrime(64, { safe: true, add: 6n, rem: 1n }, () => {}); setInterval(() => {}, 1000);'),
+            // Every start gives 256, which passes the sieve of odd primes: the search draws again each time.
+            run('crypto.generatePrimeSync(8, { add: 255n, rem: 1n });'),
+            run('crypto.generatePrime(8, { add: 255n, rem: 1n }, () => {}); setInterval(() => {}, 1000);'),
+          ]);
+          console.log(codes.join(","));
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // A terminate() that does not resolve ends here, before the test times out.
+      timeout: timeout / 2,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "1,1,1,1,1,1\n",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  },
+  timeout,
+);
+
 // A worker exiting while a Bun.spawn() child still has a pending pipe-backed stdin (a Blob the child
 // never reads; the default stdin path on Windows, BUN_FEATURE_FLAG_DISABLE_MEMFD elsewhere): the
 // Subprocess finalizer closed that writer, whose close path re-evaluated pending activity and tried to

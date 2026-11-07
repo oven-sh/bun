@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt, randomUUID } from "crypto";
 import { statSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
 describe("arguments are validated as in Node", () => {
@@ -324,6 +324,193 @@ describe("checkPrime candidate handling", () => {
     const result = await promise;
     expect(checksReads).toBe(1);
     expect(result).toBe(true);
+  });
+});
+
+describe.concurrent("generatePrime with add and rem", () => {
+  // BoringSSL's two searches for a prime p == rem (mod add) do not end for many add and rem, and below about 13 bits
+  // they return one fixed value that is too large. BignumPointer::generate() runs OpenSSL's search for both values of
+  // `safe`, so the results are the ones that Node gives. One subprocess runs every case `runs` times through
+  // generatePrimeSync and once through generatePrime, which reaches the same search from the threadpool. It has a kill
+  // guard: a search that does not end wedges the process or a thread.
+  type Case = { bits: number; safe?: boolean; add: bigint; rem?: bigint; runs?: number };
+  const forms = ["generatePrimeSync", "generatePrime"] as const;
+  // [form][case][run]: the prime, or the code of the error.
+  type Results = Record<(typeof forms)[number], (bigint | string)[][]>;
+
+  const label = (c: Case) =>
+    `${c.bits} bits,${c.safe ? " safe," : ""} add ${c.add}${c.rem === undefined ? "" : `, rem ${c.rem}`}`;
+
+  // Every value that Node v26.12.1 returns for the case, and no other. The first row is an assertion of Node's own
+  // test-crypto-prime.js, which Bun skips (it is behind a check of process.versions.openssl). A search that walks on
+  // past a candidate that is not prime, where OpenSSL draws a new start, returns 43 for that row once in four calls,
+  // and an 18-bit prime for the second row once in five. The 41 calls of each row miss that in fewer than 2 of 10,000
+  // runs. The calls of a row with "varies" must not all give one value: such a row gives each of its two values for
+  // half of the starts, so its 33 calls agree once in 2^32 runs.
+  const valueCases: Array<[Case, bigint[], "varies"?]> = [
+    [{ bits: 4, add: 15n, rem: 13n, runs: 40 }, [13n]],
+    [{ bits: 12, add: 3688n, rem: 2557n, runs: 40 }, [2557n]],
+    [{ bits: 8, add: 7n, rem: 3n, runs: 16 }, [157n, 199n, 227n, 241n]],
+    [{ bits: 8, add: 11n, rem: 4n, runs: 8 }, [191n, 257n]],
+    [{ bits: 8, add: 255n, rem: 254n, runs: 2 }, [509n]],
+    [{ bits: 8, add: 128n, rem: 1n, runs: 2 }, [257n]],
+    [{ bits: 16, add: 32769n, rem: 2n, runs: 2 }, [32771n]],
+    // The start is below the size for some draws, and the search adds `add` once: 5 and 7 are not results.
+    [{ bits: 4, add: 12n, rem: 5n, runs: 12 }, [17n]],
+    [{ bits: 5, add: 24n, rem: 7n, runs: 12 }, [31n]],
+    [{ bits: 2, add: 2n, rem: 1n, runs: 2 }, [3n]],
+    [{ bits: 3, add: 5n, rem: 0n, runs: 2 }, [5n]],
+    // From the start 25 the search steps to 41. The sieve rejects 25 at 5, because it stops only at a prime whose
+    // square is above the candidate, and it starts again at 3 for 33.
+    [{ bits: 5, add: 8n, runs: 32 }, [17n, 41n], "varies"],
+    // Each draw is odd, so each start is even: 17, 23 and 29 are not results.
+    [{ bits: 5, add: 1n, runs: 32 }, [19n, 31n]],
+    [{ bits: 8, safe: true, add: 12n, rem: 11n, runs: 16 }, [167n, 179n, 227n, 263n]],
+    [{ bits: 8, safe: true, add: 4n, rem: 3n, runs: 8 }, [167n, 179n, 227n, 263n]],
+    [{ bits: 4, safe: true, add: 4n, rem: 3n, runs: 8 }, [11n, 23n]],
+    [{ bits: 10, safe: true, add: 5n, runs: 8 }, [563n, 863n, 983n]],
+    // From the start 12 the search steps to 47. The sieve rejects 19 at 3 and 26 at 5 on the way.
+    [{ bits: 3, safe: true, add: 7n, rem: 5n, runs: 32 }, [5n, 47n], "varies"],
+    [{ bits: 3, safe: true, add: 4n, rem: 3n, runs: 2 }, [7n]],
+    [{ bits: 3, safe: true, add: 4n, rem: 1n, runs: 2 }, [5n]],
+    // 3 is on the progression and is not a safe prime: the search starts at 5. For add 3 it starts at 7, not at 4.
+    [{ bits: 2, safe: true, add: 2n, rem: 1n, runs: 2 }, [5n]],
+    [{ bits: 2, safe: true, add: 3n, rem: 1n, runs: 2 }, [7n]],
+  ];
+
+  // The two rows of 128 bits with add 5 are the other block of test-crypto-prime.js that Bun skips: a missing rem is
+  // 1, and 3 for a safe prime. In the rows with a power of two, add is almost as wide as the size. From 2^63 the
+  // sieve cannot step by add, and each rejection is a new draw.
+  const sizedCases: Case[] = [
+    { bits: 32, add: 3n, rem: 1n },
+    { bits: 64, add: 30n },
+    { bits: 64, add: 30n, rem: 7n },
+    { bits: 32, add: 12n, rem: 5n },
+    { bits: 128, add: 5n },
+    { bits: 67, add: 2n ** 63n, rem: 1n },
+    { bits: 128, add: 2n ** 120n, rem: 1n },
+    { bits: 128, add: 2n ** 65n + 1n, rem: 2n, runs: 10 },
+    { bits: 128, safe: true, add: 5n },
+    { bits: 64, safe: true, add: 5n, rem: 2n },
+    { bits: 64, safe: true, add: 7n, rem: 2n },
+    { bits: 64, safe: true, add: 4n },
+    { bits: 64, safe: true, add: 12n, rem: 11n },
+    { bits: 64, safe: true, add: 1n, rem: 0n },
+    { bits: 96, safe: true, add: 2n ** 64n, rem: 3n },
+  ];
+
+  const errorCases: Array<[Case, string]> = [
+    [{ bits: 64, add: 0n }, "ERR_OSSL_BN_DIV_BY_ZERO"],
+    [{ bits: 64, safe: true, add: 0n }, "ERR_OSSL_BN_DIV_BY_ZERO"],
+    [{ bits: 1, add: 1n }, "ERR_OSSL_BN_BITS_TOO_SMALL"],
+    [{ bits: 1, safe: true, add: 1n }, "ERR_OSSL_BN_BITS_TOO_SMALL"],
+  ];
+
+  const allCases = [...valueCases.map(([c]) => c), ...sizedCases, ...errorCases.map(([c]) => c)];
+
+  async function generatePrimes(cases: Case[]): Promise<Results> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { generatePrime, generatePrimeSync } = require("crypto");
+         const cases = ${JSON.stringify(cases, (_, v) => (typeof v === "bigint" ? String(v) : v))};
+         const options = c => ({
+           bigint: true,
+           safe: c.safe === true,
+           add: BigInt(c.add),
+           ...(c.rem === undefined ? {} : { rem: BigInt(c.rem) }),
+         });
+         const forms = {
+           generatePrimeSync: async c => generatePrimeSync(c.bits, options(c)),
+           generatePrime: c => new Promise((resolve, reject) =>
+             generatePrime(c.bits, options(c), (err, p) => (err ? reject(err) : resolve(p)))),
+         };
+         (async () => {
+           const out = {};
+           for (const form in forms) {
+             out[form] = [];
+             for (const c of cases) {
+               const primes = [];
+               const runs = form === "generatePrime" ? 1 : (c.runs ?? 1);
+               for (let i = 0; i < runs; i++) primes.push(await forms[form](c).then(String, e => e.code));
+               out[form].push(primes);
+             }
+           }
+           process.stdout.write(JSON.stringify(out));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // Below the per-test timeout in both places (5 s locally, 90 s or more in
+      // CI), so a search that never ends is killed here and not orphaned.
+      timeout: isCI ? 60_000 : 4500,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
+    const out: Record<string, string[][]> = JSON.parse(stdout);
+    const parse = (form: string[][]) => form.map(primes => primes.map(p => (/^\d+$/.test(p) ? BigInt(p) : p)));
+    return { generatePrimeSync: parse(out.generatePrimeSync), generatePrime: parse(out.generatePrime) };
+  }
+
+  // The three tests share one subprocess: three debug builds that start at once leave the kill guard too little room.
+  let child: Promise<Results> | undefined;
+  async function resultsOf(cases: Case[]): Promise<Results> {
+    const all = await (child ??= generatePrimes(allCases));
+    const slice = (form: (typeof forms)[number]) => cases.map(c => all[form][allCases.indexOf(c)]);
+    return { generatePrimeSync: slice("generatePrimeSync"), generatePrime: slice("generatePrime") };
+  }
+
+  it("small sizes return the values that Node returns, not one fixed value", async () => {
+    const results = await resultsOf(valueCases.map(([c]) => c));
+    const summary = valueCases.map(([c, allowed, varies], i) => ({
+      case: label(c),
+      unexpected: Object.fromEntries(
+        forms.map(form => [form, [...new Set(results[form][i].filter(p => !allowed.includes(p as bigint)))]]),
+      ),
+      ...(varies && { distinctValues: new Set(forms.flatMap(form => results[form][i])).size }),
+    }));
+    expect(summary).toEqual(
+      valueCases.map(([c, allowed, varies]) => ({
+        case: label(c),
+        unexpected: { generatePrimeSync: [], generatePrime: [] },
+        ...(varies && { distinctValues: allowed.length }),
+      })),
+    );
+  });
+
+  it("ends, and returns a prime of the requested size with the requested residue", async () => {
+    const results = await resultsOf(sizedCases);
+    const describePrime = (c: Case, p: bigint | string) =>
+      typeof p === "string"
+        ? p
+        : {
+            bits: p.toString(2).length,
+            residue: p % c.add,
+            prime: checkPrimeSync(p) && (!c.safe || checkPrimeSync((p - 1n) / 2n)),
+          };
+    const summary = sizedCases.map((c, i) => ({
+      case: label(c),
+      ...Object.fromEntries(forms.map(form => [form, results[form][i].map(p => describePrime(c, p))])),
+    }));
+    expect(summary).toEqual(
+      sizedCases.map(c => {
+        const expected = { bits: c.bits, residue: c.rem ?? (c.safe ? 3n : 1n), prime: true };
+        return {
+          case: label(c),
+          generatePrimeSync: Array(c.runs ?? 1).fill(expected),
+          generatePrime: [expected],
+        };
+      }),
+    );
+  });
+
+  it("a search that cannot start fails with the BoringSSL error, as in Node", async () => {
+    const results = await resultsOf(errorCases.map(([c]) => c));
+    expect(errorCases.map(([c], i) => [label(c), ...forms.map(form => results[form][i][0])])).toEqual(
+      errorCases.map(([c, code]) => [label(c), code, code]),
+    );
   });
 });
 

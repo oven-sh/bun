@@ -80,6 +80,58 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
+devTest("direct eval reads __dirname and __filename in a commonjs package", {
+  framework: minimalFramework,
+  files: {
+    "node_modules/example/package.json": JSON.stringify({
+      name: "example",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/example/index.js": `
+      module.exports = [eval("__dirname"), eval("__filename")];
+    `,
+    "routes/index.ts": `
+      import paths from 'example';
+      const last = (p, n) => p.split(/[\\\\/]/).slice(-n).join("/");
+      export default function (req, meta) {
+        return new Response(last(paths[0], 2) + " " + last(paths[1], 3));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("node_modules/example node_modules/example/index.js");
+  },
+});
+devTest("direct eval in a with scope reads __dirname when the name has a define", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      define = { "__dirname" = "\\"defined\\"" }
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import inWith from "./lib/in-with.cjs";
+      import outside from "./lib/outside.cjs";
+      console.log(inWith.split(/[\\\\/]/).pop() + " " + outside.join(" "));
+    `,
+    // A define does not replace a reference inside a with scope, so the module declares the name.
+    "lib/in-with.cjs": `
+      with ({}) {
+        module.exports = eval("__dirname");
+      }
+    `,
+    "lib/outside.cjs": `
+      module.exports = [__dirname, eval("typeof __dirname")];
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("lib defined undefined");
+  },
+});
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({

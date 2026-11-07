@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
 
-use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
+use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Flavor, Only, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
 pub(crate) struct Order {
@@ -32,7 +32,8 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    /// Vitest doesn't run the hooks of a scope where every test is skipped, so `!runs_a_test` drops Vitest hooks.
+    /// Vitest doesn't run the hooks of a scope where every test is skipped, and no module's `aroundAll` runs there.
+    /// So `!runs_a_test` drops both.
     pub(crate) fn generate_all_order(
         &mut self,
         entries: &[Box<ExecutionEntry>],
@@ -40,7 +41,7 @@ impl Order {
     ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
-            if !runs_a_test && entry_box.calling.is_vitest() {
+            if !runs_a_test && (entry_box.around.is_some() || entry_box.flavor == Flavor::Vitest) {
                 continue;
             }
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept

@@ -251,6 +251,11 @@ impl FileResponseStream {
             this_ref.fail_with(err);
             return;
         }
+        // The POSIX reader reports a failed poll registration through `on_reader_error`, then returns `Ok`.
+        #[cfg(unix)]
+        if this_ref.state.get().contains(State::FINISHED) {
+            return;
+        }
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);

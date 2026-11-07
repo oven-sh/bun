@@ -215,6 +215,104 @@ it("self is a getter", () => {
   expect(globalThis.self).toBe(globalThis);
 });
 
+it("self getter checks its receiver", () => {
+  const { get } = Object.getOwnPropertyDescriptor(globalThis, "self");
+  expect(get.call(globalThis)).toBe(globalThis);
+  expect(get.call(null)).toBe(globalThis);
+  expect(get.call(undefined)).toBe(globalThis);
+  expect(get.call()).toBe(globalThis);
+  expect(Reflect.get(globalThis, "self", globalThis)).toBe(globalThis);
+  expect(self).toBe(globalThis);
+
+  for (const receiver of [{}, 0, "", Symbol(), Object.create(globalThis), new Proxy(globalThis, {})]) {
+    expect(() => get.call(receiver)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_THIS",
+        message: "The self getter can only be used on the global object",
+      }),
+    );
+  }
+  expect(() => Reflect.get(globalThis, "self", {})).toThrow(TypeError);
+  expect(() => new Proxy(globalThis, {}).self).toThrow(TypeError);
+});
+
+it("self setter checks its receiver", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { set } = Object.getOwnPropertyDescriptor(globalThis, "self");
+       const results = [];
+       for (const receiver of [{}, 0, new Proxy(globalThis, {})]) {
+         try { set.call(receiver, "replaced"); results.push("set"); }
+         catch (error) { results.push(error.name + " " + error.code + " " + error.message); }
+       }
+       for (const assign of [
+         () => Reflect.set(globalThis, "self", "replaced", {}),
+         () => { new Proxy(globalThis, {}).self = "replaced"; },
+         () => { Object.create(globalThis).self = "replaced"; },
+       ]) {
+         try { assign(); results.push("set"); }
+         catch (error) { results.push(error.name); }
+       }
+       results.push(self === globalThis);
+       set.call(null, "from null");
+       results.push(self);
+       set.call(undefined, "from undefined");
+       results.push(self);
+       set.call(globalThis, "from globalThis");
+       results.push(self);
+       console.log(JSON.stringify(results));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const refused = "TypeError ERR_INVALID_THIS The self setter can only be used on the global object";
+  expect(JSON.parse(stdout)).toEqual([
+    refused,
+    refused,
+    refused,
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    true,
+    "from null",
+    "from undefined",
+    "from globalThis",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+it("self getter checks its receiver inside a Worker", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const worker = new Worker(
+    URL.createObjectURL(
+      new Blob(
+        [
+          `const { get } = Object.getOwnPropertyDescriptor(globalThis, "self");
+           const results = [];
+           for (const receiver of [null, undefined, globalThis, self, {}, 0]) {
+             try { results.push(get.call(receiver) === globalThis ? "global" : "other"); }
+             catch (error) { results.push(error.name); }
+           }
+           postMessage(results);`,
+        ],
+        { type: "application/javascript" },
+      ),
+    ),
+  );
+  worker.onmessage = event => resolve(event.data);
+  worker.onerror = reject;
+  try {
+    expect(await promise).toEqual(["global", "global", "global", "global", "TypeError", "TypeError"]);
+  } finally {
+    worker.terminate();
+  }
+});
+
 it("errors thrown by native code should be TypeError", async () => {
   expect(() => Bun.dns.prefetch()).toThrowError(TypeError);
   expect(async () => await fetch("http://localhost", { body: "123" })).toThrowError(TypeError);

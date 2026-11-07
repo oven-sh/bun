@@ -2378,3 +2378,36 @@ describe.concurrent("node:repl prints a frozen thrown error and continues", () =
     interactiveTimeout,
   );
 });
+
+// The `self` accessor of the main global rejects any other receiver. A REPL
+// context is a plain object that gets the main global's own properties copied
+// onto it, so it needs a `self` of its own.
+test(
+  "node:repl with useGlobal: false gives the context its own self",
+  async () => {
+    const script = `
+      const repl = require("repl");
+      const { PassThrough } = require("stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = "";
+      out.on("data", d => buf += d);
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "", useGlobal: false });
+      r.on("exit", () => process.stdout.write(buf));
+      inp.write("self === globalThis\\n");
+      inp.write("self === global\\n");
+      inp.write("self.fetch === fetch\\n");
+      inp.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\ntrue\ntrue\n");
+    expect(exitCode).toBe(0);
+  },
+  interactiveTimeout,
+);

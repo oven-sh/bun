@@ -15,7 +15,7 @@ async function run(setter: string, flags: string[], words?: string) {
     "program.mjs": `
       const set = ${setter};
       let outcome = "set";
-      try { ["replaced"].forEach(value => set.call({}, value)); } catch (error) { outcome = error.constructor.name + ": " + error.message.slice(0, 21); }
+      try { ["replaced"].forEach(value => set.call(globalThis, value)); } catch (error) { outcome = error.constructor.name + ": " + error.message.slice(0, 21); }
       console.error("OUT", outcome, typeof self, "value" in Object.getOwnPropertyDescriptor(globalThis, "self"));`,
     "a.test.mjs": `import { test } from "bun:test";\ntest("t", async () => { await import("./program.mjs"); });`,
   });

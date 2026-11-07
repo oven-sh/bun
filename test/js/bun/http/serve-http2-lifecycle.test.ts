@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
+import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
   F,
+  Fixture,
   H2Result,
+  PREFACE,
   RawH2,
   T,
   baseHeaders,
@@ -124,6 +129,174 @@ describe("Bun.serve http2 lifecycle", () => {
     expect(raw.frames.some(f => f.streamId === 5)).toBe(false);
     expect(raw.frames.filter(f => f.type === T.GOAWAY).every(f => f.payload.readUInt32BE(4) === 0)).toBe(true);
     raw.close();
+  });
+
+  // stop() visits every connection once. One that is still an HTTP/1 socket at that point (its TLS
+  // handshake or its cleartext preface is incomplete) becomes HTTP/2 only afterwards. It is served
+  // one request, as it would be had it stayed HTTP/1, and closed.
+  describe("graceful stop: a connection that becomes HTTP/2 after stop() serves one stream, gets GOAWAY and is closed", () => {
+    // Runs stop() through a second connection.
+    async function stopFromSecondConnection(fx: Fixture, secure: boolean) {
+      const session = await connectH2(fx.port, secure);
+      const sessionClosed = new Promise<void>(r => session.once("close", () => r()));
+      expect((await request(session, { ":path": "/stop?exit" })).body.toString()).toBe("stopping");
+      // stop() closes this drained session itself, so by now it has run and has seen the pending connection.
+      await sessionClosed;
+    }
+
+    const goaways = (raw: RawH2) =>
+      raw.frames
+        .filter(f => f.type === T.GOAWAY)
+        .map(f => ({ lastStreamId: f.payload.readUInt32BE(0), code: f.payload.readUInt32BE(4) }));
+
+    // Stops the server, then lets `becomeH2` complete the pending connection.
+    async function stopThenComplete(fx: Fixture, secure: boolean, becomeH2: () => Promise<RawH2>) {
+      await stopFromSecondConnection(fx, secure);
+      const raw = await becomeH2();
+      // Two requests in one write: the server has read both before it can close.
+      const get = (id: number) =>
+        frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, hpackLiteral(baseHeaders("/hello")));
+      raw.write(Buffer.concat([get(1), get(3)]));
+      expect((await raw.body(1)).toString()).toBe("hello");
+      // GOAWAY is written when the first request arrives, ahead of its response.
+      expect(goaways(raw)).toEqual([{ lastStreamId: 1, code: 0 }]);
+      // The server hangs up. This client never does.
+      await raw.waitForClose();
+      expect(raw.frames.some(f => f.streamId === 3)).toBe(false);
+      // No connection is left, so the stop() promise resolves and the fixture exits.
+      expect(await fx.proc.exited).toBe(0);
+    }
+
+    test("TLS handshake incomplete", async () => {
+      await using fx = await startFixture({ tls: true });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      // The ClientHello goes out. The server's answer is held back, so the handshake cannot finish yet.
+      let hold = true;
+      const held: Buffer[] = [];
+      const wire = new Duplex({ read() {}, write: (chunk, _encoding, cb) => void tcp.write(chunk, cb) });
+      tcp.on("data", d => void (hold ? held.push(d) : wire.push(d)));
+      tcp.on("close", () => wire.push(null));
+      const socket = tls.connect({ socket: wire, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      socket.on("error", () => {});
+      await once(tcp, "data");
+
+      await stopThenComplete(fx, true, async () => {
+        // The handshake can finish while the held bytes are pushed, so listen first.
+        const secured = once(socket, "secureConnect");
+        hold = false;
+        for (const d of held) wire.push(d);
+        await secured;
+        return RawH2.over(socket);
+      });
+    });
+
+    test("cleartext preface incomplete", async () => {
+      await using fx = await startFixture({ tls: false });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      // Too short to tell HTTP/2 from HTTP/1: the server keeps these bytes and waits for more.
+      tcp.write(PREFACE.subarray(0, 3));
+
+      await stopThenComplete(fx, false, async () => {
+        const raw = RawH2.over(tcp, { sendPreface: false });
+        raw.write(PREFACE.subarray(3));
+        raw.write(frame(T.SETTINGS, 0, 0));
+        return raw;
+      });
+    });
+
+    // 8 s with a PING every 2 s is the smallest setting that separates "refreshed the timer"
+    // from "did not" (see the zero-window tests below).
+    test("no stream: PING frames do not hold the connection past the idle timeout", async () => {
+      await using fx = await startFixture({ tls: false, idleTimeout: 8 });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      tcp.write(PREFACE.subarray(0, 3));
+      await stopFromSecondConnection(fx, false);
+
+      const raw = RawH2.over(tcp, { sendPreface: false });
+      raw.write(PREFACE.subarray(3));
+      raw.write(frame(T.SETTINGS, 0, 0));
+      const t0 = Date.now();
+      // The PINGs end after 20 s, so a server that counts them as activity closes late, not never.
+      let pings = 0;
+      const tick = setInterval(() => {
+        if (!raw.closed && pings++ < 10) raw.write(frame(T.PING, 0, 0, Buffer.from("keepaliv")));
+      }, 2000);
+      try {
+        await raw.waitForClose();
+        expect(Date.now() - t0).toBeLessThan(20000);
+        expect(goaways(raw)).toEqual([{ lastStreamId: 0, code: 0 }]);
+        expect(await fx.proc.exited).toBe(0);
+      } finally {
+        clearInterval(tick);
+      }
+    }, 45000);
+
+    test("TLS handshakes queued behind the per-iteration budget", async () => {
+      // The loop runs five TLS handshakes per iteration and parks the rest of a burst in a queue
+      // that the stop() sweep does not walk. The first request stops the server, so most of the
+      // burst is still mid-handshake at that moment. A client asks again after each answer and
+      // hangs up only after the third, so more than one answer on a connection means the server
+      // kept serving it. No answer means stop() found it already HTTP/2 with no request yet.
+      const src = `
+        import http2 from "node:http2";
+        let stopped, servedAfterStop = 0;
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tlsCert)}, http2: true, idleTimeout: 30,
+          fetch() {
+            if (stopped) servedAfterStop++;
+            stopped ??= server.stop();
+            return new Response("ok");
+          },
+        });
+        const conns = [];
+        for (let i = 0; i < 20; i++) {
+          const session = http2.connect("https://127.0.0.1:" + server.port, { rejectUnauthorized: false });
+          const closed = Promise.withResolvers();
+          const conn = { answers: 0, goaway: false, closed: closed.promise };
+          session.on("error", () => {});
+          session.on("goaway", () => (conn.goaway = true));
+          session.on("close", () => closed.resolve());
+          const request = () => {
+            const req = session.request({ ":path": "/" });
+            let body = "";
+            req.on("data", d => (body += d));
+            req.on("error", () => {});
+            req.on("end", () => {
+              if (body !== "ok") return;
+              if (++conn.answers === 3) session.close();
+              else if (!session.closed && !session.destroyed) request();
+            });
+            req.end();
+          };
+          session.on("connect", request);
+          conns.push(conn);
+        }
+        await Promise.all(conns.map(c => c.closed));
+        await stopped;
+        console.log(JSON.stringify({
+          answers: conns.map(c => c.answers).join(""),
+          answeredWithoutGoaway: conns.filter(c => c.answers > 0 && !c.goaway).length,
+          servedAfterStop,
+        }));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const result = JSON.parse(stdout);
+      // The request that called stop() is always answered. Which connection sent it is not fixed.
+      expect(result).toEqual({
+        answers: expect.stringMatching(/^(?=[01]*1)[01]{20}$/),
+        answeredWithoutGoaway: 0,
+        servedAfterStop: expect.any(Number),
+      });
+      // A request that arrives after stop() can only come on a connection that became HTTP/2 after it.
+      expect(result.servedAfterStop).toBeGreaterThan(0);
+      expect(exitCode).toBe(0);
+      // 40 TLS endpoints handshake in one process: 4 to 8 s on a debug build with ASAN.
+    }, 20000);
   });
 
   test("a paused (slowly read) request body does not idle out the connection", async () => {

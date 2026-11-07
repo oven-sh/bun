@@ -334,6 +334,12 @@ pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// This is set `true` during `Command.which()` if argv[1] is "node"
+/// (i.e. `bun node <file>`), so `exec_as_if_node` knows to skip the
+/// "node" positional. argv0=node (symlink) keeps this false.
+pub(crate) static IS_NODE_ARG: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -793,6 +799,17 @@ pub(crate) mod command {
         let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
         if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
             first_arg_name = it;
+        }
+
+        if first_arg_name == b"node" {
+            // `bun node <file>`: emulate node even though argv0 is "bun".
+            // Node-mode must not warn on flags Bun doesn't know.
+            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
+                .store(false, core::sync::atomic::Ordering::Relaxed);
+            // SAFETY: single-threaded startup
+            PRETEND_TO_BE_NODE.store(true, core::sync::atomic::Ordering::Relaxed);
+            IS_NODE_ARG.store(true, core::sync::atomic::Ordering::Relaxed);
+            return Tag::RunAsNodeCommand;
         }
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;

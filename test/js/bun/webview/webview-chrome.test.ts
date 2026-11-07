@@ -1140,14 +1140,19 @@ it("chrome: view.url keeps the #fragment", async () => {
 // a load fails and fires that page's load event. Resolves once the page says
 // it has loaded, for `failedUrl` when one is given (the error page's history
 // entry keeps the URL that failed). The last round trip is behind the reply
-// to any command that the load event made the view send.
+// to any command that the load event made the view send. A browser that never
+// gets there fails the test with what the tab showed last.
 async function errorPageLoaded(view: InstanceType<typeof Bun.WebView>, failedUrl?: string) {
+  const deadline = performance.now() + 3000;
   for (;;) {
     // Chrome refuses the history lookup while it swaps a page in.
     const history: any = failedUrl && (await view.cdp("Page.getNavigationHistory").catch(() => undefined));
     const state = await view.evaluate("location.href + ' ' + document.readyState");
     const current = history?.entries[history.currentIndex].url;
     if (current === failedUrl && state === "chrome-error://chromewebdata/ complete") break;
+    if (performance.now() > deadline) {
+      throw new Error(`Chrome's error page did not load: the tab is at "${state}", history entry ${current}`);
+    }
     await Bun.sleep(5);
   }
   await view.evaluate("1");

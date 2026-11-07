@@ -1085,6 +1085,20 @@ function navServer() {
         await imagesReleased;
         return new Response("GIF89a", { headers: { "content-type": "image/gif", "cache-control": "no-store" } });
       }
+      // Chrome aborts a navigation that is answered 204, and commits nothing.
+      if (path === "/no-content") return new Response(null, { status: 204 });
+      // Pages that send themselves to a URL that fails (port 9 is on Chrome's
+      // unsafe-port list): as they are parsed, and from their load handler.
+      if (path === "/redirects-inline") {
+        return page("<title>redirects-inline</title><script>location.href = 'http://127.0.0.1:9/from-inline'</script>");
+      }
+      if (path === "/redirects-on-load") {
+        return page(
+          "<title>redirects-on-load</title><script>onload = () => { location.href = 'http://127.0.0.1:9/from-onload' }</script>",
+        );
+      }
+      // A page around an <iframe> that fails to load.
+      if (path === "/dead-iframe") return page('<title>dead-iframe</title><iframe src="http://127.0.0.1:9/"></iframe>');
       return page(`<title>T${path}</title><body>${path}</body>`);
     },
   });
@@ -1120,6 +1134,233 @@ it("chrome: view.url keeps the #fragment", async () => {
   // Chrome reports the fragment in frame.urlFragment, separate from frame.url.
   expect(view.url).toBe(srv.base + "/page#frag");
   expect(await view.evaluate("location.href")).toBe(srv.base + "/page#frag");
+});
+
+// Chrome commits its internal error page (chrome-error://chromewebdata/) after
+// a load fails and fires that page's load event. Resolves once the page says
+// it has loaded, for `failedUrl` when one is given (the error page's history
+// entry keeps the URL that failed). The last round trip is behind the reply
+// to any command that the load event made the view send. A browser that never
+// gets there fails the test with what the tab showed last.
+async function errorPageLoaded(view: InstanceType<typeof Bun.WebView>, failedUrl?: string) {
+  const deadline = performance.now() + 3000;
+  for (;;) {
+    // Chrome refuses the history lookup while it swaps a page in.
+    const history: any = failedUrl && (await view.cdp("Page.getNavigationHistory").catch(() => undefined));
+    const state = await view.evaluate("location.href + ' ' + document.readyState");
+    const current = history?.entries[history.currentIndex].url;
+    if (current === failedUrl && state === "chrome-error://chromewebdata/ complete") break;
+    if (performance.now() > deadline) {
+      throw new Error(`Chrome's error page did not load: the tab is at "${state}", history entry ${current}`);
+    }
+    await Bun.sleep(5);
+  }
+  await view.evaluate("1");
+}
+
+it("chrome: a failed navigate() reports one failure and no navigation, and leaves view.url alone", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
+  // Port 9 is on Chrome's unsafe-port list: fails before any connection.
+  await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
+  // Neither the error page's commit nor its load event may surface as a
+  // navigation or as a second failure.
+  await errorPageLoaded(view);
+  expect(events).toEqual(["failed:net::ERR_UNSAFE_PORT"]);
+  const before = { url: srv.base + "/before", title: "T/before", loading: false };
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual(before);
+  // reload() loads the failed URL again. It fails again, so reload() rejects.
+  await expect(view.reload()).rejects.toThrow("Navigation to 'http://127.0.0.1:9/' failed");
+  expect(events.slice(1)).toEqual(["failed:Navigation to 'http://127.0.0.1:9/' failed"]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual(before);
+  // The view leaves the error page like any other page.
+  await view.goBack();
+  expect(events.slice(2)).toEqual(["navigated:" + srv.base + "/before"]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual(before);
+  await view.navigate(srv.base + "/after");
+  expect({ url: view.url, title: view.title }).toEqual({ url: srv.base + "/after", title: "T/after" });
+});
+
+it("chrome: a navigation the page starts and that fails fires onNavigationFailed once its error page has loaded", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/start");
+  const events: string[] = [];
+  const failed = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => {
+    events.push("failed:" + err.message);
+    failed.resolve();
+  };
+  // The next DOMContentLoaded is the error page's. It comes after that page's
+  // commit and before its load event.
+  view.addEventListener("Page.domContentEventFired", () => events.push("the error page is parsed"));
+  // No navigate() of the view's is pending, so Chrome's error page for the
+  // failed load is the only notice of the failure.
+  await view.evaluate("location.href = 'http://127.0.0.1:9/gone'");
+  await failed.promise;
+  await errorPageLoaded(view);
+  expect(events).toEqual(["the error page is parsed", "failed:Navigation to 'http://127.0.0.1:9/gone' failed"]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/start",
+    title: "T/start",
+    loading: false,
+  });
+});
+
+it("chrome: a retry from onNavigationFailed that fails too reports two failures", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  let retry: Promise<string> | undefined;
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => {
+    events.push("failed:" + err.message);
+    retry ??= view.navigate("http://127.0.0.1:9/retry").then(
+      () => "resolved",
+      e => "rejected:" + e.message,
+    );
+  };
+  await expect(view.navigate("http://127.0.0.1:9/first")).rejects.toThrow("net::ERR_UNSAFE_PORT");
+  expect(await retry).toBe("rejected:net::ERR_UNSAFE_PORT");
+  await errorPageLoaded(view, "http://127.0.0.1:9/retry");
+  expect(events).toEqual(["failed:net::ERR_UNSAFE_PORT", "failed:net::ERR_UNSAFE_PORT"]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/before",
+    title: "T/before",
+    loading: false,
+  });
+  // Each error page took one of the two failures. A load the page starts now
+  // and that fails is reported, once.
+  const failed = Promise.withResolvers<void>();
+  view.onNavigationFailed = (err: Error) => {
+    events.push("failed:" + err.message);
+    failed.resolve();
+  };
+  await view.evaluate("location.href = 'http://127.0.0.1:9/gone'");
+  await failed.promise;
+  await errorPageLoaded(view, "http://127.0.0.1:9/gone");
+  expect(events.slice(2)).toEqual(["failed:Navigation to 'http://127.0.0.1:9/gone' failed"]);
+});
+
+it("chrome: a retry from onNavigationFailed to a page that loads resolves on that page", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  let retry: Promise<string> | undefined;
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => {
+    events.push("failed:" + err.message);
+    retry ??= view.navigate(srv.base + "/good").then(
+      () => "resolved",
+      e => "rejected:" + e.message,
+    );
+  };
+  await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
+  expect(await retry).toBe("resolved");
+  expect(events).toEqual(["failed:net::ERR_UNSAFE_PORT", "navigated:" + srv.base + "/good"]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/good",
+    title: "T/good",
+    loading: false,
+  });
+});
+
+// After a failed navigate(), a navigate() that Chrome aborts (a 204 here, or
+// a download) shows no error page of its own. The first failure's error page
+// still goes in, and Chrome 153 sends no Page.frameNavigated for it. reload()
+// then fails on an error page of its own and has to settle.
+it("chrome: reload() rejects after a failed navigate() and one that Chrome aborted", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
+  await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
+  await expect(view.navigate(srv.base + "/no-content")).rejects.toThrow("net::ERR_ABORTED");
+  await errorPageLoaded(view);
+  // The error page's load event made the view ask for a title. The error
+  // page's own is not the view's.
+  expect({ url: view.url, title: view.title }).toEqual({ url: srv.base + "/before", title: "T/before" });
+  await expect(view.reload()).rejects.toThrow("Navigation to 'http://127.0.0.1:9/' failed");
+  expect(events).toEqual([
+    "failed:net::ERR_UNSAFE_PORT",
+    "failed:net::ERR_ABORTED",
+    "failed:Navigation to 'http://127.0.0.1:9/' failed",
+  ]);
+  await view.navigate(srv.base + "/after");
+  expect({ url: view.url, title: view.title }).toEqual({ url: srv.base + "/after", title: "T/after" });
+});
+
+// The page replaces itself with Chrome's error page before its load event, so
+// that event never comes. view.url is the document that committed. Its title
+// was never read, so view.title is still the title of the page before.
+it("chrome: navigate() rejects when its page goes to a URL that fails before it has loaded", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
+  const failure = "Navigation to 'http://127.0.0.1:9/from-inline' failed";
+  await expect(view.navigate(srv.base + "/redirects-inline")).rejects.toThrow(failure);
+  expect(events).toEqual(["navigated:" + srv.base + "/redirects-inline", "failed:" + failure]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/redirects-inline",
+    title: "T/before",
+    loading: false,
+  });
+  await view.navigate(srv.base + "/after");
+  expect({ url: view.url, title: view.title }).toEqual({ url: srv.base + "/after", title: "T/after" });
+});
+
+// The page has loaded, so navigate() resolves. Chrome holds the title fetch
+// that follows the load event while the new navigation is under way, and the
+// error page answers it: that answer is not the view's title. If the page
+// answered first, the title is its own.
+it("chrome: a page that goes to a URL that fails from its load handler does not get the error page's title", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  const failed = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => {
+    events.push("failed:" + err.message);
+    failed.resolve();
+  };
+  await view.navigate(srv.base + "/redirects-on-load");
+  await failed.promise;
+  await errorPageLoaded(view);
+  expect(events).toEqual([
+    "navigated:" + srv.base + "/redirects-on-load",
+    "failed:Navigation to 'http://127.0.0.1:9/from-onload' failed",
+  ]);
+  expect(view.url).toBe(srv.base + "/redirects-on-load");
+  expect(["T/before", "redirects-on-load"]).toContain(view.title);
+});
+
+it("chrome: an iframe that fails to load does not fail the page around it", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const events: string[] = [];
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
+  await view.navigate(srv.base + "/dead-iframe");
+  await view.reload();
+  expect(events).toEqual(["navigated:" + srv.base + "/dead-iframe", "navigated:" + srv.base + "/dead-iframe"]);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/dead-iframe",
+    title: "dead-iframe",
+    loading: false,
+  });
 });
 
 it("chrome: same-document navigations settle and update view.url", async () => {

@@ -415,6 +415,81 @@ describe("bundler", () => {
     },
     run: { file: "/out/[nonexistent]-entry.js", stdout: "1" },
   });
+
+  // The `sources` of a source map are relative to the directory of the map
+  // file, which is below the outdir when the naming template has a directory.
+  // `snapshotSourceMap` also reads every source from the map's directory.
+  itBundled("naming/SourceMapSourcesEntryPointsInDirectories", {
+    files: {
+      "/a/deep/first.ts": `import { shared } from "../../shared"; console.log(shared, 1);`,
+      "/b/second.ts": `import { shared } from "../shared"; console.log(shared, 2);`,
+      "/shared.ts": `export const shared = "shared";`,
+    },
+    entryPointsRaw: ["./a/deep/first.ts", "./b/second.ts"],
+    outdir: "/out",
+    sourceMap: "external",
+    snapshotSourceMap: {
+      "first.js.map": { files: ["../../../shared.ts", "../../../a/deep/first.ts"] },
+      "second.js.map": { files: ["../../shared.ts", "../../b/second.ts"] },
+    },
+  });
+  itBundled("naming/SourceMapSourcesEntryNamingDirectory", {
+    files: {
+      "/entry.ts": `import { dep } from "./dep"; console.log(dep);`,
+      "/dep.ts": `export const dep = 1;`,
+    },
+    outdir: "/out",
+    entryNaming: "js/[name].[ext]",
+    sourceMap: "external",
+    snapshotSourceMap: {
+      "entry.js.map": { files: ["../../dep.ts", "../../entry.ts"] },
+    },
+  });
+  // The map is written before the hash is known. A hash is one path segment.
+  itBundled("naming/SourceMapSourcesHashDirectory", {
+    files: {
+      "/entry.ts": `import { dep } from "./dep"; console.log(dep);`,
+      "/dep.ts": `export const dep = 1;`,
+    },
+    outdir: "/out",
+    entryNaming: "[hash]/[name].[ext]",
+    sourceMap: "external",
+    snapshotSourceMap: {
+      "entry.js.map": { files: ["../../dep.ts", "../../entry.ts"] },
+    },
+  });
+  itBundled("naming/SourceMapSourcesChunkNamingDirectory", {
+    files: {
+      "/one.ts": `import("./lazy").then(m => console.log(m.lazy, 1));`,
+      "/two.ts": `import("./lazy").then(m => console.log(m.lazy, 2));`,
+      "/lazy.ts": `export const lazy = "lazy";`,
+    },
+    entryPointsRaw: ["./one.ts", "./two.ts"],
+    outdir: "/out",
+    splitting: true,
+    chunkNaming: "chunks/[name]-[hash].[ext]",
+    sourceMap: "external",
+    onAfterBundle(api) {
+      const sources = readdirSync(api.outdir + "/chunks")
+        .filter(name => name.endsWith(".map"))
+        .flatMap(name => JSON.parse(api.readFile("/out/chunks/" + name)).sources);
+      expect(sources).toEqual(["../../lazy.ts"]);
+    },
+  });
+  itBundled("naming/SourceMapSourcesEntryPointOutsideRoot", {
+    files: {
+      "/proj/inside.ts": `console.log("inside");`,
+      "/elsewhere/outside.ts": `console.log("outside");`,
+    },
+    root: "/proj",
+    entryPointsRaw: ["./proj/inside.ts", "./elsewhere/outside.ts"],
+    outdir: "/out",
+    sourceMap: "external",
+    snapshotSourceMap: {
+      "inside.js.map": { files: ["../proj/inside.ts"] },
+      "outside.js.map": { files: ["../../../elsewhere/outside.ts"] },
+    },
+  });
 });
 
 // Bun.build({ naming: "[name" }) used to SIGABRT; validation now rejects it.

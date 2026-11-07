@@ -1821,6 +1821,75 @@ describe.concurrent("sourcemap positions", () => {
   });
 });
 
+// A `sources` entry is relative to the directory of the file that carries the
+// map: the `.map` file, or the chunk for an inline map. Without an outdir no
+// such file exists, and the entry is relative to the working directory.
+test.concurrent("sourcemap sources resolve from the file that carries the map", async () => {
+  using dir = tempDir("bun-build-sourcemap-sources", {
+    "proj/a/deep/entry.ts": `import { shared } from "../../shared"; console.log(shared, "a");`,
+    "proj/b/entry.ts": `import { shared } from "../shared"; console.log(shared, "b");`,
+    "proj/shared.ts": `export const shared = "shared";`,
+    "build.ts": `
+      import path from "node:path";
+
+      const root = path.resolve("proj");
+      const entrypoints = [path.join(root, "a/deep/entry.ts"), path.join(root, "b/entry.ts")];
+      const inlineMap = "//# sourceMappingURL=data:application/json;base64,";
+      const fromCwd = file => path.relative(".", file).split(path.sep).join("/");
+
+      const builds = {};
+      for (const [name, options] of Object.entries({
+        "absolute outdir, external": { outdir: path.resolve("out-external"), sourcemap: "external" },
+        "absolute outdir, linked": { outdir: path.resolve("out-linked"), sourcemap: "linked" },
+        "absolute outdir, inline": { outdir: path.resolve("out-inline"), sourcemap: "inline" },
+        "relative outdir": { outdir: "out-relative", sourcemap: "external" },
+        "no outdir, external": { sourcemap: "external" },
+        "no outdir, inline": { sourcemap: "inline" },
+      })) {
+        const build = await Bun.build({ root, entrypoints, ...options });
+        const resolved = {};
+        for (const output of build.outputs) {
+          const text = await output.text();
+          const inline = text.indexOf(inlineMap);
+          if (output.kind !== "sourcemap" && inline === -1) continue;
+          const map = JSON.parse(output.kind === "sourcemap" ? text : atob(text.slice(inline + inlineMap.length).trim()));
+          const carrier = path.resolve(output.path);
+          const base = options.outdir ? path.dirname(carrier) : process.cwd();
+          resolved[fromCwd(carrier)] = map.sources.map(source => fromCwd(path.resolve(base, source)));
+        }
+        builds[name] = resolved;
+      }
+      console.log(JSON.stringify(builds));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Where each source resolves to.
+  const carriers = (outdir: string, carrier: string) => ({
+    [`${outdir}a/deep/${carrier}`]: ["proj/shared.ts", "proj/a/deep/entry.ts"],
+    [`${outdir}b/${carrier}`]: ["proj/shared.ts", "proj/b/entry.ts"],
+  });
+  expect({ builds: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    builds: {
+      "absolute outdir, external": carriers("out-external/", "entry.js.map"),
+      "absolute outdir, linked": carriers("out-linked/", "entry.js.map"),
+      "absolute outdir, inline": carriers("out-inline/", "entry.js"),
+      "relative outdir": carriers("out-relative/", "entry.js.map"),
+      "no outdir, external": carriers("", "entry.js.map"),
+      "no outdir, inline": carriers("", "entry.js"),
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 const originalCwd = process.cwd() + "";
 
 describe("tsconfig option", () => {
@@ -2678,6 +2747,23 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
           files: { "/entry.js": "console.log(123)" },
           naming: long + "/[name].[ext]",
           outdir: "out",
+          throw: false,
+        });
+        console.log(build.success, build.logs.map(log => /^Output path for .* is too long/.test(log.message)));
+      `),
+    ).toEqual({ stdout: "false [ true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  // The source map is written before the length of the output path is checked.
+  test("fails the build the same way when the chunk has a source map", async () => {
+    expect(
+      await run(`
+        const build = await Bun.build({
+          entrypoints: ["/entry.js"],
+          files: { "/entry.js": "console.log(123)" },
+          naming: long + "/[name].[ext]",
+          outdir: "out",
+          sourcemap: "external",
           throw: false,
         });
         console.log(build.success, build.logs.map(log => /^Output path for .* is too long/.test(log.message)));

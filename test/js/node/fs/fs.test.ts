@@ -13,6 +13,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -314,6 +315,131 @@ it("fs.writev returns object", async done => {
 });
 
 describe("FileHandle", () => {
+  describe.each([bunExe(), nodeExeAtLeast("24.0.0")].filter((executable): executable is string => executable !== null))(
+    "close through a forwarding receiver (%s)",
+    executable => {
+      it.concurrent("transfers a handle also referenced through a class instance", async () => {
+        using dir = tempDir("filehandle-transfer-class", {
+          data: "data",
+          "worker.cjs": /* js */ `
+            const assert = require("node:assert/strict");
+            const { open } = require("node:fs/promises");
+            const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+            class Holder {
+              constructor(fh) { this.fh = fh; }
+            }
+            (async () => {
+              if (!isMainThread) {
+                const { fh, holder } = workerData;
+                try {
+                  assert.equal(await fh.readFile("utf8"), "data");
+                  // Bun already clones the nested reference as a plain object.
+                  assert.equal(typeof holder.fh.readFile, globalThis.Bun ? "undefined" : "function");
+                  assert.equal(holder.fh === fh, !globalThis.Bun);
+                } finally {
+                  await fh.close();
+                }
+                parentPort.postMessage("ok");
+                return;
+              }
+              const fh = await open("data", "r");
+              let worker;
+              try {
+                worker = new Worker(__filename, {
+                  workerData: { fh, holder: new Holder(fh) },
+                  transferList: [fh],
+                });
+                const message = await new Promise((resolve, reject) => {
+                  worker.once("message", resolve);
+                  worker.once("error", reject);
+                  worker.once("exit", code => reject(new Error("Worker exited before replying: " + code)));
+                });
+                assert.equal(message, "ok");
+                assert.equal(fh.fd, -1);
+                console.log(message);
+              } finally {
+                if (worker) await worker.terminate();
+                await fh.close();
+              }
+            })().catch(error => {
+              console.error(error);
+              process.exitCode = 1;
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [executable, "worker.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+      });
+
+      it.concurrent.each(["direct", "proxy", "get-trap", "nested-proxy", "detached", "foreign-this"])(
+        "%s closes once and disarms its finalizer",
+        async mode => {
+          using dir = tempDir("filehandle-proxy-close", { data: "data" });
+          const fixture = /* js */ `
+          const assert = require("node:assert/strict");
+          const { open } = require("node:fs/promises");
+          const { setImmediate } = require("node:timers/promises");
+          const errors = [];
+          process.on("uncaughtException", error => errors.push(error.code));
+          const collect = () => globalThis.Bun ? Bun.gc(true) : globalThis.gc();
+          (async () => {
+            for (let i = 0; i < 20; i++) {
+              const replacement = await (async () => {
+                const original = await open("data", "r");
+                const mode = ${JSON.stringify(mode)};
+                let handle = original;
+                if (mode === "proxy" || mode === "nested-proxy") handle = new Proxy(handle, {});
+                if (mode === "get-trap" || mode === "nested-proxy") {
+                  handle = new Proxy(handle, { get: (target, key, receiver) => Reflect.get(target, key, receiver) });
+                }
+                const buffer = Buffer.alloc(4);
+                assert.equal((await handle.read(buffer, 0, 4, 0)).bytesRead, 4);
+                assert.equal(buffer.toString(), "data");
+                let closes = 0;
+                original.on("close", () => closes++);
+                const close = handle.close;
+                if (mode === "detached") await close();
+                else if (mode === "foreign-this") await close.call({});
+                else await handle.close();
+                assert.equal(original.fd, -1);
+                await Promise.all([new Proxy(original, {}).close(), original.close()]);
+                assert.equal(closes, 1);
+                // A recycled descriptor must survive GC of the closed handle.
+                return open("data", "r");
+              })();
+              collect();
+              await setImmediate();
+              assert.equal((await replacement.stat()).size, 4);
+              await replacement.close();
+            }
+            for (let i = 0; i < 5; i++) {
+              collect();
+              await setImmediate();
+            }
+            console.log(JSON.stringify({ errors }));
+          })();
+        `;
+          await using proc = Bun.spawn({
+            cmd: [executable, "--expose-gc", "-e", fixture],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"errors":[]}\n', stderr: "", exitCode: 0 });
+        },
+      );
+    },
+  );
+
   it("FileHandle#read returns object", async () => {
     await using fd = await fs.promises.open(__filename);
     const buf = Buffer.alloc(10);
@@ -1613,7 +1739,7 @@ it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
 });
 
 it("mkdtempSync() empty name", () => {
-  const tempdir = mkdtempSync(os.tmpdir());
+  const tempdir = mkdtempSync(os.tmpdir() + path.sep);
   expect(existsSync(tempdir)).toBe(true);
   writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
   const dirs = readdirSync(tempdir);

@@ -14,6 +14,15 @@ test("it will create a snapshot file if it doesn't exist", () => {
   });
 });
 
+test("a property matched by asymmetricMatch() or by a matcher in the received value keeps its received value", () => {
+  const isOne = { asymmetricMatch: (value: unknown) => value === 1 };
+  // A snapshot also passes when it is the text of the received value itself. The matcher on `c` rules that out.
+  const c = expect.any(Number);
+  expect({ a: 1, b: 2, c: 3 }).toMatchSnapshot({ a: isOne, c });
+  expect({ a: expect.any(Number), b: 2, c: 3 }).toMatchSnapshot({ a: 1, c });
+  expect({ a: isOne, b: 2, c: 3 }).toMatchSnapshot({ a: 1, c });
+});
+
 test("ArrayBuffer values are serialized like typed arrays", () => {
   expect(new Uint8Array([1, 2, 3]).buffer).toMatchInlineSnapshot(`
     ArrayBuffer [

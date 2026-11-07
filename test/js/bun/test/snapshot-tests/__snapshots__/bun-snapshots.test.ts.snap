@@ -75,3 +75,29 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`a property matched by asymmetricMatch() or by a matcher in the received value keeps its received value 1`] = `
+{
+  "a": 1,
+  "b": 2,
+  "c": Any<Number>,
+}
+`;
+
+exports[`a property matched by asymmetricMatch() or by a matcher in the received value keeps its received value 2`] = `
+{
+  "a": Any<Number>,
+  "b": 2,
+  "c": Any<Number>,
+}
+`;
+
+exports[`a property matched by asymmetricMatch() or by a matcher in the received value keeps its received value 3`] = `
+{
+  "a": {
+    "asymmetricMatch": [Function],
+  },
+  "b": 2,
+  "c": Any<Number>,
+}
+`;

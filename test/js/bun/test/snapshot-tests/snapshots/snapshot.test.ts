@@ -607,18 +607,20 @@ test("indentation stops at 32 levels", () => {
   `);
 });
 
-test("JSX props are separated by a space", () => {
-  const element = (type: string, props: object) => ({ $$typeof: Symbol.for("react.element"), type, key: null, props });
-  expect(element("div", { a: 1, b: "x" })).toMatchInlineSnapshot(`<div a=1 b="x" />`);
+// Stored snapshots have no space before the last prop.
+test.each(["react.element", "react.transitional.element"])("JSX props of a %s", kind => {
+  const element = (type: string, props: object) => ({ $$typeof: Symbol.for(kind), type, key: null, props });
+  expect(element("div", { a: 1, b: "x" })).toMatchInlineSnapshot(`<div a=1b="x" />`);
   expect(element("div", { a: 1, b: "x", c: true, d: null, e: 5, f: 6, g: 7 }))
-    .toMatchInlineSnapshot(`<div a=1 b="x" c=true d=null e=5
-  f=6
-  g=7 />`);
+    .toMatchInlineSnapshot(`<div a=1 b="x" c=true d=null
+  e=5
+  f=6g=7 />`);
   expect(element("div", { a: 1, b: "x", children: ["text", element("b", { c: 1, d: 2, children: "bold" })] }))
-    .toMatchInlineSnapshot(`<div a=1 b="x">
+    .toMatchInlineSnapshot(`<div a=1b="x">
   text
-  <b c=1 d=2>bold</b>
+  <b c=1d=2>bold</b>
 </div>`);
+  expect(element("div", { a: 1, "": 0, b: 2, c: 3, children: "x" })).toMatchInlineSnapshot(`<div a=1 b=2 c=3>x</div>`);
 });
 
 it("should work with expect.anything()", () => {
@@ -2885,23 +2887,6 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
           });
         `,
       "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
-    });
-    expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
-  });
-
-  test("passes when it is what Bun 1.4 wrote for JSX props, with no space before the last one", async () => {
-    const printed = `<div a=1 b="x"c=true>\n  <b d=1e=2 />\n</div>`;
-    const { log, stderr, exitCode } = await logOf({
-      "a.test.js": `
-          const element = (type, props) => ({ $$typeof: Symbol.for("react.element"), type, key: null, props });
-          const value = () => element("div", { a: 1, b: "x", c: true, children: element("b", { d: 1, e: 2 }) });
-          test("in a file", () => { expect(value()).toMatchSnapshot(); });
-          test("inline", () => {
-            expect(value()).toMatchInlineSnapshot(\`${printed}\`);
-            expect(() => expect(value()).toMatchInlineSnapshot(\`${printed.replace("a=1 b", "a=1b")}\`)).toThrow();
-          });
-        `,
-      "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`${printed}\`;\n`,
     });
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });

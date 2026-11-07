@@ -5431,11 +5431,11 @@ pub mod formatter {
                         let _ind = defer_decrement!(self.indent);
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
-                        // Bun 1.4 counted the props from 1, which left out the space before the last one.
-                        let first_index = usize::from(self.snapshot.like_older_bun.is_some());
-                        self.snapshot.same_as_older_bun &= count_without_children < 2;
+                        // Snapshots count the props from 1, which leaves out the space before the last one. Stored snapshots have that text.
+                        let mut snapshot_i = 0;
 
                         while let Some((prop, property_value)) = props_iter.next()? {
+                            snapshot_i += 1;
                             if prop.eq_ascii(b"children") {
                                 continue;
                             }
@@ -5459,7 +5459,11 @@ pub mod formatter {
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));
-                            let props_i = props_iter.i.get() as usize + first_index;
+                            let props_i = if self.is_snapshot {
+                                snapshot_i
+                            } else {
+                                props_iter.i.get() as usize
+                            };
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r><green>", true).as_bytes());

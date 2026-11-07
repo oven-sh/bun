@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { sayGoal } from "./harness/goals";
@@ -8,6 +8,8 @@ import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-prog
 import { test } from "./supported";
 
 const wire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+// Bun's own code is cut out of an executable by the page. One page more is no built-in module, and on arm64 Linux a page is 64 KB.
+const mostGrowth = isLinux && isArm64 ? 64 * 1024 : 32 * 1024;
 
 async function built(entry: string, files: Record<string, string>) {
   using dir = tempDir("doors-and-reach", files);
@@ -53,7 +55,7 @@ async function expectNoGrowth(forms: Record<string, string>, goalNotMet?: string
       name,
       stdout: found.stdout,
       exitCode: found.exitCode,
-      grows: found.size - plain.size > 32 * 1024,
+      grows: found.size - plain.size > mostGrowth,
     }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
   }
 }

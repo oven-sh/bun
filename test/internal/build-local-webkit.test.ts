@@ -1,12 +1,14 @@
 /**
  * `--webkit=local` (scripts/build/deps/webkit.ts): a WebKit checkout compiled in bun's own ninja graph, described from
  * the checkout's own file lists. CI links the prebuilt WebKit, so nothing else exercises this. Configure-time only: no
- * compiler or ninja runs, and the "checkout" is a few files with the shape of WebKit's.
+ * compiler or ninja runs, and the "checkout" is a few files with the shape of WebKit's. The one step that is run,
+ * hardened-icu.sh, gets a stand-in for ICU's tarball whose configure and Makefiles compile nothing.
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { bunEnv, isLinux, isWindows, tempDir } from "harness";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
@@ -174,7 +176,9 @@ describe("which builds compile WebKit", () => {
       join(aot, "tests"),
     ];
 
-    const prebuilt = linux({});
+    // A cache of its own: in the machine's, a tarball that a build unpacked decides where testaot is.
+    using dir = tempDir("build-prebuilt-aot-files", {});
+    const prebuilt = linux({ cacheDir: join(String(dir), "cache") });
     const source = webkit.source(prebuilt);
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     const dest = source.destDir!;
@@ -352,6 +356,80 @@ function checkoutWith(changes: Record<string, string | undefined>): Record<strin
 
 const python = isWindows ? "python" : "python3";
 
+const hardenedIcuScript = join(import.meta.dir, "..", "..", "scripts", "build", "hardened-icu.sh");
+/**
+ * hardened-icu.sh runs on a Linux host, with these tools: only a Linux target is hardened. The patch is GNU's: that of
+ * BusyBox has no -s and no -d.
+ */
+const canRunHardenedIcu =
+  isLinux &&
+  ["bash", "tar", "patch", "make", "sha256sum", "nproc"].every(tool => Bun.which(tool) !== null) &&
+  Bun.spawnSync({ cmd: ["patch", "--version"], env: bunEnv })
+    .stdout.toString()
+    .startsWith("GNU patch");
+
+/**
+ * What hardened-icu.sh builds from, reduced. The tarball's configure writes down the compilers and flags it is given
+ * (the script keeps that in configure.log), and each "library" is a copy of a source. Each patch changes a line that
+ * the one before it wrote, so they apply in this order only.
+ */
+const icuStandIn = {
+  tarball: {
+    "tarball/icu/source/configure": `#!/bin/sh\nprintf '%s\\n' "$CC" "$CXX" "$AR" "$CFLAGS" "$CXXFLAGS"\n`,
+    "tarball/icu/source/stubdata/Makefile": "all:\n",
+    "tarball/icu/source/common/Makefile": "all:\n\tcp udata.cpp ../lib/libicuuc.a\n",
+    "tarball/icu/source/common/udata.cpp": "load the item\n",
+    "tarball/icu/source/i18n/Makefile": "all:\n\tcp number_utils.cpp ../lib/libicui18n.a\n",
+    "tarball/icu/source/i18n/number_utils.cpp": "resize\n",
+  },
+  patches: {
+    "icu/udata-decompress-hook.patch": `--- a/source/common/udata.cpp
++++ b/source/common/udata.cpp
+@@ -1 +1,2 @@
++decompress the item
+ load the item
+`,
+    "icu/decnum-allocation-failure.patch": `--- a/source/common/udata.cpp
++++ b/source/common/udata.cpp
+@@ -1,2 +1,2 @@
+-decompress the item
++decompress the item, or say why not
+ load the item
+--- a/source/i18n/number_utils.cpp
++++ b/source/i18n/number_utils.cpp
+@@ -1 +1 @@
+-resize
++resize, and check
+`,
+    "icu/uresdata-frontcode.patch": `--- a/source/i18n/number_utils.cpp
++++ b/source/i18n/number_utils.cpp
+@@ -1 +1 @@
+-resize, and check
++resize, check, and report
+`,
+  },
+  /** The libraries with the three patches in them, and what the script prints while it applies them. */
+  patched: {
+    "libicui18n.a": "resize, check, and report\n",
+    "libicuuc.a": "decompress the item, or say why not\nload the item\n",
+  },
+  applied:
+    "applying udata-decompress-hook.patch\napplying decnum-allocation-failure.patch\napplying uresdata-frontcode.patch\n",
+};
+
+const icuSourceJson = (sha256: string): string => JSON.stringify({ version: "0.1", sha256 }, null, 2) + "\n";
+
+/** Packs `<root>/tarball` and names the result in `<root>/icu/source.json`, as a checkout names ICU's tarball. */
+function packIcuStandIn(root: string): string {
+  chmodSync(join(root, "tarball", "icu", "source", "configure"), 0o755);
+  const tarball = join(root, "icu4c-sources.tgz");
+  const tar = Bun.spawnSync({ cmd: ["tar", "-czf", tarball, "-C", join(root, "tarball"), "icu"], env: bunEnv });
+  if (!tar.success) throw new Error(`tar: ${tar.stderr}`);
+  const sha256 = createHash("sha256").update(readFileSync(tarball)).digest("hex");
+  writeFileSync(join(root, "icu", "source.json"), icuSourceJson(sha256));
+  return tarball;
+}
+
 describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
   /**
    * A target whose WebKit is these files. `short` spells a path under the checkout, the build dir, vendor/ or the
@@ -365,9 +443,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       const p = isWindows ? written.replaceAll("/", "\\") : written;
       for (const [name, base] of [
         ["B", join(cfg.buildDir, "deps", "WebKit")],
+        ["build", cfg.buildDir],
         ["JSC", join(root, "Source", "JavaScriptCore")],
         ["WTF", join(root, "Source", "WTF")],
         ["bmalloc", join(root, "Source", "bmalloc")],
+        ["WebKit", root],
         ["vendor", cfg.vendorDir],
         ["bun", cfg.cwd],
       ] as const) {
@@ -398,9 +478,12 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
   }
 
   /** What webkit.build() fails with. */
-  function configureError(files: Record<string, string>): { message: string; hint: string | undefined } {
+  function configureError(
+    files: Record<string, string>,
+    partial: PartialConfig = {},
+  ): { message: string; hint: string | undefined } {
     try {
-      describeBuild({}, files);
+      describeBuild(partial, files);
     } catch (error) {
       if (error instanceof BuildError) return { message: error.message, hint: error.hint };
       throw error;
@@ -714,6 +797,139 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     });
   });
 
+  describe("ICU", () => {
+    /** The checkout with an icu/ like oven-sh/WebKit's: which ICU, and the patches that its Dockerfiles apply to it. */
+    const withIcu = {
+      ...checkout,
+      "icu/source.json": `{\n  "version": "79.1",\n  "sha256": "00"\n}\n`,
+      "icu/udata-decompress-hook.patch": "",
+      "icu/decnum-allocation-failure.patch": "",
+      // Written in neither name order nor its reverse: the directory's order is not the order of the list.
+      "icu/uresdata-frontcode.patch": "",
+      "icu/ucmndata-toc.patch": "",
+      // Not patches: a file the Dockerfiles read, and an editor's lock on a patch that is being written.
+      "icu/keep-raw.txt": "",
+      "icu/.#decnum-allocation-failure.patch": "",
+    };
+    const hardenedStep = "ICU (hardened-icu.sh)";
+    const isGenerator = (s: NonNullable<DirectBuild["steps"]>[number]): s is GenStep =>
+      s.kind === undefined || s.kind === "gen";
+
+    /** `run` with $BUN_ICU_ROOT as given: where a hardened build takes ICU's headers and data from. */
+    function withIcuRoot<T>(root: string | undefined, run: () => T): T {
+      const saved = process.env.BUN_ICU_ROOT;
+      try {
+        if (root === undefined) delete process.env.BUN_ICU_ROOT;
+        else process.env.BUN_ICU_ROOT = root;
+        return run();
+      } finally {
+        if (saved === undefined) delete process.env.BUN_ICU_ROOT;
+        else process.env.BUN_ICU_ROOT = saved;
+      }
+    }
+
+    test("a hardened build compiles it with every patch in the checkout's icu/, the decompression hook first", () => {
+      const { step, spec, short } = withIcuRoot("/fake/icu", () => describeBuild({ hardened: true }, withIcu));
+      const patches = [
+        "WebKit/icu/udata-decompress-hook.patch",
+        "WebKit/icu/decnum-allocation-failure.patch",
+        "WebKit/icu/ucmndata-toc.patch",
+        "WebKit/icu/uresdata-frontcode.patch",
+      ];
+      const { inputs, cmd, outputs } = step(hardenedStep);
+      expect(outputs).toEqual(["B/icu/lib/libicui18n.a", "B/icu/lib/libicuuc.a"]);
+      // ninja reruns the step for an input that is newer than the libraries, and for a command that changed: a patch
+      // that is edited, added or removed is one or the other. A compiler that is replaced rewrites its file.
+      expect(inputs).toEqual([
+        "bun/scripts/build/hardened-icu.sh",
+        "WebKit/icu/source.json",
+        ...patches,
+        "build/toolchain-identity/cc.txt",
+        "build/toolchain-identity/cxx.txt",
+      ]);
+      const flagsAt = cmd.indexOf("--") + 1;
+      expect(cmd.slice(0, flagsAt)).toEqual([
+        "bash",
+        "bun/scripts/build/hardened-icu.sh",
+        "WebKit/icu",
+        "B/icu",
+        "/fake/llvm/bin/clang",
+        "/fake/llvm/bin/clang++",
+        "/fake/llvm/bin/llvm-ar",
+        ...patches,
+        "--",
+      ]);
+      expect(cmd.slice(flagsAt)).toEqual(expect.arrayContaining(["-march=nehalem", "-fstack-protector-strong"]));
+      expect(cmd.slice(flagsAt).filter(flag => !flag.startsWith("-"))).toEqual([]);
+      // The data is not compiled: it is the one that $BUN_ICU_ROOT names.
+      expect(spec.libs!.map(short)).toEqual([...outputs, join("/fake/icu", "lib", "libicudata.a")]);
+      // A patch that WebKit adds is one more file in the directory.
+      expect(spec.configureInputs!.map(short)).toContain("WebKit/icu");
+    });
+
+    test.skipIf(!canRunHardenedIcu)("hardened-icu.sh runs the command of that step as it is written", async () => {
+      using local = checkOut({ hardened: true }, { ...checkout, ...icuStandIn.tarball, ...icuStandIn.patches });
+      const tarball = packIcuStandIn(local.cfg.localDeps.WebKit!);
+      const spec = withIcuRoot("/fake/icu", () => webkit.build(local.cfg) as DirectBuild);
+      const step = spec.steps!.filter(isGenerator).find(s => s.desc === hardenedStep)!;
+      await using proc = Bun.spawn({
+        cmd: step.cmd,
+        cwd: step.cwd,
+        env: { ...bunEnv, BUN_ICU_SOURCES: tarball },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // The step's outputs are what the script writes, with every patch of icu/ in them.
+      expect(Object.fromEntries(step.outputs.map(lib => [basename(lib), readFileSync(lib, "utf8")]))).toEqual(
+        icuStandIn.patched,
+      );
+      // What the step puts after `--` is what the compilers get, ahead of the script's own flags.
+      const flags = step.cmd.slice(step.cmd.indexOf("--") + 1).join(" ");
+      expect(flags).toContain("-fstack-protector-strong");
+      const log = join(dirname(dirname(step.outputs[0]!)), "icu", "source", "configure.log");
+      const [cc, cxx, ar, cflags, cxxflags] = readFileSync(log, "utf8").split("\n");
+      expect([cc, cxx, ar]).toEqual(["/fake/llvm/bin/clang", "/fake/llvm/bin/clang++", "/fake/llvm/bin/llvm-ar"]);
+      expect(cflags).toStartWith(`${flags} -`);
+      expect(cxxflags).toStartWith(`${flags} -`);
+      expect(stdout).toBe(icuStandIn.applied);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a hardened build says which patch it cannot do without", () => {
+      const expected = {
+        message: "this WebKit checkout has no icu/udata-decompress-hook.patch",
+        hint: "$BUN_ICU_ROOT's data is compressed item by item, and only an ICU with that patch reads it",
+      };
+      const { "icu/udata-decompress-hook.patch": _, ...withoutHook } = withIcu;
+      withIcuRoot("/fake/icu", () => {
+        expect(configureError(withoutHook, { hardened: true })).toEqual(expected);
+        expect(configureError(checkout, { hardened: true })).toEqual(expected);
+      });
+    });
+
+    test("a hardened build asks for $BUN_ICU_ROOT before anything in the checkout", () => {
+      expect(withIcuRoot(undefined, () => configureError(checkout, { hardened: true }))).toEqual({
+        message: "hardened needs ICU's headers and data",
+        hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
+      });
+    });
+
+    test("a build that is not hardened has no hardened-icu.sh step and reads nothing in the checkout's icu/", () => {
+      for (const root of [undefined, "/fake/icu"]) {
+        const { spec, short } = withIcuRoot(root, () => describeBuild({}, withIcu));
+        const steps = spec.steps!.filter(isGenerator).map(s => s.desc);
+        expect(steps.filter(desc => desc.includes("hardened-icu.sh"))).toEqual([]);
+        expect(spec.configureInputs!.map(short).filter(input => input.startsWith("WebKit/icu"))).toEqual([]);
+        // What it links is the system's ICU, or all of the one $BUN_ICU_ROOT names.
+        expect(spec.libs).toEqual(
+          root === undefined ? [] : ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(lib => join(root, "lib", lib)),
+        );
+      }
+    });
+  });
+
   test("the programs beside a local build", () => {
     using local = checkOut({}, checkout);
     const { cfg, short } = local;
@@ -757,6 +973,92 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       expect(program.cxxflags).toContain(`-DBUILDING_${program.name}`);
       for (const source of program.sources) cxx(n, cfg, source, { flags: program.cxxflags });
     }
+  });
+});
+
+// hardened-icu.sh by itself, with arguments that are written here.
+describe.skipIf(!canRunHardenedIcu)("hardened-icu.sh", () => {
+  function standIn() {
+    const dir = tempDir("build-hardened-icu", { ...icuStandIn.tarball, ...icuStandIn.patches });
+    const root = String(dir);
+    const tarball = packIcuStandIn(root);
+    const out = join(root, "out");
+    const [hook, second, third] = Object.keys(icuStandIn.patches).map(patch => join(root, patch));
+    return {
+      root,
+      tarball,
+      out,
+      hook: hook!,
+      second: second!,
+      third: third!,
+      /** The script with `args` after the five that every run has. No network: the tarball is the one here. */
+      async run(...args: string[]) {
+        await using proc = Bun.spawn({
+          cmd: ["bash", hardenedIcuScript, join(root, "icu"), out, "cc", "c++", "ar", ...args],
+          env: { ...bunEnv, BUN_ICU_SOURCES: tarball },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      },
+      /** What the step leaves for the link, by name. */
+      libraries(): Record<string, string> {
+        const lib = join(out, "lib");
+        if (!existsSync(lib)) return {};
+        return Object.fromEntries(readdirSync(lib).map(name => [name, readFileSync(join(lib, name), "utf8")]));
+      },
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+
+  test.concurrent("applies its patches in the order given, and compiles with the flags after `--`", async () => {
+    using icu = standIn();
+    const flags = ["--target=x86_64-unknown-linux-gnu", "-O2"];
+    const { stdout, stderr, exitCode } = await icu.run(icu.hook, icu.second, icu.third, "--", ...flags);
+    expect(stderr).toBe("");
+    expect(icu.libraries()).toEqual(icuStandIn.patched);
+    const log = readFileSync(join(icu.out, "icu", "source", "configure.log"), "utf8");
+    const [cc, cxx, ar, cflags, cxxflags] = log.split("\n");
+    expect([cc, cxx, ar]).toEqual(["cc", "c++", "ar"]);
+    expect(cflags).toStartWith(`${flags.join(" ")} -`);
+    expect(cxxflags).toStartWith(`${flags.join(" ")} -`);
+    expect(stdout).toBe(icuStandIn.applied);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a patch that does not apply fails the step, and no library of a run before it is left", async () => {
+    using icu = standIn();
+    expect((await icu.run(icu.hook, icu.second, icu.third, "--", "-O2")).exitCode).toBe(0);
+    expect(icu.libraries()).toEqual(icuStandIn.patched);
+    const { stdout, exitCode } = await icu.run(icu.hook, icu.third, icu.second, "--", "-O2");
+    expect(stdout).toStartWith("applying udata-decompress-hook.patch\napplying uresdata-frontcode.patch\n");
+    expect(stdout).not.toContain("applying decnum-allocation-failure.patch");
+    expect(icu.libraries()).toEqual({});
+    expect(exitCode).not.toBe(0);
+  });
+
+  const refused: Array<[how: string, args: string[]]> = [
+    ["without `--`, which is how it was run when it chose the patch itself", ["-O2"]],
+    ["without a patch, which compiles an ICU that cannot read its data", ["--", "-O2"]],
+  ];
+  test.concurrent.each(refused)("refuses to run %s", async (_how, args) => {
+    using icu = standIn();
+    const { stdout, stderr, exitCode } = await icu.run(...args);
+    expect(stderr).toStartWith("usage: hardened-icu.sh ");
+    expect(stdout).toBe("");
+    expect(existsSync(icu.out)).toBe(false);
+    expect(exitCode).toBe(2);
+  });
+
+  test.concurrent("refuses a tarball that is not the one icu/source.json names", async () => {
+    using icu = standIn();
+    writeFileSync(join(icu.root, "icu", "source.json"), icuSourceJson(Buffer.alloc(64, "0").toString()));
+    const { stdout, stderr, exitCode } = await icu.run(icu.hook, icu.second, icu.third, "--", "-O2");
+    expect(stderr).toContain(`${icu.tarball} is not the ICU 0.1 of `);
+    expect(stdout).toBe("");
+    expect(icu.libraries()).toEqual({});
+    expect(exitCode).toBe(1);
   });
 });
 

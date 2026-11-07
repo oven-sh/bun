@@ -2168,6 +2168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ret.value.unwrap(),
                                 ));
                                 output[prev_idx] = stmt;
+                                is_control_flow_dead = true;
                                 continue;
                             }
                         }
@@ -2197,6 +2198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     stmt.loc,
                                 );
+                                is_control_flow_dead = true;
                                 continue;
                             }
                         }

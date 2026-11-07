@@ -1,7 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, readFileSync, statSync } from "node:fs";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -2154,6 +2154,53 @@ describe.concurrent("--interactive", () => {
       expect(stdout).toBe("external-repl-42\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // The `-e` script runs in the tick that starts the read of the history file, as in `node -i -e`. Before
+  // Node.js v26.8.0 (nodejs/node#64513) the read then replaced the history, and the line was not saved.
+  test.todoIf(isWindows)(
+    "-e: a line that the script writes while the history file is read is saved to the file",
+    async () => {
+      using dir = tempDir("interactive-history", { "history.txt": "old2\nold1" });
+      const history = path.join(String(dir), "history.txt");
+      const decoder = new TextDecoder();
+      const loaded = Promise.withResolvers<void>();
+      let output = "";
+      await using terminal = new Bun.Terminal({
+        cols: 120,
+        rows: 40,
+        data(_terminal, data) {
+          output += decoder.decode(data, { stream: true });
+          if (output.includes("history-file-loaded")) loaded.resolve();
+        },
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--interactive",
+          "-e",
+          `repl.repl.once("flushHistory", () => console.log("history-file-" + "loaded")); repl.repl.write("1 + 1\\n");`,
+        ],
+        terminal,
+        // With TERM=dumb, write() does not end a line.
+        env: {
+          ...env,
+          TERM: "xterm-256color",
+          NODE_REPL_HISTORY: history,
+          HOME: String(dir),
+          USERPROFILE: String(dir),
+        },
+      });
+      // A REPL that ends before it has read the file ends the wait too.
+      await Promise.race([loaded.promise, proc.exited]);
+      if (proc.exitCode === null) terminal.write("\x04");
+      const exitCode = await proc.exited;
+      expect({ history: readFileSync(history, "utf8"), exitCode }).toEqual({
+        history: "1 + 1\nold2\nold1",
+        exitCode: 0,
+      });
     },
     interactiveTimeout,
   );

@@ -1197,6 +1197,70 @@ console.log(finish().join());
   expect(exitCode).toBe(0);
 });
 
+// With no other thread the GIL is not given up: the thread sleeps inside the VM, and what gets it out when the host ends what runs is the engine's own signal. A thread that waits also looks by
+// itself, less and less often: some four times in the first two seconds, and then not for two seconds or more. So the end comes after two seconds, and is not to take until the next look.
+for (const wait of ["threading.Event().wait(1000)", "lock.acquire(timeout=1000)", "queue.Queue().get(timeout=1000)"]) {
+  it(`a time limit of node:vm ends a wait at once where there is no other thread: ${wait}`, async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "waits.py": `
+import queue, threading
+
+lock = threading.Lock(); lock.acquire()
+def wait(): ${wait}
+`,
+        "main.js": `
+import vm from "node:vm";
+import { wait } from "./waits.py";
+const start = performance.now();
+try {
+  vm.runInContext("wait()", vm.createContext({ wait }), { timeout: 2000 });
+  console.log("returned");
+} catch (e) {
+  console.log(e.code, performance.now() - start < 3500 ? "in time" : "late");
+}
+`,
+      },
+      "main.js",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT in time\n");
+    expect(exitCode).toBe(0);
+  });
+}
+
+it("terminate() ends a worker that waits at once where there is no other thread", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "waits.py": `
+import threading
+
+lock = threading.Lock(); lock.acquire()
+def wait(): lock.acquire(timeout=1000)
+`,
+      "worker.js": `
+import { wait } from "./waits.py";
+postMessage("started");
+wait();
+`,
+      "main.js": `
+const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+await Bun.sleep(2000); // Between two of its own looks: see above.
+const start = performance.now();
+worker.terminate();
+await closed;
+console.log(performance.now() - start < 1500 ? "in time" : "late");
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("in time\n");
+  expect(exitCode).toBe(0);
+});
+
 it("an interrupt ends the wait for the other threads at exit", async () => {
   using dir = tempDir("python-threads", {
     "main.py": `

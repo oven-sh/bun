@@ -6,6 +6,8 @@
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -496,5 +498,72 @@ test.skipIf(isWindows)("responds to a framework request queued behind the reload
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout, stderr).toBe("index\nafter\nafter\n");
+  expect(exitCode).toBe(0);
+});
+
+// A Promise subclass can start its work in then(), as Bun.$ and a Bun.SQL query do. The plugin load waits on
+// what `await` waits on for a pending promise that setup() returns, so it calls that then(). The fixture value
+// starts itself on the next turn of the event loop when nothing called its then(), and counts that in
+// `notAwaited`.
+test.concurrent("[serve.static] plugin setup() awaits a pending Promise subclass through its own then()", async () => {
+  const fixtures = pathToFileURL(join(import.meta.dir, "../js/bun/test/fixtures/returned-thenable.ts")).href;
+  using dir = tempDir("serve-plugins-setup-promise-subclass", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      import { LazyPromise } from ${JSON.stringify(fixtures)};
+      export default {
+        name: "lazy-setup",
+        setup(build) {
+          return new LazyPromise(resolve =>
+            setImmediate(() => {
+              build.onLoad({ filter: /entry\\.ts$/ }, () => ({
+                loader: "ts",
+                contents: "console.log('PLUGIN_MARKER');",
+              }));
+              resolve();
+            }),
+          );
+        },
+      };
+    `,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("ORIGINAL_MARKER");`,
+    "server.ts": `
+      import html from "./index.html";
+      import { LazyPromise, notAwaited } from ${JSON.stringify(fixtures)};
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/": html },
+        fetch() { return new Response("fallback"); },
+      });
+      const res = await fetch(server.url, { signal: AbortSignal.timeout(10_000) });
+      const body = await res.text();
+      const m = body.match(/src="([^"]+)"/);
+      const js = m
+        ? await fetch(new URL(m[1], server.url), { signal: AbortSignal.timeout(10_000) }).then(r => r.text())
+        : "";
+      await server.stop(true);
+      console.log(JSON.stringify({
+        status: res.status,
+        fromPlugin: js.includes("PLUGIN_MARKER") && !js.includes("ORIGINAL_MARKER"),
+        thenCalls: LazyPromise.thenCalls,
+        notAwaited: notAwaited.count,
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const line = stdout.split("\n").find(l => l.startsWith("{"));
+  expect(line).toBeDefined();
+  expect(JSON.parse(line!)).toEqual({ status: 200, fromPlugin: true, thenCalls: 1, notAwaited: 0 });
   expect(exitCode).toBe(0);
 });

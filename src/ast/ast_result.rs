@@ -101,6 +101,8 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
+    /// An `import()`, `require()` or `require.resolve()` that is left to the runtime, which resolves it from the file that holds it.
+    pub has_runtime_specifier: bool,
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
@@ -148,6 +150,7 @@ impl<'a> Ast<'a> {
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
+            has_runtime_specifier: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
         }

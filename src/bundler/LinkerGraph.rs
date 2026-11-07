@@ -150,6 +150,8 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        /// `merge_small_chunks` moved the file out of its entry point's chunk, into one that loads only with that entry point.
+        pub(crate) moved_out_of_entry_chunk: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

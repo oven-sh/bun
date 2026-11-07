@@ -1,9 +1,13 @@
 import type { Server } from "bun";
+import { setSocketOptions } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
+import { once } from "node:events";
 import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
+import nodeTls from "node:tls";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
 const files = {
@@ -1470,6 +1474,189 @@ test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arriv
   closeSync(writer);
   const last = await reader.read();
   expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
+});
+
+// usockets closes idle sockets from a sweep that runs every 4 seconds. A budget
+// of 1 to 4 seconds is one sweep: the next sweep closes every socket that holds
+// one, whenever it was armed. Each of these waits for one sweep: it closes a
+// request that is never answered, and that close is the clock. Plain TCP takes
+// sendfile(2) on Linux; TLS has the file read in chunks on every platform.
+describe.concurrent.each([
+  ["plain TCP", undefined],
+  ["TLS", tls],
+])("server.timeout(req, n) with a Bun.file body over %s", (_transport, tlsOptions) => {
+  // More than one loopback connection buffers while the client reads nothing. With the client's
+  // receive buffer pinned, that is the server's send buffer: 4 MiB at most on Linux. It wasn't
+  // measured elsewhere (macOS allows 8 MiB).
+  const SIZE = (isLinux ? 16 : 32) * 1024 * 1024;
+  // Enough to take the response through writable events before it stalls again.
+  const PART = SIZE / 4;
+  const outcome = (bodyLength: number) => (bodyLength === SIZE ? "whole" : "cut");
+
+  // Clients of one server. Each reads only inside read().
+  function clients(port: number) {
+    const sockets: net.Socket[] = [];
+    return {
+      async request(pathname: string, requestBody?: Buffer) {
+        const socket = tlsOptions
+          ? nodeTls.connect({ port, host: "127.0.0.1", ca: tlsOptions.cert, servername: "localhost" })
+          : net.connect({ port, host: "127.0.0.1" });
+        sockets.push(socket);
+        socket.pause();
+        socket.on("error", () => {});
+        await once(socket, tlsOptions ? "secureConnect" : "connect");
+        // An unpinned receive buffer grows while the client reads (up to 32 MiB on Linux 6.16+), and then the rest of the body fits in it.
+        setSocketOptions(socket, 2, 64 * 1024);
+        const requestLine = requestBody
+          ? `POST ${pathname} HTTP/1.1\r\nContent-Length: ${requestBody.length}\r\n`
+          : `GET ${pathname} HTTP/1.1\r\n`;
+        socket.write(`${requestLine}Host: localhost\r\nConnection: close\r\n\r\n`);
+        if (requestBody) socket.write(requestBody);
+        let head = Buffer.alloc(0);
+        let body = -1;
+        return {
+          // Resolves with the body length so far, once it is `atLeast` or the server closed.
+          read(atLeast: number) {
+            const { promise, resolve } = Promise.withResolvers<number>();
+            const done = () => {
+              socket.pause();
+              socket.off("data", onData).off("close", done);
+              resolve(Math.max(body, 0));
+            };
+            const onData = (chunk: Buffer) => {
+              if (body >= 0) {
+                body += chunk.length;
+              } else {
+                head = Buffer.concat([head, chunk]);
+                const end = head.indexOf("\r\n\r\n");
+                if (end >= 0) body = head.length - end - 4;
+              }
+              if (body >= atLeast) done();
+            };
+            socket.on("data", onData).on("close", done);
+            if (socket.destroyed) done();
+            else socket.resume();
+            return promise;
+          },
+        };
+      },
+      [Symbol.dispose]() {
+        for (const socket of sockets) socket.destroy();
+      },
+    };
+  }
+
+  // A handler result for the request that the sweep closes.
+  function untilSwept(req: Request, swept: PromiseWithResolvers<void>) {
+    return new Promise<Response>(resolve => {
+      req.signal.addEventListener("abort", () => {
+        swept.resolve();
+        resolve(new Response());
+      });
+    });
+  }
+
+  test("a longer n keeps a stalled response open past idleTimeout", async () => {
+    using dir = tempDir("serve-file-timeout", { "big.bin": Buffer.alloc(SIZE, "a") });
+    const big = join(String(dir), "big.bin");
+    const swept = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      idleTimeout: 1,
+      routes: {
+        "/static": new Response(Buffer.alloc(SIZE, "a")),
+        "/file-route": Bun.file(big),
+        "/dir/*": { dir: String(dir) },
+      },
+      fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/sweep") return untilSwept(req, swept);
+        if (pathname === "/call-0") server.timeout(req, 0);
+        if (pathname === "/call-30") server.timeout(req, 30);
+        return new Response(Bun.file(big));
+      },
+    });
+    using client = clients(server.port);
+
+    const call0 = await client.request("/call-0");
+    const call30 = await client.request("/call-30");
+    // Without the call, idleTimeout still closes a stalled body. No body writer
+    // touches the timer after its first write: uWS arms it from the value that
+    // the request's entry stored.
+    const noCall = await client.request("/no-call");
+    const fileRoute = await client.request("/file-route");
+    const dirRoute = await client.request("/dir/big.bin");
+    // Winsock takes the first send whole, whatever its size, so a static body over plain TCP never stalls on Windows.
+    const staticRoute = isWindows && !tlsOptions ? undefined : await client.request("/static");
+    await Promise.all([call0, call30, noCall, fileRoute, dirRoute, staticRoute].map(response => response?.read(PART)));
+    await client.request("/sweep");
+    await swept.promise;
+
+    expect({
+      call0: outcome(await call0.read(SIZE)),
+      call30: outcome(await call30.read(SIZE)),
+      noCall: outcome(await noCall.read(SIZE)),
+      fileRoute: outcome(await fileRoute.read(SIZE)),
+      dirRoute: outcome(await dirRoute.read(SIZE)),
+      staticRoute: staticRoute ? outcome(await staticRoute.read(SIZE)) : "does not stall",
+    }).toEqual({
+      call0: "whole",
+      call30: "whole",
+      noCall: "cut",
+      fileRoute: "cut",
+      dirRoute: "cut",
+      staticRoute: staticRoute ? "cut" : "does not stall",
+    });
+  }, 30_000);
+
+  test("a shorter n closes a stalled response when idleTimeout is 0", async () => {
+    using dir = tempDir("serve-file-timeout", { "big.bin": Buffer.alloc(SIZE, "a") });
+    const big = join(String(dir), "big.bin");
+    const swept = Promise.withResolvers<void>();
+    const lateRequest = Promise.withResolvers<Request>();
+    const requestBodyRead = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      idleTimeout: 0,
+      fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/late-call") lateRequest.resolve(req);
+        else if (pathname !== "/no-call") server.timeout(req, 1);
+        if (pathname === "/sweep") return untilSwept(req, swept);
+        if (pathname === "/after-request-body") {
+          return req.text().then(() => {
+            requestBodyRead.resolve();
+            return new Response(Bun.file(big));
+          });
+        }
+        return new Response(Bun.file(big));
+      },
+    });
+    using client = clients(server.port);
+
+    const call = await client.request("/call");
+    const lateCall = await client.request("/late-call");
+    // uWS turns the timer off at the last chunk of a request body, so here only the file stream turns it on again.
+    const afterRequestBody = await client.request("/after-request-body", Buffer.alloc(64 * 1024, "b"));
+    // Without the call nothing closes a stalled body here.
+    const noCall = await client.request("/no-call");
+    // The call for /late-call comes when its body is in flight.
+    expect(await lateCall.read(1)).toBeGreaterThan(0);
+    server.timeout(await lateRequest.promise, 1);
+    // /after-request-body reads nothing yet: a writable event would arm its timer as well.
+    await Promise.all([call.read(PART), lateCall.read(PART), noCall.read(PART), requestBodyRead.promise]);
+    await client.request("/sweep");
+    await swept.promise;
+
+    expect({
+      call: outcome(await call.read(SIZE)),
+      lateCall: outcome(await lateCall.read(SIZE)),
+      afterRequestBody: outcome(await afterRequestBody.read(SIZE)),
+      noCall: outcome(await noCall.read(SIZE)),
+    }).toEqual({ call: "cut", lateCall: "cut", afterRequestBody: "cut", noCall: "whole" });
+  }, 30_000);
 });
 
 // A request that declares a body arms the request-body (onData) callback on

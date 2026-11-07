@@ -407,10 +407,6 @@ impl StaticRoute {
     }
 
     fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
-        if let Some(server) = this.server.get() {
-            resp.timeout(server.config().idle_timeout);
-        }
-
         if !this.on_writable_bytes(write_offset, resp) {
             return false;
         }

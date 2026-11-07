@@ -671,6 +671,101 @@ describe("an error with a circular reference to itself", () => {
   });
 });
 
+// The frame is cut from the source text by line. The tests below pass before and after a change of how the lines are found.
+describe.concurrent("the lines of a code frame", () => {
+  const repeat = (text, count) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+  const thrower = 'throw new Error("here");';
+  // What a module prints before the stack of its error: the lines of the frame, the caret and the message.
+  const frameOf = async source => {
+    using dir = tempDir("code-frame-lines", { "frame.js": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "frame.js"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = stderr.split("\n");
+    return { stdout, frame: printed.slice(0, printed.indexOf("error: here") + 1), exitCode };
+  };
+  // The frame of an error at `column` of the last of `lines`, which are `[number, text]`.
+  const frame = (lines, column) => ({
+    stdout: "",
+    frame: [
+      ...lines.map(([number, text]) => `${number} | ${text}`),
+      repeat(" ", String(lines.at(-1)[0]).length + 2 + column) + "^",
+      "error: here",
+    ],
+    exitCode: 1,
+  });
+
+  const longLine = `/*\t*/ ${repeat("var a = 0; ", 2_000)}`;
+  test.each([
+    [
+      "is long and has a tab",
+      `${longLine}\n${thrower}\n`,
+      [
+        [1, longLine.slice(0, 1024)],
+        [2, thrower],
+      ],
+      11,
+    ],
+    [
+      "has a character that is not ASCII",
+      `// é ☃\n${thrower}\n`,
+      [
+        [1, "// é ☃"],
+        [2, thrower],
+      ],
+      11,
+    ],
+    ["has a tab, and the error", `\t${thrower} // tab\nlet after = 1;\n`, [[1, `\t${thrower} // tab`]], 12],
+    ["is the only line, with a tab and no line break", `\t${thrower}`, [[1, `\t${thrower}`]], 12],
+    ["is the only line, with a character that is not ASCII", `/* é */ ${thrower}`, [[1, `/* é */ ${thrower}`]], 19],
+  ])("the first line %s", async (_, source, lines, column) => {
+    expect(await frameOf(source)).toEqual(frame(lines, column));
+  });
+
+  test("the first line ends in a carriage return and a line feed", async () => {
+    const { stdout, frame: printed, exitCode } = await frameOf(`"use strict";\r\n${thrower}\r\n`);
+    // The first line is printed with its carriage return today. This test does not say that it must be.
+    expect({ stdout, frame: printed.map(line => line.replace(/\r$/, "")), exitCode }).toEqual(
+      frame(
+        [
+          [1, '"use strict";'],
+          [2, thrower],
+        ],
+        11,
+      ),
+    );
+  });
+
+  // A module that throws on line 60. `padding(n)` is line `n` before that.
+  const moduleOf = (padding, lineBreak) =>
+    [...Array.from({ length: 59 }, (_, i) => padding(i + 1)), thrower, "// after", ""].join(lineBreak);
+  const frameAt60 = padding => frame([...[55, 56, 57, 58, 59].map(n => [n, padding(n)]), [60, thrower]], 11);
+  const comment = n => `// line ${n}`;
+  test.each([
+    ["end in a line feed", comment, "\n"],
+    ["end in a carriage return and a line feed", comment, "\r\n"],
+    ["have tabs", n => `\t//\tline\t${n}`, "\n"],
+    ["have characters that are not ASCII", n => `// línea ${n} ☃`, "\n"],
+    ["are empty or not in turn", n => (n % 2 ? "" : comment(n)), "\n"],
+    ["are 200 bytes long", n => `// line ${n} ${repeat("x", 190)}`, "\n"],
+    ["come after a line of 100,000 bytes", n => (n === 10 ? `// ${repeat("x", 100_000)}` : comment(n)), "\n"],
+  ])("the lines before the error %s", async (_, padding, lineBreak) => {
+    expect(await frameOf(moduleOf(padding, lineBreak))).toEqual(frameAt60(padding));
+  });
+
+  test("a carriage return alone counts as a line break for the lines after it", async () => {
+    // The comment is line 10 and line 11.
+    const padding = n => (n === 10 ? "/* a\rb */" : comment(n > 10 ? n + 1 : n));
+    const lines = [...Array.from({ length: 58 }, (_, i) => padding(i + 1)), thrower, "// after", ""];
+    expect(await frameOf(lines.join("\n"))).toEqual(frameAt60(comment));
+  });
+});
+
 // `Malloc=1` lets ASAN catch a read past the end of the source.
 test.concurrent("prints the source preview for an error positioned at the end of the source text", async () => {
   await using proc = Bun.spawn({

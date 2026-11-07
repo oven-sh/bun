@@ -1408,7 +1408,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 
     if CHECK_START {
         // this shows up in profiling
-        if remaining[0] > 127 || (remaining[0] < 0x20 && remaining[0] != 0x09) {
+        if remaining[0] > 127 || remaining[0] < 0x20 {
             return Some(offset);
         }
     }
@@ -1719,11 +1719,11 @@ pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
 /// The final element is the end index of the desired line
 #[derive(Copy, Clone, Default)]
 pub struct LineRange {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
-pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
+pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     text: &[u8],
     target_line: u32,
 ) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {
@@ -1733,10 +1733,7 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
     let mut ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
 
-    let mut current_line: u32 = 0;
-    let Some(first_newline_or_nonascii_i) =
-        index_of_newline_or_non_ascii_check_start::<true>(text, 0)
-    else {
+    let Some(first_stop) = index_of_newline_or_non_ascii_check_start::<true>(text, 0) else {
         if target_line == 0 {
             let _ = ranges.push(LineRange {
                 start: 0,
@@ -1747,35 +1744,14 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    let iter = CodepointIterator::init(text);
-    let mut cursor = unicode::Cursor {
-        i: first_newline_or_nonascii_i,
-        ..Default::default()
+    // Only a `\n` ends the first line. Most often the first stop is that `\n`, or the `\r` before it.
+    let first_stop = first_stop as usize;
+    let first_line_feed = match text[first_stop] {
+        b'\n' => Some(first_stop),
+        b'\r' if text.get(first_stop + 1) == Some(&b'\n') => Some(first_stop + 1),
+        _ => index_of_char_usize(&text[first_stop..], b'\n').map(|i| first_stop + i),
     };
-    const NL: i32 = b'\n' as i32;
-    const CR: i32 = b'\r' as i32;
-    let first_newline_range: LineRange = 'brk: {
-        while iter.next(&mut cursor) {
-            match cursor.c {
-                NL => {
-                    current_line += 1;
-                    break 'brk LineRange {
-                        start: 0,
-                        end: cursor.i,
-                    };
-                }
-                CR => {
-                    if iter.next(&mut cursor) && cursor.c == NL {
-                        current_line += 1;
-                        break 'brk LineRange {
-                            start: 0,
-                            end: cursor.i,
-                        };
-                    }
-                }
-                _ => {}
-            }
-        }
+    let Some(first_line_feed) = first_line_feed else {
         let _ = ranges.push(LineRange {
             start: 0,
             // Wrapping cast.
@@ -1783,77 +1759,115 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         });
         return ranges;
     };
-
-    let _ = ranges.push(first_newline_range); // OOM/capacity: fire-and-forget
+    let _ = ranges.push(LineRange {
+        start: 0,
+        end: first_line_feed as u32,
+    });
 
     if target_line == 0 {
         return ranges;
     }
 
-    let mut prev_end = first_newline_range.end;
-    while let Some(current_i) =
-        index_of_newline_or_non_ascii_check_start::<true>(text, cursor.i + u32::from(cursor.width))
-    {
-        cursor.i = current_i;
-        cursor.width = 0;
-        let advanced = iter.next(&mut cursor);
-        debug_assert!(advanced);
-        let current_line_range: LineRange = match cursor.c {
-            NL => {
-                let start = prev_end;
-                prev_end = cursor.i;
-                LineRange {
-                    start,
-                    end: cursor.i + 1,
-                }
-            }
-            CR => {
-                let current_end = cursor.i;
-                if iter.next(&mut cursor) && cursor.c == NL {
-                    let r = LineRange {
-                        start: prev_end,
-                        end: current_end,
-                    };
-                    prev_end = cursor.i;
-                    r
-                } else {
-                    LineRange {
-                        start: prev_end,
-                        end: cursor.i + 1,
-                    }
-                }
-            }
-            _ => continue,
-        };
-
-        if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
-            let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-            let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
-            ranges = new_ranges;
-        }
-        let _ = ranges.push(current_line_range); // OOM/capacity: fire-and-forget
-
+    let mut lines = LinesAfterFirst {
+        text,
+        at: first_line_feed + 1,
+        prev_end: first_line_feed as u32,
+    };
+    // Once `ranges` is full, the slot of its oldest line: the next line takes it.
+    let mut oldest: usize = 0;
+    let mut current_line: u32 = 1;
+    while let Some(range) = lines.next() {
+        push_line_range(&mut ranges, &mut oldest, range);
         if current_line >= target_line {
+            ranges.slice().rotate_left(oldest);
             return ranges;
         }
-
         current_line += 1;
     }
-
-    if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
-        let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-        let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
-        ranges = new_ranges;
-    }
-    if current_line <= target_line {
-        let _ = ranges.push(LineRange {
-            start: prev_end,
+    // The text after the last line break is the last line.
+    push_line_range(
+        &mut ranges,
+        &mut oldest,
+        LineRange {
+            start: lines.prev_end,
             // Wrapping cast.
             end: text.len() as u32,
-        }); // OOM/capacity: fire-and-forget
-    }
-
+        },
+    );
+    ranges.slice().rotate_left(oldest);
     ranges
+}
+
+/// The lines of a text after its first one, as `index_of_line_ranges` cuts them.
+struct LinesAfterFirst<'a> {
+    text: &'a [u8],
+    /// Where the next line starts.
+    at: usize,
+    /// Where the range of the next line starts: the `\n` that ended the line before it.
+    prev_end: u32,
+}
+
+impl LinesAfterFirst<'_> {
+    /// The range of the next line. `None` when the text has no line break left.
+    #[inline(always)]
+    fn next(&mut self) -> Option<LineRange> {
+        let text = self.text;
+        // The `\r` or `\n` that ends the line.
+        let mut line_break = self.at;
+        loop {
+            let byte = *text.get(line_break)?;
+            if (0x20..=0x7F).contains(&byte) {
+                // Printable ASCII goes by fast. This stops at a line break, and at a tab, a control byte and a non-ASCII byte.
+                line_break += highway::index_of_newline_or_non_ascii(&text[line_break..])?;
+            }
+            if matches!(text[line_break], b'\n' | b'\r') {
+                break;
+            }
+            line_break += 1;
+        }
+        let start = self.prev_end;
+        Some(if text[line_break] == b'\n' {
+            self.prev_end = line_break as u32;
+            self.at = line_break + 1;
+            LineRange {
+                start,
+                end: line_break as u32 + 1,
+            }
+        } else if text.get(line_break + 1) == Some(&b'\n') {
+            self.prev_end = line_break as u32 + 1;
+            self.at = line_break + 2;
+            LineRange {
+                start,
+                end: line_break as u32,
+            }
+        } else {
+            // A `\r` alone: the line takes the byte after it, and the next range starts where this one did.
+            self.at = (line_break + 2).min(text.len());
+            LineRange {
+                start,
+                end: self.at as u32,
+            }
+        })
+    }
+}
+
+/// Adds a range, in place of the oldest one (at `oldest`) when `ranges` is full.
+#[inline(always)]
+fn push_line_range<const LINE_RANGE_COUNT: usize>(
+    ranges: &mut BoundedArray<LineRange, LINE_RANGE_COUNT>,
+    oldest: &mut usize,
+    range: LineRange,
+) {
+    if ranges.len() == LINE_RANGE_COUNT {
+        ranges.slice()[*oldest] = range;
+        *oldest = if *oldest + 1 == LINE_RANGE_COUNT {
+            0
+        } else {
+            *oldest + 1
+        };
+    } else {
+        let _ = ranges.push(range);
+    }
 }
 
 /// Get N lines from the start of the text

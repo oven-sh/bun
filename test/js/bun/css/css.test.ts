@@ -8483,6 +8483,10 @@ describe("position.lineText of a CSS error", () => {
     ["CRLF", 'a { color: red; }\r\n@import "x";\r\nb {}\r\n', 2, '@import "x";'],
     ["first line", 'a {} @import "x";\nb {}\n', 1, 'a {} @import "x";'],
     ["last line without a line break", 'a { color: red; }\n\n@import "x";', 3, '@import "x";'],
+    ["tabs", 'a {\tcolor: red; }\n\t@import "x";\nb {}\n', 2, '\t@import "x";'],
+    ["characters that are not ASCII", '/* é */ a { content: "☃"; }\n@import "x"; /* é */\n', 2, '@import "x"; /* é */'],
+    ["first line with a tab", 'a {}\t@import "x";\nb {}\n', 1, 'a {}\t@import "x";'],
+    ["line 400", Buffer.alloc(18 * 399, "a { color: red; }\n").toString() + '@import "x";\n', 400, '@import "x";'],
   ])("%s", async (_, source, line, lineText) => {
     using dir = tempDir("css-line-text", { "in.css": source });
     const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")], throw: false });

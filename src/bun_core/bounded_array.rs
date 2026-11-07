@@ -222,13 +222,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn push(&mut self, item: T) -> Result<(), OverflowError> {
         self.append(item)
     }
-    #[inline]
-    pub(crate) fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
-    where
-        T: Copy,
-    {
-        self.append_slice(items)
-    }
 }
 
 impl<T, const N: usize> core::ops::Deref for BoundedArrayAligned<T, N> {

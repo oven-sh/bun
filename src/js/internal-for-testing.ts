@@ -995,6 +995,12 @@ export const stringsInternals = {
    * metadata, so this binding lets us exercise it on all platforms.
    */
   toUTF16AllocSentinel: $bindgen("bun_string_jsc.bind.ts", "toUTF16AllocSentinel"),
+  /** The byte ranges of line `targetLine` of `text` and of the lines before it, `count` in all (1 or 6), as `[start, end, ..]`: what the error printer cuts a code frame from. */
+  indexOfLineRanges: $bindgen("bun_string_jsc.bind.ts", "indexOfLineRanges") as (
+    text: Uint8Array,
+    targetLine: number,
+    count: 1 | 6,
+  ) => number[],
 };
 
 /** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */

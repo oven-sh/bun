@@ -18,9 +18,11 @@ const libraries = [
   "first_by_cdll",
   "identity",
   "lifecycle",
+  "two_threads",
+  "unowned",
 ];
 /** Libraries for the scripts in here/ alone, and for a script that runs in one mode only. */
-const others = ["without_gil", "everything", "at_exit", "memory", "unowned"];
+const others = ["without_gil", "everything", "at_exit", "memory"];
 
 // These builds take seconds to start Python, and a collection at every turn takes them minutes.
 const isSlow = isDebug || isASAN;
@@ -34,13 +36,24 @@ const modes: Record<string, { options: Record<string, string>; limit: number }> 
     options: { BUN_JSC_slowPathAllocsBetweenGCs: isSlow ? "53" : "7" },
     limit: isSlow ? 600_000 : 60_000,
   },
-  "collecting all the time": { options: { BUN_JSC_collectContinuously: "1" }, limit: isSlow ? 600_000 : limit },
+  // (What is printed is not buffered: each line lets the collector in.)
+  "collecting all the time": {
+    options: {
+      BUN_JSC_collectContinuously: "1",
+      BUN_JSC_scribbleFreeCells: "1",
+      BUN_JSC_useZombieMode: "1",
+      PYTHONUNBUFFERED: "1",
+    },
+    limit: isSlow ? 600_000 : limit,
+  },
   "freed cells are overwritten": { options: { BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1" }, limit },
   "a heap that hardly grows": { options: { BUN_JSC_heapGrowthMaxIncrease: "0.1" }, limit },
   "no generations, nothing concurrent": {
     options: { BUN_JSC_useGenerationalGC: "0", BUN_JSC_useConcurrentGC: "0" },
-    limit,
+    limit: isSlow ? 300_000 : limit,
   },
+  // (Minutes for a script on the slow builds.)
+  ...(isSlow ? {} : { "the collector goes over what it has marked": { options: { BUN_JSC_verifyGC: "1" }, limit } }),
 };
 
 describe.skipIf(!isLinux || !compiler)("the C API", () => {
@@ -441,10 +454,35 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   }
 
   test.concurrent(
-    "instances that die with the realm of the interpreter that has the API come to their end, and then the realm goes",
+    "instances that die with the realm of the interpreter that has the API do not hold it: it goes, and no tp_dealloc is called in a realm that has gone",
     async () => {
       expect(await runInTwo("realm_with_instances.mjs")).toEqual({
-        stdout: "made 3 0\nthe realm has gone: true ended: 3\n",
+        stdout: "made 3 0\nthe realm has gone: true ended: 0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
+
+  test.concurrent(
+    "what garbage of another realm's interpreter holds, and is kept for a finalizer there, is whole; it goes when that has gone",
+    async () => {
+      expect(await runInTwo("two_realms.mjs")).toEqual({
+        stdout:
+          "held\nthe finalizer in the other realm: ['Sub whole 7'] | ended so far: []\nended: [1000007, 1000008]\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    limit,
+  );
+
+  test.concurrent(
+    "no tp_dealloc begins while a termination is pending, nor of what goes with another",
+    async () => {
+      expect(await runInTwo("terminated.mjs")).toEqual({
+        stdout: "begun when the worker is terminated: 2\nbegun in the end: 2\n",
         stderr: "",
         exitCode: 0,
       });
@@ -592,11 +630,15 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   test.concurrent(
     "collections come as the memory grows that C allocates",
     async () => {
-      expect(await run("here/memory_of_c.py", "memory")).toEqual({
-        stdout: "the first was destroyed before 2,000 blocks of a megabyte had been asked for: True\n",
-        stderr: "",
-        exitCode: 0,
-      });
+      const { stdout, stderr, exitCode } = await run("here/memory_of_c.py", "memory");
+      expect(stderr).toBe("");
+      const [first, second] = stdout.split("\n");
+      expect(first).toBe("the first was destroyed before 2,000 blocks of a megabyte had been asked for: True");
+      // 2, and 56 to 99 where each step counts for the whole block. (With ASAN realloc() moves the block each time, and a block that has moved does count.)
+      expect(
+        Number(/^collections while a block grew to a megabyte in 16,383 steps: (\d+)$/.exec(second)?.[1]),
+      ).toBeLessThan(isASAN ? 1000 : 20);
+      expect(exitCode).toBe(0);
     },
     limit,
   );

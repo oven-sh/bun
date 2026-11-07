@@ -135,6 +135,9 @@ static const char *call_everything(PyObject *x)
     SAY("%d", PyObject_CallFinalizerFromDealloc(y));
     PyObject_ClearWeakRefs(y);
     PyObject_GC_Del(y);
+    /* The reference of the instance to its type. */
+    if (instance)
+        Py_DECREF(type);
     Py_XDECREF(made);
     PyErr_Clear();
     to[-1] = 0;

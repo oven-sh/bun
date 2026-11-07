@@ -14,6 +14,7 @@ def declare(name, restype, *argtypes):
 
 
 make_types = declare("make_types", py_object)
+count_of = declare("count_of", c_long, py_object)
 take_events = declare("take_events", py_object)
 set_id = declare("set_id", None, py_object, c_long)
 set_first = declare("set_first", None, py_object, py_object)
@@ -21,6 +22,7 @@ set_second = declare("set_second", None, py_object, py_object)
 has_first = declare("has_first", c_long, py_object)
 get_first = declare("get_first", py_object, py_object)
 remember_borrowed = declare("remember_borrowed", None, py_object)
+probe_borrowed = declare("probe_borrowed", None)
 recall_borrowed = declare("recall_borrowed", py_object)
 append_borrowed = declare("append_borrowed", ctypes.c_int, py_object)
 keep_borrowed = declare("keep_borrowed", None)
@@ -132,20 +134,20 @@ drop_what_c_kept()
 go_on()
 print("given back, and no collection since:", take_events())
 
-print("== C asks for its data before its turn, and after its end")
-for prober_is_older in (True, False):
-    if prober_is_older:
-        prober, node = Prober(), Node()
-    else:
-        node, prober = Node(), Prober()
+print("== C asks for its data by a pointer that it does not own: before its turn")
+drop(make(5, probe_borrowed))
+print(take_events())
+
+print("== in the tp_dealloc of its holder, and in the tp_dealloc of what it held: that is after its end, and in the same turn")
+for prober_holds in (True, False):
+    node, prober = Node(), Prober()
     set_id(node, 5)
     set_id(prober, 6)
     remember_borrowed(node)
-    # One collection is to find both dead, or the pointer that C has kept is to a cell that has been freed. So both are old, which leaves it to a full collection, and go at one stroke.
-    both = [node, prober]
-    del node, prober
+    set_first(*((prober, node) if prober_holds else (node, prober)))
+    # A collection of the young takes whatever C owns a reference to for held: it would find the holder dead alone, and the other would go in a later turn.
     gc.collect()
-    del both
+    del node, prober
     gc.collect()
     print(take_events())
     remember_borrowed(None)
@@ -165,11 +167,46 @@ try:
     id_or_exception(told[0])
 except SystemError as error:
     print("SystemError:", error)
+
+
+
 told.clear()
 gc.collect()
 print(take_events())
 
-print("== in a cycle through an object of Python's: nothing is hidden; its weak references die, it is cleared, and a later collection finds the face dead")
+print("== and the program gives it another class: it has given back its reference to its type, so no reference moves")
+
+
+class One(Node):
+    __slots__ = ()
+
+
+class Other(Node):
+    __slots__ = ()
+
+
+def counts():
+    return count_of(One), count_of(Other), count_of(Node)
+
+
+gc.collect()
+before = counts()
+tell(told)
+tell_of_itself(1)
+one = One()
+set_id(one, 70)
+del one
+gc.collect()
+tell(None)
+tell_of_itself(0)
+print(take_events(), type(told[0]).__name__, [now - then for now, then in zip(counts(), before)])
+told[0].__class__ = Other
+print(type(told[0]).__name__, id_if_it_has_data(told[0]), [now - then for now, then in zip(counts(), before)])
+told.clear()
+gc.collect()
+print(take_events(), [now - then for now, then in zip(counts(), before)])
+
+print("== in a cycle through an object of Python's: the face is there, and gc gives it to nobody, as it gives nothing that waits for its end; its weak references die, it is cleared, and a later collection finds the face dead")
 drop(make(8, look, True))
 print(take_events(), count(gc.get_objects()))
 

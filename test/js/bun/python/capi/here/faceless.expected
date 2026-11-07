@@ -18,17 +18,24 @@ before its turn: events so far []
 [] 1
 []
 given back, and no collection since: [1000004]
-== C asks for its data before its turn, and after its end
+== C asks for its data by a pointer that it does not own: before its turn
+before its turn: events so far []
+[4000005, 1000005]
+== in the tp_dealloc of its holder, and in the tp_dealloc of what it held: that is after its end, and in the same turn
 [4000005, 1000006, 1000005]
 [1000005, 4000000, 1000006]
 == a tp_dealloc hands the object to the program: a face for the occasion, which leads to nothing
 [1000007] Chatty -1
 SystemError: the object of type 'Chatty' has been destroyed
 []
-== in a cycle through an object of Python's: nothing is hidden; its weak references die, it is cleared, and a later collection finds the face dead
+== and the program gives it another class: it has given back its reference to its type, so no reference moves
+[1000070] One [0, 0, 0]
+Other -1 [0, 0, 0]
+[] [0, 0, 0]
+== in a cycle through an object of Python's: the face is there, and gc gives it to nobody, as it gives nothing that waits for its end; its weak references die, it is cleared, and a later collection finds the face dead
 before its turn: events so far []
-  in gc.get_objects() 2
-  among the referrers of what it holds 1
+  in gc.get_objects() 1
+  among the referrers of what it holds 0
   weak references to it and to what it holds None True
 [2000008, 1000008] 0
 == the same, and the program takes what leads to it before its turn: it is cleared in the program's hands, and valid

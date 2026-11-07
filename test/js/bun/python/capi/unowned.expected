@@ -1,0 +1,5 @@
+alone 1 True
+in_a_cycle 1 True
+of_a_class_that_leads_to_it 2 True
+of_a_class_that_lives 1 False
+of_a_class_over_a_type_that_tells_the_collector_nothing 1 True

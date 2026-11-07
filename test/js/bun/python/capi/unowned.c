@@ -8,17 +8,20 @@ typedef struct {
 static int ended;
 int number_ended(void) { return ended; }
 
+/* The one that was made last. Not owned: it is there as long as an instance is. */
+static PyTypeObject *made;
+
 static int traverse(PyObject *self, visitproc visit, void *arg)
 {
     PyTypeObject *type = Py_TYPE(self);
     Py_VISIT(type);
-    Py_VISIT(((Data *)PyObject_GetTypeData_DuringGC(self, type))->held);
+    Py_VISIT(((Data *)PyObject_GetTypeData_DuringGC(self, made))->held);
     return 0;
 }
 
 static int clear(PyObject *self)
 {
-    Py_CLEAR(((Data *)PyObject_GetTypeData(self, Py_TYPE(self)))->held);
+    Py_CLEAR(((Data *)PyObject_GetTypeData(self, made))->held);
     return 0;
 }
 
@@ -35,12 +38,28 @@ static void dealloc(PyObject *self)
 PyObject *make_type(void)
 {
     static PyType_Slot slots[] = { { Py_tp_traverse, traverse }, { Py_tp_clear, clear }, { Py_tp_dealloc, dealloc }, { 0, NULL } };
-    static PyType_Spec spec = { "unowned.Holder", -(int)sizeof(Data), 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, slots };
+    static PyType_Spec spec = { "unowned.Holder", -(int)sizeof(Data), 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC, slots };
+    return (PyObject *)(made = (PyTypeObject *)PyType_FromSpec(&spec));
+}
+
+/* The same, and the collector is told nothing. */
+static void plain_dealloc(PyObject *self)
+{
+    PyTypeObject *type = Py_TYPE(self);
+    ended++;
+    ((freefunc)PyType_GetSlot(type, Py_tp_free))(self);
+    Py_DECREF(type);
+}
+
+PyObject *make_plain_type(void)
+{
+    static PyType_Slot slots[] = { { Py_tp_dealloc, plain_dealloc }, { 0, NULL } };
+    static PyType_Spec spec = { "unowned.Plain", -8, 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, slots };
     return PyType_FromSpec(&spec);
 }
 
 void hold(PyObject *self, PyObject *held)
 {
     clear(self);
-    ((Data *)PyObject_GetTypeData(self, Py_TYPE(self)))->held = Py_NewRef(held);
+    ((Data *)PyObject_GetTypeData(self, made))->held = Py_NewRef(held);
 }

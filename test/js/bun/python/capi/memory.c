@@ -37,4 +37,13 @@ long fill(PyObject *self, long size)
     return holder->block != NULL;
 }
 
+long grow(PyObject *self, long size)
+{
+    Holder *holder = PyObject_GetTypeData(self, holder_type);
+    void *block = PyMem_Realloc(holder->block, size);
+    if (block)
+        holder->block = block;
+    return block != NULL;
+}
+
 long count_destroyed(void) { return destroyed; }

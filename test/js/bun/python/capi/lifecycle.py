@@ -1,6 +1,6 @@
 # Types that C makes (PyType_FromSpec), what their instances hold, and how they end: tp_traverse, tp_finalize, tp_clear, tp_dealloc.
 # Through a library loaded with ctypes.PyDLL. An object dies when a collection finds that nothing refers to it: the script collects before it looks.
-import ctypes, gc, sys, weakref
+import copy, ctypes, gc, pickle, sys, weakref
 from ctypes import c_long, py_object
 
 lib = ctypes.PyDLL(sys.argv[1])
@@ -84,7 +84,7 @@ for attempt in (lambda: type("Derived", (Leaf,), {}), lambda: type("Derived", (C
         print(attempt())
     except TypeError as error:
         print("TypeError:", error)
-print(type("Both", (Node, Wide), {}).__mro__ if False else type("Derived", (Wide,), {}).__mro__)
+print(type("Derived", (Wide,), {}).__mro__)
 
 print("== an instance")
 node = make(Node, 1)
@@ -95,7 +95,7 @@ for attempt in (lambda: setattr(node, "x", 1), lambda: node.__dict__, lambda: we
     except (AttributeError, TypeError) as error:
         print(type(error).__name__ + ":", error)
 print(node == node, node != node, hash(node) == hash(node), node in {node}, bool(node))
-print(is_tracked(node), is_finalized(node), is_tracked(Leaf()), is_tracked(1), is_tracked([]) in (0, 1))
+print(is_tracked(node), is_finalized(node), is_tracked(Leaf()), is_tracked(1), is_tracked([]))
 del node
 print(happened(False), cleared)
 
@@ -254,6 +254,16 @@ node = make(Node, 73, leaf)
 set_held(leaf, node)
 del leaf, node
 print(happened())
+
+print("== much data, of which the collector is not told either, and a tp_clear that nobody calls")
+Big = declare("make_big_type", py_object)()
+set_big = declare("set_big", None, py_object, c_long, c_long)
+for i in range(3):
+    big = Big()
+    set_big(big, 75, i)
+    print(gc.is_tracked(big), is_tracked(big))
+    del big
+    print(happened())
 
 print("== what is never given back stays")
 refs = []
@@ -710,9 +720,29 @@ attempt("as an argument:", make_with_metaclass, Polite)
 attempt("without one, of a base:", lambda: type(make_with_bases((OfPlain,))).__name__)
 attempt("without one, as an argument:", lambda: type(make_with_metaclass(Plain)).__name__)
 
+print("== a metaclass whose mro() calls the class that is being made")
+
+
+class Early(type):
+    def mro(cls):
+        try:
+            cls()
+        except TypeError as error:
+            # (Here the message has the short name of a class that C is making.)
+            print(f"in mro() of {cls.__name__}: TypeError:", str(error).replace("lifecycle.", ""))
+        return super().mro()
+
+
+class OfEarly(Node, metaclass=Early):
+    pass
+
+
+attempt("of a base:", lambda: is_tracked(make_with_bases((OfEarly,))()))
+
 print("== immutable types")
 Immutable = declare("make_immutable", py_object)()
 attempt("from a mutable base:", declare("make_immutable_from_mutable", py_object))
+print("and nothing of it is left:", [cls.__name__ for cls in Node.__subclasses__() if cls.__name__ == "ImmutableNode"])
 
 
 class OfImmutable(Immutable):
@@ -771,7 +801,238 @@ for with_clear in (0, 1):
     gc.collect()
 
 print("== a constructor that gives up and frees the memory itself")
-print(declare("constructors_that_give_up", c_long, c_long)(1000), happened())
+constructors_that_give_up = declare("constructors_that_give_up", c_long, c_long, c_long)
+print(constructors_that_give_up(1000, 1), happened())
+# C has the only reference to that type.
+print(constructors_that_give_up(1000, 0), happened(), constructors_that_give_up(1, 0))
+
+print("== a tp_traverse that leaves the rest to that of its base")
+Delegating = declare("make_delegating_type", py_object)()
+set_third = declare("set_third", None, py_object, py_object)
+a, b, c = (make(Delegating, 214 + i) for i in range(3))
+set_first(a, b)
+set_third(b, c)
+set_second(c, [a])
+del a, b, c
+print(happened(False), cleared > 0)
+
+print("== only C makes instances")
+Closed = declare("make_closed_type", py_object)()
+
+
+class OfClosed(Closed):
+    pass
+
+
+class OfClosedWithNew(Closed):
+    def __new__(cls):
+        return super().__new__(cls)
+
+
+for cls in (Closed, OfClosed, OfClosedWithNew):
+    attempt(f"{cls.__name__}()", cls)
+    attempt(f"object.__new__({cls.__name__})", object.__new__, cls)
+
+print("== no copy is made of what C keeps")
+
+
+class WithAttribute(Node):
+    pass
+
+
+with_attribute = make(WithAttribute, 217)
+with_attribute.attribute = [1]
+for name, object in (("a Node", make(Node, 218)), ("of a class that derives", with_attribute), ("a Leaf", Leaf()), ("a Bare", Bare())):
+    attempt(f"copy.copy({name}):", lambda: type(copy.copy(object)).__name__)
+    attempt(f"copy.deepcopy({name}):", lambda: type(copy.deepcopy(object)).__name__)
+    for protocol in (0, 2, 5):
+        attempt(f"__reduce_ex__({protocol}) of {name}:", lambda: object.__reduce_ex__(protocol)[0].__name__)
+    attempt(f"__getstate__() of {name}:", object.__getstate__)
+del with_attribute, object
+print(happened(False))
+
+print("== what a type says of its instances")
+print(Node.__basicsize__ - object.__basicsize__, Wide.__basicsize__ - Node.__basicsize__, WithAttribute.__basicsize__ - Node.__basicsize__, Node.__itemsize__)
+print(Node().__sizeof__() == Node.__basicsize__, Wide().__sizeof__() == Wide.__basicsize__, sys.getsizeof(Wide()) > 40000)
+for cls in (Node, Wide, Leaf, Bare, WithAttribute, Closed):
+    print(cls.__name__, "a heap type, a base type, collected, immutable, not to be instantiated:", [bool(cls.__flags__ & 1 << bit) for bit in (9, 10, 14, 8, 7)])
+
+
+class OfBig(Node):
+    __slots__ = ()
+
+
+attempt("__class__ from what the collector is told of to what it is not:", setattr, Node(), "__class__", Leaf)
+attempt("and the other way round:", setattr, Leaf(), "__class__", OfBig)
+happened()
+
+print("== what a dead parent holds is whole in the parent's tp_dealloc, which still owns it")
+call_at_dealloc = declare("call_at_dealloc", None, ctypes.c_void_p)
+seen = []
+
+
+@ctypes.CFUNCTYPE(None, c_long)
+def at_dealloc(id):
+    if id == 220:
+        child = ref()
+        seen.append(f"in the tp_dealloc of the parent: {type(child).__name__} {getattr(child, 'name', None)}")
+
+
+def family():
+    global ref
+    child = make(WithAttribute, 221, make(WithAttribute, 222))
+    child.name = "the child"
+    ref = weakref.ref(child, lambda _: seen.append("the callback of the weak reference to the child"))
+    make(Node, 220, child)
+
+
+call_at_dealloc(ctypes.cast(at_dealloc, ctypes.c_void_p))
+family()
+print(happened(), seen)
+
+print("== also if it is in a cycle of its own: reference counts free the parent, and the collector comes later")
+seen.clear()
+
+
+def family():
+    global ref
+    child = make(WithAttribute, 221, make(WithAttribute, 222))
+    child.name = "the child"
+    child.me = child
+    ref = weakref.ref(child, lambda _: seen.append("the callback of the weak reference to the child"))
+    make(Node, 220, child)
+
+
+family()
+# (Whether the child is cleared first, and so what it holds goes before it, is the collector's business.)
+print(happened(False), seen)
+call_at_dealloc(None)
+
+print("== and if the tp_dealloc hands it on, it lives on as it was")
+tell(heard := [])
+tell_of_children(1)
+seen.clear()
+
+
+def family():
+    global ref
+    child = make(WithAttribute, 224, make(WithAttribute, 225))
+    child.name = "the child"
+    ref = weakref.ref(child, lambda _: seen.append("the callback of the weak reference to the child"))
+    make(Chatty, 223, child)
+
+
+family()
+print(happened(), type(heard[0]).__name__, heard[0].name, ref() is heard[0], seen)
+tell_of_children(0)
+tell(None)
+heard.clear()
+print(happened(), seen)
+
+print("== what it leads to, an instance of a class that would have died with it, is of that class, for C too")
+type_by_c = declare("type_by_c", py_object, py_object)
+tell(heard)
+tell_of_children(1)
+
+
+def family():
+    class Other(Node):
+        pass
+
+    child = make(WithAttribute, 227)
+    child.other = make(Other, 228)
+    make(Chatty, 226, child)
+
+
+family()
+print(happened())
+other = heard[0].other
+print(type(other).__name__, type_by_c(other) is type(other))
+tell_of_children(0)
+tell(None)
+del other
+heard.clear()
+# (CPython: the attributes go before the data.)
+print(happened(False))
+
+print("== a class that dies with its instance, and leads to it")
+
+
+def by_an_attribute_of_the_class(id):
+    class Local(Node):
+        pass
+
+    Local.instance = make(Local, id)
+
+
+def by_a_method_that_closes_over_it(id):
+    class Local(Node):
+        def method(self):
+            return one
+
+    one = make(Local, id)
+
+
+def by_the_globals_of_a_method(id):
+    exec(f"class Local(Node):\n    def method(self): pass\none = make(Local, {id})", {"Node": Node, "make": make})
+
+
+def by_a_class_between(id):
+    class Between(Node):
+        pass
+
+    class Local(Between):
+        pass
+
+    Between.instance = make(Local, id)
+
+
+# What the tp_dealloc is told by the type of its object: Py_IS_TYPE(self, Py_TYPE(self)), it is a subtype of C's own, and it has a tp_free. And the books of C's own type are as they were.
+look_at_type = declare("look_at_type", None, c_long)
+look_at_type(1)
+gc.collect()
+n0 = count_of(Node)
+for number, way in enumerate((by_an_attribute_of_the_class, by_a_method_that_closes_over_it, by_the_globals_of_a_method, by_a_class_between)):
+    way(190 + number)
+    gc.collect()
+    print(way.__name__, [(event // 1000000, event % 1000) for event in take_events() if event // 1000000 != 2], count_of(Node) - n0)
+
+print("== the same, below a parent: the child waits for the parent, and meanwhile another of its classes goes")
+
+
+class Witness:
+    def __del__(self):
+        global Outer
+        print("before the parent's end", [event for event in take_events() if event // 1000000 != 2])
+        del Outer
+
+
+class Parent(Node):
+    pass
+
+
+class Outer(Node):
+    pass
+
+
+def below_a_parent(id):
+    class Local(Outer):
+        def method(self):
+            return child
+
+    child = make(Local, id + 1)
+    parent = make(Parent, id, [child])
+    parent.witness = Witness()
+
+
+outer = weakref.ref(Outer)
+below_a_parent(200)
+gc.collect()
+print([(event // 1000000, event % 1000) for event in take_events() if event // 1000000 != 2], outer() is None)
+look_at_type(0)
+del Parent
+gc.collect()
+print(count_of(Node) - n0)
 
 print("== at the end")
 left = make(Watched, 180, make(Node, 181))

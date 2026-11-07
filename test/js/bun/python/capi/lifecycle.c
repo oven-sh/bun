@@ -6,7 +6,7 @@
 
 /* ---- What has happened, in order. Noted without a call of the API. ---- */
 
-enum { DEALLOC = 1, CLEAR = 2, FINALIZE = 3, PROBE = 4 };
+enum { DEALLOC = 1, CLEAR = 2, FINALIZE = 3, PROBE = 4, TYPE = 5 };
 #define EVENTS 65536
 static long events[EVENTS];
 static long number_of_events;
@@ -78,12 +78,33 @@ static int node_clear(PyObject *self)
     return 0;
 }
 
+/* Without the API: for JS. */
+int count_events(void) { return (int)number_of_events; }
+
+/* What a tp_dealloc can ask the type of its object. */
+static long looks_at_type;
+void look_at_type(long on) { looks_at_type = on; }
+
+/* Whom a tp_dealloc tells, and of what. */
+static PyObject *told;
+static long tells_of_children, tells_of_itself, raises_at_its_end;
+
+/* Code of the program's that a tp_dealloc calls. */
+static void (*at_dealloc)(long id);
+void call_at_dealloc(void (*function)(long id)) { at_dealloc = function; }
+
 static void node_dealloc(PyObject *self)
 {
     PyTypeObject *type = Py_TYPE(self);
     Node *node = PyObject_GetTypeData(self, node_type);
     PyObject_GC_UnTrack(self);
+    if (looks_at_type)
+        note(TYPE, 1000 * (type == node_type) + 100 * Py_IS_TYPE(self, type) + 10 * PyType_IsSubtype(type, node_type) + !!PyType_GetSlot(type, Py_tp_free));
     note(DEALLOC, node->id);
+    if (told && tells_of_itself)
+        PyList_Append(told, self);
+    if (at_dealloc)
+        at_dealloc(node->id);
     Py_CLEAR(node->first);
     Py_CLEAR(node->second);
     ((freefunc)PyType_GetSlot(type, Py_tp_free))(self);
@@ -168,8 +189,6 @@ static PyType_Spec leaf_spec = { "lifecycle.Leaf", -(int)sizeof(Leaf), 0, Py_TPF
 /* ---- Chatty: a Node whose tp_dealloc makes objects, and tells the program ---- */
 
 static PyTypeObject *chatty_type;
-static PyObject *told;
-static long tells_of_children, tells_of_itself, raises_at_its_end;
 
 static void chatty_dealloc(PyObject *self)
 {
@@ -216,7 +235,7 @@ static PyType_Spec chatty_spec = { "lifecycle.Chatty", 0, 0, Py_TPFLAGS_DEFAULT,
 static PyTypeObject *prober_type;
 static PyObject *borrowed;
 
-static void prober_dealloc(PyObject *self)
+void probe_borrowed(void)
 {
     if (borrowed) {
         PyObject *raised = PyErr_GetRaisedException();
@@ -224,6 +243,11 @@ static void prober_dealloc(PyObject *self)
         note(PROBE, other ? other->id : 0);
         PyErr_SetRaisedException(raised);
     }
+}
+
+static void prober_dealloc(PyObject *self)
+{
+    probe_borrowed();
     node_dealloc(self);
 }
 
@@ -400,6 +424,7 @@ PyObject *new_node_untracked(long id)
 
 void track(PyObject *object) { PyObject_GC_Track(object); }
 long is_tracked(PyObject *object) { return PyObject_GC_IsTracked(object); }
+PyObject *type_by_c(PyObject *object) { return Py_NewRef((PyObject *)Py_TYPE(object)); }
 long is_finalized(PyObject *object) { return PyObject_GC_IsFinalized(object); }
 
 /* A chain of n nodes that only C has seen; the first is returned. */
@@ -554,6 +579,38 @@ PyObject *make_with_both_slots(PyObject *base, PyObject *bases, long base_first)
     return PyType_FromSpec(&spec);
 }
 
+/* Big: much data, of which the collector is not told, so its tp_free is PyObject_Free(). And a tp_clear without Py_TPFLAGS_HAVE_GC, which nobody calls. */
+typedef struct {
+    long id;
+    char much[200000];
+    long last;
+} Big;
+static PyTypeObject *big_type;
+static int big_clear(PyObject *self)
+{
+    note(CLEAR, ((Big *)PyObject_GetTypeData(self, big_type))->id);
+    return 0;
+}
+static void big_dealloc(PyObject *self)
+{
+    PyTypeObject *type = Py_TYPE(self);
+    Big *big = PyObject_GetTypeData(self, big_type);
+    note(DEALLOC, big->id + big->last + big->much[100000]);
+    ((freefunc)PyType_GetSlot(type, Py_tp_free))(self);
+    Py_DECREF(type);
+}
+PyObject *make_big_type(void)
+{
+    static PyType_Slot slots[] = { { Py_tp_clear, big_clear }, { Py_tp_dealloc, big_dealloc }, { 0, NULL } };
+    static PyType_Spec spec = { "lifecycle.Big", -(int)sizeof(Big), 0, Py_TPFLAGS_DEFAULT, slots };
+    return Py_XNewRef((PyObject *)(big_type = (PyTypeObject *)PyType_FromSpec(&spec)));
+}
+void set_big(PyObject *object, long id, long last)
+{
+    Big *big = PyObject_GetTypeData(object, big_type);
+    big->id = id, big->last = last;
+}
+
 /* Told: tells the collector of what it holds, and of its type, and has no tp_dealloc. With and without a tp_clear. */
 typedef struct {
     PyObject *held;
@@ -592,15 +649,58 @@ PyObject *new_told(long with_clear, PyObject *held)
 }
 
 /* A constructor that gives up frees the memory itself, as many do: no tp_dealloc is called. */
-long constructors_that_give_up(long n)
+long constructors_that_give_up(long n, long of_a_type_with_a_dealloc)
 {
-    long before = (long)Py_REFCNT((PyObject *)node_type);
+    PyTypeObject *type = of_a_type_with_a_dealloc ? node_type : told_type[0];
+    long before = (long)Py_REFCNT((PyObject *)type);
     for (long i = 0; i < n; i++) {
-        PyObject *object = (PyObject *)PyObject_GC_New(PyObject, node_type);
+        PyObject *object = (PyObject *)PyObject_GC_New(PyObject, type);
         if (!object)
             return -1;
         PyObject_GC_Del(object);
-        Py_DECREF(node_type);
+        Py_DECREF(type);
     }
-    return (long)Py_REFCNT((PyObject *)node_type) - before;
+    return (long)Py_REFCNT((PyObject *)type) - before;
+}
+
+/* Delegating: a Node with one reference more, whose tp_traverse leaves the rest to that of its base. */
+typedef struct {
+    PyObject *third;
+} Delegating;
+static PyTypeObject *delegating_type;
+static int delegating_traverse(PyObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(((Delegating *)PyObject_GetTypeData_DuringGC(self, delegating_type))->third);
+    return ((traverseproc)PyType_GetSlot(node_type, Py_tp_traverse))(self, visit, arg);
+}
+static int delegating_clear(PyObject *self)
+{
+    Py_CLEAR(((Delegating *)PyObject_GetTypeData(self, delegating_type))->third);
+    return node_clear(self);
+}
+static void delegating_dealloc(PyObject *self)
+{
+    PyObject_GC_UnTrack(self);
+    Py_CLEAR(((Delegating *)PyObject_GetTypeData(self, delegating_type))->third);
+    node_dealloc(self);
+}
+PyObject *make_delegating_type(void)
+{
+    static PyType_Slot slots[] = { { Py_tp_traverse, delegating_traverse }, { Py_tp_clear, delegating_clear }, { Py_tp_dealloc, delegating_dealloc }, { 0, NULL } };
+    static PyType_Spec spec = { "lifecycle.Delegating", -(int)sizeof(Delegating), 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, slots };
+    return Py_XNewRef((PyObject *)(delegating_type = (PyTypeObject *)PyType_FromSpecWithBases(&spec, (PyObject *)node_type)));
+}
+void set_third(PyObject *object, PyObject *value)
+{
+    Delegating *data = PyObject_GetTypeData(object, delegating_type);
+    PyObject *old = data->third;
+    data->third = Py_NewRef(value);
+    Py_XDECREF(old);
+}
+
+/* Closed: only C makes instances. */
+PyObject *make_closed_type(void)
+{
+    static PyType_Spec spec = { "lifecycle.Closed", 0, 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION, no_slots };
+    return PyType_FromSpec(&spec);
 }

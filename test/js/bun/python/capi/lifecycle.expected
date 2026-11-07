@@ -26,7 +26,7 @@ TypeError: cannot create weak reference to 'lifecycle.Node' object
 TypeError: lifecycle.Node() takes no arguments
 TypeError: lifecycle.Node() takes no arguments
 True False True True True
-1 0 0 0 True
+1 0 0 0 1
 ['dealloc 0', 'dealloc 0', 'dealloc 0', 'dealloc 1'] 0
 == where the data lies
 0 0 32 0
@@ -75,6 +75,13 @@ True False True True True
 []
 ['dealloc 70', 'dealloc 71']
 []
+== much data, of which the collector is not told either, and a tp_clear that nobody calls
+False 0
+['dealloc 75']
+False 0
+['dealloc 76']
+False 0
+['dealloc 77']
 == what is never given back stays
 [] True {74}
 [] True {74}
@@ -194,8 +201,13 @@ of a base, which returns 42: TypeError: Metaclasses with custom tp_new are not s
 as an argument: TypeError: Metaclasses with custom tp_new are not supported.
 without one, of a base: Plain
 without one, as an argument: Plain
+== a metaclass whose mro() calls the class that is being made
+in mro() of OfEarly: TypeError: cannot create 'OfEarly' instances
+in mro() of Derived: TypeError: cannot create 'Derived' instances
+of a base: 1
 == immutable types
 from a mutable base: TypeError: Creating immutable type lifecycle.ImmutableNode from mutable base lifecycle.Node
+and nothing of it is left: []
 __class__ from it: TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
 __class__ to it: TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
 == Py_tp_base and Py_tp_bases in one spec
@@ -213,4 +225,71 @@ True ToldAndCleared Loud
 what only the type refers to is finalized
 == a constructor that gives up and frees the memory itself
 0 []
+0 [] 0
+== a tp_traverse that leaves the rest to that of its base
+['dealloc 214', 'dealloc 215', 'dealloc 216'] True
+== only C makes instances
+Closed() TypeError: cannot create 'lifecycle.Closed' instances
+object.__new__(Closed) TypeError: cannot create 'lifecycle.Closed' instances
+OfClosed() TypeError: cannot create 'OfClosed' instances
+object.__new__(OfClosed) TypeError: cannot create 'OfClosed' instances
+OfClosedWithNew() TypeError: cannot create 'OfClosedWithNew' instances
+object.__new__(OfClosedWithNew) TypeError: cannot create 'OfClosedWithNew' instances
+== no copy is made of what C keeps
+copy.copy(a Node): TypeError: cannot pickle 'lifecycle.Node' object
+copy.deepcopy(a Node): TypeError: cannot pickle 'lifecycle.Node' object
+__reduce_ex__(0) of a Node: _reconstructor
+__reduce_ex__(2) of a Node: TypeError: cannot pickle 'lifecycle.Node' object
+__reduce_ex__(5) of a Node: TypeError: cannot pickle 'lifecycle.Node' object
+__getstate__() of a Node: None
+copy.copy(of a class that derives): TypeError: cannot pickle 'WithAttribute' object
+copy.deepcopy(of a class that derives): TypeError: cannot pickle 'WithAttribute' object
+__reduce_ex__(0) of of a class that derives: _reconstructor
+__reduce_ex__(2) of of a class that derives: TypeError: cannot pickle 'WithAttribute' object
+__reduce_ex__(5) of of a class that derives: TypeError: cannot pickle 'WithAttribute' object
+__getstate__() of of a class that derives: {'attribute': [1]}
+copy.copy(a Leaf): TypeError: cannot pickle 'lifecycle.Leaf' object
+copy.deepcopy(a Leaf): TypeError: cannot pickle 'lifecycle.Leaf' object
+__reduce_ex__(0) of a Leaf: _reconstructor
+__reduce_ex__(2) of a Leaf: TypeError: cannot pickle 'lifecycle.Leaf' object
+__reduce_ex__(5) of a Leaf: TypeError: cannot pickle 'lifecycle.Leaf' object
+__getstate__() of a Leaf: None
+copy.copy(a Bare): TypeError: cannot pickle 'lifecycle.Bare' object
+copy.deepcopy(a Bare): TypeError: cannot pickle 'lifecycle.Bare' object
+__reduce_ex__(0) of a Bare: _reconstructor
+__reduce_ex__(2) of a Bare: TypeError: cannot pickle 'lifecycle.Bare' object
+__reduce_ex__(5) of a Bare: TypeError: cannot pickle 'lifecycle.Bare' object
+__getstate__() of a Bare: None
+['dealloc 0', 'dealloc 217', 'dealloc 218']
+== what a type says of its instances
+32 40000 0 0
+True True True
+Node a heap type, a base type, collected, immutable, not to be instantiated: [True, True, True, False, False]
+Wide a heap type, a base type, collected, immutable, not to be instantiated: [True, True, True, False, False]
+Leaf a heap type, a base type, collected, immutable, not to be instantiated: [True, False, False, False, False]
+Bare a heap type, a base type, collected, immutable, not to be instantiated: [True, False, False, False, False]
+WithAttribute a heap type, a base type, collected, immutable, not to be instantiated: [True, True, True, False, False]
+Closed a heap type, a base type, collected, immutable, not to be instantiated: [True, True, False, False, True]
+__class__ from what the collector is told of to what it is not: TypeError: __class__ assignment: 'lifecycle.Leaf' deallocator differs from 'lifecycle.Node'
+and the other way round: TypeError: __class__ assignment: 'OfBig' deallocator differs from 'lifecycle.Leaf'
+== what a dead parent holds is whole in the parent's tp_dealloc, which still owns it
+['dealloc 220', 'dealloc 221', 'dealloc 222'] ['in the tp_dealloc of the parent: WithAttribute the child', 'the callback of the weak reference to the child']
+== also if it is in a cycle of its own: reference counts free the parent, and the collector comes later
+['dealloc 220', 'dealloc 221', 'dealloc 222'] ['in the tp_dealloc of the parent: WithAttribute the child', 'the callback of the weak reference to the child']
+== and if the tp_dealloc hands it on, it lives on as it was
+['dealloc 223'] WithAttribute the child True []
+['dealloc 224', 'dealloc 225'] ['the callback of the weak reference to the child']
+== what it leads to, an instance of a class that would have died with it, is of that class, for C too
+['dealloc 226']
+Other True
+['dealloc 227', 'dealloc 228']
+== a class that dies with its instance, and leads to it
+by_an_attribute_of_the_class [(5, 111), (1, 190)] 0
+by_a_method_that_closes_over_it [(5, 111), (1, 191)] 0
+by_the_globals_of_a_method [(5, 111), (1, 192)] 0
+by_a_class_between [(5, 111), (1, 193)] 0
+== the same, below a parent: the child waits for the parent, and meanwhile another of its classes goes
+before the parent's end []
+[(5, 111), (1, 200), (5, 111), (1, 201)] True
+0
 == at the end

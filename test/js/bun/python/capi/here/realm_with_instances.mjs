@@ -1,5 +1,5 @@
 // The first interpreter of the process is a ShadowRealm's. It has instances of the type of an extension, and nothing refers to the realm any more: they die with it, in one collection.
-// They come to their end all the same, and then the realm goes. argv: the directory of the libraries.
+// The realm goes, and they with it: there is no interpreter any more in which a tp_dealloc could run, as at an exit without a collection. argv: the directory of the libraries.
 import { dlopen } from "bun:ffi";
 import { fullGC } from "bun:jsc";
 
@@ -15,7 +15,7 @@ async function inRealm() {
 }
 await inRealm();
 for (let turns = 0; turns < 3; turns++) await turn();
-// What is owed to the instances holds the realm, and is done at a turn of the loop.
+// What is owed to others holds the realm, and is done at a turn of the loop.
 for (let collections = 0; is_initialized() && collections < 100; collections++) {
   fullGC();
   if (is_initialized()) await turn();

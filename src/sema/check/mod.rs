@@ -979,6 +979,8 @@ impl<'s> Program<'s> {
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
             variances_marked_empty: Vec::new(),
+            first_pushed: FxHashMap::default(),
+            serial_walk: Vec::new(),
             suspended_variances: Vec::new(),
             in_progress_variance_reads: 0,
             variances_measured: Vec::new(),
@@ -1152,6 +1154,7 @@ impl<'s> Program<'s> {
 }
 
 bun_core::declare_scope!(SemaCycles, hidden);
+bun_core::declare_scope!(SemaVariances, hidden);
 
 /// The value of `Checker::work_trap` that `Checker::work` never reaches.
 const WORK_TRAP_DISARMED: u64 = u64::MAX;
@@ -2100,6 +2103,10 @@ pub struct Checker<'p, 's> {
     )]
     spare_inferences: Vec<Box<infer::Inference>>,
     variances_in_progress: Vec<Sym>,
+    /// The push serial of each type this task has numbered. See `push_serial`.
+    first_pushed: FxHashMap<TypeId, u32>,
+    /// The types whose serials `push_serial` is assigning. Kept allocated between calls.
+    serial_walk: Vec<TypeId>,
     /// In-progress symbols that a cycle re-entered. Their variances read as empty until the measurement finishes.
     variances_marked_empty: Vec<Sym>,
     /// Measurements suspended by a restart. Their marker types still count as marker types.
@@ -2188,7 +2195,7 @@ pub struct Checker<'p, 's> {
         TypeId,
         usize,
     )>,
-    /// The types for which a reverse mapped type inference is in progress, each with its push number. See
+    /// The types for which a reverse mapped type inference is in progress, each with its push serial. See
     /// `is_at_least_as_new`.
     reverse_mapped_source_stack: Vec<(TypeId, u32)>,
     reverse_mapped_target_stack: Vec<(TypeId, u32)>,

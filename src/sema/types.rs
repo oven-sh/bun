@@ -3797,40 +3797,21 @@ impl<'p, 's> Types<'p, 's> {
         id
     }
 
-    /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
-    /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
-    /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller orders two types with the same height.
+    /// Compares the heights of `a` and `b`, for the depth limit of `aot::Queries`: a taller type is taken for a newer
+    /// instantiation, one caused by recursion.
     #[inline]
     pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)
     }
 
-    /// True if the key of `whole` mentions `part`, directly or through the types in it. tsgo creates a type after every
-    /// type it's built from, so `part` has the lower id there. Only types higher than `part` can mention it, and the
-    /// others aren't entered.
-    pub fn is_built_from(&self, whole: TypeId, part: TypeId) -> bool {
-        let floor = self.rank(part).height;
-        let mut entered: SmallVec<[TypeId; 16]> = SmallVec::new();
-        let mut waiting: SmallVec<[TypeId; 16]> = SmallVec::new();
-        waiting.push(whole);
-        while let Some(next) = waiting.pop() {
-            let mut mentioned = Mentioned {
-                types: *self,
-                found: SmallVec::new(),
-            };
-            visit_type_as_content(&self.record(next).created, &mut mentioned);
-            for id in mentioned.found {
-                if id == part {
-                    return true;
-                }
-                if self.rank(id).height > floor && !entered.contains(&id) {
-                    entered.push(id);
-                    waiting.push(id);
-                }
-            }
-        }
-        false
+    /// The types that the key of `id` mentions directly.
+    pub fn mentioned_types(&self, id: TypeId) -> SmallVec<[TypeId; 8]> {
+        let mut mentioned = Mentioned {
+            types: *self,
+            found: SmallVec::new(),
+        };
+        visit_type_as_content(&self.record(id).created, &mut mentioned);
+        mentioned.found
     }
 
     #[inline]

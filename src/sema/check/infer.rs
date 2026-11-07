@@ -125,7 +125,7 @@ pub(super) struct Inference {
     unfinished_hits: u32,
     /// `None` outside a walk and in a short one.
     repeated_argument_walks: Option<Box<RepeatedArgumentWalks>>,
-    /// Each type with its push number. See `is_at_least_as_new`.
+    /// Each type with its push serial. See `is_at_least_as_new`.
     source_stack: SmallVec<[(TypeId, u32); 8]>,
     target_stack: SmallVec<[(TypeId, u32); 8]>,
     expanding: u8,
@@ -879,9 +879,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let saved_priority = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
         let saved_expanding = n.expanding;
-        let push = 2 * n.source_stack.len() as u32;
-        n.source_stack.push((source, push + 1));
-        n.target_stack.push((target, push));
+        let target_serial = self.push_serial(target);
+        let source_serial = self.push_serial(source);
+        n.source_stack.push((source, source_serial));
+        n.target_stack.push((target, target_serial));
         if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
             n.expanding |= 1;
         }
@@ -2542,9 +2543,12 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(cached.unwrap_or(TypeId::UNKNOWN));
         }
         let scope = self.begin_scope();
-        let push = 2 * self.reverse_mapped_source_stack.len() as u32;
-        self.reverse_mapped_source_stack.push((source, push + 1));
-        self.reverse_mapped_target_stack.push((target, push));
+        let target_serial = self.push_serial(target);
+        let source_serial = self.push_serial(source);
+        self.reverse_mapped_source_stack
+            .push((source, source_serial));
+        self.reverse_mapped_target_stack
+            .push((target, target_serial));
         let saved = self.reverse_expanding;
         let (sources, targets) = (
             std::mem::take(&mut self.reverse_mapped_source_stack),

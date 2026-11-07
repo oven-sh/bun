@@ -233,7 +233,7 @@ pub(super) struct Relater {
     /// there are none. Otherwise it's empty, because most comparisons are only a few levels deep,
     /// and searching the list is cheaper than adding a key here and removing it.
     maybe_keys_set: FxHashSet<Key>,
-    /// Each type with its push number. See `is_at_least_as_new`.
+    /// Each type with its push serial. See `is_at_least_as_new`.
     pub(super) source_stack: Vec<(TypeId, u32)>,
     pub(super) target_stack: Vec<(TypeId, u32)>,
     /// An `OnStack` for each entry in a prefix of each stack, filled in by `is_last_deeply_nested`.
@@ -2780,6 +2780,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             variances.push(variance);
         }
+        bun_core::scoped_log!(
+            SemaVariances,
+            "measured {}: {:?} (nested: {}, file {:?})",
+            bstr::BStr::new(self.atoms().bytes(self.files().symbol(sym).name)),
+            variances,
+            was_computing,
+            self.task.file
+        );
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
@@ -4201,10 +4209,11 @@ impl<'p, 's> Checker<'p, 's> {
         let cuts = self.comparisons_of_deeply_nested_types;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
-        // A member of a union or a constraint is pushed on one stack only, so an index doesn't give the push order.
-        let push = 2 * (r.source_stack.len() + r.target_stack.len()) as u32;
+        // tsgo creates a level's target before its source, so the target takes the lower serial.
+        let target_serial = (recursion & REC_TARGET != 0).then(|| self.push_serial(target));
         if recursion & REC_SOURCE != 0 {
-            r.source_stack.push((source, push + 1));
+            let serial = self.push_serial(source);
+            r.source_stack.push((source, serial));
             if r.expanding & REC_SOURCE == 0
                 && r.source_stack.len() >= 3
                 && self.is_last_deeply_nested(
@@ -4216,8 +4225,8 @@ impl<'p, 's> Checker<'p, 's> {
                 r.expanding |= REC_SOURCE;
             }
         }
-        if recursion & REC_TARGET != 0 {
-            r.target_stack.push((target, push));
+        if let Some(serial) = target_serial {
+            r.target_stack.push((target, serial));
             if r.expanding & REC_TARGET == 0
                 && r.target_stack.len() >= 3
                 && self.is_last_deeply_nested(
@@ -4231,9 +4240,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
         let result = if r.expanding == REC_BOTH {
-            self.comparisons_of_deeply_nested_types += 1;
-            self.task.hold_back();
-            Ternary::MAYBE
+            self.cut_deeply_nested()
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
@@ -4473,32 +4480,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
     }
 
-    /// `isDeeplyNestedType(source, sourceStack, sourceDepth, 10)` for a conditional type. On the way into
-    /// `Exclude<Exclude<.., A>, B>` tsgo compares the instantiations that the constraint of each level makes, which are
-    /// newer level by level. Here a level's constraint is the type inside it, which is lower, so height says nothing
-    /// about which is newer. Every level is pushed after the one around it.
-    fn is_conditional_source_deeply_nested(
-        &mut self,
-        source: TypeId,
-        source_stack: &[(TypeId, u32)],
-    ) -> bool {
-        let max_depth = 10;
-        if source_stack.len() < max_depth {
-            return false;
-        }
-        let identity = self.recursion_identity(source);
-        let mut count = 0;
-        for &(on_stack, _) in source_stack {
-            if self.has_matching_recursion_identity(on_stack, identity) {
-                count += 1;
-                if count >= max_depth {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// `known` has an `OnStack` for each entry of the stack, or is empty.
     fn is_deeply_nested_among(
         &mut self,
@@ -4529,44 +4510,70 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if self.has_matching_recursion_identity(on_stack, identity) {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                if last.is_none_or(|last| Self::is_at_least_as_new(stack, i, last)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = Some(on_stack);
+                last = Some(i);
             }
         }
         false
     }
 
-    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
-    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
-    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
-    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
-    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so of two different types with the same height, exactly one is newer. A lower type is older: a walk into a finite
-    /// type meets its parts, and a declaration's own instantiations exist before the one that is compared. The exception
-    /// is a conditional type that was pushed later and that `last`, a conditional type too, isn't built from. No
-    /// declaration names it. The comparison made it after `last`, as `Exclude<A, 3>` for the constraint of
-    /// `Exclude<Exclude<A, 2>, 3>`.
-    fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
-        let pushed = |t: TypeId| {
-            let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
-            stacks.into_iter().filter_map(first).min()
-        };
-        t == last
-            || match self.types().nesting_order(t, last) {
-                std::cmp::Ordering::Greater => true,
-                std::cmp::Ordering::Equal => pushed(t) >= pushed(last),
-                std::cmp::Ordering::Less => {
-                    matches!(self.data(t), TypeData::Cond { .. })
-                        && matches!(self.data(last), TypeData::Cond { .. })
-                        && pushed(t) > pushed(last)
-                        && !self.types().is_built_from(last, t)
+    /// The result of a comparison that `isDeeplyNestedType` cuts off. Where that happens depends on the push serials,
+    /// which this task alone has, so the results that follow from it stay in the task.
+    fn cut_deeply_nested(&mut self) -> Ternary {
+        self.comparisons_of_deeply_nested_types += 1;
+        self.task.hold_back();
+        Ternary::MAYBE
+    }
+
+    /// `t.id >= last.id` in `isDeeplyNestedType`, with the push serials for the ids. See `push_serial`.
+    fn is_at_least_as_new(stack: &[(TypeId, u32)], to: usize, from: usize) -> bool {
+        let ((t, serial), (last, last_serial)) = (stack[to], stack[from]);
+        t == last || serial >= last_serial
+    }
+
+    /// Returns the push serial of `t`: its place in the order in which tsgo creates types, as far as this task can
+    /// tell. tsgo creates a type when a type node is resolved or a comparison first reaches it, after the declared
+    /// type of its target and after the types its key mentions, left to right. The first serial of a type gives
+    /// those their serials first.
+    pub(super) fn push_serial(&mut self, t: TypeId) -> u32 {
+        if let Some(&serial) = self.first_pushed.get(&t) {
+            return serial;
+        }
+        let mut pending = std::mem::take(&mut self.serial_walk);
+        pending.push(t);
+        while let Some(&next) = pending.last() {
+            if self.first_pushed.contains_key(&next) {
+                pending.pop();
+                continue;
+            }
+            let before = pending.len();
+            let mentioned = self.types().mentioned_types(next);
+            // The last pushed is numbered first.
+            for &part in mentioned.iter().rev() {
+                if part != next && !self.first_pushed.contains_key(&part) {
+                    pending.push(part);
                 }
             }
+            if let TypeData::Ref { target, .. } = self.data(next)
+                && let Some((declared, _)) = self.p.declared_types.get(&self.task, target)
+                && declared != next
+                && !self.first_pushed.contains_key(&declared)
+            {
+                pending.push(declared);
+            }
+            if pending.len() == before {
+                let serial = self.first_pushed.len() as u32;
+                self.first_pushed.insert(next, serial);
+                pending.pop();
+            }
+        }
+        self.serial_walk = pending;
+        self.first_pushed[&t]
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
@@ -4604,7 +4611,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
-        for (&(on_stack, _), known) in stack.iter().zip(identities.iter()) {
+        for (i, (&(on_stack, _), known)) in stack.iter().zip(identities.iter()).enumerate() {
             if known.may_match & bit == 0 {
                 continue;
             }
@@ -4616,13 +4623,13 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.current_recursion_identity(on_stack, cached_value) == identity
             };
             if matches {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                if last.is_none_or(|last| Self::is_at_least_as_new(stack, i, last)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = Some(on_stack);
+                last = Some(i);
             }
         }
         false
@@ -5432,7 +5439,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Cond { file, node, .. } => {
                 if self.is_deeply_nested_type(target, [&r.source_stack, &r.target_stack], false, 10)
                 {
-                    return Ternary::MAYBE;
+                    return self.cut_deeply_nested();
                 }
                 // Only without `infer`, when the result doesn't depend on distribution, and when
                 // the source isn't instantiated from the same conditional type.
@@ -5649,8 +5656,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_conditional_source_deeply_nested(source, &r.source_stack) {
-                    return Ternary::MAYBE;
+                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
+                {
+                    return self.cut_deeply_nested();
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {
                     // `T1 extends U1 ? X1 : Y1` is related to `T2 extends U2 ? X2 : Y2` if one of

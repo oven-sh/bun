@@ -77,7 +77,7 @@ slow_path:
     while (cursor < end) {
         if (*cursor == '%') {
             if (cursor + 2 >= end) {
-                result.append(replacementChar);
+                result.append('%');
                 cursor++;
                 continue;
             }
@@ -86,8 +86,8 @@ slow_path:
             uint8_t lowNibble = hexToInt(cursor[2]);
 
             if (highNibble > 15 || lowNibble > 15) {
-                result.append(replacementChar);
-                cursor += (cursor + 2 < end) ? 3 : 1;
+                result.append('%');
+                cursor++;
                 continue;
             }
 

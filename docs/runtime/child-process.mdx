@@ -32,11 +32,11 @@ By default, the input stream of the subprocess is undefined; configure it with t
 
 ```ts
 const proc = Bun.spawn(["cat"], {
-  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
+  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/LICENSE.md"),
 });
 
 const text = await proc.stdout.text();
-console.log(text); // "const input = "hello world".repeat(400); ..."
+console.log(text); // "Bun itself is MIT-licensed. ..."
 ```
 
 | Value                    | Description                                      |
@@ -92,6 +92,25 @@ const proc = Bun.spawn(["cat"], {
 const output = await proc.stdout.text();
 console.log(output); // "Hello from ReadableStream!"
 ```
+
+### When the input stream fails
+
+A stream that you pass to `stdin` can fail before it ends. For example, a download breaks, or an S3 object does not exist. Bun then closes the input of the subprocess. The subprocess reads the part of the stream that Bun wrote before the failure, then the end of its input. `proc.exited` resolves with the exit code of the subprocess, so an exit code of `0` does not show that the subprocess read the whole stream.
+
+The stream errors with the failure. To observe the failure, keep a reference to the stream and pass it to `finished()` from `node:stream/promises`. The promise that `finished()` returns rejects with the error of the stream.
+
+```ts
+import { s3 } from "bun";
+import { finished } from "node:stream/promises";
+
+const stream = s3.file("data.csv").stream();
+const proc = Bun.spawn(["wc", "-l"], { stdin: stream });
+
+// `finished()` rejects if the download fails.
+const [lines] = await Promise.all([proc.stdout.text(), finished(stream)]);
+```
+
+For a `Response` or a `Request`, pass its `body` stream as `stdin` and wait for that stream.
 
 ## Output streams
 

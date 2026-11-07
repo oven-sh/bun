@@ -19,8 +19,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
-#include <JavaScriptCore/WeakMapImpl.h>
-#include <JavaScriptCore/WeakMapImplInlines.h>
+#include <JavaScriptCore/WeakGCHashTable.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
@@ -131,37 +130,61 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 
-// This is taken from JSWeakSet
-// We only want to hold onto the list of active spies which haven't already been collected
-// So we use a WeakSet
-// Unlike using WeakSet from JS, we are able to iterate through the WeakSet.
-class ActiveSpySet final : public WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>> {
+// The mocks that clearAllMocks(), resetAllMocks() or restoreAllMocks() has to visit, in the order they entered.
+// The list doesn't keep them alive: the collector takes out the dead ones at the end of every collection.
+class WeakMockList final : public JSC::WeakGCHashTable {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakMockList);
+    WTF_MAKE_NONCOPYABLE(WeakMockList);
+
 public:
-    using Base = WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>;
-
-    DECLARE_EXPORT_INFO;
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    explicit WeakMockList(VM& vm)
+        : m_vm(vm)
     {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSWeakSetType, StructureFlags), info());
+        vm.heap.registerWeakGCHashTable(this);
     }
 
-    static ActiveSpySet* create(VM& vm, Structure* structure)
+    ~WeakMockList() final
     {
-        ActiveSpySet* instance = new (NotNull, allocateCell<ActiveSpySet>(vm)) ActiveSpySet(vm, structure);
-        instance->finishCreation(vm);
-        return instance;
+        m_vm.heap.unregisterWeakGCHashTable(this);
+    }
+
+    bool isEmpty() const { return m_mocks.isEmpty(); }
+
+    void append(JSMockFunction* mock)
+    {
+        m_mocks.append(mock);
+        markDirty(m_vm);
+    }
+
+    // Puts `mocks` in front of the ones in the list.
+    NEVER_INLINE void prepend(std::span<JSMockFunction*> mocks)
+    {
+        m_mocks.insertSpan(0, mocks);
+        markDirty(m_vm);
+    }
+
+    // Empties the list into `mocks`, which keeps them alive.
+    NEVER_INLINE void moveTo(MarkedVector<JSMockFunction*>& mocks)
+    {
+        mocks.ensureCapacity(m_mocks.size());
+        for (auto* mock : m_mocks)
+            mocks.append(mock);
+        m_mocks.shrink(0);
     }
 
 private:
-    ActiveSpySet(VM& vm, Structure* structure)
-        : Base(vm, structure)
+    void reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope) final
     {
+        m_mocks.removeAllMatching([&](JSMockFunction* mock) {
+            return !vm.heap.isMarked(mock);
+        });
+        if (m_mocks.size() <= m_mocks.capacity() / 4)
+            m_mocks.shrinkToFit();
     }
-};
 
-static_assert(std::is_final<ActiveSpySet>::value, "Required for JSType based casting");
-const ClassInfo ActiveSpySet::s_info = { "ActiveSpySet"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ActiveSpySet) };
+    Vector<JSMockFunction*> m_mocks;
+    VM& m_vm;
+};
 
 class JSMockImplementation final : public JSNonFinalObject {
 public:
@@ -884,6 +907,9 @@ public:
         didUninstall();
     }
 
+    // Spies are restored in the order they were made. Call it before wrapFunction() and the store of the spy, which can both run script that makes another spy.
+    void willInstall() { takePlaceIn(List::Spies); }
+
     static void clearAll(Zig::GlobalObject*);
     static void resetAll(Zig::GlobalObject*);
     static void restoreAll(Zig::GlobalObject*);
@@ -909,7 +935,7 @@ private:
         Spies = 1 << 2,
     };
 
-    static JSC::WriteBarrier<JSC::Unknown>& setOf(JSMockModule& mockModule, List list)
+    static std::unique_ptr<WeakMockList>& listOf(JSMockModule& mockModule, List list)
     {
         switch (list) {
         case List::Called:
@@ -922,6 +948,9 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    // The bit of `m_lists` that says the list, or the forEachIn() that runs over it, has an entry for this mock.
+    static constexpr uint8_t hasEntryIn(List list) { return static_cast<uint8_t>(list) << 3; }
+
     template<typename Functor> static void forEachIn(Zig::GlobalObject*, List, const Functor&);
 
     ALWAYS_INLINE void enter(List list)
@@ -932,15 +961,23 @@ private:
 
     NEVER_INLINE void enterSlow(List list)
     {
-        auto& vm = this->vm();
-        auto& set = setOf(mockModule(), list);
-        if (!set)
-            set.set(vm, globalObject(), ActiveSpySet::create(vm, mockModule().activeSpySetStructure.getInitializedOnMainThread(globalObject())));
-        uncheckedDowncast<ActiveSpySet>(set.get())->add(vm, this, this);
+        takePlaceIn(list);
         m_lists |= static_cast<uint8_t>(list);
     }
 
-    // Only clears the flag. The set keeps a stale entry, which forEachIn() skips, because removing one costs a rehash.
+    // A mock has one entry, and keeps it when it leaves, so it has the same place if it enters again.
+    void takePlaceIn(List list)
+    {
+        if (m_lists & hasEntryIn(list))
+            return;
+        auto& mocks = listOf(mockModule(), list);
+        if (!mocks)
+            mocks = makeUnique<WeakMockList>(vm());
+        mocks->append(this);
+        m_lists |= hasEntryIn(list);
+    }
+
+    // Only clears the flag. The list keeps a stale entry, which forEachIn() skips, because finding it to take it out costs a search.
     void leave(List list)
     {
         m_lists &= ~static_cast<uint8_t>(list);
@@ -1155,34 +1192,42 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
-// Detaches the set first, which drops its stale entries and lets script that `apply` runs register mocks in a new set.
-// Every mock leaves, so `apply` must enter() the ones that stay. Keeps going after an exception and rethrows the first one at the end.
+// Visits the mocks of a list in the order they entered it. Keeps going after an exception and rethrows the first one at the end.
+// Every mock leaves first, so `apply` must enter() the ones that stay. Those keep their places, ahead of the mocks that script makes enter during the pass.
+// A pass that script starts from inside `apply` finds none of the mocks that this pass has yet to visit, nor the one it is visiting.
 template<typename Functor>
 void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const Functor& apply)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto& set = setOf(globalObject->mockModule, list);
-    if (!set)
+    auto* entries = listOf(globalObject->mockModule, list).get();
+    if (!entries || entries->isEmpty())
         return;
 
-    MarkedArgumentBuffer mocks;
-    uncheckedDowncast<ActiveSpySet>(set.get())->takeSnapshot(mocks);
-    set.clear();
+    MarkedVector<JSMockFunction*> mocks;
+    entries->moveTo(mocks);
+    size_t staying = 0;
+    bool isTerminating = false;
     JSC::Exception* firstException = nullptr;
-    for (size_t i = 0; i < mocks.size(); ++i) {
-        auto* mock = uncheckedDowncast<JSMockFunction>(mocks.at(i));
-        if (!(mock->m_lists & static_cast<uint8_t>(list)))
-            continue;
-        mock->leave(list);
-        apply(mock);
-        if (auto* exception = scope.exception()) [[unlikely]] {
-            if (!scope.tryClearException())
-                return;
-            if (!firstException)
-                firstException = exception;
+    for (JSMockFunction* mock : mocks) {
+        // A termination ends the pass. The mocks it did not get to stay in the list.
+        if (!isTerminating && (mock->m_lists & static_cast<uint8_t>(list))) {
+            mock->leave(list);
+            apply(mock);
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                if (!scope.tryClearException())
+                    isTerminating = true;
+                else if (!firstException)
+                    firstException = exception;
+            }
         }
+        if (mock->m_lists & static_cast<uint8_t>(list))
+            mocks.at(staying++) = mock;
+        else
+            mock->m_lists &= ~hasEntryIn(list);
     }
-    if (firstException)
+    if (staying)
+        entries->prepend(mocks.mutableSpan().first(staying));
+    if (firstException && !isTerminating)
         throwException(globalObject, scope, firstException);
 }
 
@@ -1215,7 +1260,8 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     MarkedArgumentBuffer spiesOfPreload;
     JSC::Exception* firstException = nullptr;
     // Loop, because a Proxy trap hit while restoring one spy may install another.
-    while (globalObject->mockModule.activeSpies) {
+    auto& spies = globalObject->mockModule.activeSpies;
+    while (spies && !spies->isEmpty()) {
         forEachIn(globalObject, List::Spies, [&](JSMockFunction* spy) {
             if (spy->isMadeByPreload) {
                 spiesOfPreload.append(spy);
@@ -1272,6 +1318,11 @@ extern "C" void JSMock__didFinishTestFile(Zig::GlobalObject* globalObject)
     JSMockFunction::didFinishTestFile(globalObject);
 }
 
+JSMockModule::JSMockModule() = default;
+JSMockModule::JSMockModule(JSMockModule&&) = default;
+JSMockModule& JSMockModule::operator=(JSMockModule&&) = default;
+JSMockModule::~JSMockModule() = default;
+
 JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
 {
     JSMockModule mock;
@@ -1308,11 +1359,6 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
 
             init.set(structure);
         });
-    mock.activeSpySetStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-        Structure* implementation = ActiveSpySet::createStructure(init.vm, init.owner, jsNull());
-        init.set(implementation);
-    });
-
     mock.mockModuleStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             Structure* implementation = createModuleMockStructure(init.vm, init.owner, jsNull());
@@ -1418,9 +1464,6 @@ template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
     name.visit(visitor);
     FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
 #undef VISIT_JSMOCKMODULE_GC_MEMBER
-    visitor.append(activeSpies);
-    visitor.append(calledMocks);
-    visitor.append(configuredMocks);
     visitor.append(stubbedEnvs);
     visitor.append(stubbedGlobals);
     visitor.append(envsOfPreload);
@@ -3146,6 +3189,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         auto* mock = createMockFunction(vm, globalObject, isVitest);
+        mock->willInstall();
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
@@ -3227,6 +3271,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     auto* mock = createMockFunction(vm, globalObject, isVitest);
+    mock->willInstall();
     if (original.isCallable()) {
         wrapFunction(globalObject, mock, original);
     } else if (access == SpyAccess::Get && descriptor.isDataDescriptor()) {

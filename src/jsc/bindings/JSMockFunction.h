@@ -17,6 +17,7 @@ using namespace JSC;
 using namespace WebCore;
 
 class JSMockFunction;
+class WeakMockList;
 
 // Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
 JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
@@ -28,6 +29,11 @@ void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const Str
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
 public:
+    JSMockModule();
+    JSMockModule(JSMockModule&&);
+    JSMockModule& operator=(JSMockModule&&);
+    ~JSMockModule();
+
     static uint64_t s_nextInvocationId;
     static uint64_t nextInvocationId() { return ++s_nextInvocationId; }
 
@@ -37,7 +43,6 @@ public:
     V(Structure, mockImplementationStructure)                     \
     V(Structure, mockObjectStructure)                             \
     V(Structure, mockModuleStructure)                             \
-    V(Structure, activeSpySetStructure)                           \
     V(JSFunction, withImplementationCleanupFunction)              \
     V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
     V(JSCell, lazyPrototype)                                      \
@@ -51,12 +56,12 @@ public:
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
-    // Weak sets (ActiveSpySet), created on first use.
-    JSC::WriteBarrier<JSC::Unknown> activeSpies;
+    // Spies that are installed. Each of these three lists is created on first use.
+    std::unique_ptr<WeakMockList> activeSpies;
     // Mocks that were called, or had `.mock` read, since they were last cleared.
-    JSC::WriteBarrier<JSC::Unknown> calledMocks;
+    std::unique_ptr<WeakMockList> calledMocks;
     // Mocks whose implementation or mock name may differ from what mockReset() gives them.
-    JSC::WriteBarrier<JSC::Unknown> configuredMocks;
+    std::unique_ptr<WeakMockList> configuredMocks;
 
     // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use.
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;

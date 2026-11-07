@@ -5024,6 +5024,82 @@ if (isBun) {
       expect(reads).toBe(1);
     });
 
+    // Resetting a mock reads the `prototype` of its implementation, which calls `onReset`.
+    const resettable = onReset => {
+      const mocked = vi.fn(
+        new Proxy(function () {}, {
+          get(target, key, receiver) {
+            if (key === "prototype") onReset();
+            return Reflect.get(target, key, receiver);
+          },
+        }),
+      );
+      mocked.prototype;
+      return mocked;
+    };
+
+    test("resetAllMocks() resets the mocks in the order they were configured", () => {
+      const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+      const reset = [];
+      const mocks = names.map(name => resettable(() => reset.push(name)).mockReturnValue("configured"));
+      reset.length = 0;
+      vi.resetAllMocks();
+      expect(reset).toEqual(names);
+      expect(mocks.map(mocked => mocked())).toEqual(names.map(() => undefined));
+    });
+
+    test("resetAllMocks() resets a mock once, also if it was reset and configured again before", () => {
+      let resets = 0;
+      let configuresAgain = false;
+      const mocked = resettable(() => {
+        resets++;
+        if (configuresAgain) mocked.mockReturnValue("configured again");
+      });
+      for (let i = 0; i < 3; i++) mocked.mockReturnValue(i).mockReset();
+      mocked.mockReturnValue("configured");
+      resets = 0;
+      configuresAgain = true;
+      vi.resetAllMocks();
+      configuresAgain = false;
+      expect([resets, mocked()]).toEqual([1, "configured again"]);
+      vi.resetAllMocks();
+      expect([resets, mocked()]).toEqual([2, undefined]);
+    });
+
+    test("a resetAllMocks() that is terminated leaves the mocks it did not reach to the next one", () => {
+      const names = ["a", "b", "c", "d", "e", "f"];
+      const reset = [];
+      let phase = "configure";
+      let isSpinning = false;
+      const mocks = names.map(name =>
+        resettable(() => {
+          if (phase === "configure") return;
+          if (phase === "spin" && name === "c") {
+            isSpinning = true;
+            for (;;);
+          }
+          reset.push(name);
+        }).mockReturnValue("configured"),
+      );
+      globalThis.resetAllMocksUntilTerminated = () => vi.resetAllMocks();
+      try {
+        phase = "spin";
+        // The timeout of node:vm terminates the call. If it comes before `c` spins, try a longer one.
+        for (let timeout = 50; !isSpinning; timeout *= 2) {
+          expect(() => vm.runInThisContext("resetAllMocksUntilTerminated()", { timeout })).toThrow(
+            expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+          );
+        }
+      } finally {
+        phase = "reset";
+        reset.length = 0;
+        vi.resetAllMocks();
+        delete globalThis.resetAllMocksUntilTerminated;
+      }
+      expect(reset).toEqual(["d", "e", "f"]);
+      expect(mocks.map(mocked => mocked())).toEqual(names.map(() => undefined));
+    });
+
     test("clearAllMocks() skips a mock that hasn't been used since the last clearAllMocks()", () => {
       const mocked = vi.fn();
       const state = mocked.mock;
@@ -5089,6 +5165,312 @@ if (isBun) {
         jest.restoreAllMocks();
         expect(other.method()).toBe("original");
         expect(jest.isMockFunction(other.method)).toBe(false);
+      });
+
+      // Installing a spy and restoring it both define the property, which calls `onDefine`.
+      const trapped = (properties, onDefine) =>
+        new Proxy(properties, {
+          defineProperty(target, key, descriptor) {
+            onDefine(key);
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        });
+      // A spy is only restored while its object is alive, so the tests read their objects after the restore.
+      const spied = (objects, key = "method") =>
+        objects.filter(object => jest.isMockFunction(Object.getOwnPropertyDescriptor(object, key)?.value));
+
+      test.each(flavors)("%s: restores the spies in the order they were made", (_, isVitest, fn, spy) => {
+        const keys = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        const restored = [];
+        let refuses = false;
+        const proxy = trapped(Object.fromEntries(keys.map(key => [key, () => {}])), key => {
+          if (!refuses) return;
+          restored.push(key);
+          throw new Error(`refuses ${key}`);
+        });
+        for (const key of keys) spy(proxy, key);
+
+        refuses = true;
+        try {
+          expect(() => jest.restoreAllMocks()).toThrow(new Error("refuses a"));
+          expect(restored).toEqual(keys);
+          // A spy that stays keeps its place.
+          expect(() => jest.restoreAllMocks()).toThrow(new Error("refuses a"));
+          expect(restored).toEqual([...keys, ...keys]);
+        } finally {
+          refuses = false;
+          jest.restoreAllMocks();
+        }
+        expect(keys.filter(key => jest.isMockFunction(proxy[key]))).toEqual([]);
+      });
+
+      test.each(flavors)(
+        "%s: two spies on one property put back their originals in that order",
+        (_, isVitest, fn, spy) => {
+          const first = () => "first";
+          const second = () => "second";
+          const objects = Array.from({ length: 16 }, () => ({ method: first }));
+          for (const object of objects) {
+            spy(object, "method");
+            object.method = second;
+            spy(object, "method");
+          }
+          jest.restoreAllMocks();
+          expect(objects.map(object => object.method())).toEqual(objects.map(() => "second"));
+        },
+      );
+
+      test.each(flavors)(
+        "%s: a spy made while another one is installed is restored after it",
+        (_, isVitest, fn, spy) => {
+          const restored = [];
+          const expected = [];
+          const proxies = [];
+          let isRestoring = false;
+          for (let i = 0; i < 6; i++) {
+            const inner = trapped({ method() {} }, () => isRestoring && restored.push(`inner ${i}`));
+            const outer = trapped({ method() {} }, () => {
+              if (isRestoring) restored.push(`outer ${i}`);
+              else spy(inner, "method");
+            });
+            spy(outer, "method");
+            proxies.push(outer, inner);
+            expected.push(`outer ${i}`, `inner ${i}`);
+          }
+          isRestoring = true;
+          jest.restoreAllMocks();
+          expect(restored).toEqual(expected);
+          expect(spied(proxies)).toEqual([]);
+        },
+      );
+
+      test.each(flavors)(
+        "%s: a spy made while a getter spy is installed is restored after it",
+        (_, isVitest, fn, spy) => {
+          const restored = [];
+          const expected = [];
+          const proxies = [];
+          let isRestoring = false;
+          for (let i = 0; i < 6; i++) {
+            const inner = trapped({ method() {} }, () => isRestoring && restored.push(`inner ${i}`));
+            const outer = trapped({ get value() {} }, () => {
+              if (isRestoring) restored.push(`outer ${i}`);
+              else spy(inner, "method");
+            });
+            spy(outer, "value", "get");
+            proxies.push(outer, inner);
+            expected.push(`outer ${i}`, `inner ${i}`);
+          }
+          isRestoring = true;
+          jest.restoreAllMocks();
+          expect(restored).toEqual(expected);
+          expect(spied(proxies)).toEqual([]);
+        },
+      );
+
+      test.each(flavors)(
+        "%s: a spy made while another one copies its original is restored after it",
+        (_, isVitest, fn, spy) => {
+          const second = () => "second";
+          // The spy that is made first replaces the other one, which is then only restored while something refers to it.
+          const replaced = [];
+          const objects = Array.from({ length: 16 }, () => {
+            const first = function () {};
+            const object = { method: first };
+            let isArmed = true;
+            // spyOn() reads the `length` of the original before it stores the spy.
+            Object.defineProperty(first, "length", {
+              get() {
+                if (isArmed) {
+                  isArmed = false;
+                  object.method = second;
+                  replaced.push(spy(object, "method"));
+                }
+                return 0;
+              },
+            });
+            return object;
+          });
+          for (const object of objects) spy(object, "method");
+          jest.restoreAllMocks();
+          expect(objects.map(object => object.method())).toEqual(objects.map(() => "second"));
+          expect(replaced.length).toBe(16);
+        },
+      );
+
+      test.each(flavors)("%s: a spy that stays is restored before the spies made since", (_, isVitest, fn, spy) => {
+        const restored = [];
+        const proxies = [];
+        const indices = [0, 1, 2, 3, 4, 5];
+        let phase = "install";
+        for (const i of indices) {
+          const later = trapped({ method() {} }, () => phase === "restore" && restored.push(`later ${i}`));
+          const stuck = trapped({ method() {} }, () => {
+            if (phase === "restore") restored.push(`stuck ${i}`);
+            if (phase !== "refuse") return;
+            spy(later, "method");
+            throw new Error(`refuses ${i}`);
+          });
+          spy(stuck, "method");
+          proxies.push(stuck, later);
+        }
+        phase = "refuse";
+        try {
+          expect(() => jest.restoreAllMocks()).toThrow(new Error("refuses 0"));
+        } finally {
+          phase = "restore";
+          jest.restoreAllMocks();
+        }
+        expect(restored).toEqual([...indices.map(i => `stuck ${i}`), ...indices.map(i => `later ${i}`)]);
+        expect(spied(proxies)).toEqual([]);
+      });
+
+      test.each(flavors)("%s: the spies left after a garbage collection are still in order", (_, isVitest, fn, spy) => {
+        const restored = [];
+        const proxies = [];
+        let isRestoring = false;
+        for (let i = 0; i < 8; i++) {
+          for (let j = 0; j < 100; j++) spy({ method() {} }, "method");
+          proxies.push(trapped({ method() {} }, () => isRestoring && restored.push(i)));
+          spy(proxies[i], "method");
+        }
+        Bun.gc(true);
+        isRestoring = true;
+        jest.restoreAllMocks();
+        expect(restored).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+        expect(spied(proxies)).toEqual([]);
+      });
+
+      test.each(flavors)(
+        "%s: a restoreAllMocks() that is terminated leaves the spies it did not reach to the next one",
+        (_, isVitest, fn, spy) => {
+          const keys = ["a", "b", "c", "d", "e", "f"];
+          const restored = [];
+          let phase = "install";
+          let isSpinning = false;
+          const proxy = trapped(Object.fromEntries(keys.map(key => [key, () => {}])), key => {
+            if (phase === "install") return;
+            if (phase === "spin" && key === "c") {
+              isSpinning = true;
+              for (;;);
+            }
+            restored.push(key);
+          });
+          for (const key of keys) spy(proxy, key);
+          globalThis.restoreAllMocksUntilTerminated = () => jest.restoreAllMocks();
+          try {
+            phase = "spin";
+            // The timeout of node:vm terminates the call. If it comes before `c` spins, try a longer one.
+            for (let timeout = 50; !isSpinning; timeout *= 2) {
+              expect(() => vm.runInThisContext("restoreAllMocksUntilTerminated()", { timeout })).toThrow(
+                expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+              );
+            }
+            expect(keys.filter(key => jest.isMockFunction(proxy[key]))).toEqual(["c", "d", "e", "f"]);
+          } finally {
+            phase = "restore";
+            restored.length = 0;
+            jest.restoreAllMocks();
+            delete globalThis.restoreAllMocksUntilTerminated;
+          }
+          expect(restored).toEqual(["c", "d", "e", "f"]);
+          expect(keys.filter(key => jest.isMockFunction(proxy[key]))).toEqual([]);
+        },
+      );
+    });
+
+    describe("the end of a test file", () => {
+      const runTestFiles = async files => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("mock-fn-end-of-file", files);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...Object.keys(files).map(name => `./${name}`)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const reported = stderr =>
+        stderr
+          .split(/\r?\n/)
+          .filter(line => /^(error: |[ab]\.test\.ts:$|\((pass|fail)\) | \d+ errors?$)/.test(line))
+          .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+
+      test("two spies on one property put back their originals in the order they were made", async () => {
+        const { stderr, exitCode } = await runTestFiles({
+          "a.test.ts": `
+            import { spyOn, test } from "bun:test";
+            globalThis.objects = Array.from({ length: 16 }, () => ({ method: () => "first" }));
+            test("a", () => {
+              for (const object of objects) {
+                spyOn(object, "method");
+                object.method = () => "second";
+                spyOn(object, "method");
+              }
+            });
+          `,
+          "b.test.ts": `
+            import { expect, test } from "bun:test";
+            test("b", () => expect(objects.map(object => object.method())).toEqual(objects.map(() => "second")));
+          `,
+        });
+        expect({ reported: reported(stderr), exitCode }).toEqual({
+          reported: ["a.test.ts:", "(pass) a", "b.test.ts:", "(pass) b"],
+          exitCode: 0,
+        });
+      });
+
+      test("of the spies that can't be restored, the one that was made first is reported", async () => {
+        // `target` is a Proxy that refuses to have its spies restored once `isOver` is set.
+        // It is a global, because a spy is only restored while its object is alive.
+        const refusesRestore = `
+          import { jest, spyOn, test, vi } from "bun:test";
+          const keys = Array.from({ length: 32 }, (_, i) => "key" + i);
+          let isOver = false;
+          const target = globalThis[import.meta.file] = new Proxy(Object.fromEntries(keys.map(key => [key, () => {}])), {
+            defineProperty(target, key, descriptor) {
+              if (isOver) throw new Error("the trap refuses " + key);
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+          });
+          function makeSpies() {
+            const makers = [spyOn, jest.spyOn, vi.spyOn];
+            keys.forEach((key, i) => makers[i % 3](target, key));
+            isOver = true;
+          }
+        `;
+        const { stderr, exitCode } = await runTestFiles({
+          "a.test.ts": `
+            ${refusesRestore}
+            vi.setConfig({ restoreMocks: true });
+            test("a", makeSpies);
+            test("the next test", () => {});
+            test("the last test", () => {});
+          `,
+          "b.test.ts": `
+            ${refusesRestore}
+            test("b", makeSpies);
+          `,
+        });
+        expect({ reported: reported(stderr), exitCode }).toEqual({
+          reported: [
+            "a.test.ts:",
+            "(pass) a",
+            "error: the trap refuses key0",
+            "(fail) the next test",
+            "error: the trap refuses key0",
+            "(fail) the last test",
+            "error: the trap refuses key0",
+            "b.test.ts:",
+            "(pass) b",
+            "error: the trap refuses key0",
+            " 2 errors",
+          ],
+          exitCode: 1,
+        });
       });
     });
 

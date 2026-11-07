@@ -135,6 +135,10 @@ test("fires after a minute", () => {
 
 If a timer callback throws, the function that ran the timer rethrows the error. If a faked `process.nextTick` or `queueMicrotask` callback throws, that function also stops right away. The clock stays where it is, and anything that hasn't run yet stays pending.
 
+Calling `useFakeTimers()` again starts a new clock and removes the pending fake timers. If a callback does that, or calls `useRealTimers()`, the function that ran the callback stops there. It runs nothing on the new clock and doesn't move it. `advanceTimersToNextTimer(steps)` is the exception: it goes on with the new clock, as in Jest.
+
+In Jest and Vitest, the function that ran the callback still runs the timers that were pending on the old clock. `advanceTimersToNextTimerAsync()` also goes on with the new clock there. In Bun it stops like the other functions.
+
 `runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` can't keep it running forever. Every function that advances the clock throws the same error after that many faked `process.nextTick` or `queueMicrotask` callbacks in a row. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
 
 Bun restores the real timers and the real time at the end of each test file.

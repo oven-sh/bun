@@ -3711,6 +3711,344 @@ describe.each([
   });
 });
 
+// A call that advances the clock belongs to the clock it started on. Once a callback has replaced that clock, the call runs nothing more.
+describe.each([
+  ["vi", vi],
+  ["jest", jest],
+] as const)("%s: a callback that calls useFakeTimers() again", (_, api) => {
+  const toFake = ["setTimeout", "setInterval", "setImmediate", "nextTick", "queueMicrotask", "performance"] as const;
+  const start = () => void api.useFakeTimers({ toFake: [...toFake] });
+  // The new clock starts with a timer, an immediate and a tick pending.
+  function replace(ran: string[]) {
+    ran.push("replaced");
+    start();
+    setTimeout(() => ran.push("new timer"), 0);
+    setImmediate(() => ran.push("new immediate"));
+    process.nextTick(() => ran.push("new tick"));
+  }
+  const replacedBy: Record<string, (ran: string[]) => unknown> = {
+    "a tick": ran => process.nextTick(replace, ran),
+    "a microtask": ran => queueMicrotask(() => replace(ran)),
+    "a timer": ran => setTimeout(replace, 10, ran),
+    "an interval": ran => setInterval(replace, 10, ran),
+    "an immediate": ran => setImmediate(replace, ran),
+    "a tick that a timer queues": ran => setTimeout(() => process.nextTick(replace, ran), 10),
+    "a timer, after useRealTimers()": ran => setTimeout(() => (api.useRealTimers(), replace(ran)), 10),
+  };
+  // vi of "vitest" leaves AbortSignal.timeout() on the real clock.
+  if (api === jest) {
+    replacedBy["an AbortSignal.timeout() listener"] = ran =>
+      AbortSignal.timeout(10).addEventListener("abort", () => replace(ran));
+  }
+  const everyCallback = Object.keys(replacedBy);
+  const newClock = (ran: string[]) => ({
+    replaced: ran.includes("replaced"),
+    ran: ran.filter(name => name.startsWith("new ")),
+    now: performance.now(),
+    pending: api.getTimerCount(),
+  });
+  const untouched = { replaced: true, ran: [], now: 0, pending: 3 };
+  const boom = () => {
+    throw new Error("boom");
+  };
+
+  describe.each([
+    ["advanceTimersByTime(20)", () => api.advanceTimersByTime(20)],
+    ["advanceTimersToNextFrame()", () => api.advanceTimersToNextFrame()],
+    ["runOnlyPendingTimers()", () => api.runOnlyPendingTimers()],
+    ["runAllTimers()", () => api.runAllTimers()],
+    ["advanceTimersByTimeAsync(20)", () => api.advanceTimersByTimeAsync(20)],
+    ["runOnlyPendingTimersAsync()", () => api.runOnlyPendingTimersAsync()],
+    ["runAllTimersAsync()", () => api.runAllTimersAsync()],
+    // Jest goes on with the new clock in these two. Here useFakeTimers() settles the promise, so they end like the others.
+    ["advanceTimersToNextTimerAsync()", () => api.advanceTimersToNextTimerAsync()],
+    ["advanceTimersToNextTimerAsync(3)", () => api.advanceTimersToNextTimerAsync(3)],
+  ])("%s leaves the new clock alone", (_, advance) => {
+    test.each(everyCallback)("when %s replaces the old one", async by => {
+      start();
+      const ran: string[] = [];
+      replacedBy[by](ran);
+      // With a timer pending, advanceTimersToNextTimerAsync() goes on to the ticks.
+      setTimeout(() => ran.push("old timer"), 15);
+      await advance();
+      // A step that an Async function posted before its clock went away runs in these turns.
+      await oneLoopTurn();
+      await oneLoopTurn();
+      expect(newClock(ran)).toEqual(untouched);
+    });
+  });
+
+  test.each([
+    ["runAllTicks()", "a tick", () => api.runAllTicks()],
+    ["runAllImmediates()", "an immediate", () => jest.runAllImmediates()],
+  ] as const)("%s leaves the new clock alone when %s replaces the old one", (_, by, run) => {
+    start();
+    const ran: string[] = [];
+    replacedBy[by](ran);
+    run();
+    expect(newClock(ran)).toEqual(untouched);
+  });
+
+  test.each([
+    ["next timer mode", "a tick", () => vi.setTimerTickMode("nextTimerAsync")],
+    ["next timer mode", "a timer", () => vi.setTimerTickMode("nextTimerAsync")],
+    ["interval mode", "a tick", () => vi.setTimerTickMode("interval", 1)],
+    ["interval mode", "a timer", () => vi.setTimerTickMode("interval", 1)],
+  ] as const)("%s leaves the new clock alone when %s replaces the old one", async (_, by, setMode) => {
+    start();
+    setMode();
+    const ran: string[] = [];
+    const replaced = Promise.withResolvers<void>();
+    const callback = () => (replace(ran), replaced.resolve());
+    if (by === "a tick") process.nextTick(callback);
+    else setTimeout(callback, 10);
+    await replaced.promise;
+    await oneLoopTurn();
+    await oneLoopTurn();
+    expect(newClock(ran)).toEqual(untouched);
+  });
+
+  test.each([
+    ["vi.waitFor()", () => vi.waitFor(() => {}, { interval: 5 })],
+    ["vi.waitUntil()", () => vi.waitUntil(() => true, { interval: 5 })],
+    // It advances the clock between two attempts.
+    ["expect.poll()", (attempts = 0) => expect.poll(() => ++attempts, { interval: 5 }).toBe(2)],
+  ])("%s leaves the new clock alone when a tick replaces the old one", async (_, wait) => {
+    start();
+    const ran: string[] = [];
+    replacedBy["a tick"](ran);
+    await wait();
+    expect(newClock(ran)).toEqual(untouched);
+  });
+
+  // Jest calls `clock.next()` and `clock.tick(0)` for each step, each on the clock that is installed by then.
+  describe("advanceTimersToNextTimer() goes on with the new clock", () => {
+    test.each(everyCallback)("when %s replaces the old one", by => {
+      start();
+      const ran: string[] = [];
+      replacedBy[by](ran);
+      api.advanceTimersToNextTimer();
+      expect(newClock(ran)).toEqual({
+        replaced: true,
+        ran: ["new tick", "new immediate", "new timer"],
+        now: 0,
+        pending: 0,
+      });
+    });
+
+    // `next()` fires the first timer of an instant and `tick(0)` the others. Either can be the one that ends.
+    test.each<[string, (replaces: () => void) => unknown]>([
+      ["the first timer of an instant", replaces => setTimeout(replaces, 10)],
+      ["a later timer of the same instant", replaces => (setTimeout(() => {}, 10), setTimeout(replaces, 10))],
+      [
+        "a tick that a later timer of the same instant queues",
+        replaces => (setTimeout(() => {}, 10), setTimeout(() => process.nextTick(replaces), 10)),
+      ],
+    ])("and takes each step that is left on it when %s replaces the old one", (_, arrange) => {
+      const after = (steps: number) => {
+        start();
+        const ran: string[] = [];
+        arrange(() => (start(), setTimeout(() => ran.push("new timer"), 5000)));
+        api.advanceTimersToNextTimer(steps);
+        return { ran, now: performance.now(), pending: api.getTimerCount() };
+      };
+      expect([after(1), after(2)]).toEqual([
+        { ran: [], now: 0, pending: 1 },
+        { ran: ["new timer"], now: 5000, pending: 0 },
+      ]);
+    });
+
+    test("and with the clock after that when a timer of the new clock calls useFakeTimers() too", () => {
+      const after = (steps: number) => {
+        start();
+        const ran: string[] = [];
+        const third = () => (ran.push("second clock"), start(), setTimeout(() => ran.push("third clock"), 5000));
+        setTimeout(() => (start(), setTimeout(third, 0)), 10);
+        api.advanceTimersToNextTimer(steps);
+        return { ran, now: performance.now(), pending: api.getTimerCount() };
+      };
+      expect([after(1), after(2)]).toEqual([
+        { ran: ["second clock"], now: 0, pending: 1 },
+        { ran: ["second clock", "third clock"], now: 5000, pending: 0 },
+      ]);
+    });
+
+    test("and finds nothing more to run once a callback has called useRealTimers()", () => {
+      api.useFakeTimers({ now: 0 });
+      setTimeout(() => api.useRealTimers(), 10);
+      expect(api.advanceTimersToNextTimer(3)).toBe(api);
+      expect({ fake: api.isFakeTimers(), date: Date.now() > 1e12 }).toEqual({ fake: false, date: true });
+    });
+  });
+
+  describe("an error", () => {
+    async function outcome(advance: () => unknown, arrange: (ran: string[]) => unknown) {
+      start();
+      const ran: string[] = [];
+      arrange(ran);
+      let thrown: unknown;
+      try {
+        await advance();
+      } catch (error) {
+        thrown = error;
+      }
+      return { thrown, ...newClock(ran) };
+    }
+    const thrownAndUntouched = { thrown: new Error("boom"), ...untouched };
+    const sync = {
+      "advanceTimersByTime(20)": () => api.advanceTimersByTime(20),
+      "advanceTimersToNextFrame()": () => api.advanceTimersToNextFrame(),
+      "runOnlyPendingTimers()": () => api.runOnlyPendingTimers(),
+      "runAllTimers()": () => api.runAllTimers(),
+      "advanceTimersToNextTimer(3)": () => api.advanceTimersToNextTimer(3),
+    };
+    // These go on after a timer throws, and then throw the first error.
+    const goOn = Object.entries(sync).slice(0, 3);
+    const waits: [string, () => unknown][] = [
+      ["vi.waitFor()", () => vi.waitFor(() => {}, { interval: 10 })],
+      ["vi.waitUntil()", () => vi.waitUntil(() => true, { interval: 10 })],
+    ];
+
+    test.each([...Object.entries(sync), ...waits])(
+      "%s throws what the callback threw after it replaced the clock",
+      async (_, advance) => {
+        expect({
+          "a timer": await outcome(advance, ran => setTimeout(() => (replace(ran), boom()), 10)),
+          "a tick": await outcome(advance, ran => process.nextTick(() => (replace(ran), boom()))),
+        }).toEqual({ "a timer": thrownAndUntouched, "a tick": thrownAndUntouched });
+      },
+    );
+
+    test.each([
+      ...goOn,
+      ...waits,
+      ["advanceTimersByTimeAsync(20)", () => api.advanceTimersByTimeAsync(20)],
+      ["runOnlyPendingTimersAsync()", () => api.runOnlyPendingTimersAsync()],
+    ])("%s throws an earlier error of a timer when a later callback replaces the clock", async (_, advance) => {
+      expect({
+        "a timer": await outcome(advance, ran => (setTimeout(boom, 5), setTimeout(replace, 10, ran))),
+        "a tick": await outcome(advance, ran => setTimeout(() => (process.nextTick(replace, ran), boom()), 5)),
+      }).toEqual({ "a timer": thrownAndUntouched, "a tick": thrownAndUntouched });
+    });
+
+    test.each(goOn)("%s throws the error of the tick that replaced the clock instead", async (_, advance) => {
+      const tick = (ran: string[]) => {
+        replace(ran);
+        throw new Error("from the tick");
+      };
+      expect(await outcome(advance, ran => setTimeout(() => (process.nextTick(tick, ran), boom()), 5))).toEqual({
+        thrown: new Error("from the tick"),
+        ...untouched,
+      });
+    });
+
+    test("advanceTimersToNextTimer(3) throws it when a later timer of the same instant replaced the clock", async () => {
+      const advance = sync["advanceTimersToNextTimer(3)"];
+      const first = () => setTimeout(() => {}, 10);
+      expect({
+        "and threw": await outcome(advance, ran => (first(), setTimeout(() => (replace(ran), boom()), 10))),
+        "after one that threw": await outcome(
+          advance,
+          ran => (first(), setTimeout(boom, 10), setTimeout(replace, 10, ran)),
+        ),
+      }).toEqual({ "and threw": thrownAndUntouched, "after one that threw": thrownAndUntouched });
+    });
+
+    test("that the callback throws after useFakeTimers() is not lost by the Async functions or the tick modes", async () => {
+      const names = [
+        "advanceTimersByTimeAsync",
+        "runOnlyPendingTimersAsync",
+        "runAllTimersAsync",
+        "advanceTimersToNextTimerAsync",
+      ];
+      const modes = ["nextTimerAsync", "interval"];
+      using dir = tempDir("fake-timers-replace-throw", {
+        "throw.test.ts": `
+          import { test, ${_} as api } from "bun:test";
+          const replaceAndThrow = name => {
+            api.useFakeTimers();
+            throw new Error("after useFakeTimers() in " + name);
+          };
+          test.each(${JSON.stringify(names)})("%s", async name => {
+            api.useFakeTimers();
+            setTimeout(replaceAndThrow, 10, name);
+            await api[name](10);
+            await new Promise(resolve => setImmediate(resolve));
+          });
+          test.each(${JSON.stringify(modes)})("%s mode", async mode => {
+            api.useFakeTimers();
+            api.setTimerTickMode(mode, 1);
+            const fired = Promise.withResolvers();
+            setTimeout(() => (fired.resolve(), replaceAndThrow(mode + " mode")), 10);
+            await fired.promise;
+            await new Promise(resolve => setImmediate(resolve));
+          });
+        `,
+      });
+      const { stderr, exitCode } = await run(["test", "./throw.test.ts"], String(dir));
+      expect(stderr.match(/^error: after useFakeTimers\(\) in .*$/gm)).toEqual(
+        [...names, ...modes.map(mode => `${mode} mode`)].map(name => `error: after useFakeTimers() in ${name}`),
+      );
+      expect(stderr).toContain(" 6 fail");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  test("a call that the callback makes on the new clock runs it", () => {
+    start();
+    const ran: string[] = [];
+    setTimeout(() => {
+      replace(ran);
+      api.runAllTimers();
+      ran.push(`new clock at ${performance.now()}`);
+      setTimeout(() => ran.push("new timer of later"), 1);
+    }, 10);
+    api.runAllTimers();
+    expect(newClock(ran)).toEqual({
+      replaced: true,
+      ran: ["new tick", "new immediate", "new timer", "new clock at 0"],
+      now: 0,
+      pending: 1,
+    });
+  });
+
+  test("a call inside a callback ends with the clock too", () => {
+    start();
+    const ran: string[] = [];
+    setTimeout(() => api.runAllTimers(), 5);
+    setTimeout(replace, 10, ran);
+    api.advanceTimersByTime(20);
+    expect(newClock(ran)).toEqual(untouched);
+  });
+
+  // As in @sinonjs/fake-timers, where `duringTick` is a field of each clock.
+  test.each(["a tick", "a timer"] as const)(
+    "a timer without a delay is due at once on the new clock, set by %s or after the call that it ended",
+    by => {
+      const arms: Record<string, (fired: () => void) => unknown> = {
+        "setTimeout(fn, 0)": fired => setTimeout(fired, 0),
+        "setImmediate(fn)": fired => setImmediate(fired),
+      };
+      // vi of "vitest" leaves AbortSignal.timeout() on the real clock.
+      if (api === jest)
+        arms["AbortSignal.timeout(0)"] = fired => AbortSignal.timeout(0).addEventListener("abort", fired);
+      const firedAt: Record<string, number[]> = {};
+      for (const [name, arm] of Object.entries(arms)) {
+        start();
+        const at: number[] = (firedAt[name] = []);
+        const callback = () => (start(), arm(() => at.push(performance.now())));
+        if (by === "a tick") process.nextTick(callback);
+        else setTimeout(callback, 10);
+        api.advanceTimersByTime(10);
+        // The call has returned. What it counted for the old clock must not count for this one.
+        arm(() => at.push(performance.now()));
+        api.advanceTimersByTime(0);
+      }
+      expect(firedAt).toEqual(Object.fromEntries(Object.keys(arms).map(name => [name, [0, 0]])));
+    },
+  );
+});
+
 describe("the clock that advances by itself", () => {
   test.each([
     ["vi", { shouldAdvanceTime: true }, 20],

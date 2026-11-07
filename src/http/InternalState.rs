@@ -98,6 +98,9 @@ pub struct InternalStateFlags {
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
+    /// This attempt was started with a non-empty body; `original_request_body`
+    /// no longer tells once `HTTPClient::release_sent_request_body` emptied it.
+    pub(crate) has_request_body: bool,
 }
 
 impl InternalStateFlags {
@@ -114,6 +117,7 @@ impl InternalStateFlags {
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            has_request_body: false,
         }
     }
 }
@@ -153,6 +157,10 @@ impl<'a> InternalState<'a> {
     pub(crate) fn init(body: HTTPRequestBody<'a>) -> InternalState<'a> {
         let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
+            flags: InternalStateFlags {
+                has_request_body: body.len() > 0,
+                ..InternalStateFlags::new()
+            },
             original_request_body: body,
             request_body,
             compressed_body: MutableString::init_empty(),

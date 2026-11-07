@@ -496,6 +496,23 @@ impl FetchTasklet {
         }
     }
 
+    /// The HTTP thread reported `request_body_released`: a response that is
+    /// still streaming must not keep the request's bytes (or file) alive. The
+    /// caller holds `mutex` and `detach()`es the returned body once it does not.
+    fn take_released_request_body(&mut self) -> Option<HTTPRequestBody> {
+        if !core::mem::take(&mut self.result.request_body_released)
+            // A redirect dropped it; `abort_listener` may still have to cancel it.
+            || matches!(self.request_body, HTTPRequestBody::ReadableStream(_))
+        {
+            return None;
+        }
+        if let Some(http_) = self.http.as_mut() {
+            // Borrows `request_body`.
+            http_.request_body = http::HTTPRequestBody::Bytes(b"");
+        }
+        Some(core::mem::take(&mut self.request_body))
+    }
+
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
         // `http.client` borrows `url_proxy_buffer` / `unix_socket_path` / `request_headers`.
@@ -905,10 +922,15 @@ impl FetchTasklet {
             return Ok(());
         }
 
+        let released_request_body = self.take_released_request_body();
         let global_this = self.global_this;
         // explicit cleanup at each return (a closure keeps borrowck happy)
-        let cleanup = |this: &mut FetchTasklet| {
+        let cleanup = move |this: &mut FetchTasklet| {
             this.mutex.unlock();
+            // Freeing a large body under the lock would stall the HTTP thread in `callback`.
+            if let Some(mut body) = released_request_body {
+                body.detach();
+            }
             // if we are not done we wait until the next call
             if is_done {
                 // The HTTP response has been fully received. If the request body
@@ -1995,7 +2017,7 @@ impl FetchTasklet {
         // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
         // the caller's +1 — bumping it again here leaked one ref per
         // Blob-backed body (issue: fetch-leak fixture #5 RSS growth).
-        // `clear_data() → request_body.detach()` releases it.
+        // `take_released_request_body()`'s caller or `clear_data()` releases it.
 
         let url = fetch_options.url;
         let env = cx.vm().as_mut().transpiler.env_mut();
@@ -2046,8 +2068,9 @@ impl FetchTasklet {
         // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
-        // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
-        // lifetime of the request, and `clear_data` drops the `AsyncHTTP` before it drops them.
+        // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated while the
+        // HTTP thread borrows them, and `clear_data` drops the `AsyncHTTP` before it drops them.
+        // `request_body` goes earlier, once that thread gave up its borrow: `take_released_request_body`.
         let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
@@ -2520,6 +2543,7 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
+        let prev_request_body_released = task_ref.result.request_body_released;
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
         // callbacks; the terminal callback carries the bytes in `body_owned`
         // instead. Capture both; the stored copy keeps neither.
@@ -2529,6 +2553,7 @@ impl FetchTasklet {
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
+        task_ref.result.request_body_released |= prev_request_body_released;
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if task_ref.result.certificate_info.is_none() {

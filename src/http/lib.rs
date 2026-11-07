@@ -479,6 +479,9 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
+    /// The client is done with the `Bytes` / `Sendfile` request body it was
+    /// started with, so its owner may free it. Set at most once, with `metadata`.
+    pub request_body_released: bool,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -1636,6 +1639,21 @@ impl<'a> HTTPClient<'a> {
     #[inline]
     fn is_request_fully_sent(&self) -> bool {
         self.state.request_stage == RequestStage::Done
+    }
+
+    /// Lets go of a fully written body as the response head is reported: past
+    /// that point no redirect or retry sends it again. A `Stream` is its
+    /// producer's to end.
+    fn release_sent_request_body(&mut self) -> bool {
+        if !self.is_request_fully_sent()
+            || matches!(self.state.original_request_body, HTTPRequestBody::Stream(_))
+        {
+            return false;
+        }
+        self.state.original_request_body = HTTPRequestBody::Bytes(b"");
+        self.state.request_body = bun_ptr::RawSlice::EMPTY;
+        self.compressed_request_body = Vec::new();
+        true
     }
 
     #[inline]
@@ -3687,7 +3705,7 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) {
         bun_core::scoped_log!(fetch, "closeAndFail: {:?}", err);
-        if cfg!(target_os = "macos") && self.state.original_request_body.len() > 0 {
+        if cfg!(target_os = "macos") && self.state.flags.has_request_body {
             GenHttpContext::<IS_SSL>::fail_socket(socket);
         } else {
             GenHttpContext::<IS_SSL>::terminate_socket(socket);
@@ -4620,6 +4638,7 @@ impl<'a> HTTPClient<'a> {
         let certificate_info = self.state.certificate_info.take();
         if certificate_info.is_none() {
             if let Some(metadata) = self.state.cloned_metadata.take() {
+                let request_body_released = self.release_sent_request_body();
                 // transfer ownership of the metadata here
                 return HTTPClientResult {
                     metadata: Some(metadata),
@@ -4639,6 +4658,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
+                    request_body_released,
                 };
             }
         }
@@ -4663,6 +4683,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
+            request_body_released: false,
         }
     }
 

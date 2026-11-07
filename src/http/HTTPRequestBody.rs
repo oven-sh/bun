@@ -14,7 +14,8 @@ use crate::fold_transfer_encoding;
 // `core::ptr::read` in `start_queued_task`, so every arm must be
 // trivially-droppable.
 pub enum HTTPRequestBody<'a> {
-    /// Borrowed bytes — caller guarantees they outlive the request.
+    /// Borrowed bytes — caller guarantees they outlive the request, or the
+    /// result that reports `HTTPClientResult::request_body_released`.
     Bytes(&'a [u8]),
     Sendfile(SendFile),
     Stream(Stream),

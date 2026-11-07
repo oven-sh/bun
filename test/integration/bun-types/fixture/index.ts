@@ -408,6 +408,21 @@ Bun.serve({
 import.meta.hot.accept();
 import.meta.hot.data;
 
+import.meta.hot.accept("./file.json");
+import.meta.hot.accept("./file.json", undefined);
+import.meta.hot.accept("./file.json", newModule => {
+  expectType(newModule).is<any>();
+});
+import.meta.hot.accept(["./file.json"]);
+import.meta.hot.accept(["./file.json"], undefined);
+import.meta.hot.accept(["./file.json"], newModules => {
+  expectType(newModules).is<any[]>();
+});
+// @ts-expect-error
+import.meta.hot.accept("./file.json", 123);
+// @ts-expect-error
+import.meta.hot.accept(["./file.json"], 123);
+
 fetch("", {
   tls: {
     rejectUnauthorized: false,

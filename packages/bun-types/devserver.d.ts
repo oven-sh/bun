@@ -100,6 +100,12 @@ interface ImportMeta {
      * When `import.meta.hot.accept` is not used, the page reloads when the
      * file updates, and a console message shows which files were checked.
      *
+     * The callback is optional. Without one, Bun only patches this module's
+     * `import` statements of the dependency, which must be an ES module. Bun
+     * does not evaluate this module again. A value that this module computed
+     * from the dependency while it loaded, or got from `require()` or
+     * `import()`, stays the old one. Pass a callback to update such a value.
+     *
      * @example
      * ```ts
      * import.meta.hot.accept('./foo', (newModule) => {
@@ -109,8 +115,20 @@ interface ImportMeta {
      *   }
      * });
      * ```
+     *
+     * @example
+     * ```ts
+     * import { count } from './foo';
+     *
+     * export function getCount() {
+     *   // Returns the new value after foo.ts updates.
+     *   return count;
+     * }
+     *
+     * import.meta.hot.accept('./foo');
+     * ```
      */
-    accept(specifier: string, callback: (newModule: any) => void): void;
+    accept(specifier: string, callback?: (newModule: any) => void): void;
 
     /**
      * Indicate that the modules of an array of dependencies can be accepted.
@@ -119,8 +137,12 @@ interface ImportMeta {
      *
      * When `import.meta.hot.accept` is not used, the page reloads when the
      * file updates, and a console message shows which files were checked.
+     *
+     * The callback is optional. Without one, Bun only patches this module's
+     * `import` statements of the updated dependency, as it does for a single
+     * dependency.
      */
-    accept(specifiers: string[], callback: (newModules: (any | undefined)[]) => void): void;
+    accept(specifiers: string[], callback?: (newModules: (any | undefined)[]) => void): void;
 
     /**
      * Attach a callback that Bun calls:

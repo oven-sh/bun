@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { sayGoal } from "./harness/goals";
@@ -43,6 +43,9 @@ function builtOnceWith(lib: string) {
   return once;
 }
 
+// The build leaves out whole pages of Bun's code. A page is 64 KB on Linux arm64, where 4 KB of functions that are alone in one cost all of it.
+const onePage = isLinux && isArm64 ? 64 * 1024 : 0;
+
 async function expectNoGrowth(forms: Record<string, string>, goalNotMet?: string) {
   const plain = await builtOnceWith(double);
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
@@ -53,7 +56,7 @@ async function expectNoGrowth(forms: Record<string, string>, goalNotMet?: string
       name,
       stdout: found.stdout,
       exitCode: found.exitCode,
-      grows: found.size - plain.size > 32 * 1024,
+      grows: found.size - plain.size > 32 * 1024 + (goalNotMet ? 0 : onePage),
     }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
   }
 }

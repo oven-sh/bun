@@ -424,6 +424,11 @@ extern "C" void Bun__FakeTimers__setOriginal(Zig::GlobalObject* globalObject, JS
     uncheckedDowncast<JSWeakMap>(JSValue::decode(originals))->set(JSC::getVM(globalObject), JSValue::decode(fake).asCell(), JSValue::decode(original));
 }
 
+extern "C" void Bun__FakeTimers__forgetOriginal(JSC::EncodedJSValue originals, JSC::EncodedJSValue fake)
+{
+    uncheckedDowncast<JSWeakMap>(JSValue::decode(originals))->remove(JSValue::decode(fake).asCell());
+}
+
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue originals, JSC::EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);

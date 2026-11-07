@@ -74,7 +74,7 @@ With [`--isolate=modules`](/test/parallel#--isolate) there is one global object,
 
 For the same reason, the timers that jsdom sets for itself are real while [fake timers](/test/dates-times) are on. `input.select()`, `input.focus()`, `window.postMessage()` and a click on a `#fragment` link each set one. With `--isolate`, they don't count in `vi.getTimerCount()`, and `vi.runAllTimers()` doesn't run them.
 
-Preload scripts run in the project's environment. With `--isolate`, they run again for each file, in that file's environment.
+Preload scripts run in the project's environment. With `--isolate`, they run again for each file, in that file's environment. Without it, a preload's `vi.stubGlobal()` stubs and [fake timers](/test/dates-times) go over the globals of each file's own environment.
 
 With jsdom, an error thrown in an event listener or a timer fails the running test, like in Vitest and Jest. If the file or a preload script has added an `error` listener to `window`, the test doesn't fail.
 

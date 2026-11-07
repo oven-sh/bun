@@ -1,13 +1,16 @@
 //! Picks each test file's environment. src/js/internal/test/environment.ts creates the window.
 
 use super::jest::Jest;
+use super::timers::fake_timers::FakeTimers;
+use super::vi_utils;
 use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
@@ -205,6 +208,29 @@ impl Environment {
 
 pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
+}
+
+/// Without `--isolate`, fake timers and a preload's `vi.stubGlobal()` stay from file to file. Each keeps what it replaced
+/// on the global, which is only right for the names the global had at that time. So environment.ts takes them off
+/// before it changes the names of a window on the global (`on` is false), and puts them on what is there afterwards.
+pub(crate) fn move_replacements(cx: &mut JsScope<'_>, on: bool) {
+    let global = cx.global();
+    if on {
+        report(global, FakeTimers::put_on_frames(global));
+        report(global, vi_utils::move_global_stubs(global, true));
+    } else {
+        // A stub can be over a fake.
+        report(global, vi_utils::move_global_stubs(global, false));
+        FakeTimers::take_off_frames(global);
+    }
+}
+
+/// What a replacement throws is the file's error. The names of the window still move.
+fn report(global: &JSGlobalObject, result: JsResult<()>) {
+    if let Err(err) = result {
+        let error = global.take_exception(err);
+        let _ = global.bun_vm().as_mut().uncaught_exception(global, error, false);
+    }
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

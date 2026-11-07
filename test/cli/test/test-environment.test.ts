@@ -1285,6 +1285,258 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
+    describe("what it put in place of a global, when a file has another environment", () => {
+      const packages = {
+        ...fakePackages,
+        // Each window says which one its functions are of.
+        "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+          const { Window } = exports;
+          exports.Window = class extends Window {
+            constructor(options) {
+              super(options);
+              const id = this.environment;
+              this.requestAnimationFrame = () => id + " frame";
+              this.cancelAnimationFrame = () => {};
+              this.matchMedia = () => id + " media";
+              this.close = () => (this.closed = true);
+            }
+          };`,
+        // The window's own returns text, and Bun's fake returns a number. A stale fake is one whose fake timers ended.
+        "frame.js": `
+          import { vi } from "bun:test";
+          export function frame(request = globalThis.requestAnimationFrame) {
+            if (typeof request !== "function") return typeof request;
+            const timers = vi.isFakeTimers() ? vi.getTimerCount() : NaN;
+            const id = request(() => {});
+            if (typeof id !== "number") return id;
+            const isOnFakeClock = vi.isFakeTimers() && vi.getTimerCount() === timers + 1;
+            clearTimeout(id);
+            return isOnFakeClock ? "fake" : "stale fake";
+          }`,
+      };
+      const inNode = `// ${VITEST} node\n`;
+      const inWindow = `// ${VITEST} happy-dom\n`;
+      const file = (title: string, body: string) => `
+        import { afterAll, jest, test, vi } from "bun:test";
+        import { frame } from "./frame.js";
+        const media = () => (typeof matchMedia === "function" ? matchMedia() : typeof matchMedia);
+        test("${title}", () => {
+          ${body}
+        });`;
+      const logs = (title: string, seen = "frame()") => file(title, `console.log("${title}", ${seen});`);
+      /** Logs `seen`, undoes what the preload did, and logs `seen` again. */
+      const undoes = (title: string, undo: string, seen = "frame()") =>
+        file(title, `console.log("${title}", ${seen});\n${undo};\nconsole.log("${title}", ${seen});`);
+      async function run(files: Record<string, string>, ...args: string[]) {
+        using dir = tempDir("test-environment", { ...packages, ...files });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js", ...args);
+        return {
+          stdout: stdout.filter(line => !/^(?:open|abort) /.test(line)),
+          failed: summary(stderr)?.[1],
+          exitCode,
+        };
+      }
+      const passed = (...stdout: string[]) => ({ stdout, failed: "0 fail", exitCode: 0 });
+
+      describe("fake timers", () => {
+        const fakeTimers = `import { vi } from "bun:test"; vi.useFakeTimers();`;
+        const captured = `import { captured } from "./captured.js";`;
+
+        test.each([
+          [[], "happy-dom#1 frame"],
+          // The preload turns them on again for each file.
+          [["--isolate"], "fake"],
+          [["--isolate=modules"], "fake"],
+        ])("a node file that ends them has no requestAnimationFrame %j", async (flags, inTheNextWindow) => {
+          const both = "frame(), typeof cancelAnimationFrame";
+          const ran = await run(
+            {
+              "preload.js": fakeTimers,
+              "1.test.js": logs("1"),
+              "2.test.js": `${inNode}${undoes("2", "vi.useRealTimers()", both)}`,
+              "3.test.js": logs("3"),
+              "4.test.js": `${inNode}${logs("4", both)}`,
+            },
+            "--environment=happy-dom",
+            ...flags,
+          );
+          expect(ran).toEqual(
+            passed(
+              "1 fake",
+              "2 undefined undefined",
+              "2 undefined undefined",
+              `3 ${inTheNextWindow}`,
+              "4 undefined undefined",
+            ),
+          );
+        });
+
+        test("a node file that turns them on again has no requestAnimationFrame either", async () => {
+          const inNode = `/** ${JEST} node */`;
+          const ran = await run(
+            {
+              "preload.js": `import { jest } from "bun:test"; jest.useFakeTimers();`,
+              "1.test.js": logs("1"),
+              "2.test.js": `${inNode}${undoes("2", "jest.useFakeTimers()")}`,
+              "3.test.js": logs("3"),
+              "4.test.js": `${inNode}${logs("4")}`,
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 fake", "2 undefined", "2 undefined", "3 happy-dom#1 frame", "4 undefined"));
+        });
+
+        test("requestAnimationFrame is the same fake again when a file is back in the window", async () => {
+          const ran = await run(
+            {
+              "preload.js": fakeTimers,
+              "captured.js": `export const captured = requestAnimationFrame;`,
+              "1.test.js": `${captured}${logs("1", "frame(), frame(captured)")}`,
+              "2.test.js": `${inNode}${captured}${logs("2", "frame(), frame(captured)")}`,
+              "3.test.js": `${captured}${logs("3", "frame(), requestAnimationFrame === captured")}`,
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 fake fake", "2 undefined fake", "3 fake true"));
+        });
+
+        test("a fake that a node file puts on globalThis is not replaced by the window's function", async () => {
+          const ran = await run(
+            {
+              "preload.js": fakeTimers,
+              "captured.js": `export const captured = requestAnimationFrame;`,
+              "1.test.js": `${captured}${logs("1", "frame(captured)")}`,
+              "2.test.js": `${inNode}${captured}${file(
+                "2",
+                `vi.useRealTimers();
+                globalThis.requestAnimationFrame = captured;
+                console.log("2", frame());`,
+              )}`,
+              "3.test.js": `${inNode}${logs("3")}`,
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 fake", "2 stale fake", "3 stale fake"));
+        });
+
+        test("what the preload assigned over a fake stays over it", async () => {
+          const ran = await run(
+            {
+              "preload.js": `${fakeTimers} globalThis.requestAnimationFrame = () => "of the preload";`,
+              "1.test.js": logs("1"),
+              "2.test.js": `${inNode}${logs("2")}`,
+              "3.test.js": undoes("3", "vi.useRealTimers()"),
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 of the preload", "2 undefined", "3 of the preload", "3 happy-dom#1 frame"));
+        });
+
+        test.each([
+          ["has other options", `// ${VITEST}-options { "url": "https://example.com/" }\n`, "", "happy-dom#1 frame"],
+          ["opens after a file closed the last one", "", `afterAll(() => window.close());`, "happy-dom#2 frame"],
+        ])("they are on requestAnimationFrame of a window that %s", async (_, options, close, inTheLastFile) => {
+          const ran = await run(
+            {
+              "preload.js": fakeTimers,
+              "1.test.js": `${logs("1")}\n${close}`,
+              "2.test.js": `${options}${undoes("2", "vi.useRealTimers()")}`,
+              "3.test.js": logs("3"),
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 fake", "2 fake", "2 happy-dom#2 frame", `3 ${inTheLastFile}`));
+        });
+
+        test("a requestAnimationFrame that it gave node files is theirs again after a file with a window", async () => {
+          const ran = await run({
+            "preload.js": `globalThis.requestAnimationFrame = () => "of the preload"; ${fakeTimers}`,
+            "1.test.js": logs("1"),
+            "2.test.js": `${inWindow}${undoes("2", "vi.useRealTimers()")}`,
+            "3.test.js": logs("3"),
+          });
+          expect(ran).toEqual(passed("1 fake", "2 fake", "2 happy-dom#1 frame", "3 of the preload"));
+        });
+
+        test("those of its beforeAll() leave a node file no requestAnimationFrame", async () => {
+          const ran = await run({
+            "preload.js": `import { beforeAll, vi } from "bun:test"; beforeAll(() => void vi.useFakeTimers());`,
+            "1.test.js": `${inWindow}${logs("1")}`,
+            "2.test.js": undoes("2", "vi.useRealTimers()"),
+            "3.test.js": `${inWindow}${logs("3")}`,
+            "4.test.js": logs("4"),
+          });
+          expect(ran).toEqual(passed("1 fake", "2 undefined", "2 undefined", "3 happy-dom#1 frame", "4 undefined"));
+        });
+      });
+
+      describe("vi.stubGlobal()", () => {
+        const stub = `import { vi } from "bun:test"; vi.stubGlobal("matchMedia", () => "stub");`;
+        const unstubs = (title: string, seen = "media()") => undoes(title, "vi.unstubAllGlobals()", seen);
+
+        test("a stub of a window's name is on every file, over what that file has", async () => {
+          const ran = await run(
+            {
+              "preload.js": stub,
+              "1.test.js": logs("1", "media()"),
+              "2.test.js": `${inNode}${unstubs("2")}`,
+              "3.test.js": unstubs("3"),
+              "4.test.js": `${inNode}${logs("4", "media()")}`,
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 stub", "2 stub", "2 undefined", "3 stub", "3 happy-dom#1 media", "4 stub"));
+        });
+
+        test("a window that opens after a stub of its name still gives globalThis that name", async () => {
+          const ran = await run({
+            "preload.js": `${stub} vi.stubGlobal("environment", "stub");`,
+            "1.test.js": `${inWindow}${unstubs("1", "media(), environment")}`,
+            "2.test.js": unstubs("2", `media(), typeof environment === "undefined" ? "undefined" : environment`),
+          });
+          expect(ran).toEqual(
+            passed("1 stub stub", "1 happy-dom#1 media happy-dom#1", "2 stub stub", "2 undefined undefined"),
+          );
+        });
+
+        test("a stub is on a node file after a window that can't stay until the next file", async () => {
+          const ran = await run(
+            {
+              "preload.js": stub,
+              "1.test.js": file(
+                "1",
+                `Object.defineProperty(globalThis, "scrollTo", { value: () => {}, configurable: false });
+                console.log("1", media());`,
+              ),
+              "2.test.js": `${inNode}${unstubs("2")}`,
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual(passed("1 stub", "2 stub", "2 undefined"));
+        });
+
+        test("a stub that can't go back on doesn't keep a file from its window", async () => {
+          using dir = tempDir("test-environment", {
+            ...packages,
+            "preload.js": stub,
+            "1.test.js": file(
+              "1",
+              `Object.defineProperty(globalThis, "matchMedia", { value: () => "stuck", configurable: false });
+              console.log("1", media());`,
+            ),
+            "2.test.js": `${inWindow}${logs("2", "media(), environment")}`,
+          });
+          const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js");
+          expect(stderr).toContain(
+            "TypeError: Attempting to change configurable attribute of unconfigurable property.",
+          );
+          expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["1 stuck", "2 stuck happy-dom#1"]);
+          expect(summary(stderr)?.slice(0, 2)).toEqual(["2 pass", "0 fail"]);
+          expect(exitCode).toBe(1);
+        });
+      });
+    });
+
     // The setup docs/test/dom.mdx has long recommended, in a project that kept its old runner's comments.
     test("that registers its own DOM wins over environment comments", async () => {
       using dir = tempDir("test-environment", {
@@ -1600,6 +1852,47 @@ describe.concurrent("test environment with the real", () => {
     expect(verdicts(stderr)).toEqual({ "throws in a frame callback": "fail", "throws in a listener": "fail" });
     expect(summary(stderr)).toEqual(["0 pass", "2 fail"]);
     expect(exitCode).toBe(1);
+  });
+
+  test("jsdom: a node file that ends a preload's fake timers leaves the window its requestAnimationFrame", async () => {
+    using dir = project({
+      "preload.js": `import { vi } from "bun:test"; vi.useFakeTimers({ now: 0 });`,
+      "1.test.js": `
+        import { test, expect, vi } from "bun:test";
+        test("the preload's fake timers are on", () => expect(vi.isFakeTimers()).toBe(true));`,
+      "2.test.js": `// ${VITEST} node
+        import { test, expect, vi } from "bun:test";
+        test("a node file ends them", () => {
+          vi.useRealTimers();
+          expect(typeof requestAnimationFrame).toBe("undefined");
+        });`,
+      "3.test.js": `
+        import { test, expect } from "bun:test";
+        test("the window hears what a frame callback throws", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const hear = event => {
+            event.preventDefault();
+            resolve(event.error.message);
+          };
+          window.addEventListener("error", hear, { once: true });
+          requestAnimationFrame(() => {
+            throw new Error("from the frame callback");
+          });
+          expect(await promise).toBe("from the frame callback");
+        });`,
+      "4.test.js": `// ${VITEST} node
+        import { test, expect } from "bun:test";
+        test("a later node file has none", () => expect(typeof requestAnimationFrame).toBe("undefined"));`,
+    });
+    const { stderr, exitCode } = await bunTest(String(dir), "--environment=jsdom", "--preload=./preload.js");
+    expect(verdicts(stderr)).toEqual({
+      "the preload's fake timers are on": "pass",
+      "a node file ends them": "pass",
+      "the window hears what a frame callback throws": "pass",
+      "a later node file has none": "pass",
+    });
+    expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
   });
 
   const throwInListener = `

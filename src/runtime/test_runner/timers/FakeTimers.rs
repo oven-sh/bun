@@ -31,6 +31,7 @@ unsafe extern "C" {
         original: JSValue,
     );
     safe fn Bun__FakeTimers__originalOf(originals: JSValue, value: JSValue) -> JSValue;
+    safe fn Bun__FakeTimers__forgetOriginal(originals: JSValue, fake: JSValue);
     safe fn Bun__FakeTimers__isNativeFunction(value: JSValue) -> bool;
     safe fn Bun__FakeTimers__markBuiltinForCompiledCode(
         global: &JSGlobalObject,
@@ -139,6 +140,11 @@ impl Api {
             Api::Performance => bun_jsc::cpp::Bun__FakeTimers__performanceObject(global),
             _ => global.to_js_value(),
         }
+    }
+
+    /// Only a DOM library defines these two.
+    fn is_frame(self) -> bool {
+        matches!(self, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
     }
 }
 
@@ -361,6 +367,14 @@ struct Replaced {
     fake: Strong,
 }
 
+/// A frame fake that replaces nothing for now. See `FakeTimers::take_off_frames`.
+struct Detached {
+    api: Api,
+    fake: Strong,
+    /// If the global held something else in place of `fake`: that value, and what `fake` replaced.
+    covered: Option<(Strong, Strong)>,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Restore {
     Always,
@@ -489,7 +503,11 @@ pub(crate) struct FakeTimers {
     date_now_offset: f64,
     loop_limit: u32,
     replaced: Vec<Replaced>,
-    /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
+    /// The frame fakes that `take_off_frames` took out of `replaced`, until `put_on_frames` has a function for them to
+    /// replace.
+    detached: Vec<Detached>,
+    /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced. A fake that
+    /// `take_off_frames` took off has no entry.
     originals: StrongOptional,
     reading_globals: bool,
     ticks: VecDeque<Tick>,
@@ -515,6 +533,7 @@ impl Default for FakeTimers {
             date_now_offset: 0.0,
             loop_limit: 0,
             replaced: Vec::new(),
+            detached: Vec::new(),
             originals: StrongOptional::empty(),
             reading_globals: false,
             ticks: VecDeque::new(),
@@ -651,6 +670,10 @@ impl FakeTimers {
         self.replaced
             .iter()
             .any(|replaced| replaced.fake.get() == function)
+            || self
+                .detached
+                .iter()
+                .any(|frame| frame.fake.get() == function)
     }
 
     /// `api` is an `Api as u8`.
@@ -738,6 +761,7 @@ impl FakeTimers {
     fn deactivate(&mut self, global: &JSGlobalObject) -> Deactivated {
         let cleared = self.clear();
         self.forget_installation(global);
+        self.detached.clear();
         Deactivated {
             cleared,
             replaced: core::mem::take(&mut self.replaced),
@@ -766,6 +790,7 @@ impl FakeTimers {
             self.forget_installation(global);
         }
         self.replaced.clear();
+        self.detached.clear();
         self.originals.deinit();
         self.ticks.clear();
         self.drives.clear();
@@ -953,10 +978,7 @@ impl FakeTimers {
                     original_of(originals, installed).unwrap_or(installed)
                 }
             };
-            // Only a DOM library defines these two.
-            if matches!(api, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
-                && !original.is_callable()
-            {
+            if api.is_frame() && !original.is_callable() {
                 continue;
             }
             // These two clocks are faked below the builtin `now`, which stays. A spy on it makes way, as when sinon replaces the whole object.
@@ -1007,6 +1029,96 @@ impl FakeTimers {
                 api.put(global, original);
             }
         }
+    }
+
+    /// The test environment is about to change which names of a window `global` has. The frame records leave `replaced`,
+    /// and a fake that is on `global` makes way for what it replaced. So the environment moves the window's own
+    /// functions, and `uninstall` has none of them to put on a global that the window has left. A value that the program
+    /// put in place of a fake stays. Runs no JS.
+    #[optimize(size)]
+    pub(crate) fn take_off_frames(global: &JSGlobalObject) {
+        // SAFETY: per-thread `timer::All`; nothing below re-enters it.
+        let this = unsafe { &mut (*timer_all()).fake_timers };
+        let mut index = 0;
+        while index < this.replaced.len() {
+            if !this.replaced[index].api.is_frame() {
+                index += 1;
+                continue;
+            }
+            let Replaced {
+                api,
+                original,
+                fake,
+            } = this.replaced.remove(index);
+            if let Some(originals) = this.originals.get() {
+                Bun__FakeTimers__forgetOriginal(originals, fake.get());
+            }
+            let name = bun_core::String::static_(api.property());
+            let installed = Bun__FakeTimers__getDirect(global, api.owner(global), &name);
+            let covered = if installed == fake.get() {
+                api.put(global, original.get());
+                None
+            } else if installed.is_empty() {
+                None
+            } else {
+                Some((Strong::create(installed, global), original))
+            };
+            this.detached.push(Detached { api, fake, covered });
+        }
+    }
+
+    /// The names of `global` are where the test environment wants them. Each fake that `take_off_frames` took off goes on
+    /// again, over the function that `global` has for it now. It stays off if there is none. Where the program's value
+    /// is in place of the fake as before, the record is as before too.
+    #[optimize(size)]
+    pub(crate) fn put_on_frames(global: &JSGlobalObject) -> JsResult<()> {
+        let all = timer_all();
+        // SAFETY: per-thread `timer::All`; each borrow below ends at its statement, and none spans a getter.
+        if unsafe { (*all).fake_timers.detached.is_empty() } {
+            return Ok(());
+        }
+        let _reading = ReadingGlobals::begin();
+        // SAFETY: as above.
+        let originals = unsafe { (*all).fake_timers.originals(global) };
+        let mut index = 0;
+        // SAFETY: as above. A record stays in `detached` while a getter runs, so `is_installed` knows its fake.
+        while let Some(frame) = unsafe { &(*all).fake_timers.detached }.get(index) {
+            let (api, fake) = (frame.api, frame.fake.get());
+            let name = bun_core::String::static_(api.property());
+            let installed = Bun__FakeTimers__getDirect(global, api.owner(global), &name);
+            let as_before = frame
+                .covered
+                .as_ref()
+                .filter(|(instead, _)| instead.get() == installed)
+                .map(|(_, original)| original.get());
+            let original = match as_before {
+                Some(original) => original,
+                None => {
+                    let installed = api.owner(global).get(global, api.property())?;
+                    let installed = installed.unwrap_or(JSValue::UNDEFINED);
+                    let original = original_of(originals, installed).unwrap_or(installed);
+                    // SAFETY: as above.
+                    if !original.is_callable()
+                        || unsafe { (*all).fake_timers.is_installed(installed) }
+                    {
+                        index += 1;
+                        continue;
+                    }
+                    api.put(global, fake);
+                    original
+                }
+            };
+            Bun__FakeTimers__setOriginal(global, originals, fake, original);
+            // SAFETY: as above.
+            let this = unsafe { &mut (*all).fake_timers };
+            let Detached { fake, .. } = this.detached.remove(index);
+            this.replaced.push(Replaced {
+                api,
+                original: Strong::create(original, global),
+                fake,
+            });
+        }
+        Ok(())
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.

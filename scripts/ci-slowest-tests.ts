@@ -18,14 +18,21 @@ import { $, spawn } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
+import { failedBucketAttempt, isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). See
 // scripts/ci-log-phase.mjs for the header shapes runner.node.ts emits and why
 // each one has to close the open span.
-export function parseLog(text: string): Map<string, number> {
-  const out = new Map<string, number>();
+//
+// `record` gets each attempt of a file in the log, with what that attempt
+// took. An attempt is a serial run (the first, or an `[attempt #K]`), a run in
+// a parallel bucket whether it passed or failed there, or a dispatch of the
+// parallel-safe phase. In the phase of the files that build many executables
+// this loop times only a file that passes at its first try (`[N/M] <path>
+// (X.XXs)`): a first try that fails is no attempt, and a further try counts
+// like a parallel-safe dispatch, at most 500 ms.
+function eachAttempt(text: string, record: (file: string, ms: number) => void): void {
   let curName: string | null = null;
   let curStart = 0;
   let concurrent = false;
@@ -36,7 +43,7 @@ export function parseLog(text: string): Map<string, number> {
     // Concurrent-phase gaps are inter-dispatch deltas, not per-file wall
     // clock; clamp so the last-dispatched file on a shard does not absorb the
     // N-wide tail drain or a sibling's 5-15 s retry backoff.
-    out.set(curName, (out.get(curName) ?? 0) + (concurrent ? Math.min(span, 500) : span));
+    record(curName, concurrent ? Math.min(span, 500) : span);
     curName = null;
   };
   for (const line of text.split("\n")) {
@@ -54,7 +61,7 @@ export function parseLog(text: string): Map<string, number> {
       // Parallel-bucket summaries carry the authoritative wall clock inline.
       const timed = !hdr[1] && /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {
-        out.set(timed[1], (out.get(timed[1]) ?? 0) + Math.round(parseFloat(timed[2]) * 1000));
+        record(timed[1], Math.round(parseFloat(timed[2]) * 1000));
         concurrent = false;
         continue;
       }
@@ -67,7 +74,13 @@ export function parseLog(text: string): Map<string, number> {
       concurrent = !hdr[1];
       continue;
     }
-    if (isPhaseGroupHeader(body)) {
+    // The runner's other headers are groups.
+    if (!body.startsWith("--- ")) continue;
+    const failed = failedBucketAttempt(body);
+    if (failed) {
+      close(ts);
+      record(failed.path, failed.ms);
+    } else if (isPhaseGroupHeader(body)) {
       close(ts);
       concurrent = false;
     }
@@ -75,7 +88,77 @@ export function parseLog(text: string): Map<string, number> {
   // A truncated log (job killed / timed out mid-run) has no `--- End`; charge
   // the open span to the last timestamp seen so the culprit is not dropped.
   close(lastTs);
-  return out;
+}
+
+// One file over the jobs of a build. `perPlat` is the sum of the file's
+// attempts on each platform. `retried` has the platforms where that sum is
+// more than one attempt.
+export type Agg = {
+  maxMs: number;
+  maxPlat: string;
+  perPlat: Map<string, number>;
+  retried?: Map<string, { attempts: number; maxAttemptMs: number }>;
+};
+
+// `maxMs` is the sum of `attempts` attempts on `maxPlat`, the platform where
+// the file took the longest. The longest of them took `maxAttemptMs`. More
+// than one attempt is a file that failed and ran again, not one slow run.
+export type Row = { file: string; maxMs: number; maxPlat: string; attempts: number; maxAttemptMs: number };
+
+export function addLog(agg: Map<string, Agg>, plat: string, log: string): void {
+  eachAttempt(log, (file, ms) => {
+    let a = agg.get(file);
+    if (!a) agg.set(file, (a = { maxMs: 0, maxPlat: "", perPlat: new Map() }));
+    const before = a.perPlat.get(plat);
+    const total = (before ?? 0) + ms;
+    a.perPlat.set(plat, total);
+    if (before !== undefined) {
+      const retried = (a.retried ??= new Map());
+      const onPlat = retried.get(plat);
+      if (onPlat) {
+        onPlat.attempts++;
+        onPlat.maxAttemptMs = Math.max(onPlat.maxAttemptMs, ms);
+      } else {
+        // Until now the sum was one attempt.
+        retried.set(plat, { attempts: 2, maxAttemptMs: Math.max(before, ms) });
+      }
+    }
+    if (total > a.maxMs) {
+      a.maxMs = total;
+      a.maxPlat = plat;
+    }
+  });
+}
+
+// `package.json` / `test/package.json` are setup steps, not tests.
+const isTest = (f: string) => /\.(m|c)?(j|t)sx?$/.test(f);
+
+export function slowestRows(agg: Map<string, Agg>, topN: number): Row[] {
+  return [...agg.entries()]
+    .filter(([file]) => isTest(file))
+    .map(([file, a]) => {
+      const retried = a.retried?.get(a.maxPlat);
+      return {
+        file,
+        maxMs: a.maxMs,
+        maxPlat: a.maxPlat,
+        attempts: retried?.attempts ?? 1,
+        maxAttemptMs: retried?.maxAttemptMs ?? a.maxMs,
+      };
+    })
+    .sort((a, b) => b.maxMs - a.maxMs)
+    .slice(0, topN);
+}
+
+export function tableLines(rows: Row[]): string[] {
+  const seconds = (ms: number) => (ms / 1000).toFixed(2);
+  return [
+    `rank\tseconds\tfile\tslowest_platform\tattempts\tlongest_attempt`,
+    ...rows.map(
+      (row, i) =>
+        `${i + 1}\t${seconds(row.maxMs)}\t${row.file}\t${row.maxPlat}\t${row.attempts}\t${seconds(row.maxAttemptMs)}`,
+    ),
+  ];
 }
 
 if (import.meta.main) {
@@ -148,7 +231,6 @@ if (import.meta.main) {
     return out;
   }
 
-  type Agg = { maxMs: number; maxPlat: string; perPlat: Map<string, number> };
   const agg = new Map<string, Agg>();
 
   let done = 0;
@@ -160,16 +242,7 @@ if (import.meta.main) {
       try {
         const log = await fetchLog(job);
         const plat = platOf(job.name);
-        for (const [file, ms] of parseLog(log)) {
-          let a = agg.get(file);
-          if (!a) agg.set(file, (a = { maxMs: 0, maxPlat: "", perPlat: new Map() }));
-          const total = (a.perPlat.get(plat) ?? 0) + ms;
-          a.perPlat.set(plat, total);
-          if (total > a.maxMs) {
-            a.maxMs = total;
-            a.maxPlat = plat;
-          }
-        }
+        addLog(agg, plat, log);
       } catch (e) {
         console.error(`  failed ${job.id}: ${(e as Error).message}`);
       }
@@ -179,14 +252,7 @@ if (import.meta.main) {
   }
   await Promise.all(Array.from({ length: 16 }, worker));
 
-  // `package.json` / `test/package.json` are setup steps, not tests.
-  const isTest = (f: string) => /\.(m|c)?(j|t)sx?$/.test(f);
-
-  const sorted = [...agg.entries()]
-    .filter(([file]) => isTest(file))
-    .map(([file, a]) => ({ file, maxMs: a.maxMs, maxPlat: a.maxPlat }))
-    .sort((a, b) => b.maxMs - a.maxMs)
-    .slice(0, TOP_N);
+  const sorted = slowestRows(agg, TOP_N);
 
   console.error(`${agg.size} unique entries, ${sorted.length} test files after filtering`);
   console.error(`logs cached at ${CACHE}`);
@@ -194,8 +260,7 @@ if (import.meta.main) {
   if (json) {
     console.log(JSON.stringify({ build: BUILD, count: agg.size, top: sorted }, null, 2));
   } else {
-    console.log(`rank\tseconds\tfile\tslowest_platform`);
-    sorted.forEach((t, i) => console.log(`${i + 1}\t${(t.maxMs / 1000).toFixed(2)}\t${t.file}\t${t.maxPlat}`));
+    for (const line of tableLines(sorted)) console.log(line);
   }
   process.exit(0);
 }

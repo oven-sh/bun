@@ -10,6 +10,10 @@
 //   - retry/error label: `--- [N/M] <path> - <error>` (not a path)
 //   - parallel-bucket phase: `--- [A-B/M] K files in parallel`, then after the
 //     single `bun test --parallel` run a summary `[N/M] <path> (X.XXs)` per file
+//     that passed, and a group `--- <path> - K failing in the parallel batch (X.XXs)`
+//     per file whose tests failed there. Both say what the file took in the bucket.
+//     The group has no `[N/M]`: the file gets its number when it runs again, alone,
+//     as a serial test. failedBucketAttempt() reads it
 //   - parallel-safe phase: `--- Running N parallel-safe tests`, then a bare
 //     `[N/M] <path>` per concurrent dispatch (no recoverable wall clock)
 //   - compiled-programs phase: `--- Running N programs compiled ahead of time`,
@@ -39,3 +43,15 @@ export const isPhaseGroupHeader = body =>
   /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled|files that build)|Disk and memory pressure\b|End\b|Summary\b|Received \w+, exiting)/.test(
     body,
   );
+
+/**
+ * The run of a file that failed in its `bun test --parallel` bucket, from the group that the runner opens for it:
+ * `--- <path> - K failing in the parallel batch (X.XXs)`.
+ *
+ * @param {string} body one log line with its APC timestamp and SGR codes removed
+ * @returns {{ path: string, ms: number } | null} the file, and what it took in the bucket
+ */
+export const failedBucketAttempt = body => {
+  const failed = /^--- (.+\.[cm]?[jt]sx?) - \d+ failing in the parallel batch \((\d+(?:\.\d+)?)s\)$/.exec(body);
+  return failed && { path: failed[1], ms: Math.round(parseFloat(failed[2]) * 1000) };
+};

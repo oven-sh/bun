@@ -24,6 +24,7 @@ The script (`scripts/ci-slowest-tests.ts`) does the heavy lifting:
 - Caches logs to `$TMPDIR/bun-ci-logs-<build>/` so re-runs are instant.
 - Parses `_bk;t=<ms> ... --- [N/TOTAL] <file>` group headers, normalising backslashes to `/` and stripping `[attempt #N]` retries.
 - Aggregates each file's duration as the **max across all platforms** (a file appears once per platform; shards within a platform are disjoint).
+- Adds up every attempt of a file on a platform: a run in the parallel batch that failed (`--- <file> - K failing in the parallel batch (X.XXs)`), the rerun alone, and each `[attempt #N]`. `attempts` and `maxAttemptMs` in the JSON, `attempts` and `longest_attempt` (seconds) in the table, say how many attempts the time of a row adds up on its slowest platform and how long the longest took. A row with more than 1 attempt is a file that failed and ran again: its time is a sum, not one slow run. The time of a try that fails in the phase `Running N files that build many executables` is not in the row: the runner prints no seconds for it.
 - Drops `package.json` / non-JS entries — those are setup steps, not tests.
 
 If the script can't find a build automatically (rare — it walks the last 10 merged PRs), pick one yourself: `gh pr list --state merged --limit 10 --json number,headRefName`, then `bk build list --branch <headRefName>` and pass the first build with a `finished_at`. Merged-PR builds usually report `state: failed` because of flaky tests — that's fine, the timing data is still valid.
@@ -39,6 +40,7 @@ Procedure:
 3. Post the **main** message: header (build link + gist link, "Rest in thread.") followed by the **top 20** bullets. Row format:
 
    ```
+   • 973s `test/aot/modules-in-a-test-run-twice.test.ts` 🐧 x64-asan (5 attempts, longest 197s)
    • 325s `test/js/bun/cron/in-process-cron.test.ts` 🐧 x64-baseline
    • 96s  `test/js/bun/http/serve-body-leak.test.ts` 🐧 x64-asan
    ```
@@ -46,5 +48,6 @@ Procedure:
    - seconds: plain text, left-aligned, padded so the backticks line up
    - filepath: code-font, **full path including `test/` prefix and extension** — do not strip anything
    - platform: standard Unicode emoji only (🐧 linux, 🪟 windows, 🍎 macOS — never workspace-custom shortcodes) followed by the arch/variant **verbatim** from the job name (`x64-asan`, `aarch64`, `x64-baseline` — do not abbreviate)
+   - attempts: only for a row with more than 1. Put `(N attempts, longest Xs)` after the platform. The seconds of that row are the sum of runs that failed and ran again, not one slow run
 
 4. Reply in-thread (`thread_ts` = the main message) with rows 21–N in the same bullet format, packed into chunks under 4800 chars each (~70 rows per chunk). Post chunks sequentially so they stay ordered.

@@ -136,7 +136,6 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      // An untyped blob is sent as `Content-Type: application/octet-stream`, so it parses back with that type.
       ["blob", { file: true, name: undefined as any, type: "application/octet-stream", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
     ]);

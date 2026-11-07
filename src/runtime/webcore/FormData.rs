@@ -165,10 +165,9 @@ pub(crate) fn to_js_from_multipart_data(
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
-                    // Lowercased like a script-given type, but the bytes stay as sent: no charset is added.
                     let ct = field.content_type.slice(buf);
                     blob.content_type
-                        .set(crate::webcore::blob::BlobContentType::from_lowercased(ct));
+                        .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
                     blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {
@@ -279,7 +278,6 @@ pub(crate) fn for_each_multipart_entry<C>(
         let mut filename: Option<bun_semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        // Read all header lines so `Content-Type` is seen: https://github.com/oven-sh/bun/issues/33012
         while !header_chunk.is_empty() {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
@@ -294,11 +292,10 @@ pub(crate) fn for_each_multipart_entry<C>(
             } else {
                 b""
             };
-            if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
-                // Fetch spec: each Content-Disposition line first sets name and filename to null.
-                name = bun_semver::String::default();
-                filename = None;
-                is_file = false;
+            // The first Content-Disposition line that gives a name and a filename is final.
+            if (filename.is_none() || name.len() == 0)
+                && strings::eql_case_insensitive_ascii(key, b"content-disposition", true)
+            {
                 // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
                 // disposition type is a case-insensitive token (RFC 2183 §2).
                 value = strings::trim(value, b" \t");
@@ -352,7 +349,10 @@ pub(crate) fn for_each_multipart_entry<C>(
                         break;
                     }
                 }
-            } else if strings::eql_case_insensitive_ascii(key, b"content-type", true) {
+            } else if !value.is_empty()
+                && field.content_type.is_empty()
+                && strings::eql_case_insensitive_ascii(key, b"content-type", true)
+            {
                 let trimmed = strings::trim(value, b"; \t");
                 // Only an exact `\r\n` terminates a header line above, so a bare
                 // CR or LF can survive into the value. Reject anything outside
@@ -360,9 +360,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                 // reflected verbatim into outgoing request headers. HTAB stays
                 // allowed: it is valid optional whitespace inside a field value
                 // and cannot start a new header line.
-                if trimmed.is_empty() {
-                    field.content_type = bun_semver::String::default();
-                } else if trimmed
+                if trimmed
                     .iter()
                     .all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b))
                 {

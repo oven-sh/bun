@@ -355,39 +355,91 @@ describe("FormData", () => {
         await expect(parse(C, file)).rejects.toThrow(message);
       });
 
-      it(`lowercases the declared type, as the File constructor does (${C.name})`, async () => {
-        const body = buildPart([disposition("banner"), "Content-Type: IMAGE/WebP"], webp);
-        const file = (await parse(C, body)).get("file") as File;
-        expect(file.type).toBe("image/webp");
-        // The bytes stay as sent: no charset is added to a text type.
-        const text = buildPart([disposition("a.txt"), "Content-Type: Text/Plain"], Buffer.from("hi"));
-        const parsed = (await parse(C, text)).get("file") as File;
-        expect([parsed.type, new Response(parsed).headers.get("content-type")]).toEqual(["text/plain", "text/plain"]);
+      it.each([
+        `Content-Disposition: form-data; name="other"`,
+        `Content-Disposition: form-data; name="other"; filename="other.png"`,
+        `Content-Disposition: form-data; name=""`,
+      ])(`${C.name}: a file part keeps its name and file name when %s follows`, async later => {
+        const form = await parse(C, buildPart([disposition("banner"), later, "Content-Type: image/webp"], webp));
+        const file = form.get("file") as File;
+        expect([[...form.keys()], file.name, file.type]).toEqual([["file"], "banner", "image/webp"]);
       });
 
-      it(`uses the last Content-Type line (${C.name})`, async () => {
-        const body = buildPart([disposition("banner"), "Content-Type: text/plain", "Content-Type: image/webp"], webp);
+      it(`a Content-Disposition line with no filename does not end the header (${C.name})`, async () => {
+        const form = await parse(
+          C,
+          buildPart(
+            [`Content-Disposition: form-data; name="first"`, disposition("banner"), "Content-Type: image/webp"],
+            webp,
+          ),
+        );
+        const file = form.get("file") as File;
+        expect([[...form.keys()], file.name, file.type]).toEqual([["file"], "banner", "image/webp"]);
+      });
+
+      it(`keeps the first Content-Type line (${C.name})`, async () => {
+        const body = buildPart([disposition("banner"), "Content-Type: image/webp", "Content-Type: text/plain"], webp);
         expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
-        // An empty last line clears the declared type, so the file name decides.
-        const empty = buildPart([disposition("a.txt"), "Content-Type: image/webp", "Content-Type:"], webp);
-        expect(((await parse(C, empty)).get("file") as File).type).toBe("text/plain;charset=utf-8");
       });
 
-      it(`uses the last Content-Disposition line whole (${C.name})`, async () => {
-        const toFile = buildPart(
-          [`Content-Disposition: form-data; name="a"`, disposition("b.bin"), "Content-Type: image/webp"],
-          webp,
-        );
-        const toField = buildPart(
-          [disposition("a.bin"), `Content-Disposition: form-data; name="b"`, "Content-Type: image/webp"],
-          Buffer.from("text"),
-        );
-        const asFile = await parse(C, toFile);
-        const file = asFile.get("file") as File;
-        expect([[...asFile.keys()], file.name, file.type]).toEqual([["file"], "b.bin", "image/webp"]);
-        expect([...(await parse(C, toField)).entries()]).toEqual([["b", "text"]]);
+      it(`stores the declared type as sent (${C.name})`, async () => {
+        const file = (await parse(C, buildBody("text/plain", "a.txt", Buffer.from("hi")))).get("file") as File;
+        const again = new FormData();
+        again.append("file", file);
+        expect({
+          type: file.type,
+          header: new Response(file).headers.get("content-type"),
+          parsedAgain: ((await new Response(again).formData()).get("file") as File).type,
+        }).toEqual({ type: "text/plain", header: "text/plain", parsedAgain: "text/plain" });
+      });
+
+      it(`a part typed multipart/form-data parses again with its own boundary (${C.name})`, async () => {
+        const inner = `--AbC\r\nContent-Disposition: form-data; name="k"\r\n\r\nv\r\n--AbC--\r\n`;
+        const form = await parse(C, buildBody("multipart/form-data; boundary=AbC", "inner.bin", Buffer.from(inner)));
+        const nested = await new Response(form.get("file") as File).formData();
+        expect([...nested.entries()]).toEqual([["k", "v"]]);
       });
     }
+
+    describe("through every way into the parser", () => {
+      const asStream = (body: Uint8Array) => new Blob([body]).stream();
+      const ways: [string, (body: Uint8Array) => FormData | Promise<FormData>][] = [
+        // @ts-expect-error - FormData.from is a Bun extension
+        ["FormData.from(bytes, boundary)", body => FormData.from(body, boundary)],
+        // @ts-expect-error - FormData.from is a Bun extension
+        ["FormData.from(blob, boundary)", body => FormData.from(new Blob([body]), boundary)],
+        ["Blob.formData()", body => new Blob([body], { type: headers["Content-Type"] }).formData()],
+        ["Response over a stream", body => new Response(asStream(body), { headers }).formData()],
+        ["Bun.readableStreamToFormData()", body => Bun.readableStreamToFormData(asStream(body), boundary)],
+      ];
+
+      it.each(ways)("%s reads the declared type", async (_way, read) => {
+        const form = await read(buildBody("text/plain", "x.png", webp));
+        expect((form.get("file") as File).type).toBe("text/plain");
+      });
+
+      it.each(ways)("%s rejects a header line with no colon after Content-Disposition", async (_way, read) => {
+        const noColon = buildPart([disposition("banner.txt"), "no colon"], webp);
+        const folded = buildPart([disposition("banner.txt"), "Content-Type: text/plain;", " charset=utf-8"], webp);
+        for (const body of [noColon, folded]) {
+          await expect((async () => read(body))()).rejects.toThrow("missing header colon separator");
+        }
+      });
+
+      it("fetch() response and Bun.serve request read the declared type", async () => {
+        const body = buildBody("text/plain", "x.png", webp);
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            if (req.method !== "POST") return new Response(body, { headers });
+            return Response.json(((await req.formData()).get("file") as File).type);
+          },
+        });
+        const fromResponse = (await (await fetch(server.url)).formData()).get("file") as File;
+        const fromRequest = await (await fetch(server.url, { method: "POST", body, headers })).json();
+        expect([fromResponse.type, fromRequest]).toEqual(["text/plain", "text/plain"]);
+      });
+    });
   });
 
   it("should throw on missing final boundary", async () => {

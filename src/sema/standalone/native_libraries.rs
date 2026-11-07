@@ -384,12 +384,52 @@ extern "C" fn Bun__collateUTF16(
 
 // What Bun's transpiler asks of the rest of Bun. The compiler's front end runs it on the files that it lowers.
 
-/// `operationMathPow`
+/// `operationMathPow` of WebKit's `runtime/MathCommon.cpp`, branch for branch. Only the last line is libm's `pow`, so a
+/// `**` that the parser or the React Compiler folds in this program is the number that it is in Bun.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
-    if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
+    /// `maxExponentForIntegerMathPow`
+    const MAX_EXPONENT_FOR_INTEGER_MATH_POW: i32 = 1000;
+
+    if exponent.is_nan() {
         return f64::NAN;
+    }
+    let absolute_base = base.abs();
+    if absolute_base == 1.0 && exponent.is_infinite() {
+        return f64::NAN;
+    }
+    if exponent == 0.5 {
+        if absolute_base == 0.0 {
+            return 0.0;
+        }
+        if absolute_base == f64::INFINITY {
+            return f64::INFINITY;
+        }
+        return base.sqrt();
+    }
+    if exponent == -0.5 {
+        if absolute_base == 0.0 {
+            return f64::INFINITY;
+        }
+        if absolute_base == f64::INFINITY {
+            return 0.0;
+        }
+        return 1.0 / base.sqrt();
+    }
+    let mut integer = exponent as i32;
+    if f64::from(integer) == exponent && (0..=MAX_EXPONENT_FOR_INTEGER_MATH_POW).contains(&integer)
+    {
+        let mut result = 1.0;
+        let mut power = base;
+        while integer != 0 {
+            if integer & 1 != 0 {
+                result *= power;
+            }
+            power *= power;
+            integer >>= 1;
+        }
+        return result;
     }
     base.powf(exponent)
 }
@@ -577,5 +617,53 @@ mod tests {
     fn unknown_typescript_lib_is_absent() {
         assert!((TYPESCRIPT_LIBS.has)(b"lib.es5.d.ts"));
         assert!(!(TYPESCRIPT_LIBS.has)(b"lib.nothing.d.ts"));
+    }
+
+    /// What `base ** exponent` is in Bun, for the branches that do not end in libm's `pow`.
+    #[test]
+    fn pow_is_the_pow_of_the_engine() {
+        let rows = [
+            // An integer exponent from 0 to 1000: multiplied. glibc's `pow` has other last digits for the first nine.
+            (1.05, 4.0, 1.21550625),
+            (1.05, 5.0, 1.2762815625000001),
+            (1.1, 10.0, 2.593742460100002),
+            (0.1, 4.0, 0.00010000000000000005),
+            (0.3, 3.0, 0.027),
+            (9.99, 7.0, 9930209.65034979),
+            (-1.05, 5.0, -1.2762815625000001),
+            (1.0000001, 1000.0, 1.000100004995219),
+            (1.1, 1000.0, 2.469932918005993e41),
+            (2.0, 1000.0, 1.0715086071862673e301),
+            (-2.0, 3.0, -8.0),
+            (-0.0, 3.0, -0.0),
+            (3.0, 0.0, 1.0),
+            (5.0, -0.0, 1.0),
+            (f64::NAN, 0.0, 1.0),
+            // 0.5 and -0.5: the square root. glibc's `pow` has other last digits for 9.85, 2 and 3.
+            (9.85, 0.5, 3.138470965295043),
+            (7.0, 0.5, 2.6457513110645907),
+            (-4.0, 0.5, f64::NAN),
+            (-0.0, 0.5, 0.0),
+            (f64::NEG_INFINITY, 0.5, f64::INFINITY),
+            (2.0, -0.5, 0.7071067811865475),
+            (3.0, -0.5, 0.5773502691896258),
+            (-0.0, -0.5, f64::INFINITY),
+            (f64::NEG_INFINITY, -0.5, 0.0),
+            // NaN, where the last three are 1 for libm's `pow`.
+            (2.0, f64::NAN, f64::NAN),
+            (1.0, f64::NAN, f64::NAN),
+            (1.0, f64::INFINITY, f64::NAN),
+            (-1.0, f64::NEG_INFINITY, f64::NAN),
+        ];
+        for (base, exponent, in_bun) in rows {
+            let power = Bun__JSC__operationMathPow(base, exponent);
+            // The bits tell 0 from -0.
+            let same = if in_bun.is_nan() {
+                power.is_nan()
+            } else {
+                power.to_bits() == in_bun.to_bits()
+            };
+            assert!(same, "{base} ** {exponent} is {power}, and {in_bun} in Bun");
+        }
     }
 }

@@ -1197,8 +1197,11 @@ pub mod math {
         safe fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
     }
 
-    /// JSC-compatible `Math.pow` (matches WebKit's `operationMathPow` corner-case
-    /// handling for NaN/±∞/±0 — `std::powf` differs on a handful of inputs).
+    /// JavaScriptCore's `operationMathPow`: what `**` and `Math.pow` give when Bun runs the
+    /// source. The folds whose number goes into what Bun builds call this and not `f64::powf`:
+    /// the parser's and the React Compiler's. A NaN exponent, a base of ±1 with an infinite
+    /// exponent, an exponent of ±0.5 and an integer exponent from 0 to 1000 never reach libm
+    /// there, so the two differ in the last digits of many powers.
     #[inline]
     pub fn pow(x: f64, y: f64) -> f64 {
         Bun__JSC__operationMathPow(x, y)

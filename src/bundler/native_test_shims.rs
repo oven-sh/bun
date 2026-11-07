@@ -73,16 +73,6 @@ extern "C" fn Bun__linux_trace_emit(_event_name: *const c_char, _duration_ns: i6
     0
 }
 
-// `**` as the language defines it, where the C library answers 1 for a base of 1 or -1.
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
-    if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
-        return f64::NAN;
-    }
-    base.powf(exponent)
-}
-
 // No text is a URL here: whoever asks goes on as behind a text that does not parse.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]

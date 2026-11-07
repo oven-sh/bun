@@ -13,6 +13,7 @@ import {
   eslintConfig,
   eslintSmall,
   type Files,
+  folds,
   long,
   rc,
   small,
@@ -216,6 +217,18 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(diagnostics["order.jsx"]).toHaveLength(4);
     expect(exit).toBe(1);
   });
+
+  test(
+    "a test that the compiler folds is true where it is for oxlint",
+    async () => {
+      const { diagnostics, exit } = await report(small.folds);
+      expect(diagnostics).toEqual(expected.reports.folds.diagnostics);
+      // `1 ** Infinity` is NaN, `1e20 | 0` wraps, and `1.05 ** 4` is the C library's and not Bun's.
+      expect(Object.keys(diagnostics)).toEqual(["nan.jsx", "power.jsx", "wraps.jsx"]);
+      expect(exit).toBe(1);
+    },
+    slow,
+  );
 
   test("each write to a captured variable is reported at its own location", async () => {
     const { diagnostics, exit } = await report(small.writes);
@@ -551,6 +564,24 @@ describe.concurrent(
       });
       expect(exitCode).toBe(1);
     });
+
+    // The plugin folds with the engine that runs ESLint. These are its reports under Node, not those that
+    // expected.ts would record, which runs it under Bun.
+    test(
+      "a test that the compiler folds is true where it is for the plugin",
+      async () => {
+        const { files, exitCode } = await messages(folds);
+        const setState = (columns: string) =>
+          `react-hooks/set-state-in-render 7:${columns} Error: Cannot call setState during render`;
+        expect(briefly(files)).toEqual({
+          "nan.jsx": [setState("24-7:32")],
+          "power.jsx": [setState("37-7:45")],
+          "wraps.jsx": [setState("28-7:36")],
+        });
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
 
     test("on complete messages, suggestions, disable comments, and files the plugin doesn't compile", async () => {
       const { files, exitCode } = await messages(eslintSmall);

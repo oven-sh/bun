@@ -406,6 +406,29 @@ function NotNull(props: Props) {
 }
 `;
 
+/** The compiler folds `test`. A test that is true leaves a `setState()` that every render calls. */
+const setsStateIf = (statements: string, test: string) => `import { useState } from "react";
+
+export function Component() {
+  const [state, setState] = useState(0);
+  ${statements}
+  if (${test}) setState(1);
+  return <div>{state}</div>;
+}
+`;
+
+/**
+ * The first two tests are true in every engine. `1.05 ** 4` is 1.2155062500000002 for the C library's `pow`, with
+ * which oxlint's compiler folds it, and for Node, which runs the plugin. It is 1.21550625 for Bun's engine and in what
+ * Bun builds.
+ */
+export const folds: Files = {
+  "nan.jsx": setsStateIf("let power = 1;\n  power **= 1 / 0;", "power !== power"),
+  "wraps.jsx": setsStateIf("let bits = 1e20;\n  bits |= 0;", "bits === 1661992960"),
+  "power.jsx": setsStateIf("let power = 1.05;\n  power **= 4;", "power === 1.2155062500000002"),
+  "power-in-bun.jsx": setsStateIf("let power = 1.05;\n  power **= 4;", "power === 1.21550625"),
+};
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -634,6 +657,7 @@ function Component(props) {
     ),
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
+  folds: { ".oxlintrc.json": rc(), ...folds },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
   names: {
     ".oxlintrc.json": rc(),

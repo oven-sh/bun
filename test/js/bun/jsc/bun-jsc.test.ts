@@ -28,7 +28,7 @@ import {
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("bun:jsc", () => {
@@ -373,6 +373,17 @@ describe("bun:jsc", () => {
   const sourceLines = readFileSync(import.meta.path, "utf8").split("\n");
   const lineOf = (text: string) => sourceLines.findIndex(line => line.includes(text)) + 1;
 
+  // Writing "5" to /proc/self/clear_refs resets VmHWM, the peak RSS, to the current RSS.
+  const canResetPeakRSS = (() => {
+    if (!isLinux) return false;
+    try {
+      writeFileSync("/proc/self/clear_refs", "5");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
   it.todoIf(isBuildKite && isWindows)("profile stackTraces has the documented shape", () => {
     const result = profileUntilSampled(deepRecursion(50, 20), 500);
 
@@ -496,7 +507,7 @@ describe("bun:jsc", () => {
       const { profile } = require("bun:jsc");
       function tiny(x) { return x + Bun.nanoseconds() % 2; }
       function hot(n) { let s = 0; for (let i = 0; i < n; i++) s = tiny(s) | 0; return s; }
-      for (let i = 0; i < 100; i++) hot(10_000);
+      for (let i = 0; i < 30; i++) hot(10_000);
       const deadline = performance.now() + 10_000;
       let inlined = [];
       while (inlined.length === 0 && performance.now() < deadline) {
@@ -526,7 +537,8 @@ describe("bun:jsc", () => {
         expect(typeof frame.inliner.column).toBe("number");
       }
     },
-    30_000,
+    // The child warms up the JIT with a busy loop, which is slow under ASAN.
+    15_000,
   );
 
   it.todoIf(isBuildKite && isWindows)("samplingProfilerStackTraces drains the samples and keeps sampling", async () => {
@@ -568,7 +580,7 @@ describe("bun:jsc", () => {
     expect(firstOfSecond).toBeGreaterThan(lastOfFirst);
   });
 
-  it.skipIf(!isLinux)(
+  it.skipIf(!canResetPeakRSS)(
     "profile does not allocate far more than the result for deep stacks",
     async () => {
       // Each sampled frame used to cost about 1.5 KB of transient memory (a
@@ -596,19 +608,14 @@ describe("bun:jsc", () => {
       // Start the sampler thread and warm up the JIT outside the measurement.
       profile(() => deep(5), 1000);
       Bun.gc(true);
-      try {
-        fs.writeFileSync("/proc/self/clear_refs", "5");
-      } catch {
-        console.log(JSON.stringify({ skipped: "VmHWM cannot be reset on this kernel" }));
-        process.exit(0);
-      }
+      fs.writeFileSync("/proc/self/clear_refs", "5");
       const before = peakRSS();
       const result = profile(() => deep(500), 1000);
       const after = peakRSS();
       const frames = result.stackTraces.traces.reduce((sum, trace) => sum + trace.frames.length, 0);
       console.log(JSON.stringify({ frames, peakDeltaBytes: after - before }));
     `;
-      let measurement: { frames: number; peakDeltaBytes: number; skipped?: string } = { frames: 0, peakDeltaBytes: 0 };
+      let measurement = { frames: 0, peakDeltaBytes: 0 };
       for (let attempt = 0; attempt < 3 && measurement.frames < 20_000; attempt++) {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", script],
@@ -619,11 +626,11 @@ describe("bun:jsc", () => {
         expect(stderr).toBe("");
         expect(exitCode).toBe(0);
         measurement = JSON.parse(stdout);
-        if (measurement.skipped) return;
       }
       expect(measurement.frames).toBeGreaterThanOrEqual(20_000);
       expect(measurement.peakDeltaBytes / measurement.frames).toBeLessThan(isASAN || isDebug ? 1000 : 700);
     },
+    // Up to three children, each about five seconds under ASAN.
     60_000,
   );
 });

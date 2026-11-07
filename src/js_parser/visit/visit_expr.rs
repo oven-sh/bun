@@ -357,6 +357,120 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_property_access_target(in_.is_property_access_target),
         );
     }
+    #[inline]
+    fn jsx_property_is_key(property: &G::Property) -> bool {
+        property.key.is_some_and(|key| {
+            key.data
+                .e_string()
+                .is_some_and(|key| key.eql_comptime(b"key"))
+        })
+    }
+
+    /// Create a JSX member tag, its initializer, and an optional parameter binding for a per-call scope.
+    fn jsx_tag_member(p: &mut Self, tag: Expr) -> (Expr, Expr, Option<Ref>) {
+        let mut object = E::Object::default();
+        let body = G::FnBody::init_return_expr(p.arena, tag).expect("arena allocation failed");
+        let body = if tag.data.e_identifier().is_some_and(|id| {
+            p.symbols[id.ref_.inner_index() as usize]
+                .original_name
+                .slice()
+                == b"arguments"
+        }) {
+            // Capturing lexical `arguments` in an arrow; the getter has its own `arguments`.
+            let read = p.new_expr(
+                E::Arrow {
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            let key = p.new_expr(E::EString::from_static(b"read"), tag.loc);
+            object.properties.push(G::Property {
+                key: Some(key),
+                value: Some(read),
+                ..Default::default()
+            });
+            let this = p.new_expr(E::This {}, tag.loc);
+            let target = p.new_expr(
+                E::Dot {
+                    target: this,
+                    name: b"read".as_slice().into(),
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            let call = p.new_expr(
+                E::Call {
+                    target,
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            G::FnBody::init_return_expr(p.arena, call).expect("arena allocation failed")
+        } else {
+            body
+        };
+        let getter = p.new_expr(
+            E::Function {
+                func: G::Fn {
+                    body,
+                    ..Default::default()
+                },
+            },
+            tag.loc,
+        );
+        let key = p.new_expr(E::EString::from_static(b"value"), tag.loc);
+        object.properties.push(G::Property {
+            kind: G::PropertyKind::Get,
+            flags: Flags::Property::IsMethod.into(),
+            key: Some(key),
+            value: Some(getter),
+            ..Default::default()
+        });
+        let value = p.new_expr(object, tag.loc);
+        let scoped = p.current_scope().kind == js_ast::scope::Kind::FunctionArgs;
+        let ref_ = if scoped {
+            p.generate_temp_ref(Some(b"JSXTag"))
+        } else {
+            p.generate_temp_var(b"JSXTag")
+        };
+        p.symbols[ref_.inner_index() as usize].set_must_start_with_capital_letter_for_jsx(true);
+        let identifier = Expr::init_identifier(ref_, tag.loc);
+        let initializer = if scoped {
+            value
+        } else {
+            let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
+            let decl = p.s(
+                js_ast::S::Local {
+                    kind: js_ast::s::Kind::KVar,
+                    decls: G::DeclList::init_one(G::Decl {
+                        binding,
+                        value: None,
+                    }),
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            p.nearest_stmt_list_mut()
+                .expect("JSX has a statement list")
+                .push(decl);
+            p.record_usage(ref_);
+            Expr::assign(identifier, value)
+        };
+        p.record_usage(ref_);
+        let tag = p.new_expr(
+            E::Dot {
+                target: identifier,
+                name: b"value".as_slice().into(),
+                name_loc: tag.loc,
+                ..Default::default()
+            },
+            tag.loc,
+        );
+        (tag, initializer, scoped.then_some(ref_))
+    }
+
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
     // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the
     // big match arms into the recursive dispatcher, inflating its stack frame to
@@ -371,14 +485,123 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .data
             .e_jsx_element()
             .expect("infallible: variant checked");
+        let runtime = p.options.jsx.runtime;
+        if matches!(
+            runtime,
+            options::JSX::Runtime::Automatic | options::JSX::Runtime::Classic
+        ) && e_.flags.contains(Flags::JSXElement::HasBareKey)
+        {
+            let mut i = 0;
+            while i < e_.properties.len() {
+                let property = &e_.properties.slice()[i];
+                if !property.flags.contains(Flags::Property::WasShorthand)
+                    || !Self::jsx_property_is_key(property)
+                {
+                    i += 1;
+                    continue;
+                }
+
+                let key = property.key.expect("infallible: key prop has key");
+                p.log().add_warning(
+                    Some(p.source),
+                    key.loc,
+                    b"\"key\" prop ignored. Must be a string, number or symbol.",
+                );
+                e_.properties.ordered_remove(i);
+            }
+
+            let mut first_spread_prop_index = -1;
+            let mut key_prop_index = -1;
+            for (i, property) in e_.properties.iter().enumerate() {
+                if property.kind == G::PropertyKind::Spread {
+                    if first_spread_prop_index == -1 {
+                        first_spread_prop_index = i as i32;
+                    }
+                } else if Self::jsx_property_is_key(property) {
+                    key_prop_index = i as i32;
+                }
+            }
+            e_.key_prop_index = key_prop_index;
+            let is_key_after_spread =
+                key_prop_index > first_spread_prop_index && first_spread_prop_index >= 0;
+            if is_key_after_spread {
+                e_.flags.insert(Flags::JSXElement::IsKeyAfterSpread);
+            } else {
+                e_.flags.remove(Flags::JSXElement::IsKeyAfterSpread);
+            }
+            e_.flags.remove(Flags::JSXElement::HasBareKey);
+        }
         // JSX is not a type parameter — dispatch on the runtime
         // `P::jsx_transform` field.
         match p.jsx_transform {
             JSXTransformType::React => {
+                let mut tag_initializer = None;
+                let mut tag_binding = None;
+                let mut invalid_tag = false;
                 let tag: Expr = 'tagger: {
-                    if let Some(mut _tag) = e_.tag {
-                        p.visit_expr(&mut _tag);
-                        break 'tagger _tag;
+                    if let Some(mut tag) = e_.tag {
+                        let was_string = matches!(tag.data, Data::EString(_));
+                        p.visit_expr(&mut tag);
+                        if p.options.jsx.runtime == options::JSX::Runtime::Preserve {
+                            let mut root = tag;
+                            while let Data::EDot(dot) = root.data {
+                                root = dot.target;
+                            }
+                            let valid_tag = match &tag.data {
+                                Data::EString(str_) => str_.is_jsx_name(p.arena),
+                                _ => matches!(
+                                    root.data,
+                                    Data::EIdentifier(_)
+                                        | Data::EImportIdentifier(_)
+                                        | Data::EThis(_)
+                                ),
+                            };
+                            if !valid_tag {
+                                p.log().add_error(
+                                    Some(p.source),
+                                    tag.loc,
+                                    b"Cannot preserve JSX tag after it resolves to an invalid JSX tag expression",
+                                );
+                                invalid_tag = true;
+                                break 'tagger tag;
+                            }
+                            let is_defined_string =
+                                !was_string && matches!(tag.data, Data::EString(_));
+                            let identifier = tag.data.e_identifier();
+                            let has_lowercase_name = identifier.is_some_and(|id| {
+                                p.symbols[id.ref_.inner_index() as usize]
+                                    .original_name
+                                    .slice()
+                                    .first()
+                                    .is_some_and(u8::is_ascii_lowercase)
+                            });
+                            let has_string_named_import = match root.data {
+                                Data::EImportIdentifier(id) => {
+                                    p.string_named_import_items.contains_key(&id.ref_)
+                                }
+                                _ => false,
+                            };
+                            if has_string_named_import || is_defined_string || has_lowercase_name {
+                                let (member, initializer, binding) = Self::jsx_tag_member(p, tag);
+                                tag = member;
+                                tag_initializer = Some(initializer);
+                                tag_binding = binding;
+                            } else {
+                                let ref_ = match tag.data {
+                                    Data::EIdentifier(id) => Some(id.ref_),
+                                    Data::EImportIdentifier(id) => Some(id.ref_),
+                                    _ => None,
+                                };
+                                if let Some(ref_) = ref_ {
+                                    p.symbols[ref_.inner_index() as usize]
+                                        .set_must_start_with_capital_letter_for_jsx(true);
+                                }
+                            }
+                        }
+                        break 'tagger tag;
+                    }
+                    if p.options.jsx.runtime == options::JSX::Runtime::Preserve {
+                        break 'tagger p.new_expr(E::Missing {}, expr.loc);
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
                         break 'tagger p
@@ -386,6 +609,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
+
+                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
+                if runtime == options::JSX::Runtime::Automatic
+                    && is_key_after_spread
+                    && !p.has_classic_runtime_warned
+                {
+                    // Capturing the location before visiting; visiting can replace the spread expression.
+                    let spread_loc = e_
+                        .properties
+                        .slice()
+                        .iter()
+                        .take(e_.key_prop_index as usize)
+                        .rev()
+                        .find(|property| property.kind == G::PropertyKind::Spread)
+                        .and_then(|property| property.value)
+                        .map_or(expr.loc, |value| value.loc);
+                    p.log().add_warning(
+                        Some(p.source),
+                        spread_loc,
+                        b"\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
+                    );
+                    p.has_classic_runtime_warned = true;
+                }
 
                 for property in e_.properties.slice_mut() {
                     if property.kind != G::PropertyKind::Spread {
@@ -401,17 +647,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
-                    options::JSX::Runtime::Automatic
-                } else {
-                    options::JSX::Runtime::Classic
-                };
-                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
-                if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
+                if runtime == options::JSX::Runtime::Classic
+                    || (runtime == options::JSX::Runtime::Automatic && is_key_after_spread)
+                {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
                     VecExt::append(&mut args, tag);
@@ -659,6 +901,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             },
                             was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
+                    return;
+                } else if runtime == options::JSX::Runtime::Preserve {
+                    // Preserve the JSX AST but still visit nested expressions so symbol
+                    // binding, minification, DCE, and source maps see the same tree.
+                    if e_.tag.is_some() {
+                        e_.tag = Some(tag);
+                    }
+
+                    let mut last_child: u32 = 0;
+                    for i in 0..children_count {
+                        let mut visited = e_.children.slice()[i as usize];
+                        p.visit_expr(&mut visited);
+                        if !matches!(visited.data, Data::EMissing(..)) {
+                            e_.children.slice_mut()[last_child as usize] = visited;
+                            last_child += 1;
+                        }
+                    }
+                    e_.children.truncate(last_child as usize);
+
+                    // Draining nested scopes before discarding an invalid tag.
+                    if invalid_tag {
+                        *e = p.new_expr(E::Missing {}, expr.loc);
+                        return;
+                    }
+                    let Some(initializer) = tag_initializer else {
+                        *e = expr;
+                        return;
+                    };
+                    let Some(ref_) = tag_binding else {
+                        *e = initializer.join_with_comma(expr);
+                        return;
+                    };
+                    // Isolating parameter defaults; a hoisted temporary would be shared by reentrant calls.
+                    let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
+                    let args = p.arena.alloc_slice_fill_iter([G::Arg {
+                        binding,
+                        ..Default::default()
+                    }]);
+                    let body = G::FnBody::init_return_expr(p.arena, expr)
+                        .expect("arena allocation failed");
+                    let target = p.new_expr(
+                        E::Arrow {
+                            args: js_ast::StoreSlice::new_mut(args),
+                            body,
+                            prefer_expr: true,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
+                    *e = p.new_expr(
+                        E::Call {
+                            target,
+                            args: ExprNodeList::init_one(initializer),
                             ..Default::default()
                         },
                         expr.loc,

@@ -1,8 +1,21 @@
 import { expectAssignable, expectType } from "./utilities";
 
+expectType<BuildMessage["level"]>().is<"error" | "warn" | "info" | "debug" | "verbose">();
+expectType<ResolveMessage["level"]>().is<"error" | "warn" | "info" | "debug" | "verbose">();
+
 Bun.build({
   entrypoints: ["hey"],
   splitting: false,
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  jsx: { runtime: "preserve" },
+});
+
+new Bun.Transpiler({
+  loader: "tsx",
+  tsconfig: { compilerOptions: { jsx: "preserve" } },
 });
 
 // Build.CompileTarget should accept SIMD variants (issue #26247)

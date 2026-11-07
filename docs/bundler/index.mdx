@@ -1807,7 +1807,7 @@ class BuildMessage {
   name: string;
   position?: Position;
   message: string;
-  level: "error" | "warning" | "info" | "debug" | "verbose";
+  level: "error" | "warn" | "info" | "debug" | "verbose";
 }
 
 class ResolveMessage extends BuildMessage {
@@ -1861,7 +1861,7 @@ interface BuildConfig {
    * JSX configuration object for controlling JSX transform behavior
    */
   jsx?: {
-    runtime?: "automatic" | "classic";
+    runtime?: "automatic" | "classic" | "preserve";
     importSource?: string;
     factory?: string;
     fragment?: string;
@@ -2054,7 +2054,7 @@ declare class ResolveMessage {
     | "at_conditional"
     | "url"
     | "internal";
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly level: "error" | "warn" | "info" | "debug" | "verbose";
 
   toString(): string;
 }

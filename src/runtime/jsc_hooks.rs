@@ -2636,6 +2636,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         && unsafe { (*jsc_vm).transpiler.options.rewrite_jest_for_tests },
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
+                    forbid_jsx_preserve: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !DATA_ONLY
                         && !disable_transpilying

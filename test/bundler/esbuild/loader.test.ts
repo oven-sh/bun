@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { transformSync } from "esbuild";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -142,41 +143,65 @@ describe("bundler", () => {
     },
     bundling: false,
   });
-  // itBundled("loader/JSXPreserveCapitalLetter", {
-  //   // GENERATED
-  //   files: {
-  //     "/entry.jsx": /* jsx */ `
-  //       import { mustStartWithUpperCaseLetter as Test } from './foo'
-  //       console.log(<Test/>)
-  //     `,
-  //     "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
-  //   },
-  // });
-  // itBundled("loader/JSXPreserveCapitalLetterMinify", {
-  //   files: {
-  //     "/entry.jsx": /* jsx */ `
-  //       import { mustStartWithUpperCaseLetter as XYYYY } from './foo'
-  //       // This should be named "Y" due to frequency analysis
-  //       console.log(<XYYYY YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY />)
-  //     `,
-  //     "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
-  //   },
-  //   external: ["react"],
-  //   minifyIdentifiers: true,
-  // });
-  // itBundled("loader/JSXPreserveCapitalLetterMinifyNested", {
-  //   files: {
-  //     "/entry.jsx": /* jsx */ `
-  //       x = () => {
-  //         class RENAME_ME {} // This should be named "Y" due to frequency analysis
-  //         capture(RENAME_ME)
-  //         return <RENAME_ME YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY />
-  //       }
-  //     `,
-  //   },
-  //   external: ["react"],
-  //   minifyIdentifiers: true,
-  // });
+  itBundled("loader/JSXPreserveCapitalLetter", {
+    jsx: { runtime: "preserve" },
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { mustStartWithUpperCaseLetter as Test } from './foo'
+        console.log(<Test/>)
+      `,
+      "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/<[A-Z][\w$]*/);
+      expect(out).not.toContain("jsx-runtime");
+    },
+  });
+  itBundled("loader/JSXPreserveCapitalLetterMinify", {
+    jsx: { runtime: "preserve" },
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { mustStartWithUpperCaseLetter as XYYYY } from './foo'
+        // This should be named "Y" due to frequency analysis
+        console.log(<XYYYY YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY />)
+      `,
+      "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
+    },
+    external: ["react"],
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/<[A-Z][\w$]*/);
+      expect(out).not.toContain("jsx-runtime");
+    },
+  });
+  itBundled("loader/JSXPreserveCapitalLetterMinifyNested", {
+    jsx: { runtime: "preserve" },
+    files: {
+      "/entry.jsx": /* jsx */ `
+        x = () => {
+          class RENAME_ME {} // This should be named "Y" due to frequency analysis
+          capture(RENAME_ME)
+          return <RENAME_ME YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY />
+        }
+      `,
+    },
+    external: ["react"],
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/<[A-Z][\w$]*/);
+      expect(out).not.toContain("jsx-runtime");
+      expect(out).not.toContain("RENAME_ME");
+      const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
+      api.writeFile(
+        "/out.js",
+        `let x, captured;\nconst capture = value => { captured = value; };\nconst h = type => type;\n${code}\nconsole.log(x() === captured);`,
+      );
+    },
+    run: { stdout: "true" },
+  });
   itBundled("loader/RequireCustomExtensionString", {
     files: {
       "/entry.js": `console.log(require('./test.custom'))`,

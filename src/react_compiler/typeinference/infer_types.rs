@@ -835,8 +835,7 @@ fn generate_instruction_types(
                 for prop in &object_pattern.properties {
                     if let ObjectPropertyOrSpread::Property(obj_prop) = prop {
                         match &obj_prop.key {
-                            ObjectPropertyKey::Identifier { name }
-                            | ObjectPropertyKey::String { name } => {
+                            ObjectPropertyKey::String { name } => {
                                 let prop_place_type =
                                     get_type(obj_prop.place.identifier, identifiers);
                                 let value_type = get_type(value.identifier, identifiers);

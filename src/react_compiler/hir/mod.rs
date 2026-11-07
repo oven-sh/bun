@@ -1227,10 +1227,10 @@ pub struct ObjectProperty {
     pub place: Place,
 }
 
+// Not in upstream: no `Identifier`. A key that is a name is a `String` here, and a numeric key is a `Number`.
 #[derive(Debug, Clone)]
 pub enum ObjectPropertyKey {
     String { name: StoreStr },
-    Identifier { name: StoreStr },
     Computed { name: Place },
     Number { name: FloatValue },
 }

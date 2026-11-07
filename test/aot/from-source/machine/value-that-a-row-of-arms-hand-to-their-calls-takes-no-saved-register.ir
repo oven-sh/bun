@@ -1,0 +1,16 @@
+# a row of tests, each with an arm that calls with v and returns. Each arm but the first hangs below the test in front of it, which stands behind the arms ahead: v is carried across none of their calls
+# f4 = pick, f1 = one, f2 = two, f3 = three. pick is handed to sink, so nobody knows what arrives
+# -- source: value-that-a-row-of-arms-hand-to-their-calls-takes-no-saved-register.ts
+# declare function sink(...values: unknown[]): void;
+# function pick(c: unknown, v: unknown) { if (c === null) return one(v).x; if (c === undefined) return two(v).y; if (c === true) return three(v).z; return v; }
+# function one(v: unknown) { return { x: v }; }
+# function two(v: unknown) { return { y: v }; }
+# function three(v: unknown) { return { z: v }; }
+# sink(pick);
+# -- end of source
+# REQUIRES: unsanitized-code
+# RUN: allocate f4:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f4:Body
+# CHECK-NOT: usedCalleeSaves
+# CHECK: headOfFramedPart =
+# CHECK-NOT: needsFrameAheadOfFramedPart

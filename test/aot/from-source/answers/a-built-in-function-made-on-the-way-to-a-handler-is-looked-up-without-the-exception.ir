@@ -1,0 +1,14 @@
+# the handler takes `got` as it stood in front of the try: a built-in function, a constant: compiled code makes it on the edge to the handler, while the ReferenceError is on its way. The cell had never been asked for: the look in the
+# realm took the pending exception for its own, cleared it, and the process stopped: "AOT: built-in cell 21 (key 4150, JSON.stringify) is not in this realm: 6". (No `with` is needed.)
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: ReferenceError
+# NONE-NEXT: function stringify() { [
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: ReferenceError
+# ALL-NEXT: function stringify() { [
+# ALL-NEXT: exited with 0
+# -- source: main.js
+# function take() { let got = JSON.stringify; try { got = missing; print("no error"); } catch (error) { print(error.name); } return String(got).slice(0, 24); }
+# print(take());
+# -- end of source

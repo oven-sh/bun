@@ -1,0 +1,1 @@
+{ "name": "react", "version": "19.0.0", "type": "module", "exports": { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" } }

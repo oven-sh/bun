@@ -3,8 +3,8 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { basename, join } from "path";
-import { run as runCommand } from "./harness/run";
 import { slot } from "./harness/commands";
+import { run as runCommand } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
 type CompileMode = "test file" | "child processes" | "bundles";
@@ -39,9 +39,8 @@ const skipped: Record<string, string> = {
     "its runner imports each case by a computed specifier (:190), so the cases would be interpreted, and its boilerplate adds a property to Function.prototype (:19-20), which is read-only in a compiled program",
 };
 
-const untypedPackages = "TS7016: the packages it imports have no type declarations";
+const untypedJsxRuntime = "TS7016: react/jsx-runtime, which an element stands for, has no type declarations";
 const undeclaredIntrinsicElements = "TS7026: nothing declares JSX.IntrinsicElements";
-const undeclaredGlobalProperty = "TS7017: nothing declares globalThis.$RefreshSig$";
 const fastRefresh = "bundler > a hook call in a method, with React Fast Refresh";
 const classFields = "tsconfig compilerOptions.useDefineForClassFields";
 const fieldOverridesAccessor = "TS2610: a field overrides an accessor of the base class";
@@ -50,7 +49,7 @@ const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
 
-// path -> test name as `bun test` prints it -> the difference documented in docs/compiler/compatibility.mdx.
+// path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
@@ -85,20 +84,13 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${decoratorExpressions} > repeated export around a decorator is rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]:
       "TS1477: a property access follows an instantiation expression",
-    [`${decorators} > members stay where they are written > a read of the class name before its class decorators run is undefined`]:
-      "the read throws a ReferenceError, as it does natively: the name is not initialized yet",
   },
   "test/bundler/bundler_jsx.test.ts": {
-    "bundler > jsx/AutomaticFragmentNamedImportDev": untypedPackages,
-    "bundler > jsx/AutomaticFragmentNamedImportProd": untypedPackages,
-    "bundler > jsx/AutomaticLocalShadowDev": untypedPackages,
-    "bundler > jsx/AutomaticLocalShadowProd": untypedPackages,
+    "bundler > jsx/AutomaticFragmentNamedImportDev": untypedJsxRuntime,
+    "bundler > jsx/AutomaticLocalShadowDev": untypedJsxRuntime,
     "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedBundledCjs": undeclaredIntrinsicElements,
     "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedBundledCjs": undeclaredIntrinsicElements,
-    [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: undeclaredGlobalProperty,
-    [`${fastRefresh} > jsx/FastRefreshClassExpressionMethod.tsx`]: undeclaredGlobalProperty,
-    [`${fastRefresh} > jsx/FastRefreshObjectMethodKeepsSuper.tsx`]: undeclaredGlobalProperty,
-    [`${fastRefresh} > jsx/FastRefreshFunctionsAroundAndInsideAMethod`]: undeclaredGlobalProperty,
+    [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: "TS2339: the class C declares neither c nor v",
   },
   "test/bundler/esbuild/ts.test.ts": {
     "bundler > ts/DeclareClassFields": "TS2304: nothing declares c, d, C and D",
@@ -108,7 +100,6 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > ts/ImportVsLocalCollisionMixed": "TS2305: other.ts exports only `real`",
     "bundler > ts/TypeScriptDecoratorsSimpleCase": "TS7019: the rest parameter `args` has no type",
     "bundler > ts/ExportTypeSTAR": 'TS2307: there is no module "foo"',
-    "bundler > ts/ImportRewrittenExtensions": "TS2307: TypeScript does not resolve ./g.js to g.mts",
     "bundler > ts/EnumTreeShaking/sibling-enum-before.ts": "TS2450: the enum x is used before its declaration",
     "bundler > ts/EnumTreeShaking/namespace-before.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumTreeShaking/namespace-after.ts": "TS2304: nothing declares y",
@@ -154,14 +145,14 @@ function wrapperPath() {
 }
 
 function commandFor(
-  path: string,
+  paths: string[],
   mode: CompileMode,
   log: string,
 ): { cmd: string[]; env: Record<string, string | undefined> } {
   switch (mode) {
     case "test file":
       return {
-        cmd: [bunExe(), "test", "--debug-aot", "--timeout=60000", path],
+        cmd: [bunExe(), "test", "--debug-aot", "--timeout=60000", ...paths],
         env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
       };
     case "child processes":
@@ -173,23 +164,23 @@ function commandFor(
           "--timeout=120000",
           "--preload",
           join(String(directory), "use-wrapper.ts"),
-          path,
+          ...paths,
         ],
         env: { ...bunEnv, AOT_PARITY_BUN: bunExe(), AOT_PARITY_WRAPPER: wrapperPath(), AOT_PARITY_LOG: log },
       };
     case "bundles":
       return {
-        cmd: [bunExe(), "test", "--timeout=120000", path],
+        cmd: [bunExe(), "test", "--timeout=120000", ...paths],
         env: { ...bunEnv, BUN_BUNDLER_TEST_AOT: "1" },
       };
   }
 }
 
-async function run(path: string, mode: CompileMode) {
-  const log = join(String(directory), basename(path) + ".log");
+async function run(paths: string[], mode: CompileMode) {
+  const log = join(String(directory), basename(paths[0]) + ".log");
   writeFileSync(log, "");
   await using proc = Bun.spawn({
-    ...commandFor(path, mode, log),
+    ...commandFor(paths, mode, log),
     cwd: repoRoot,
     stdin: "ignore",
     stdout: "pipe",
@@ -198,23 +189,44 @@ async function run(path: string, mode: CompileMode) {
     killSignal: "SIGKILL",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Once more than 20 tests pass, `bun test` prints every failure a second time before the summary.
-  const names = [...stderr.matchAll(/^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?$/gm)].map(match => match[1]);
+  // What `bun test` prints about a test file stands behind a line with the file's path. Once more than 20 tests pass, it prints
+  // every failure a second time before the summary, under no file.
+  const about = new Map<string, string[]>(paths.map(path => [path, []]));
+  let lines = about.get(paths[0])!;
+  for (const line of stderr.split("\n"))
+    (lines = /^\d+ tests failed:$/.test(line) ? [] : (about.get(line.slice(0, -1)) ?? lines)).push(line);
   return {
     exitCode,
     signal: proc.signalCode,
-    stderr,
-    failed: [...new Set(names)].sort(),
-    passed: Number(stderr.match(/^ *([0-9]+) pass$/m)?.[1] ?? 0),
+    files: new Map(
+      [...about].map(([path, lines]) => {
+        const names = lines
+          .map(line => /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?$/.exec(line)?.[1])
+          .filter(name => name !== undefined);
+        return [
+          path,
+          {
+            lines,
+            failed: [...new Set(names)].sort(),
+            passed: lines.filter(line => line.startsWith("(pass) ")).length,
+          },
+        ];
+      }),
+    ),
     compiledRuns: readFileSync(log, "utf8").split("\n").filter(Boolean),
   };
 }
 
-async function check(path: string, mode: CompileMode) {
-  const { signal, stderr, passed, compiledRuns, ...ran } = await run(path, mode);
-  const failed = ran.failed.filter(name => !judgedByAClock.has(name));
-  const exitCode = failed.length === 0 && ran.failed.length > 0 ? 0 : ran.exitCode;
-  const lines = stderr.split("\n");
+async function check(path: string, mode: CompileMode, running: ReturnType<typeof run>) {
+  const { signal, files, compiledRuns, ...ran } = await running;
+  const { lines, passed, ...file } = files.get(path)!;
+  const failed = file.failed.filter(name => !judgedByAClock.has(name));
+  // The exit code is the run's. A file answers for it unless another file of the run has failed or has not run.
+  const isOfOthers = [...files].some(([other, { failed, passed }]) => other !== path && (failed.length > 0 || !passed));
+  const exitCode =
+    (failed.length === 0 && file.failed.length > 0) || (failed.length === 0 && passed > 0 && isOfOthers)
+      ? 0
+      : ran.exitCode;
   const tail = lines.slice(-60).join("\n");
   const expected = Object.keys(expectedFailures[path] ?? {}).sort();
   const groups = Object.keys(expectedFailuresOfGroups[path] ?? {});
@@ -264,8 +276,14 @@ export function parity(paths: string[]) {
 
     // The limit also covers the wait for a free slot, at worst behind every other file.
     const queueTimeout = paths.length * runTimeout + 60_000;
-    for (const { path, mode } of files.filter(file => paths.includes(file.path))) {
-      test(path, () => slot(() => check(path, mode)), queueTimeout);
+    const asked = files.filter(file => paths.includes(file.path));
+    // The files that are compiled themselves are test files of one run: what they reach of test/harness.ts and of Bun's own code is compiled once.
+    const compiledThemselves = asked.filter(file => file.mode === "test file").map(file => file.path);
+    let oneRun: ReturnType<typeof run> | undefined;
+    for (const { path, mode } of asked) {
+      const running = () =>
+        mode === "test file" ? (oneRun ??= slot(() => run(compiledThemselves, mode))) : slot(() => run([path], mode));
+      test(path, () => check(path, mode, running()), queueTimeout);
     }
   });
 }

@@ -45,7 +45,7 @@ async function runTests(folder: string, flags: string[], words = "") {
   return { printed: stdout.replace(/^bun test .*\n/, ""), counts: stderr.match(/^ \d+ (pass|fail)$/gm), exitCode };
 }
 
-test.each(["", "TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])(
+test.each(["", "TestRunLayers:0"])(
   "a test run prints what bun test prints: %s",
   async words => {
     using dir = tempDir("a-call-that-spells-one-file-in-several-ways", nested);

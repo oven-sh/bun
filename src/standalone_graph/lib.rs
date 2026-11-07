@@ -1,4 +1,15 @@
 #![allow(non_snake_case)]
+#![cfg_attr(test, feature(linkage))]
+
+#[cfg(test)]
+use bun_sema_standalone as _;
+#[cfg(test)]
+#[path = "../aot/standalone/engine_stubs.rs"]
+mod engine_stubs;
+#[cfg(test)]
+bun_aot::define_linked_functions! {
+    fn bun_aot_log_part_outside_stages(_name: &str) {}
+}
 
 pub mod error;
 pub use error::{Error, Result};

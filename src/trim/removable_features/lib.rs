@@ -26,6 +26,8 @@ pub enum EnteredFrom {
     Program,
     Startup,
     CommandLine,
+    /// Machine code of the program calls it and nothing else does. The image lists what its code calls.
+    CompiledCode,
 }
 
 #[repr(u8)]
@@ -142,6 +144,13 @@ impl Feature {
         features
     }
 
+    /// What a compiled program leaves out without being asked to, where its image lists none of what compiled code enters. The native code of no built-in is in it.
+    pub fn all_that_leave_unasked() -> FeatureSet {
+        let mut features = Feature::all_outside_compiled_programs();
+        features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+        features
+    }
+
     pub fn is_engine(self) -> bool {
         self.index() < Feature::FIRST_EMBEDDER_INDEX
     }
@@ -248,6 +257,10 @@ mod tests {
         );
         assert_eq!(Feature::Interpreter.entered_from(), EnteredFrom::Program);
         assert_eq!(Feature::Sql.entered_from(), EnteredFrom::Program);
+        assert_eq!(
+            Feature::OperationsOnMapsAndSets.entered_from(),
+            EnteredFrom::CompiledCode
+        );
     }
 
     #[test]
@@ -256,6 +269,7 @@ mod tests {
             EnteredFrom::Program,
             EnteredFrom::Startup,
             EnteredFrom::CommandLine,
+            EnteredFrom::CompiledCode,
         ];
         let counts = origins.map(|origin| Feature::all_entered_from(origin).len());
         assert_eq!(counts.iter().sum::<usize>(), Feature::ALL.len());

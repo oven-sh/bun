@@ -1,0 +1,20 @@
+# -- source: main.ts
+# import type { int32 } from "bun";
+# declare function print(...values: unknown[]): void;
+# class Base { constructor(readonly n: number) {} }
+# class Counter extends Base { count: int32 = 0; bump(): void { this.count = (this.count + 1) | 0; } }
+# class Plain extends Base {}
+# const held = { counter: Counter, plain: Plain };
+# let sum = 0;
+# for (let i = 0; i < 4; i++) { const Chosen = i & 1 ? held.counter : held.plain; sum += new Chosen(i).n; }
+# const counter = new Counter(1); counter.bump();
+# print(sum, counter.count);
+# export {};
+# -- end of source
+# The second road to the same stop needs no member that nobody calls: `bump` is called, and stores an int32 of its own.
+# RUN: run-in-shell
+# CHECK: 6 1
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 6 1
+# CHECKED-NEXT: exited with 0

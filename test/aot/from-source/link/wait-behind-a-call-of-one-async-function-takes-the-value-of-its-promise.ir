@@ -1,0 +1,13 @@
+# The wait stands right behind a call whose one callee is an async function: the promise has just been made, so a `then` that the program has laid on another promise of that function is not asked, and the value is what the function returns.
+# f1 = kindOf
+# -- source: wait-behind-a-call-of-one-async-function-takes-the-value-of-its-promise.js
+# async function load() { return 1; }
+# function kindOf(v) { return typeof v; }
+# async function use(f) { const v = await f(); return kindOf(v); }
+# const kept = load();
+# kept.then = function (done) { done("text"); };
+# use(load);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NEXT: parameter 0 expected=i32 proven=i32

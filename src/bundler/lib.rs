@@ -132,6 +132,7 @@ pub mod HTMLImportManifest;
 pub mod HTMLScanner;
 pub mod aot;
 pub mod cache;
+pub mod css_module_graph;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
 pub mod output_file;

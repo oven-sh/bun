@@ -137,7 +137,7 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
 pub mod encoded_slice;
-pub use encoded_slice::{CompiledJsonParser, EncodedSliceJsc};
+pub use encoded_slice::EncodedSliceJsc;
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "JSArray.rs"]
@@ -471,6 +471,8 @@ pub mod bun_string_jsc;
 pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
+#[path = "declared_results_testing.rs"]
+pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]
@@ -502,6 +504,9 @@ pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
+    if options.runs_compiled_code {
+        bindgen::hold_results_to_declared_types();
+    }
     let env = bun_sys::environ();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)

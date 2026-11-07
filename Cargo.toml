@@ -67,6 +67,7 @@ members = [
   "src/event_loop",
   "src/executable",
   "src/exe_format",
+  "src/sort_by_number",
   "src/trim",
   "src/trim/removable_features",
   "src/highway",
@@ -176,6 +177,7 @@ panic = "abort"
 # one is a decision, made by adding it to this list and to the one in `[profile.dev]`.
 rustflags = ["""-Zallow-features=\
   adt_const_params,\
+  alloc_error_hook,\
   allocator_api,\
   arbitrary_self_types_pointers,\
   const_cmp,\
@@ -203,6 +205,7 @@ panic = "abort"
 # See `[profile.release]`.
 rustflags = ["""-Zallow-features=\
   adt_const_params,\
+  alloc_error_hook,\
   allocator_api,\
   arbitrary_self_types_pointers,\
   const_cmp,\
@@ -552,6 +555,7 @@ bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
+bun_sort_by_number = { path = "src/sort_by_number" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }

@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="synchronous"
 // CHECK-NOT: Await
 // CHECK-NOT: = Boolean

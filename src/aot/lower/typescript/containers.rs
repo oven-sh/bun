@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, SymbolId};
-use bun_sema::hir::{self, Flags, ModuleName};
+use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::hir::{self, ModuleName};
 
 use crate::ir::ValueId;
 use crate::lower::{FunctionLowering, object, scope};
@@ -10,6 +10,7 @@ pub(super) struct Container {
     pub(super) binding: SymbolId,
     pub(super) merged: SymbolId,
     pub(super) name: Atom,
+    is_single_declaration: bool,
     ends_dead_zone: bool,
 }
 
@@ -17,30 +18,65 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn find_container(&self, declaration: Decl, name: Atom) -> Container {
         let bound = self.file.bound;
         let binding = bound.declared_symbol(declaration);
-        // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges with is the binding.
         let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
             && bound.initial_state(binding) == InitialState::Uninitialized;
-        let mut declarations = bound.symbol(binding).decls.iter().copied();
-        let first = declarations.find(|&it| self.produces_code(it));
+        let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
+        let local = bound.lookup(locals, name).unwrap_or(binding);
+        let declarations = &bound.symbol(local).decls;
+        let first = declarations.iter().find(|&&it| self.produces_code(it));
+        let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
+        let is_exported = bound.symbol(exported).decls.contains(&declaration);
+        let merged = if is_exported { exported } else { binding };
+        let is_stored_by_code = [binding, merged].into_iter().any(|variable| {
+            !bound.stores_to(variable).is_empty() || bound.is_visible_to_eval(variable)
+        });
         Container {
             binding,
-            merged: bound.export_symbol_of_value_symbol_if_exported(binding),
+            merged,
             name,
-            ends_dead_zone: has_dead_zone && first == Some(declaration),
+            is_single_declaration: declarations.len() == 1
+                && bound.symbol(exported).decls.len() == 1
+                && !is_stored_by_code
+                && !self.is_inside_name_with_two_tables(bound.symbol_scope(binding))
+                && !(is_exported && self.is_member_of_container(exported)),
+            ends_dead_zone: has_dead_zone && first == Some(&declaration),
         }
+    }
+
+    fn is_member_of_container(&self, member: SymbolId) -> bool {
+        let bound = self.file.bound;
+        let outer = bound.symbol(member).parent;
+        outer.is_some() && outer != bound.file_symbol
+    }
+
+    fn is_inside_name_with_two_tables(&self, scope: ScopeId) -> bool {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let parent_of = |scope: &ScopeId| bound.scopes[scope.idx()].parent.some();
+        std::iter::successors(scope.some(), parent_of).any(|scope| {
+            let ScopeKind::Module(outer) = bound.scopes[scope.idx()].kind else {
+                return false;
+            };
+            let (ModuleName::Ident(name), Some(binding)) = (
+                hir[outer].name,
+                bound.declared_symbol(Decl::Module(outer)).some(),
+            ) else {
+                return false;
+            };
+            let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
+            let local = bound.lookup(locals, name).unwrap_or(binding);
+            let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
+            let exported = &bound.symbol(exported).decls;
+            (bound.symbol(local).decls.iter()).any(|it| !exported.contains(it))
+        })
     }
 
     fn produces_code(&self, declaration: Decl) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
-        match declaration {
-            Decl::Enum(it) => !hir[it].flags.contains(Flags::AMBIENT),
-            Decl::Module(it) => bound.makes_namespace_object(hir, it),
-            _ => false,
-        }
+        bound.makes_container_object(hir, declaration)
     }
 
     pub(super) fn has_single_declaration(&self, container: Container) -> bool {
-        self.file.bound.symbol(container.merged).decls.len() == 1
+        container.is_single_declaration
     }
 
     pub(super) fn initialize_container(&mut self, container: Container, created: ValueId) {
@@ -97,9 +133,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ModuleName::Ident(_) | ModuleName::String(_) | ModuleName::Global => return,
         };
         let container = self.find_container(Decl::Module(declaration), name);
-        self.ensure_container(container);
+        let object = self.ensure_container(container);
         let scope = bound.module_scope[declaration.idx()];
-        self.enter_scope(scope);
+        self.enter_container_scope(scope, object);
         self.lower_statements(data.body);
         self.leave_scope(scope);
     }

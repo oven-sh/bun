@@ -67,16 +67,6 @@ unsafe extern "C" {
     // (`to_js_buffer_from_memfd`) maps `addr` itself via `bun_sys::mmap`, so
     // the validity proof is discharged at that single call site.
     safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); remaining args are by-value scalars.
-    safe fn ArrayBuffer__fromSharedMemfd(
-        fd: i64,
-        global: &JSGlobalObject,
-        byte_offset: usize,
-        byte_length: usize,
-        total_size: usize,
-        ty: JSType,
-    ) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle;
     // `&mut *mut u8` is ABI-identical to a non-null `void**` out-param the
     // callee fills on success.
@@ -281,24 +271,6 @@ impl ArrayBuffer {
         buffer_value.ensure_still_alive();
 
         Ok(buffer_value)
-    }
-
-    /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
-    /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
-    /// to copying; the typed-array allocation can also throw, so empty alone
-    /// does not mean "declined".
-    #[inline]
-    pub fn to_array_buffer_from_shared_memfd(
-        fd: i64,
-        global: &JSGlobalObject,
-        byte_offset: usize,
-        byte_length: usize,
-        total_size: usize,
-        ty: JSType,
-    ) -> JsResult<JSValue> {
-        crate::call_check_slow(global, || {
-            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
-        })
     }
 
     pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {

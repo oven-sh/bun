@@ -25,7 +25,8 @@ use bun_core::Fd;
 use bun_sys as sys;
 use bun_sys::FdExt;
 
-use crate::webcore::blob::store::Bytes as BlobStoreBytes;
+use crate::webcore::blob::store::{Bytes as BlobStoreBytes, Data, Store};
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSType, JSValue, JsResult};
 
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///
@@ -37,20 +38,38 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
-    pub(crate) fd: Fd,
+    /// `free` closes it with the store's view. A `CopyOnWrite` can outlive it, and must not read it.
+    fd: Fd,
     pub(crate) size: usize,
 }
 
-impl Drop for LinuxMemFdAllocator {
+/// One copy-on-write mapping of the memfd, owned by a JS buffer.
+struct CopyOnWrite {
+    base: *mut u8,
+    len: usize,
+    /// What `LinuxMemFdAllocator::has_copies` counts.
+    _memfd: bun_ptr::RefPtr<LinuxMemFdAllocator>,
+}
+
+impl CopyOnWrite {
+    extern "C" fn release(_bytes: *mut c_void, this: *mut c_void) {
+        // SAFETY: `this` is the `Box<Self>` that `copy_on_write_js` handed to JSC, which calls this once.
+        drop(unsafe { bun_core::heap::take(this.cast::<Self>()) });
+    }
+}
+
+impl Drop for CopyOnWrite {
     fn drop(&mut self) {
-        self.fd.close();
+        if let Err(err) = sys::munmap(self.base, self.len) {
+            bun_core::debug_warn!("Failed to munmap memfd: {}", err);
+        }
     }
 }
 
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    pub(crate) fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
+    fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             fd,
@@ -99,24 +118,12 @@ impl LinuxMemFdAllocator {
     /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
     /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
     /// embedded allocator); the caller must NOT consume that ref separately.
-    pub(crate) unsafe fn alloc(
-        this: *mut Self,
-        len: usize,
-        offset: usize,
-        // `sys::mmap` takes raw `i32` flags; callers pass `libc::MAP_*`
-        // directly. `MAP_SHARED` is forced below.
-        flags: i32,
-    ) -> sys::Result<BlobStoreBytes> {
+    pub(crate) unsafe fn alloc(this: *mut Self, len: usize) -> sys::Result<BlobStoreBytes> {
         let mut size = len;
 
         // size rounded up to nearest page
         let page = bun_alloc::page_size();
         size = (size + page - 1) & !(page - 1);
-
-        // The map type *replaces* the low TYPE bits (not OR). Mask out the
-        // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
-        // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
-        let flags_mut = (flags & !libc::MAP_TYPE) | libc::MAP_SHARED;
 
         // SAFETY: `this` is live per caller contract; we only read scalar fields.
         let (self_size, self_fd) = unsafe { ((*this).size, (*this).fd) };
@@ -126,9 +133,9 @@ impl LinuxMemFdAllocator {
             core::ptr::null_mut(),
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
-            flags_mut,
+            libc::MAP_SHARED,
             self_fd,
-            offset as i64,
+            0,
         ) {
             Ok(slice_ptr) => {
                 // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
@@ -145,6 +152,56 @@ impl LinuxMemFdAllocator {
             }
             Err(errno) => Err(errno),
         }
+    }
+
+    /// `None` when `bytes` is not in a memfd or the kernel refuses the mapping.
+    pub(crate) fn copy_on_write_js(
+        bytes: &BlobStoreBytes,
+        global: &JSGlobalObject,
+        byte_offset: usize,
+        byte_length: usize,
+        ty: JSType,
+    ) -> Option<JsResult<JSValue>> {
+        let this = Self::from(bytes.allocator())?;
+        let len = bytes.allocated_slice().len();
+        debug_assert!(byte_offset <= len && byte_length <= len - byte_offset);
+        // SAFETY: `bytes` holds a ref on `*this` through its allocator.
+        let fd = unsafe { (*this).fd };
+        let base = sys::mmap(
+            core::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE,
+            fd,
+            0,
+        )
+        .ok()?;
+        let copy = Box::new(CopyOnWrite {
+            base,
+            len,
+            // SAFETY: `this` is live, see above.
+            _memfd: unsafe { bun_ptr::RefPtr::init_ref(this) },
+        });
+        // SAFETY: the range is inside the `len` bytes mapped at `base`. JSC owns
+        // `copy` from here and frees it through `CopyOnWrite::release`, also on failure.
+        Some(unsafe {
+            let view = core::slice::from_raw_parts_mut(base.add(byte_offset), byte_length);
+            jsc::ArrayBuffer::from_bytes(view, ty).to_js_with_context(
+                global,
+                bun_core::heap::into_raw(copy).cast::<c_void>(),
+                Some(CopyOnWrite::release),
+            )
+        })
+    }
+
+    /// Exact only for the store's last owner: read `Store::has_one_ref()` first.
+    pub(crate) fn has_copies(store: &Store) -> bool {
+        let Data::Bytes(bytes) = &store.data else {
+            return false;
+        };
+        // SAFETY: `bytes` holds a ref on the allocator through its vtable pointer.
+        Self::from(bytes.allocator())
+            .is_some_and(|this| !unsafe { &(*this).ref_count }.has_one_ref())
     }
 
     pub(crate) fn should_use(bytes: &[u8]) -> bool {
@@ -222,10 +279,17 @@ impl LinuxMemFdAllocator {
         let memfd = Self::new(fd, bytes.len());
         // SAFETY: `memfd` is the `heap::alloc` pointer (full provenance) with
         // one live ref — required by `Self::alloc`.
-        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len(), 0, libc::MAP_SHARED) }?;
-        // That ref now lives in `res.allocator`.
-        let _ = memfd.into_raw();
-        Ok(res)
+        match unsafe { Self::alloc(memfd.as_ptr(), bytes.len()) } {
+            Ok(res) => {
+                // That ref now lives in `res.allocator`.
+                let _ = memfd.into_raw();
+                Ok(res)
+            }
+            Err(err) => {
+                fd.close();
+                Err(err)
+            }
+        }
     }
 }
 
@@ -262,6 +326,8 @@ mod allocator_interface {
                 bun_core::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
+        // SAFETY: we hold one ref until the `deref` below, so `*this` is live.
+        unsafe { (*this).fd }.close();
         // SAFETY: caller contract — `this` is the Box-allocated `*mut Self` and
         // we hold one ref. No live `&Self` exists (we never materialized one).
         unsafe { LinuxMemFdAllocator::deref(this) };

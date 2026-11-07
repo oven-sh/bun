@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import {
   copyFileSync,
   cpSync,
@@ -1331,4 +1331,167 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   writeFileSync(join(String(dir), "main.js"), `console.log("still running");\nprocess.exit();`);
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
+});
+
+/**
+ * Returns a function that resolves to the next line of the process's stdout. If the process ends before it prints
+ * one, the function rejects with the exit code, the signal and stderr.
+ */
+function lineByLine(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+  const reader = proc.stdout.getReader();
+  const stderr = proc.stderr.text();
+  const decoder = new TextDecoder();
+  let text = "";
+  return async () => {
+    for (;;) {
+      const end = text.indexOf("\n");
+      if (end !== -1) {
+        const line = text.slice(0, end);
+        text = text.slice(end + 1);
+        return line;
+      }
+      const { value, done } = await reader.read();
+      if (done) {
+        const exitCode = await proc.exited;
+        throw new Error(
+          `the process ended before its next line: exit code ${exitCode}, signal ${proc.signalCode}\n${await stderr}`,
+        );
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  };
+}
+
+// These tests pin what docs/runtime/watch-mode.mdx says under "Preload scripts". They are not concurrent: `bun test`
+// ends the children of a timed-out test only outside a concurrent group, and a --hot child never exits on its own.
+describe("--hot with a preload", () => {
+  /** main.js. Each run prints `state` on one line, and the second run exits. */
+  const main = (load: string, state: string) => `
+    ${load}
+    globalThis.runs = (globalThis.runs ?? 0) + 1;
+    console.log("run " + globalThis.runs + ": " + ${state});
+    if (globalThis.runs === 2) process.exit(0);
+  `;
+
+  /**
+   * Runs main.js under --hot, saves `file` after the first run, and expects the lines of the two runs.
+   * The save does not truncate the file first, so no reload reads it empty. `text` is as long as the text it replaces.
+   */
+  async function expectTwoRuns(
+    files: Record<string, string>,
+    flags: string[],
+    [file, text]: [string, string],
+    expected: [string, string],
+  ) {
+    using dir = tempDir("hot-preload", files);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", ...flags, "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const line = lineByLine(runner);
+    expect(await line()).toBe(expected[0]);
+    writeFileSync(join(String(dir), file), text, { flag: "r+" });
+    expect(await line()).toBe(expected[1]);
+    expect(await runner.exited).toBe(0);
+  }
+
+  it("evaluates a preload once, whichever of --preload, -r, --require, --import and bunfig.toml names it", async () => {
+    const counts = (name: string, comment: string) => `
+      globalThis.preloads ??= {};
+      globalThis.preloads["${name}"] = (globalThis.preloads["${name}"] ?? 0) + 1; // ${comment}
+    `;
+    const evaluations = "--import: 1, --preload: 1, --require: 1, -r: 1, bunfig.toml: 1";
+    await expectTwoRuns(
+      {
+        "bunfig.toml": `preload = ["./from-bunfig.js"]\n`,
+        "from-bunfig.js": counts("bunfig.toml", "first"),
+        "from-preload.js": counts("--preload", "first"),
+        "from-r.js": counts("-r", "first"),
+        "from-require.js": counts("--require", "first"),
+        "from-import.js": counts("--import", "first"),
+        "main.js": main(
+          "",
+          `Object.keys(globalThis.preloads).sort().map(name => name + ": " + globalThis.preloads[name]).join(", ")`,
+        ),
+      },
+      "--preload ./from-preload.js -r ./from-r.js --require ./from-require.js --import ./from-import.js".split(" "),
+      ["from-import.js", counts("--import", "again")],
+      [`run 1: ${evaluations}`, `run 2: ${evaluations}`],
+    );
+  });
+
+  /** A preload that records its evaluation and registers `onLoad` for *.contents. */
+  const plugin = (generation: number, onLoad: string) => `
+    globalThis.preloads = (globalThis.preloads ?? 0) + 1;
+    globalThis.preloadGeneration = ${generation};
+    Bun.plugin({
+      name: "contents",
+      setup(build) {
+        build.onLoad({ filter: /\\.contents$/ }, ${onLoad});
+      },
+    });
+  `;
+  const serves = (generation: number) => `({ contents: "export default ${generation};", loader: "js" })`;
+  /** What main.js prints once `generation` is what data.contents exports. */
+  const pluginState =
+    `"preload evaluated " + globalThis.preloads + " time(s), last as generation " + globalThis.preloadGeneration` +
+    ` + ", onLoad of generation " + generation`;
+
+  it("keeps the plugin of a preload from startup when the preload is saved", async () => {
+    await expectTwoRuns(
+      {
+        "plugin.js": plugin(1, `() => ${serves(1)}`),
+        "data.contents": "",
+        "main.js": main(`import generation from "./data.contents";`, pluginState),
+      },
+      ["--preload", "./plugin.js"],
+      ["plugin.js", plugin(2, `() => ${serves(2)}`)],
+      [
+        "run 1: preload evaluated 1 time(s), last as generation 1, onLoad of generation 1",
+        "run 2: preload evaluated 1 time(s), last as generation 1, onLoad of generation 1",
+      ],
+    );
+  });
+
+  it("evaluates a preload again when the entry point imports it, and the plugin from startup stays", async () => {
+    await expectTwoRuns(
+      {
+        "plugin.js": plugin(1, `() => ${serves(1)}`),
+        "data.contents": "",
+        // The import() runs after plugin.js has registered its plugin again.
+        "main.js": main(
+          `import "./plugin.js";\nconst { default: generation } = await import("./data.contents");`,
+          pluginState,
+        ),
+      },
+      ["--preload", "./plugin.js"],
+      ["plugin.js", plugin(2, `() => ${serves(2)}`)],
+      [
+        "run 1: preload evaluated 1 time(s), last as generation 1, onLoad of generation 1",
+        "run 2: preload evaluated 2 time(s), last as generation 2, onLoad of generation 1",
+      ],
+    );
+  });
+
+  it("loads a module again when the onLoad of a preloaded plugin loads it with require()", async () => {
+    const loader = (generation: number) => `exports.load = () => ${serves(generation)};`;
+    await expectTwoRuns(
+      {
+        "plugin.js": plugin(1, `args => require("./loader.js").load(args)`),
+        "loader.js": loader(1),
+        "data.contents": "",
+        "main.js": main(`import generation from "./data.contents";`, pluginState),
+      },
+      ["--preload", "./plugin.js"],
+      ["loader.js", loader(2)],
+      [
+        "run 1: preload evaluated 1 time(s), last as generation 1, onLoad of generation 1",
+        "run 2: preload evaluated 1 time(s), last as generation 1, onLoad of generation 2",
+      ],
+    );
+  });
 });

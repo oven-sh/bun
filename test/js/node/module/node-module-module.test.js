@@ -1,7 +1,7 @@
 import "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -1147,6 +1147,470 @@ console.log("survived", require("./late.js"));`,
     expect(req).toBe(module.require);
     expect(fn).toBe(filename);
     expect(dn).toBe(path.dirname(filename));
+  });
+
+  describe("Module.prototype._compile with a hashbang line", () => {
+    // Only text that user code hands to _compile itself (require-from-string style
+    // helpers, require.extensions handlers that readFileSync) still has the file's
+    // "#!" line; what bun's loader passes to an overridden _compile is transpiled
+    // output with the hashbang already removed. Node accepts the hashbang.
+    function compile(source, filename = "/hashbang-test/module.js") {
+      const module = new Module(filename);
+      module._compile(source, filename);
+      return module.exports;
+    }
+
+    test.each([
+      ["\\n", "#!/usr/bin/env node\nmodule.exports = 42;\n", 42],
+      ["\\r\\n", "#!/usr/bin/env node\r\nmodule.exports = 'crlf';\r\n", "crlf"],
+      ["\\r", "#!/usr/bin/env node\rmodule.exports = 'cr';", "cr"],
+      ["\\u2028", "#!/usr/bin/env node\u2028module.exports = 'ls';", "ls"],
+      ["\\u2029", "#!/usr/bin/env node\u2029module.exports = 'ps';", "ps"],
+    ])("hashbang line ended by %s", (_, source, expected) => {
+      expect(compile(source)).toBe(expected);
+    });
+
+    test("source that is only a hashbang line", () => {
+      expect(compile("#!/usr/bin/env node")).toEqual({});
+      expect(compile("#!")).toEqual({});
+    });
+
+    test("a directive prologue after the hashbang still applies", () => {
+      const source = [
+        "#!/usr/bin/env node",
+        '"use strict";',
+        "module.exports = (function () { return this; })() === undefined;",
+      ].join("\n");
+      expect(compile(source)).toBe(true);
+    });
+
+    test("line numbers are unchanged", () => {
+      const filename = "/hashbang-test/lines.js";
+      const error = compile(["#!/usr/bin/env node", "", "module.exports = new Error('here');"].join("\n"), filename);
+      expect(error.stack).toContain(`${filename}:3:`);
+
+      let syntaxError;
+      try {
+        compile(["#!/usr/bin/env node", "var ok = 1;", "var = ;"].join("\n"), filename);
+      } catch (e) {
+        syntaxError = e;
+      }
+      expect(syntaxError).toBeInstanceOf(SyntaxError);
+      expect(syntaxError.stack).toMatch(/\/hashbang-test\/lines\.js:3\b/);
+    });
+
+    test("a hashbang line is not a sourceURL directive", () => {
+      const exportError = "module.exports = new Error('x');";
+      for (const marker of ["#", "@"]) {
+        const { stack } = compile(`#!${marker} sourceURL=fake.js\n${exportError}`, "/hashbang-test/real.js");
+        expect(stack).toContain("/hashbang-test/real.js:2:");
+        expect(stack).not.toContain("fake.js");
+      }
+      // The same line as a real comment is a directive, so the check above is meaningful.
+      const { stack } = compile(`//# sourceURL=directive.js\n${exportError}`, "/hashbang-test/real.js");
+      expect(stack).toContain("directive.js:2:");
+    });
+
+    test("a hashbang anywhere but offset 0 is still a syntax error, as in node", () => {
+      for (const source of [
+        " #!/usr/bin/env node\nmodule.exports = 1;",
+        "\n#!/usr/bin/env node\nmodule.exports = 1;",
+        "\uFEFF#!/usr/bin/env node\nmodule.exports = 1;",
+        "#\nmodule.exports = 1;",
+        "module.exports = 1;\n#!/usr/bin/env node\n",
+      ]) {
+        expect(() => compile(source)).toThrow(SyntaxError);
+      }
+    });
+
+    test("require.extensions hook that passes the file contents to _compile", async () => {
+      using dir = tempDir("compile-hashbang-hook", {
+        "cli.js": "#!/usr/bin/env node\nmodule.exports = new Error('x');\n",
+        "main.cjs": /* js */ `
+          const fs = require("node:fs");
+          require.extensions[".js"] = function (module, filename) {
+            module._compile(fs.readFileSync(filename, "utf8"), filename);
+          };
+          const error = require("./cli.js");
+          console.log(JSON.stringify({ frame: /cli\\.js:\\d+/.exec(error.stack)[0] }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ frame: "cli.js:2" });
+      expect(exitCode).toBe(0);
+    });
+
+    test("with an overridden Module.wrapper", async () => {
+      // Module.wrapper is process-wide once assigned, so this runs in a child.
+      // Node rejects this combination (a patched wrapper makes it compile
+      // Module.wrap(source) as a script, which also breaks require() of every
+      // shebang file); bun's require() keeps working there and so does _compile.
+      const code = /* js */ `
+        const Module = require("node:module");
+        Module.wrapper = [
+          "(function (exports, require, module, __filename, __dirname) { globalThis.wrapped = (globalThis.wrapped ?? 0) + 1;",
+          "\\n});",
+        ];
+        const filename = "/hashbang-test/wrapped.js";
+        const m = new Module(filename);
+        m._compile(["#!/usr/bin/env node", "module.exports = new Error('x');"].join("\\n"), filename);
+        console.log(JSON.stringify({ wrapped: globalThis.wrapped, frame: /wrapped\\.js:\\d+/.exec(m.exports.stack)[0] }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ wrapped: 1, frame: "wrapped.js:2" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Node compiles the text as CommonJS first. Text that only parses as an ES module is loaded as the ES module of
+  // `filename`, and module.exports is its namespace. require-from-string calls _compile this way.
+  describe("Module.prototype._compile with text that is not CommonJS", () => {
+    async function rows(exe) {
+      using dir = tempDir("module-compile-es-module-text", {
+        "main.cjs": fs.readFileSync(path.join(import.meta.dir, "module-compile-es-module-fixture.cjs"), "utf8"),
+        "dep.mjs": `export const dep = "dep";`,
+        "sub/dep.mjs": `export const dep = "sub dep";`,
+        "commonjs.cjs": `module.exports = { commonjs: true };`,
+        "required.cjs": `module.exports = { required: true };`,
+        "unloaded.cjs": `module.exports = { who: "file" };`,
+        "in-flight.mjs": `globalThis.inFlightFileRan = true; export const who = "file";`,
+      });
+      await using proc = Bun.spawn({ cmd: [exe, "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { rows: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+
+    const syntaxError = message => ({ threw: "SyntaxError", message });
+    const ambiguous = (name, advice) => ({
+      threw: "ReferenceError",
+      code: "ERR_AMBIGUOUS_MODULE_SYNTAX",
+      message: `Cannot determine intended module format because both '${name}' and top-level await are present. If the code is intended to be CommonJS, wrap await in an async function. If the code is intended to be an ES module, ${advice}.`,
+    });
+    const underBun = {
+      // _compile returns before Node.js or Bun sets module.loaded.
+      namedAndDefault: { exports: { default: 7, v: 1 }, esModule: true, returned: "undefined", loaded: false },
+      moduleExportsExport: { custom: true },
+      importMetaOnly: { exports: {}, url: "virtual/c.js" },
+      redeclaresModuleAndRequire: 3,
+      // require() of an ES module: Bun runs a module with top-level await up to the await, and then throws.
+      topLevelAwait: {
+        threw: "TypeError",
+        message: 'require() async module "<dir>/virtual/e.js" is unsupported. use "await import()" instead.',
+        ran: true,
+      },
+      importsFollowTheFilename: { dep: "sub dep", commonjs: true, filename: "sub/virtual.js" },
+      relativeFilename: "sub/relative.js",
+      unnormalizedFilename: "dots.js",
+      emptyFilename: "",
+      separatorAtTheEndOfTheFilename: { url: false, ownModule: false },
+      backslashInTheFilename: { sameModule: isWindows },
+      // The first ES module that is registered under a filename stays, and text that is no module is an error there too.
+      sameFilenameTwice: { first: 1, second: 1, same: true },
+      typoUnderTheNameOfAnESModule: syntaxError("Unexpected token ';'. Expected a property name."),
+      // The error is the one of the parse that reads more of the text.
+      exportSyntaxError: syntaxError("Cannot declare a const variable twice: 'a'."),
+      importSyntaxError: syntaxError("Cannot declare a let variable twice: 'dep'."),
+      importMetaSyntaxError: syntaxError("Cannot declare a let variable twice: 'a'."),
+      validTextAfterSyntaxError: 3,
+      textAfterAnImportIsNotFound: { first: "ERR_MODULE_NOT_FOUND", second: "ERR_MODULE_NOT_FOUND", afterDelete: 2 },
+      commonJSTypo: syntaxError("Unexpected token ';'. Expected a property name."),
+      unclosedImportCall: syntaxError("Unexpected token ';'. import call expects one or two arguments."),
+      unclosedImportCallUnderTheNameOfAnESModule: syntaxError(
+        "Unexpected token ';'. import call expects one or two arguments.",
+      ),
+      commonJSStaysCommonJS: "function",
+      bodyThrows: { threw: "TypeError", message: "from the body" },
+      bodyThrowsANumber: { threwValue: 1 },
+      bodyThrowsAnObjectNamedSyntaxError: { threwValue: { name: "SyntaxError", message: "not an error" } },
+      // The text ran as CommonJS once. It does not run again as an ES module.
+      bodyThrowsItsOwnParseError: { thrown: syntaxError("Unexpected keyword 'export'"), bodyRuns: 1 },
+      hashbangCommonJS: 1,
+      hashbangESModule: { hashbang: true },
+      thrownByTheModule: { threw: "Error", message: "boom" },
+      typeofRequire: "undefined",
+      commonJSNamesInESModuleText: {
+        exports: "ReferenceError: exports is not defined in ES module scope",
+        require: "ReferenceError: require is not defined in ES module scope, you can use import instead",
+        module: "ReferenceError: module is not defined in ES module scope",
+        __filename: "ReferenceError: __filename is not defined in ES module scope",
+        __dirname: "ReferenceError: __dirname is not defined in ES module scope",
+        anotherName: "ReferenceError: nope is not defined",
+        anotherError: "TypeError: module is not defined",
+        noMessage: "ReferenceError: ",
+        otherWords: "ReferenceError: module is not DEFINED",
+        objectAsMessage: "ReferenceError: module is not defined",
+        nameOfItsOwn: "ConfigError: module is not defined",
+        assignedMessage: "ReferenceError: module is not defined in ES module scope",
+      },
+      messageKeepsItsAttributes: {
+        enumerable: {
+          value: "exports is not defined in ES module scope",
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        },
+        notEnumerable: {
+          value: "module is not defined in ES module scope",
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        },
+      },
+      // A message that an assignment cannot change stays as it is.
+      frozenErrorStaysFrozen: { threw: "ReferenceError", message: "require is not defined", frozen: true },
+      // Bun starts a module with top-level await. These names are read before the await.
+      commonJSNamesAndTopLevelAwait: {
+        require: ambiguous("require", "replace require() with import"),
+        module: ambiguous("module", "use export instead of module.exports/exports"),
+        exports: ambiguous("exports", "use export instead of module.exports/exports"),
+        __filename: ambiguous("__filename", "use import.meta.filename instead"),
+        __dirname: ambiguous("__dirname", "use import.meta.dirname instead"),
+        codeOfItsOwn: ambiguous("require", "replace require() with import"),
+        notExtensible: (({ code, ...rest }) => rest)(ambiguous("__dirname", "use import.meta.dirname instead")),
+      },
+      esModuleThrowsANumber: { threwValue: 1 },
+      // Bun's loader holds these two files under their names, so the text does not get the name.
+      filenameOfTheCommonJSEntry: syntaxError("Unexpected keyword 'export'"),
+      filenameOfAnImportedCommonJSFile: syntaxError("Unexpected keyword 'export'"),
+      // require() alone does not give a CommonJS file to that loader, so the text gets the name.
+      filenameOfARequiredCommonJSFile: { text: true },
+      afterTheTextOfARequiredCommonJSFile: { import: { text: true }, require: { required: true } },
+      // One registry answers require() and import(): the text has the name of a CommonJS file that nothing loaded.
+      requireAfterTheTextOfAnUnloadedCommonJSFile: { text: "text", require: "text" },
+      // A "?" starts a query, as in every name of a module in Bun. import.meta.filename has no query.
+      queryInTheFilename: { dep: "text", filename: "dep.mjs" },
+      importWithTheQueryOfTheFilename: "text",
+      // What happens today, not what is wanted: the failing test below has the wanted answer.
+      importInFlight: { compile: "text", import: "text", fileRan: false },
+      mainModuleAsReceiver: { a: 1 },
+      emptyFilenameAfterChdir: { sameModule: true, inAnotherDirectory: "sub" },
+      dynamicImportFollowsTheFilename: "sub dep",
+      wrapAssigned: { a: 1 },
+      // Text that a replaced Module.wrapper goes around is compiled as it is.
+      wrapperReplaced: syntaxError("Unexpected keyword 'export'"),
+      wrapperPutBackByTheBody: { thrown: syntaxError("Unexpected keyword 'export'"), runs: 1 },
+      afterTheWrapperIsPutBack: { a: 1 },
+    };
+    const withoutMessages = value =>
+      !value || typeof value !== "object"
+        ? value
+        : Object.fromEntries(
+            Object.entries(value)
+              .filter(([name]) => !("threw" in value) || name !== "message")
+              .map(([name, member]) => [name, withoutMessages(member)]),
+          );
+    const { mainModuleAsReceiver, esModuleThrowsANumber, ...rowsOfBoth } = underBun;
+    const requireOfAsyncModule = { threw: "Error", code: "ERR_REQUIRE_ASYNC_MODULE" };
+    const underNode = {
+      ...withoutMessages(rowsOfBoth),
+      // Node.js makes an object that has the exports and __esModule. Bun answers __esModule on the namespace.
+      namedAndDefault: { ...underBun.namedAndDefault, exports: { __esModule: true, default: 7, v: 1 } },
+      separatorAtTheEndOfTheFilename: { url: true, ownModule: true },
+      textAfterAnImportIsNotFound: { first: "ERR_MODULE_NOT_FOUND", second: 2, afterDelete: 2 },
+      // Node.js refuses a module with top-level await before it runs any of it.
+      topLevelAwait: { ...requireOfAsyncModule, ran: false },
+      commonJSNamesAndTopLevelAwait: Object.fromEntries(
+        Object.keys(underBun.commonJSNamesAndTopLevelAwait).map(name => [name, requireOfAsyncModule]),
+      ),
+      // Node.js assigns to the message in strict mode, which throws for a message that is read-only.
+      frozenErrorStaysFrozen: { threw: "TypeError", frozen: false },
+      // Node.js loads the text under the name of a file that require() loaded, and returns the exports of a
+      // CommonJS file that an ES module imported.
+      filenameOfTheCommonJSEntry: { a: 1 },
+      filenameOfAnImportedCommonJSFile: { commonjs: true },
+      // Node.js keeps its cache of CommonJS modules apart from the ES modules, so require() runs the file.
+      requireAfterTheTextOfAnUnloadedCommonJSFile: { text: "text", require: "file" },
+      // In Node.js the filename is the path of a file, "?" and all. import() with the query loads dep.mjs.
+      queryInTheFilename: { dep: "text", filename: "dep.mjs?query" },
+      importWithTheQueryOfTheFilename: "dep",
+      // Node.js gives the name to an import() when the import() starts. Text that comes in the same tick is refused.
+      importInFlight: {
+        compile: { threw: "Error", code: "ERR_REQUIRE_ESM_RACE_CONDITION" },
+        import: "file",
+        fileRan: true,
+      },
+      // Node.js stops looking for ES modules for good once Module.wrap or Module.wrapper is assigned. Bun does not
+      // count Module.wrap, and looks again when Module.wrapper is the default one again.
+      wrapAssigned: { threw: "SyntaxError" },
+      afterTheWrapperIsPutBack: { threw: "SyntaxError" },
+    };
+
+    let rowsUnderBun;
+    test("under bun", async () => {
+      expect(await (rowsUnderBun ??= rows(bunExe()))).toEqual({ rows: underBun, stderr: "", exitCode: 0 });
+    });
+
+    // The import() started first, so the name is its own: the text keeps the error of the CommonJS parse, and the
+    // import() gets the file. Bun's loader has no entry for a load by name until the source of the load arrives
+    // (JSModuleLoader::loadModule in oven-sh/WebKit), so today the text takes the name and the import() gets the text.
+    test.failing("an import() of the file that has started keeps the name of the file", async () => {
+      const result = await (rowsUnderBun ??= rows(bunExe()));
+      expect(result.rows.importInFlight).toEqual({
+        compile: syntaxError("Unexpected keyword 'export'"),
+        import: "file",
+        fileRan: true,
+      });
+    });
+
+    const node = nodeExeAtLeast("26.3.0");
+    test.skipIf(!node)("under node", async () => {
+      expect(await rows(node)).toEqual({ rows: underNode, stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("Module.prototype._compile leaves a filename to the mock.module() that holds it", async () => {
+    using dir = tempDir("module-compile-mocked-name", { "mocked.js": `export const from = "the file";` });
+    const filename = path.join(String(dir), "mocked.js");
+    mock.module(filename, () => ({ from: "the mock" }));
+    const module = new Module(filename);
+    expect(() => module._compile(`export const from = "the text";`, filename)).toThrow(SyntaxError);
+    expect((await import(filename)).from).toBe("the mock");
+  });
+
+  // The loader has an entry for a file from the moment that a static import starts to fetch it.
+  test("Module.prototype._compile leaves a filename to the static import that still fetches the file", async () => {
+    using dir = tempDir("module-compile-static-import-in-flight", {
+      "importer.js": `export { from } from "./dependency.js";`,
+      "dependency.js": `export const from = "the file on the disk";`,
+      "entry.ts": `
+        import Module from "node:module";
+        import { join } from "node:path";
+        const requested = Promise.withResolvers<void>();
+        const mayLoad = Promise.withResolvers<void>();
+        Bun.plugin({
+          name: "hold the load of dependency.js open",
+          setup(build) {
+            build.onLoad({ filter: /dependency\\.js$/ }, async () => {
+              requested.resolve();
+              await mayLoad.promise;
+              return { contents: "export const from = 'the file';", loader: "js" };
+            });
+          },
+        });
+        const dependency = join(import.meta.dir, "dependency.js");
+        const importer = import("./importer.js");
+        await requested.promise;
+        const module = new Module(dependency);
+        let compiled;
+        try {
+          module._compile("export const from = 'the text';", dependency);
+          compiled = module.exports.from;
+        } catch (e) {
+          compiled = e.name + ": " + e.message;
+        }
+        mayLoad.resolve();
+        console.log(JSON.stringify({ compiled, imported: (await importer).from }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "entry.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { compiled: "SyntaxError: Unexpected keyword 'export'", imported: "the file" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The text gets a name only after the CommonJS parse failed, and the name is what path.resolve() answers. For ""
+  // it asks for the working directory and throws here, so the error of the CommonJS parse stays. For another relative
+  // name it answers with the directory that was the working directory, and the text loads. (Node.js throws ENOENT
+  // for the two.)
+  test.skipIf(isWindows)("Module.prototype._compile where the working directory is gone", async () => {
+    using dir = tempDir("module-compile-no-working-directory", {
+      "main.cjs": `
+        const Module = require("node:module");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const gone = path.join(__dirname, "gone");
+        fs.mkdirSync(gone);
+        process.chdir(gone);
+        fs.rmdirSync(gone);
+        const attempt = (text, filename) => {
+          try {
+            const module = new Module(filename);
+            module._compile(text, filename);
+            return module.exports.directory === gone ? "loaded in the directory that is gone" : module.exports.directory;
+          } catch (e) {
+            return e.name;
+          }
+        };
+        const rows = {};
+        for (const filename of ["", "t.js"]) {
+          rows[filename] = {
+            typo: attempt("module.exports = {;", filename),
+            esModule: attempt("export const directory = import.meta.dirname;", filename),
+          };
+        }
+        console.log(JSON.stringify(rows));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        "": { typo: "SyntaxError", esModule: "SyntaxError" },
+        "t.js": { typo: "SyntaxError", esModule: "loaded in the directory that is gone" },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node's flag stops eval() and new Function() only. With "=strict", Bun runs no text at all.
+  test.each([
+    [[], 2],
+    [["--disallow-code-generation-from-strings"], 2],
+    [
+      ["--disallow-code-generation-from-strings=strict"],
+      "EvalError: Code generation from strings disallowed for this context",
+    ],
+  ])("Module.prototype._compile of ES module text with %j", async (flags, expected) => {
+    using dir = tempDir("module-compile-es-module-text-flags", {
+      "main.cjs": `
+        const Module = require("node:module");
+        const attempt = (text, filename, result) => {
+          const m = new Module(filename);
+          try {
+            m._compile(text, filename);
+            return result(m);
+          } catch (e) {
+            return e.name + ": " + e.message;
+          }
+        };
+        console.log(
+          JSON.stringify({
+            commonJS: attempt("module.exports = 1 + 1", "/made.cjs", m => m.exports),
+            esModule: attempt("export default 1 + 1", "/made.mjs", m => m.exports.default),
+            redeclaresModule: attempt("const module = 1 + 1; globalThis.made = module;", "/made.js", () => globalThis.made),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ commonJS: expected, esModule: expected, redeclaresModule: expected });
+    expect(exitCode).toBe(0);
   });
 
   test("Module._extensions", () => {

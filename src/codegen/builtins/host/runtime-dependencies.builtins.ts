@@ -273,6 +273,9 @@ const moduleChildrenFunctions = [
 
 const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
 
+// A built-in handler of Module._extensions loads a file that is an ES module through it, and module._compile the text of one.
+const esModuleIntoModuleFunctions = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
+
 const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
@@ -280,6 +283,7 @@ const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeSt
 const fakeTimerFunctions = functionsIn("builtins/useFakeTimers", "createPerformance");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
+  "%ModuleObject%._compile": esModuleIntoModuleFunctions,
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
@@ -336,7 +340,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // Worker.cpp jsFunctionSetNodeWorkerStdioPorts(), which the binding holds: from that call on the three properties are made of the ports.
   "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding": [streamOfWorker(0), streamOfWorker(1), streamOfWorker(2)],
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
-  "node:module": functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
+  "node:module": esModuleIntoModuleFunctions,
+  "node:module.prototype._compile": esModuleIntoModuleFunctions,
   "node:module.wrapper": [
     b.functionUsed(
       b.functionIn("builtins/CommonJS", "getWrapperArrayProxy"),

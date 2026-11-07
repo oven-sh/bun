@@ -1,0 +1,60 @@
+# -- source: main.js
+# function Animal(legs) { this.legs = legs; }
+# function Dog(legs, age) { var self = Animal.call(this, legs) || this; self.age = age; return self; }
+# Dog.prototype.total = function () { return this.legs + this.age; };
+# function Point(x, y) { this.x = x; this.y = y; }
+# var last, other;
+# function keepsDog(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Dog(4, i); last = made; total += made.total(); } return total; }
+# function dropsDog(count) { var total = 0; for (var i = 0; i < count; i++) total += new Dog(4, i).total(); return total; }
+# function keepsPoint(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Point(i, 1); last = made; total += made.x + made.y; } return total; }
+# function dropsPoint(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Point(i, 1); total += made.x + made.y; } return total; }
+# function keepsTwoPoints(count) { var total = 0; for (var i = 0; i < count; i++) { var a = new Point(i, 1); var b = new Point(i, 2); last = a; other = b; total += a.x + b.y; } return total; }
+# publish(Animal, Dog, Point);
+# print(keepsDog(5) + dropsDog(5) + keepsPoint(5) + dropsPoint(5) + keepsTwoPoints(5));
+# print(keepsDog(5) + dropsDog(5) + keepsPoint(5) + dropsPoint(5) + keepsTwoPoints(5));
+# -- end of source
+# The functions are in the hands of code that nobody has seen, so anything may be stored under `prototype` of each. Each is the one function object of its function.
+# While a guard of the class holds, what `new` makes stands below the object that the class table has registered. The allocation names it as that of a class does, nothing reads `prototype`, and nothing looks at the new cell to learn what stands above it.
+# f4 = keepsDog, f6 = keepsPoint, f8 = keepsTwoPoints, L0 = Dog, L1 = Point
+# The body of Dog begins with a call, so its allocation lists nothing and the guard of `prototype` is asked by itself. Where it has ended the turn begins again in the slow copy, which builds the construction without the guard.
+# RUN(DOG): walk f4 mechanisms=all
+# DOG-LABEL: code f4:Body
+# DOG: BeginMemberGuards layout=L0
+# DOG: ) isInLoop=true isLoopHead=true:
+# DOG: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+# DOG-NEXT: Branch {{*}}notTaken [[ended]]()
+# DOG: [[made]]: {{*}} = NewObject layout=L0
+# DOG: [[ended]]() frequency=Rare isInLoop=true:
+# DOG-NEXT: Jump
+# DOG-NOT: HasLayoutPrototype [[made]]
+# The front of the typed copy begins the guards of Dog for `total`. They begin once, so no turn begins them again.
+# RUN(ONCE): walk f4 mechanisms=all
+# ONCE-COUNT-1: BeginMemberGuards
+# ONCE-NOT: BeginMemberGuards
+# The stores at the head of Point are listed by the allocation. The guards that those stores ask are guards of the class, so they speak for the prototype too.
+# RUN(POINT): walk f6 mechanisms=all
+# POINT-LABEL: code f6:Body
+# POINT: BeginMemberGuards layout=L1
+# POINT-NEXT: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L1 key="x"}, {kind=MemberPassedByStores layout=L1 key="y"}]
+# POINT: = NewObject -,
+# RUN(ASKED): walk f6 mechanisms=all
+# ASKED-NOT: GetConstructPrototype
+# ASKED-NOT: HasLayoutPrototype
+# ASKED-NOT: side=Static
+# This loop is built once, so the arms of the first birth meet, and the closed one has run code that nobody has seen. The guards are asked again. That they have begun no code takes back.
+# RUN(TWICE): walk f8 mechanisms=all
+# TWICE-LABEL: code f8:Body
+# TWICE: BeginMemberGuards layout=L1
+# TWICE: = NewObject -,
+# TWICE-NOT: BeginMemberGuards
+# TWICE: = NewObject -,
+# RUN(WITHHELD): walk f4 mechanisms=all-Guesses
+# WITHHELD-NOT: side=Static key="prototype"
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { };
+# ANSWERS: 110
+# ANSWERS-NEXT: 110
+# ANSWERS-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell globalThis.publish = (Animal, Dog, Point) => { Dog.prototype = { total() { return 100; } }; };
+# REPLACED: 1050
+# REPLACED-NEXT: 1050
+# REPLACED-NEXT: exited with 0

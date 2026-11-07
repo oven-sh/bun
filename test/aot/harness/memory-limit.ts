@@ -165,7 +165,7 @@ export function processesBelow(pid: number): number[] {
 
 /**
  * Watches the children that run at once, each until its watch is disposed of, so that together they never fill the machine.
- * Once they hold more than `limit` bytes together, or the machine has less left than a seventh of that, `ends` says who is killed: all of them, or the one that holds most, alone.
+ * Once they hold more than `limit` bytes together, `ends` says who is killed: all of them, or the one that holds most, alone.
  * `exceeded` of a watch says that its child was killed so, `held` what it held then, `peak` the most that it was seen to hold. Nothing tells on Windows.
  */
 export function endAtMemoryLimitTogether(limit = memoryLimitOfCommandsAtOnce, ends: "all" | "the fattest" = "all") {

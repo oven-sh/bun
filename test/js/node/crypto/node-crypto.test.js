@@ -1946,7 +1946,24 @@ describe.each([
     return ecdh;
   };
   const [key, iv, data] = [Buffer.alloc(16, 1), Buffer.alloc(12, 2), Buffer.from("data")];
-  const gcm = () => crypto.createCipheriv("aes-128-gcm", key, iv);
+  // Each cipher goes on to its end after the empty input: the state that the input leaves in it is part of the outcome.
+  const seal = feed => {
+    const gcm = crypto.createCipheriv("aes-128-gcm", key, iv);
+    feed(gcm);
+    return Buffer.concat([gcm.update(data), gcm.final(), gcm.getAuthTag()]);
+  };
+  const sealed = seal(() => {});
+  const open = feed => {
+    const gcm = crypto.createDecipheriv("aes-128-gcm", key, iv).setAuthTag(sealed.subarray(-16));
+    feed(gcm);
+    return Buffer.concat([gcm.update(sealed.subarray(0, -16)), gcm.final()]);
+  };
+  // ECB takes an iv of no bytes.
+  const ecb = (create, value, input) => {
+    const aes = create("aes-128-ecb", key, value);
+    return Buffer.concat([aes.update(input), aes.final()]);
+  };
+  const block = ecb(crypto.createCipheriv, null, data);
   const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   const cipher = { cipher: "aes-128-cbc", passphrase: "" };
   const encrypted = ec.privateKey.export({ type: "pkcs8", format: "pem", ...cipher });
@@ -1963,10 +1980,10 @@ describe.each([
     ["ECDH.convertKey()", value => crypto.ECDH.convertKey(value, "prime256v1")],
     ["generatePrime(), as add", value => crypto.generatePrimeSync(32, { add: value })],
     ["generatePrime(), as rem", value => crypto.generatePrimeSync(32, { add: Buffer.alloc(0), rem: value })],
-    ["createCipheriv(), as the iv", value => crypto.createCipheriv("aes-128-gcm", key, value)],
-    ["createDecipheriv(), as the iv", value => crypto.createDecipheriv("aes-128-gcm", key, value)],
-    ["cipher.setAAD()", value => (cipher => (cipher.setAAD(value).final(), cipher.getAuthTag()))(gcm())],
-    ["decipher.setAAD()", value => crypto.createDecipheriv("aes-128-gcm", key, iv).setAAD(value).update(data)],
+    ["createCipheriv(), as the iv", value => ecb(crypto.createCipheriv, value, data)],
+    ["createDecipheriv(), as the iv", value => ecb(crypto.createDecipheriv, value, block)],
+    ["cipher.setAAD()", value => seal(gcm => gcm.setAAD(value))],
+    ["decipher.setAAD()", value => open(gcm => gcm.setAAD(value))],
     ["decipher.setAuthTag()", value => crypto.createDecipheriv("aes-128-gcm", key, iv).setAuthTag(value)],
     [
       "verify.verify(), as the signature",
@@ -1993,11 +2010,25 @@ describe.each([
     ["Certificate.verifySpkac()", value => crypto.Certificate.verifySpkac(value)],
     ["Certificate.exportChallenge()", value => crypto.Certificate.exportChallenge(value)],
     // update() takes no ArrayBuffer.
-    ...(kind === "a detached ArrayBuffer" ? [] : [["cipher.update()", value => gcm().update(value)]]),
+    ...(kind === "a detached ArrayBuffer"
+      ? []
+      : [
+          ["cipher.update()", value => seal(gcm => gcm.update(value))],
+          ["decipher.update()", value => open(gcm => gcm.update(value))],
+        ]),
   ];
 
   it.each(places)("to %s", (_, call) => {
     expect(outcome(() => call(detached()))).toEqual(outcome(() => call(Buffer.alloc(0))));
+  });
+
+  it("to a cipher, which seals and opens after it as after no input", () => {
+    // update() takes no ArrayBuffer.
+    for (const feed of kind === "a detached ArrayBuffer" ? ["setAAD"] : ["setAAD", "update"]) {
+      expect(seal(gcm => gcm[feed](detached()))).toEqual(sealed);
+      expect(open(gcm => gcm[feed](detached()))).toEqual(data);
+    }
+    expect(ecb(crypto.createDecipheriv, detached(), block)).toEqual(data);
   });
 });
 

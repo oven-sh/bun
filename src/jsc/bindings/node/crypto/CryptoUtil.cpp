@@ -698,6 +698,13 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return {};
     }
 
+    // A detached view has a null vector(). BoringSSL gives a null slice pointer a meaning of its own in some functions
+    // (API-CONVENTIONS.md), so an empty Buffer stands for the view. Node hands out an address for each empty input too:
+    // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_util.h#L723-L729
+    if (view->isDetached()) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, WebCore::createEmptyBuffer(globalObject));
+    }
+
     return view;
 }
 

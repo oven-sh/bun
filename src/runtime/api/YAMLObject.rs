@@ -1070,33 +1070,46 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JS
         // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`. What throws
         // returns without reading `input` again.
         let global = unsafe { cx.heap.global() };
-        let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
-        let global = cx.global();
-        for PendingProperty {
-            mapping,
-            key,
-            value,
-        } in pending
-        {
-            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
-        }
+        let text = input.get(&cx.heap);
+        let result = parse_to_values(global, text, roots, &mut pending, |_| Ok(()))?;
+        define_pending(cx.global(), roots, pending)?;
         Ok(result)
     })
 }
 
 /// A property that waits for the tree to be gone. Its key is a sequence or a mapping, or it comes after one that is.
 /// `ToString` of those is JavaScript, which can free the input that the tree points into.
-struct PendingProperty {
+pub(crate) struct PendingProperty {
     mapping: JSValue,
     key: JSValue,
     value: JSValue,
 }
 
-fn parse_to_values(
+/// Defines the properties that waited, which `roots` holds. This runs JavaScript: the caller no longer reads the input.
+#[inline(always)]
+pub(crate) fn define_pending(
+    global: &JSGlobalObject,
+    _roots: &MarkedArgumentBuffer,
+    pending: Vec<PendingProperty>,
+) -> JsResult<()> {
+    for PendingProperty {
+        mapping,
+        key,
+        value,
+    } in pending
+    {
+        mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+    }
+    Ok(())
+}
+
+/// The value of the YAML `input`, less the properties left in `pending`. `check_root` sees the root first.
+pub(crate) fn parse_to_values(
     global: &JSGlobalObject,
     input: &[u8],
     roots: &mut MarkedArgumentBuffer,
     pending: &mut Vec<PendingProperty>,
+    check_root: impl FnOnce(&bun_ast::Expr) -> JsResult<()>,
 ) -> JsResult<JSValue> {
     super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
@@ -1119,6 +1132,7 @@ fn parse_to_values(
                     )));
                 }
             };
+        check_root(&root)?;
 
         let mut ctx = ParserCtx {
             seen_objects: HashMap::default(),

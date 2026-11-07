@@ -133,6 +133,10 @@ try {
   console.log(String(error.message));
 }`,
     "hello.ts": `console.log("hello world");`,
+    "front-matter.ts": `for (const document of ["# none", "---\\na: 1\\n---\\n", "+++\\na = 1\\n+++\\n"]) {
+  try { console.log(JSON.stringify(Bun.markdown.frontmatter(document).data)); } catch (error) { (${told})(error); }
+}
+console.log(Bun.markdown.html("---\\na: 1\\n---\\n# Heading"));`,
     "uses-them.ts": parts.map(({ text }) => text).join("\n"),
     "imports-modules.ts": modulesWithNativeBindings
       .map(
@@ -205,6 +209,16 @@ try { ${call.replace("imported", "imported" + index) || "throw { code: 'ERR_FEAT
         ([specifier, , call]) => `${specifier} ${call}: object, ERR_FEATURE_REMOVED true`,
       ),
     });
+  });
+
+  // The first line of a document says which parser its front matter needs. The renderers need neither.
+  test.each([
+    ["yaml", 'null\nERR_FEATURE_REMOVED true\n{"a":1}\n<h1>Heading</h1>\n\n'],
+    ["toml", 'null\n{"a":1}\nERR_FEATURE_REMOVED true\n<h1>Heading</h1>\n\n'],
+  ])("without %s, Bun.markdown.frontmatter() throws for a block in that format only", async (name, stdout) => {
+    const built = await build("front-matter.ts", { remove: [name] });
+    expect(built).toMatchObject({ stdout: "built\n", exitCode: 0 });
+    expect(await run([built.executable], folder)).toMatchObject({ stdout, exitCode: 0 });
   });
 
   test("a name in both lists, and a name that Bun doesn't know, fail the build", async () => {

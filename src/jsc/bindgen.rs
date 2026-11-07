@@ -179,6 +179,26 @@ impl<'a> JsHeap<'a> {
             .ok_or_else(|| self.string_too_long())
     }
 
+    /// The code units `start..end` of a WTF-backed `string`. The result shares them with it, unless it is short.
+    #[inline]
+    pub fn create_substring(
+        &self,
+        string: &bun_core::String,
+        start: usize,
+        end: usize,
+    ) -> JsLocal<'a, JSString> {
+        // The length of a borrowed slice is in bytes, which are not code units.
+        let counts_code_units = matches!(
+            string.tag(),
+            bun_core::Tag::WTFStringImpl | bun_core::Tag::Empty
+        );
+        assert!(counts_code_units && start <= end && end <= string.length());
+        // SAFETY: `string` is live for the call, and `start..end` are code units of it.
+        JsLocal::from_raw(unsafe {
+            crate::cpp::BunString__substringToJS(self.global_ptr(), string, start, end - start)
+        })
+    }
+
     /// One of the strings every global object has.
     #[inline]
     pub fn common_string(&self, string: CommonString) -> JsLocal<'a, JSString> {

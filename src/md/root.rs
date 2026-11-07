@@ -54,6 +54,8 @@ pub struct Options {
     /// See `compat.rs`: what a parser that follows micromark need not do.
     pub micromark_to_the_letter: bool,
     pub mdx: bool,
+    /// Skip the `front_matter` block the document starts with. A renderer that `wants_source` gets all of the text.
+    pub frontmatter: bool,
 }
 
 impl Default for Options {
@@ -85,6 +87,7 @@ impl Default for Options {
             micromark: false,
             micromark_to_the_letter: false,
             mdx: false,
+            frontmatter: true,
         }
     }
 }
@@ -118,6 +121,7 @@ impl Options {
         micromark: false,
         micromark_to_the_letter: false,
         mdx: false,
+        frontmatter: false,
     };
 
     pub const TERMINAL: Self = Self {
@@ -130,6 +134,7 @@ impl Options {
         wiki_links: true,
         underline: true,
         latex_math: true,
+        frontmatter: true,
         ..Self::NONE
     };
 
@@ -156,6 +161,7 @@ impl Options {
             micromark: self.micromark,
             micromark_to_the_letter: self.micromark_to_the_letter,
             mdx: self.mdx,
+            frontmatter: self.frontmatter,
         }
     }
 

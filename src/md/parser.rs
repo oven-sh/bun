@@ -19,9 +19,9 @@ pub(crate) const MARK_HIDES: u8 = 1 << 3;
 /// One of `Extensions::span_bytes`.
 pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
 pub(crate) const MARK_OTHER: u8 = 1 << 5;
-use bun_core::StackCheck;
+use bun_core::{StackCheck, strings};
 
-use super::helpers;
+use super::front_matter::{self, Rule};
 use super::html_renderer::HtmlRenderer;
 use super::types::{
     Align, BlockType, Container, ContainerEnds, Extensions, Flags, OFF, Renderer,
@@ -41,6 +41,8 @@ pub(crate) use super::ref_defs::RefDef;
 pub(crate) struct Parser<'a> {
     pub(crate) text: &'a [u8],
     pub(crate) size: OFF,
+    /// Where the Markdown starts in `text`, which the renderer holds too: see `markdown_of`.
+    pub(crate) doc_start: OFF,
     pub(crate) has_carriage_return: bool,
     pub(crate) flags: Flags,
 
@@ -315,10 +317,17 @@ impl<'a> Parser<'a> {
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let track = rend.ptr.wants_source();
+        let has_carriage_return = strings::contains_char(text, b'\r');
+        // Who wants to know where things are is told places in `text`, all of it.
+        let markdown = match track {
+            true => text,
+            false => markdown_of(text, flags.frontmatter, has_carriage_return),
+        };
         let mut p = Parser {
             text,
             size,
-            has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
+            doc_start: (text.len() - markdown.len()) as OFF,
+            has_carriage_return,
             flags,
             renderer: rend,
             image_nesting_level: 0,
@@ -357,7 +366,7 @@ impl<'a> Parser<'a> {
             last_list_item_starts_with_two_blank_lines: false,
             last_header_opens_list_item: false,
             last_line_is_only_a_task_mark: false,
-            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
+            max_ref_def_output: 16 * (markdown.len() as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
             track,
             container_sources: Vec::new(),
@@ -485,6 +494,31 @@ impl<'a> Parser<'a> {
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
 
+/// `text` behind a UTF-8 byte order mark, the front matter if it counts, and a byte order mark right behind that.
+#[inline]
+fn markdown_of(text: &[u8], frontmatter: bool, carriage_returns: bool) -> &[u8] {
+    let rest = strings::without_utf8_bom(text);
+    match rest.first() {
+        Some(&first) if frontmatter && strings::contains_char(Rule::MARKDOWN.markers, first) => {
+            behind_front_matter(rest, carriage_returns)
+        }
+        _ => rest,
+    }
+}
+
+/// `text` behind its front matter. Out of line: few documents start with what a fence is made of.
+#[inline(never)]
+fn behind_front_matter(text: &[u8], carriage_returns: bool) -> &[u8] {
+    let rule = Rule {
+        carriage_returns,
+        ..Rule::MARKDOWN
+    };
+    match front_matter::detect(text, rule) {
+        Some(block) => strings::without_utf8_bom(&text[block.end..]),
+        None => text,
+    }
+}
+
 // ========================================
 // Public API
 // ========================================
@@ -494,12 +528,9 @@ pub(crate) fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
-    // Skip UTF-8 BOM
-    let input = helpers::skip_utf8_bom(text);
+    let mut html_renderer = HtmlRenderer::init(text, render_opts);
 
-    let mut html_renderer = HtmlRenderer::init(input, render_opts);
-
-    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
+    let mut parser = Parser::init(text, flags, html_renderer.renderer())?;
 
     parser.process_doc()?;
     drop(parser);
@@ -519,13 +550,7 @@ pub(crate) fn render_with_renderer<'a>(
     extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-    // Who wants to know where things are is told places in `text`.
-    let input = match rend.ptr.wants_source() {
-        true => text,
-        false => helpers::skip_utf8_bom(text),
-    };
-
-    let mut p = Parser::init(input, flags, rend)?;
+    let mut p = Parser::init(text, flags, rend)?;
     if let Some(extensions) = extensions {
         p.set_extensions(extensions);
     }

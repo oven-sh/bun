@@ -15,7 +15,7 @@ impl Parser<'_> {
         let mut pivot_line = dummy_blank;
         let mut line_buf: [Line; 2] = [Line::default(), Line::default()];
         let mut line_idx: usize = 0;
-        let mut off: OFF = 0;
+        let mut off: OFF = self.doc_start;
 
         self.enter_block(BlockType::Doc, 0, 0)?;
 

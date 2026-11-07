@@ -34,6 +34,10 @@ declare module "*" with { type: "file" } {
 declare module "*" with { type: "md" } {
   /**
    * The Markdown rendered to HTML.
+   *
+   * Bun skips a front matter block at the start of the file. The loader has no
+   * option to keep it and does not export the metadata. To read it, pass the
+   * text of the file to `Bun.markdown.frontmatter()`.
    */
   var html: string;
   export = html;
@@ -42,6 +46,10 @@ declare module "*" with { type: "md" } {
 declare module "*" with { type: "markdown" } {
   /**
    * The Markdown rendered to HTML.
+   *
+   * Bun skips a front matter block at the start of the file. The loader has no
+   * option to keep it and does not export the metadata. To read it, pass the
+   * text of the file to `Bun.markdown.frontmatter()`.
    */
   var html: string;
   export = html;

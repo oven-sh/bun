@@ -1475,10 +1475,13 @@ pub(crate) mod tests {
             let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
             let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
             assert_eq!(record_end, bytes.len());
-            let expected = root.map(|root| [b"/work/", root].concat());
-            let expected = expected.map(|path| path.strip_suffix(b"/").unwrap_or(&path).to_vec());
             #[cfg(not(windows))]
-            assert_eq!(program.root_on_disk(b"/work"), expected);
+            {
+                let expected = root.map(|root| [b"/work/", root].concat());
+                let expected =
+                    expected.map(|path| path.strip_suffix(b"/").unwrap_or(&path).to_vec());
+                assert_eq!(program.root_on_disk(b"/work"), expected);
+            }
             assert_eq!(program.knows_root_on_disk(), root.is_some());
         }
     }

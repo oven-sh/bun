@@ -3,6 +3,7 @@ import * as b from "../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::event_loop" });
 
 export const ActiveTasks = b.dictionary({
+  enteredCount: b.i32,
   activeTasks: b.usize,
   tasks: b.usize,
   immediateTasks: b.usize,
@@ -15,3 +16,5 @@ export const ActiveTasks = b.dictionary({
 });
 
 export const getActiveTasks = b.fn({ returns: ActiveTasks, capability: "heap" });
+
+export const runNestedUntilSettled = b.fn({ args: { promise: b.any }, capability: "js", throws: true });

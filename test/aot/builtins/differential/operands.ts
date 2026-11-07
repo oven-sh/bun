@@ -47,6 +47,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^process\.(stdin|openStdin)\b/, "it takes over a standard stream"],
   [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$/, "it blocks, starts a process or opens a socket"],
   [/^Atomics\.wait$/, "it blocks the thread"],
+  [/^native:Bindgen:event_loop\.bind\.ts:runNestedUntilSettled$|^%NativeFunctions%\.Event_loopBindTsRunNestedUntilSettled$/, "it stays away until its operand settles, and a promise of the test may never"],
   [/^%NodeJSFS%\.prototype\.(close|ftruncate)(Sync|Cb)?$|^native:Bindgen:(udp_socket\.bind\.ts:dgram(Close|Adopt|Bind|Listen)Fd|node_cluster_binding\.bind\.ts:clusterCloseHandle)$|^%NativeFunctions%\.(Udp_socketBindTsDgram(Close|Adopt|Bind|Listen)Fd|Node_cluster_bindingBindTsClusterCloseHandle)$/, "it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too"],
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
   [/^native:Bindgen:(node_cluster_binding\.bind\.ts:clusterRawBind|udp_socket\.bind\.ts:connect)$/, "it asks the name servers about every string that is no address, and waits for them"],

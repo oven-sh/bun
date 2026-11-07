@@ -38,4 +38,18 @@ export const build = b.fn({
   rustPath: "crate::api::js_bundler::js_bundler::build",
 });
 
+const setupReaction = { ...js, args: { value: b.any, context: b.any } } as const;
+
+/** The reactions to the promise a plugin's `setup()` returned. */
+export const onPluginSetupResolve = b.fn({
+  ...setupReaction,
+  export: "Bun__JSBundler__onPluginSetupResolve",
+  rustPath: "crate::api::js_bundler::js_bundler::on_plugin_setup_resolve",
+});
+export const onPluginSetupReject = b.fn({
+  ...setupReaction,
+  export: "Bun__JSBundler__onPluginSetupReject",
+  rustPath: "crate::api::js_bundler::js_bundler::on_plugin_setup_reject",
+});
+
 export const workerLiveCount = b.fn({ returns: b.usize });

@@ -1,5 +1,6 @@
 // `ws` client options that control how it connects: `createConnection`, `lookup`, `agent`, and the options passed
 // through to node:net. The server is a raw TCP peer. See ws-raw-peer.ts.
+import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tls as certificate, isLinux } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -441,8 +442,8 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
     expect(await store).toBe("the caller's");
   });
 
-  // The handshake runs from the event loop, whoever turns it. `Bun.build()` ticks the event loop until an async plugin
-  // `setup()` settles, here inside a store. With npm ws, node:tls runs the callback there.
+  // The handshake runs from the event loop, whoever turns it: here a caller inside a store. With npm ws, node:tls
+  // runs the callback there.
   test.skipIf(!builtin)(
     "checkServerIdentity of a socket made outside every store doesn't run in the store of a caller that ticks the event loop",
     async () => {
@@ -457,15 +458,8 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
           resolve();
         },
       });
-      const build = storage.run("the waiter's", () =>
-        Bun.build({
-          entrypoints: ["/wait.js"],
-          files: { "/wait.js": "" },
-          plugins: [{ name: "wait", setup: () => checked }],
-        }),
-      );
+      storage.run("the waiter's", () => runNestedEventLoopUntilSettled(checked));
       expect(store).toBe("no store");
-      await build;
     },
   );
 

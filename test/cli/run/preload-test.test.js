@@ -302,5 +302,29 @@ plugin({
       writeFileSync(join(String(dir), "main.js"), `console.log("main ran");`);
       expect(await stdout("main ran\n")).toContain("first ran\nsecond ran\nmain ran\n");
     });
+
+    test("a reload that loads the preloads again waits for them at the top of the event loop", async () => {
+      // The depth a timer callback sees. It's one more when the event loop runs inside one of its own tasks.
+      const logDepth = name => `
+        import { getEventLoopStats } from "bun:internal-for-testing";
+        await new Promise(resolve =>
+          setTimeout(() => {
+            console.log("${name}: " + getEventLoopStats().enteredCount);
+            resolve();
+          }, 1),
+        );
+      `;
+      using dir = tempDir("preload-hot", {
+        // After a preload fails, every reload loads the preloads again.
+        "first.js": `throw new Error("from first.js");`,
+        "second.js": ``,
+        "main.js": logDepth("main"),
+      });
+      const { proc, stdout, stderr } = spawnHot(dir);
+      await using _ = proc;
+      expect(await stderr("error: from first.js")).toContain("error: from first.js");
+      writeFileSync(join(String(dir), "first.js"), logDepth("preload"));
+      expect(await stdout("main: ")).toMatch(/^preload: (\d+)\nmain: \1\n/);
+    });
   });
 });

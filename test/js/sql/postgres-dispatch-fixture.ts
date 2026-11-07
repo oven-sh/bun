@@ -2,6 +2,7 @@
 // on a new connection, and prints one line per scenario: what every query settled with.
 // It is a subprocess because a broken build aborts or hangs in these scenarios.
 import { SQL, type ReservedSQL } from "bun";
+import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
 import { drainMicrotasks } from "bun:jsc";
 
 // The process stops before the timeout of its test, and it does not outlive a test run that was killed.
@@ -39,17 +40,14 @@ function settle(promise: Promise<unknown>) {
 
 const backendPid = async (db: SQL) => (await db`select pg_backend_pid() as pid`)[0].pid;
 
-/** Runs the event loop until `promise` settles: Bun.build() waits for an async plugin setup(). */
+/** Runs the event loop until `promise` settles. */
 function waitInsideConversion(promise: Promise<unknown>) {
-  const settled = promise.then(
-    () => {},
-    () => {},
+  runNestedEventLoopUntilSettled(
+    promise.then(
+      () => {},
+      () => {},
+    ),
   );
-  Bun.build({
-    entrypoints: [import.meta.path],
-    target: "bun",
-    plugins: [{ name: "wait", setup: () => settled }],
-  }).catch(() => {});
 }
 
 /** The deferred flush has run: what was executed before is on the wire. */

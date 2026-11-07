@@ -1405,17 +1405,6 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    /// # Safety
-    /// `done` must point to a live `bool`; C++ writes `true` through it from a
-    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&self, done: *const bool) {
-        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
-        while !unsafe { done.read_volatile() } {
-            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
-            unsafe { (*self.native_loop()).tick() };
-        }
-    }
-
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     /// `after_call` runs after `callback` returns and before microtasks drain.
@@ -1546,6 +1535,25 @@ impl EventLoop {
     }
 }
 
+/// Testing API: runs the event loop, with the caller's script on the stack, until a promise settles.
+///
+/// No JavaScript API does this. A macro that returns a promise still does, and an addon can, so what
+/// the runtime does to survive it needs a way to be tested.
+pub(crate) fn run_nested_until_settled(
+    cx: &mut crate::bindgen::JsScope<'_>,
+    promise: crate::bindgen::JsLocal<'_>,
+) -> JsResult<()> {
+    let global_object = cx.global();
+    let Some(promise) = promise.to_js().as_any_promise() else {
+        return Err(global_object.throw(format_args!("Expected a promise")));
+    };
+    global_object
+        .bun_vm()
+        .as_mut()
+        .wait_for_promise(promise)
+        .map_err(|stopped| stopped.throw(global_object))
+}
+
 /// Testing API to expose event loop state
 pub(crate) fn get_active_tasks(
     heap: &crate::bindgen::JsHeap<'_>,
@@ -1562,6 +1570,7 @@ pub(crate) fn get_active_tasks(
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls.get() };
     crate::generated_bindgen::event_loop::ActiveTasks {
+        entered_count: event_loop.entered_event_loop_count as i32,
         active_tasks: vm_ref.active_tasks,
         tasks: event_loop.tasks.readable_length(),
         immediate_tasks: event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len(),

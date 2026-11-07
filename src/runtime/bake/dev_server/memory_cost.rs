@@ -78,6 +78,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             ssr_transpiler: _,
             log: _,
             plugin_state: _,
+            plugin_setup_context: _,
             current_bundle: _,
             next_bundle: _,
             deferred_request_pool: _,
@@ -105,6 +106,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .magic
     //   .memory_visualizer_timer
     //   .plugin_state
+    //   .plugin_setup_context
     //   .server_register_update_callback
     //   .server_fetch_function_callback
     //   .watcher_atomics

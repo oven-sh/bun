@@ -974,7 +974,21 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
+  /**
+   * How many `EventLoop::tick()` calls and callback scopes are on the native stack. The same kind of
+   * callback always sees the same number, unless the event loop runs inside itself.
+   */
+  enteredCount: number;
 } = $bindgen("event_loop.bind.ts", "getActiveTasks");
+
+/**
+ * Runs the event loop inside this call until `promise` settles. No public API does that, but a macro
+ * that returns a promise and a native addon still can, so tests of how the runtime survives it use this.
+ */
+export const runNestedEventLoopUntilSettled: (promise: Promise<unknown>) => void = $bindgen(
+  "event_loop.bind.ts",
+  "runNestedUntilSettled",
+);
 
 export const hostedGitInfo = {
   parseUrl: $bindgen("hosted_git_info_jsc.bind.ts", "parseUrl"),

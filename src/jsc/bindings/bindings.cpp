@@ -694,6 +694,29 @@ static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globa
     return verdict != 0;
 }
 
+// Must match `Answerer` in expect_deferred.rs.
+enum class ExpectAnswerer : uint8_t {
+    EqualityTester,
+    AsymmetricMatch,
+    IsEqualNode,
+    SatisfyPredicate,
+    Contains,
+};
+
+extern "C" void Expect__refuseThenable(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue answer, ExpectAnswerer who);
+
+// `Answerer::ask` of expect_deferred.rs: a promise that user code returns is no answer, so it throws.
+static ALWAYS_INLINE bool askPredicate(JSGlobalObject* globalObject, ThrowScope& scope, ExpectAnswerer who, JSValue function, JSValue thisValue, const ArgList& arguments)
+{
+    JSValue answer = JSC::call(globalObject, function, JSC::getCallData(function), thisValue, arguments);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (answer.isObject()) [[unlikely]] {
+        Expect__refuseThenable(globalObject, JSValue::encode(answer), who);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return answer.toBoolean(globalObject);
+}
+
 // Rules out most objects without a property lookup.
 static ALWAYS_INLINE bool mayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value)
 {
@@ -755,9 +778,7 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
     JSValue other = methodOfA ? b : a;
     MarkedArgumentBuffer arguments;
     arguments.append(other ? other : jsUndefined());
-    JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
-    RETURN_IF_EXCEPTION(scope, false);
-    return matched.toBoolean(globalObject);
+    return askPredicate(globalObject, scope, ExpectAnswerer::AsymmetricMatch, method, methodOfA ? a : b, arguments);
 }
 
 // jsdom and happy-dom nodes are class instances, sometimes wrapped in a Proxy.
@@ -854,9 +875,7 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
 
     MarkedArgumentBuffer arguments;
     arguments.append(o2);
-    JSValue result = JSC::call(globalObject, isEqualNode, JSC::getCallData(isEqualNode), o1, arguments);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    return result.toBoolean(globalObject);
+    return askPredicate(globalObject, scope, ExpectAnswerer::IsEqualNode, isEqualNode, o1, arguments);
 }
 
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)

@@ -854,6 +854,33 @@ describe("equality", () => {
     for (const falsy of [0, "", null, undefined]) expect(returning(falsy)).not.toEqual(h("i"));
   });
 
+  test("isEqualNode() that returns a promise or another thenable throws", () => {
+    const returning = (returned: unknown) => Object.assign(h("i"), { isEqualNode: () => returned });
+    const refused = (returned: string) =>
+      `isEqualNode() returned ${returned}. It has to return its answer synchronously`;
+    // The matcher leaves a promise to its owner, so this test handles the rejection.
+    const rejected = Promise.reject(new Error("rejected before it was returned"));
+    rejected.catch(() => {});
+    for (const [returned, described] of [
+      [Promise.resolve(true), "a promise"],
+      [Promise.resolve(false), "a promise"],
+      [rejected, "a promise"],
+      [new Promise(() => {}), "a promise"],
+      [{ then() {} }, "a thenable"],
+    ] as const) {
+      for (const assertion of [
+        () => expect(returning(returned)).toEqual<Node>(h("i")),
+        () => expect(returning(returned)).not.toEqual(h("i")),
+        () => expect(returning(returned)).toStrictEqual<Node>(h("i")),
+        () => expect({ n: returning(returned) }).toMatchObject({ n: h("i") }),
+      ]) {
+        expect(assertion).toThrow(TypeError);
+        expect(assertion).toThrow(new TypeError(refused(described)));
+      }
+    }
+    expect(returning({ then: true })).toEqual<Node>(h("b"));
+  });
+
   test("toMatchObject uses isEqualNode() for two nodes and properties for a plain pattern", () => {
     expect({ n: h("i", { a: "1" }), x: 1 }).toMatchObject({ n: h("i", { a: "1" }) });
     expect({ n: h("i", { a: "1" }), x: 1 }).not.toMatchObject({ n: h("i", { a: "2" }) });

@@ -63,6 +63,7 @@ const MIRI_CRATES = [
 // their tests start other programs, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::waiting_lists"],
+  bun_resolver: ["compiled_program::tests", "data_url::tests", "fs_full::tests", "package_names::tests"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

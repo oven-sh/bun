@@ -118,6 +118,22 @@ describe("bundler", () => {
     run: { stdout: "./modules/a.ts,./modules/b.ts\n./modules/a.ts,./modules/b.ts" },
   });
 
+  // `minifySyntax` prints `Object["keys"]` as `Object.keys`, which doesn't make it the shortcut.
+  for (const minifySyntax of [false, true]) {
+    itBundled("import-meta-glob/OnlyObjectKeysAsWrittenBundlesNothing" + (minifySyntax ? "WithMinifySyntax" : ""), {
+      entryPoints: ["/entry.ts"],
+      files: {
+        "/effects/a.ts": `console.log("a was evaluated");`,
+        "/effects/b.ts": `console.log("b was evaluated");`,
+        "/entry.ts": `
+          console.log(Object.keys(import.meta.glob("./effects/*.ts", { eager: true })).join());
+          console.log(Object["keys"](import.meta.glob("./effects/a.ts", { eager: true })).join());`,
+      },
+      minifySyntax,
+      run: { stdout: "a was evaluated\n./effects/a.ts,./effects/b.ts\n./effects/a.ts" },
+    });
+  }
+
   itBundled("import-meta-glob/UnusedResultIsRemoved", {
     entryPoints: ["/entry.ts"],
     files: {

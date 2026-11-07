@@ -1020,7 +1020,7 @@ devTest("css module class list edit refreshes the importing component without a 
     // A style-only edit re-evaluates nothing. The App.tsx edit after it shows
     // that exactly one message arrived since.
     await dev.patch("App.module.css", { find: "blue", replace: "green" });
-    await dev.patch("App.tsx", { find: "hello", replace: "world" });
-    await c.expectMessage("App:subtitle,title");
+    await dev.patch("App.tsx", { find: `"App:"`, replace: `"App edited:"` });
+    await c.expectMessage("App edited:subtitle,title");
   },
 });

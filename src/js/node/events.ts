@@ -216,42 +216,24 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
     ("unlikely");
     return initializeProxyReceiver(this, opts);
   }
-  const events = this._events;
-  const hasNoEvents = events === undefined || events === Object.$getPrototypeOf(this)._events;
-  const hasNoMaxListeners = this._maxListeners == null;
-  const capturesRejections = opts?.captureRejections;
-  if (hasNoMaxListeners && !capturesRejections && !EventEmitterPrototype[kCapture]) {
-    if (hasNoEvents) {
-      this._events = Object.create(null);
-      this._eventsCount = 0;
-      this[kShapeMode] = false;
-      this._maxListeners = undefined;
-      this[kCapture] = false;
-    } else {
-      // Preallocated `_events` (streams).
-      this[kShapeMode] = true;
-      this._maxListeners = undefined;
-      this[kCapture] = false;
-    }
-    return;
-  }
-
-  if (hasNoEvents) {
+  if (this._events === undefined || this._events === Object.$getPrototypeOf(this)._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
   } else {
+    // Preallocated `_events` (streams).
     this[kShapeMode] = true;
   }
 
-  if (hasNoMaxListeners) this._maxListeners = undefined;
-  if (capturesRejections) {
+  this._maxListeners ??= undefined;
+  if (opts?.captureRejections) {
     ("unlikely");
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
-    validateBoolean(opts!.captureRejections, "options.captureRejections");
-    this[kCapture] = !!opts!.captureRejections;
+    validateBoolean(opts.captureRejections, "options.captureRejections");
+    this[kCapture] = !!opts.captureRejections;
     storeEmitWithRejectionCapture(this);
   } else {
+    this[kCapture] = EventEmitterPrototype[kCapture];
     const capture = EventEmitterPrototype[kCapture];
     this[kCapture] = capture;
     if (capture) {
@@ -274,18 +256,20 @@ function initializeProxyReceiver(emitter: any, opts?: $Node.EventEmitterOptions)
   if (opts?.captureRejections) {
     validateBoolean(opts.captureRejections, "options.captureRejections");
     emitter[kCapture] = !!opts.captureRejections;
-    emitter.emit = emitWithRejectionCapture;
+    storeEmitWithRejectionCapture(emitter);
   } else {
     emitter[kCapture] = EventEmitterPrototype[kCapture];
     const capture = EventEmitterPrototype[kCapture];
     emitter[kCapture] = capture;
     if (capture) {
-      emitter.emit = emitWithRejectionCapture;
+      storeEmitWithRejectionCapture(emitter);
     }
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {} as $Node.EventEmitterPrototype);
+// Two statements: the object goes nowhere but under `prototype`, so a compiler that reads this text knows the members that are laid below.
+EventEmitter.prototype = {} as $Node.EventEmitterPrototype;
+const EventEmitterPrototype = EventEmitter.prototype;
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(this: $Node.EventEmitter, n: number) {
   validateNumber(n, "setMaxListeners", 0);
@@ -537,10 +521,12 @@ const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $
 
 // Only an emitter that captures rejections has an own `emit`. Compiled ahead of time, a store that names the property makes room for it in
 // every emitter, and every call of `emit` asks whether it is there.
-const propertiesOfCapturingEmitter = { emit: emitWithRejectionCapture };
+function storeUnderName(emitter: $Node.EventEmitter, name: string, method: unknown) {
+  (emitter as any)[name] = method;
+}
 function storeEmitWithRejectionCapture(emitter: $Node.EventEmitter) {
   if (IS_COMPILED_AHEAD_OF_TIME) {
-    Object.assign(emitter, propertiesOfCapturingEmitter);
+    storeUnderName(emitter, "emit", emitWithRejectionCapture);
   } else {
     emitter.emit = emitWithRejectionCapture;
   }
@@ -673,6 +659,39 @@ EventEmitterPrototype.prependOnceListener = function prependOnceListener(
   return this;
 };
 
+// The end of removeListener() once more, for an executable that was compiled ahead of time. It takes its place in a stack trace, under its name.
+const removeFromList = function removeListener(
+  emitter: $Node.EventEmitter,
+  events: $Node.Events,
+  type: $Node.EventName,
+  list: $Node.Listener[],
+  listener: $Node.Listener,
+) {
+  let position = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] === listener || list[i].listener === listener) {
+      position = i;
+      break;
+    }
+  }
+  if (position < 0) return emitter;
+
+  const n = list.length;
+  if (n === 2) {
+    events[type] = list[1 - position];
+  } else {
+    const copy = $newArrayWithSize<$Node.Listener>(n - 1);
+    for (let i = 0; i < position; i++) copy[i] = list[i];
+    for (let i = position + 1; i < n; i++) copy[i - 1] = list[i];
+    if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
+    events[type] = copy;
+  }
+
+  if (events.removeListener !== undefined) emitter.emit("removeListener", type, listener.listener ?? listener);
+
+  return emitter;
+};
+
 const removeListener = function removeListener(
   this: $Node.EventEmitter,
   type: $Node.EventName,
@@ -710,6 +729,8 @@ const removeListener = function removeListener(
     return this;
   }
 
+  // Compiled ahead of time, what follows is a function of its own: behind a declared parameter the list is known to be one.
+  if (IS_COMPILED_AHEAD_OF_TIME) return removeFromList(this, events, type, list, listener);
   let position = -1;
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i] === listener || list[i].listener === listener) {
@@ -1344,18 +1365,27 @@ Object.assign(EventEmitter, {
 // Node: `Object.getPrototypeOf(process) instanceof EventEmitter` holds.
 // Link the native process prototype under this module's EventEmitter; the
 // native methods stay earlier in the chain and keep winning lookups.
-try {
-  const processPrototype = Object.getPrototypeOf(process);
-  if (
-    processPrototype !== null &&
-    processPrototype !== Object.prototype &&
-    !(processPrototype instanceof EventEmitter)
-  ) {
-    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+// Compiled ahead of time, a native function does the same three steps: the compiler gives up on `process`, and keeps all that it can do,
+// where a statement asks what stands above it. A test that has replaced a built-in could tell the two apart.
+if (IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS) {
+  // From here on an accessor that a program lays on this prototype answers the names that `process` lacks, with `process` as `this`.
+  // Where the program asks for such a name the compiler is told that `process` goes out of its sight; the native function does not look at it.
+  const processIfReachable = PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES ? process : undefined;
+  $newCppFunction("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom", 1)(EventEmitterPrototype, processIfReachable);
+} else {
+  try {
+    const processPrototype = Object.getPrototypeOf(process);
+    if (
+      processPrototype !== null &&
+      processPrototype !== Object.prototype &&
+      !(processPrototype instanceof EventEmitter)
+    ) {
+      Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+    }
+  } catch {
+    // If the prototype is not relinkable, process simply keeps its native
+    // chain; everything else about this module still works.
   }
-} catch {
-  // If the prototype is not relinkable, process simply keeps its native
-  // chain; everything else about this module still works.
 }
 
 export default EventEmitter as $Node.EventEmitterConstructor;

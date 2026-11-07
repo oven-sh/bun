@@ -744,7 +744,7 @@ When you add multiple entrypoints to a standalone executable, Bun bundles each o
 
 We may eventually detect statically-known paths in `new Worker(path)` and bundle them automatically. For now, you need to list the worker file as an entrypoint, as in the earlier example.
 
-If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist. With [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings#files-on-disk-are-not-part-of-the-program), Bun doesn't load it.
+If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist. An executable built with `--aot` does that only with [`--aot-allow-code-from-disk`](/compiler/compatibility#dynamic-imports). With [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings#files-on-disk-are-not-part-of-the-program), Bun doesn't load it.
 
 ---
 
@@ -766,6 +766,8 @@ That means if the executable is at `/usr/bin/hello` and the user's terminal is i
 cd /home/me/Desktop
 ./hello
 ```
+
+With `--aot`, a path is resolved the first time it is imported. After `process.chdir()`, `await import("./my.db", { with: { type: "sqlite" } })` returns the database that was opened first, not the one in the new directory.
 
 ---
 
@@ -1006,6 +1008,12 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
 With `--aot`, your modules and the files you embed keep their places relative to one another. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`.
+
+Without `--aot`, a single file is embedded under its base name: `--asset ./a/config.json` is at `/$bunfs/root/config.json`. With `--aot` it's at `/$bunfs/root/a/config.json`, and `/$bunfs/root/config.json` finds it too, so code written for either keeps working. Three things differ:
+
+- The base name only resolves. `fs.readdirSync()` and `Bun.embeddedFiles` list the file once, as `a/config.json`.
+- If a module, another embedded file or a directory is already at that path, the path keeps meaning that.
+- `--asset ./a/config.json --asset ./b/config.json` is an error without `--aot`, because both files would be `config.json`. With `--aot` it builds. Each file is at its own path and `/$bunfs/root/config.json` doesn't exist.
 
 `__dirname`, `__filename` and `require.resolve()` give the path your source file had on the machine that ran the build, with and without `--aot`. An executable that uses one of them contains that path, so two builds in different directories differ. `import.meta.dir`, `import.meta.path` and `import.meta.url` start with `/$bunfs/root/` instead.
 
@@ -1385,7 +1393,6 @@ interface CompileBuildOptions {
   bytecodeOrder?: string | string[] | false | null; // Order file(s) to lay the bytecode out by (requires bytecode: true)
   jitPolicy?: number; // JIT tier-up threshold scale at startup (default: 1 = normal)
   aot?: boolean; // Compile the program to machine code ahead of time (default: false)
-  aotLogTypeMismatches?: boolean; // With aot: log values that don't match their declared type (default: false)
   aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards"
   functionSource?: boolean; // With aot: embed function source code for fn.toString() (default: true)
   allowCodeFromDisk?: boolean; // With aot: let import(), require() and new Worker() load code from disk (default: false)

@@ -498,7 +498,7 @@ using WebCore::JSStreamsRuntime;
 bool isNonHostAsyncGeneratorFunction(JSObject* object)
 {
 #if ENABLE(AOT)
-    if (JSC::AOT::declaredAs(object) == JSC::AOT::DeclaredAs::AsyncGeneratorFunction)
+    if (object->vm().hasCompiledCode() && JSC::AOT::declaredAs(object) == JSC::AOT::DeclaredAs::AsyncGeneratorFunction)
         return true;
 #endif
     auto* function = dynamicDowncast<JSFunction>(object);

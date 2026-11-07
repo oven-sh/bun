@@ -85,8 +85,28 @@ struct StripWalk {
     finished: FxHashMap<TypeId, TypeId>,
 }
 
+#[inline]
 fn push_nodes(pending: &mut PendingNodes, nodes: impl IntoIterator<Item = TypeNodeId>) {
-    pending.extend(nodes.into_iter().filter(|node| node.is_some()));
+    for node in nodes {
+        if node.is_some() {
+            pending.push(node);
+        }
+    }
+}
+
+#[inline]
+fn has_declared_parts(data: &TypeData) -> bool {
+    matches!(
+        data,
+        TypeData::Union(_)
+            | TypeData::Intersection(_)
+            | TypeData::Ref { .. }
+            | TypeData::Tuple { .. }
+            | TypeData::Anon { .. }
+            | TypeData::Fns { .. }
+            | TypeData::Synth(_)
+            | TypeData::ReverseMapped { .. }
+    )
 }
 
 fn tuple_element_type_node(hir: &hir::File<'_>, element: &TupleElem) -> TypeNodeId {
@@ -297,8 +317,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             named.symbols.push(symbol);
         } else if flags.contains(SymFlags::TYPE_ALIAS) || !flags.intersects(SymFlags::TYPE) {
             named.has_untrusted_part = true;
-        } else if written_count < self.c.files().type_argument_arity(symbol).1 {
+        } else if self.takes_more_type_arguments(symbol, written_count) {
             named.symbols.push(symbol);
+        }
+    }
+
+    fn takes_more_type_arguments(&self, symbol: Sym, written_count: usize) -> bool {
+        let files = self.c.files();
+        match files.only_type_param_list(symbol) {
+            Some((_, parameters)) if parameters.len() <= written_count => false,
+            _ => written_count < files.type_argument_arity(symbol).1,
         }
     }
 
@@ -324,6 +352,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(symbol) = symbol else {
             return;
         };
+        if arguments.is_empty() {
+            return;
+        }
         let symbol = self.c.files().canonical(symbol);
         if self.reads_declarations_of_arguments(symbol, arguments.len()) {
             let hir = self.c.hir(file);
@@ -377,27 +408,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn has_untrusted_declaration(&mut self, ty: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
-        let has_parts = matches!(
-            self.c.data(ty),
-            TypeData::Union(_)
-                | TypeData::Intersection(_)
-                | TypeData::Ref { .. }
-                | TypeData::Tuple { .. }
-                | TypeData::Anon { .. }
-                | TypeData::Fns { .. }
-                | TypeData::Synth(_)
-                | TypeData::ReverseMapped { .. }
-        );
-        if !has_parts || !visited.insert(ty) {
+        let data = self.c.data(ty);
+        if !has_declared_parts(data) || !visited.insert(ty) {
             return false;
         }
         if self.c.is_stack_low() {
             return true;
         }
-        match self.c.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => parts
-                .iter()
-                .any(|&part| self.has_untrusted_declaration(part, visited)),
+        match data {
+            TypeData::Union(parts) | TypeData::Intersection(parts) => parts.iter().any(|&part| {
+                has_declared_parts(self.c.data(part))
+                    && self.has_untrusted_declaration(part, visited)
+            }),
             TypeData::Ref { target, .. } => {
                 !self.is_declared_in_type_function_files(*target)
                     || (self.c.type_arguments(ty).iter())
@@ -437,10 +459,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if named.has_untrusted_part {
             return true;
         }
+        if named.symbols.is_empty() {
+            return false;
+        }
         let mut graph = AliasScanGraph::default();
         let mut mentions = false;
-        for &symbol in &named.symbols {
+        for &symbol in named.symbols.iter() {
             mentions |= self.scan_alias(symbol, &mut graph) == AliasScan::MentionsUntrustedAlias;
+        }
+        if graph.nodes.is_empty() {
+            return mentions;
         }
         self.scan_alias_declarations(&mut graph);
         let mut symbols = named.symbols.iter();

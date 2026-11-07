@@ -1,0 +1,17 @@
+# `for (const [i, account] of accounts.entries()) sum += account.balance + i`: the walk steps the list by index, and the element has the type that Link proves the list to hold, with undefined for a hole: no test of the shape, no read by name.
+# f1 = make, f2 = total
+# -- source: what-a-loop-over-the-entries-of-a-list-hands-out-has-the-type-of-its-elements.ts
+# declare function print(value: unknown): void;
+# interface Account { balance: number }
+# function make(i: number): Account { return { balance: i }; }
+# function total(accounts: Account[]): number { let sum = 0; for (const [i, account] of accounts.entries()) sum += account.balance + i; return sum; }
+# const list: Account[] = [make(1), make(2), make(3)];
+# print(total(list)); list[1] = make(20); print(total(list));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: undefined|L{{*}} = GetArrayElement
+# CHECK: = GetSlot {{*}} key="balance"
+# RUN(NOT): walk f2 mechanisms=all
+# NOT-NOT: = ShapeTest
+# NOT-NOT: = PropGet

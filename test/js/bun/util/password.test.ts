@@ -570,6 +570,8 @@ test("verify reads the hash as a hash of the algorithm it is given", async () =>
     for (const label of argon2) {
       expect(password.verifySync("hello", hash, label)).toBeTrue();
       expect(await password.verify("hello", hash, label)).toBeTrue();
+      expect(password.verifySync("wrong", hash, label)).toBeFalse();
+      expect(await password.verify("wrong", hash, label)).toBeFalse();
     }
     expect(password.verifySync("hello", hash, "bcrypt")).toBeFalse();
     expect(await password.verify("hello", hash, "bcrypt")).toBeFalse();

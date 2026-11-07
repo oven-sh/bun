@@ -2391,38 +2391,35 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
-  // BUN_DESTRUCT_VM_ON_EXIT, which the sanitizer lanes set for every child, waits for the thread pool at exit.
-  const exitsWhileThreadPoolWorks = {
-    ...bunEnv,
-    BUN_DESTRUCT_VM_ON_EXIT: "0",
-    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-  };
-
-  test("a WebCrypto operation left under way", async () => {
+  test("WebCrypto operations left under way, in the file and in a ShadowRealm", async () => {
     using dir = tempDir(
       "isolate-leak-webcrypto",
       makeLeakFixture(`
-        const key = await crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]);
+        import { afterAll } from "bun:test";
+        let settled = 0;
         // It takes minutes, so it outlasts the run.
-        crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512);
-      `),
-    );
-    expect(await maxLiveGlobals(String(dir), exitsWhileThreadPoolWorks)).toBeLessThanOrEqual(4);
-  });
-
-  test("a WebCrypto operation left under way in a ShadowRealm", async () => {
-    using dir = tempDir(
-      "isolate-leak-webcrypto-realm",
-      makeLeakFixture(`
-        const started = Promise.withResolvers();
-        new ShadowRealm().evaluate(\`(started, settled) => void crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]).then(key => {
-          crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512).then(settled);
+        const derive = \`(started, settled) => void crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]).then(key => {
+          crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512).then(settled, settled);
           started();
-        })\`)(started.resolve, () => {});
-        await started.promise;
+        })\`;
+        for (const evaluate of [eval, source => new ShadowRealm().evaluate(source)]) {
+          const started = Promise.withResolvers();
+          evaluate(derive)(started.resolve, () => void settled++);
+          await started.promise;
+        }
+        afterAll(() => expect(settled).toBe(0));
       `),
     );
-    expect(await maxLiveGlobals(String(dir), exitsWhileThreadPoolWorks)).toBeLessThanOrEqual(4);
+    const env = {
+      ...bunEnv,
+      // Two of the operations keep a thread busy. The others wait for one.
+      UV_THREADPOOL_SIZE: "2",
+      // The sanitizer lanes set it for every child. It waits for the thread pool at exit.
+      BUN_DESTRUCT_VM_ON_EXIT: "0",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+    // Each file has two globals.
+    expect(await maxLiveGlobals(String(dir), env)).toBeLessThanOrEqual(6);
   });
 
   test("long setTimeout/setInterval left pending", async () => {

@@ -342,7 +342,7 @@ void ScriptExecutionContext::prepareForDestruction()
 
     // The promise of a WebCrypto operation that is under way is a GC root.
     if (auto* subtleCrypto = m_globalObject->existingSubtleCrypto())
-        subtleCrypto->clearPendingPromises();
+        subtleCrypto->unrootPendingPromises();
 }
 
 void ScriptExecutionContext::removeAllEventListeners()

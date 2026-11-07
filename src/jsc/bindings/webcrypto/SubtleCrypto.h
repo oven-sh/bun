@@ -98,8 +98,8 @@ public:
     // KeyObject.prototype.toCryptoKey also reuses the usage-bitmap mapping.
     static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&);
 
-    // For ScriptExecutionContext::prepareForDestruction(): none of the promises is settled any more.
-    void clearPendingPromises();
+    // For ScriptExecutionContext::prepareForDestruction().
+    void unrootPendingPromises();
 
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);
@@ -113,6 +113,8 @@ private:
         RefPtr<DeferredPromise> get(DeferredPromise*) const;
         RefPtr<DeferredPromise> take(DeferredPromise*);
         void remove(DeferredPromise*);
+        // The entries stay: the operations under way find their promises by address.
+        void unroot();
 
     private:
         struct Entry {

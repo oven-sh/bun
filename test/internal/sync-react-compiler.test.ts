@@ -12,8 +12,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const script = readFileSync(join(import.meta.dir, "..", "..", "scripts", "sync-react-compiler.sh"), "utf8");
@@ -25,13 +25,12 @@ const astConsumer = (name: string, revision: number) => `use react_compiler_ast:
 describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/sync-react-compiler.sh", () => {
   let root: ReturnType<typeof tempDir>;
   let env: Record<string, string | undefined>;
-  /** The commit in UPSTREAM_PORTED, the one after it, and the tip of `main`. */
-  let ported: string, second: string, main: string;
+  /** Upstream's commits: the one before the ported commit, the ported commit, the one after it, the tip of `main`. */
+  let before: string, ported: string, second: string, main: string;
 
   beforeAll(async () => {
     root = tempDir("sync-react-compiler", {
       home: {},
-      repo: { "scripts/sync-react-compiler.sh": script, "src/react_compiler/UPSTREAM_PORTED": "" },
       upstream: {
         [crates]: {
           // Whole-crate ports.
@@ -43,8 +42,6 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "react_compiler_hir/src/print.rs": source("print", 1),
           // An AST-boundary port.
           "react_compiler_lowering/src/build_hir.rs": astConsumer("lower", 1),
-          // Not ported, and names react_compiler_ast at the ported commit already.
-          "react_compiler/src/fixture_utils.rs": astConsumer("fixture", 1),
           "react_compiler_ast/src/lib.rs": "pub struct File;\n",
         },
       },
@@ -83,14 +80,20 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       return stdout.trim();
     };
     const commit = async (files: Record<string, string>) => {
-      for (const [path, contents] of Object.entries(files)) writeFileSync(join(upstream, crates, path), contents);
+      for (const [path, contents] of Object.entries(files)) {
+        mkdirSync(dirname(join(upstream, crates, path)), { recursive: true });
+        writeFileSync(join(upstream, crates, path), contents);
+      }
       await git("add", "-A");
       await git("commit", "--quiet", "-m", "commit");
       return await git("rev-parse", "HEAD");
     };
 
     await git("-c", "init.defaultBranch=main", "init", "--quiet");
-    ported = await commit({});
+    // Here only the AST-boundary ports name react_compiler_ast: the script has no consumer to list.
+    before = await commit({});
+    // Not ported, and names react_compiler_ast at the ported commit already.
+    ported = await commit({ "react_compiler/src/fixture_utils.rs": astConsumer("fixture", 1) });
     // An annotated tag: the script has to resolve it to the commit, not to the tag object.
     await git("tag", "--annotate", "-m", "tag", "ported-tag", ported);
     second = await commit({ "react_compiler_hir/src/lib.rs": source("hir", 2) });
@@ -107,16 +110,21 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       "react_compiler_ast/src/scope.rs": astConsumer("scope", 3),
       "react_compiler/src/timing.rs": "use react_compiler_ast_extras::Timer;\n",
     });
-    writeFileSync(join(String(root), "repo", "src", "react_compiler", "UPSTREAM_PORTED"), ported + "\n");
   });
 
   afterAll(() => root?.[Symbol.dispose]());
 
-  /** Runs the script. Of each diff in its output only the `---`, `+++`, `-` and `+` lines are kept. */
-  async function sync(args: string[] = [], gitConfig: Record<string, string> = {}) {
-    const repo = join(String(root), "repo");
+  /**
+   * Runs a copy of the script that has `pin` in its UPSTREAM_PORTED. Of each diff in the output only the `---`, `+++`,
+   * `-` and `+` lines are kept.
+   */
+  async function sync(pin: string, args: string[] = [], gitConfig: Record<string, string> = {}) {
+    using repo = tempDir("sync-react-compiler-repo", {
+      "scripts/sync-react-compiler.sh": script,
+      "src/react_compiler/UPSTREAM_PORTED": pin + "\n",
+    });
     await using proc = Bun.spawn({
-      cmd: ["bash", join(repo, "scripts", "sync-react-compiler.sh"), ...args],
+      cmd: ["bash", join(String(repo), "scripts", "sync-react-compiler.sh"), ...args],
       env: { ...env, ...gitConfig },
       stdout: "pipe",
       stderr: "pipe",
@@ -124,10 +132,11 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const lines = (output: string) =>
       output
+        .replaceAll(before, "<before>")
         .replaceAll(ported, "<ported>")
         .replaceAll(second, "<second>")
         .replaceAll(main, "<main>")
-        .replaceAll(repo, "<repo>")
+        .replaceAll(String(repo), "<repo>")
         .split("\n");
     return {
       stdout: lines(stdout).filter(
@@ -139,7 +148,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
   }
 
   test.concurrent("diffs the ported commit against upstream's main", async () => {
-    expect(await sync()).toMatchInlineSnapshot(`
+    expect(await sync(ported)).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": [
@@ -195,7 +204,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
   });
 
   test.concurrent("diffs the ported commit against the commit it is given", async () => {
-    expect(await sync([second])).toMatchInlineSnapshot(`
+    expect(await sync(ported, [second])).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": [
@@ -221,7 +230,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
   });
 
   test.concurrent("has nothing to diff when the ref it is given is the ported commit", async () => {
-    expect(await sync(["ported-tag"])).toMatchInlineSnapshot(`
+    expect(await sync(ported, ["ported-tag"])).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": [
@@ -236,10 +245,51 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     `);
   });
 
+  // In the next two tests `git grep` finds no file at one of the two commits, and exits with 1.
+  test.concurrent("lists a consumer as new when the ported commit has none", async () => {
+    expect(await sync(before, [ported])).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": [
+          "Fetching facebook/react @ {<before>, <ported>} ...",
+        ],
+        "stdout": [
+          "UPSTREAM_PORTED: <before>",
+          "UPSTREAM_HEAD:   <ported>",
+          "### whole-crate ports (apply mechanically) ###",
+          "### AST-boundary ports (re-port via DESIGN.md type map) ###",
+          "### new react_compiler_ast consumers (need new Bun port) ###",
+          "compiler/crates/react_compiler/src/fixture_utils.rs",
+          "When porting is done: echo <ported> > <repo>/src/react_compiler/UPSTREAM_PORTED",
+        ],
+      }
+    `);
+  });
+
+  test.concurrent("lists no new consumer when the commit it is given has none", async () => {
+    expect(await sync(ported, [before])).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": [
+          "Fetching facebook/react @ {<ported>, <before>} ...",
+        ],
+        "stdout": [
+          "UPSTREAM_PORTED: <ported>",
+          "UPSTREAM_HEAD:   <before>",
+          "### whole-crate ports (apply mechanically) ###",
+          "### AST-boundary ports (re-port via DESIGN.md type map) ###",
+          "### new react_compiler_ast consumers (need new Bun port) ###",
+          "(none)",
+          "When porting is done: echo <before> > <repo>/src/react_compiler/UPSTREAM_PORTED",
+        ],
+      }
+    `);
+  });
+
   test.concurrent("stops when it cannot list the files that name react_compiler_ast", async () => {
     // `git grep` does not run with this value.
     const grepFails = { GIT_CONFIG_COUNT: "4", GIT_CONFIG_KEY_3: "grep.threads", GIT_CONFIG_VALUE_3: "-1" };
-    const { stdout, stderr, exitCode } = await sync([], grepFails);
+    const { stdout, stderr, exitCode } = await sync(ported, [], grepFails);
     expect({ lastLine: stdout.at(-1), stderr, exitCode }).toEqual({
       lastLine: "### new react_compiler_ast consumers (need new Bun port) ###",
       stderr: [

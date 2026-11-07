@@ -847,17 +847,41 @@ describe.concurrent("vi.setConfig", () => {
         console.log(JSON.stringify({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), env: process.env.STUBBED, global: typeof stubbed }));
       });
     `;
+    // Two spies on each property. The older one is a getter spy, or a method spy under a wrapper that the test assigns.
+    const fileWithStackedSpies = (module: string, config = "") => `
+      import { spyOn, test, vi } from "${module}";
+      ${config}
+      const objects = Array.from({ length: 32 }, () => ({ method: () => "original" }));
+      const descriptors = objects.map(object => Object.getOwnPropertyDescriptor(object, "method"));
+      test("first", () => {
+        objects.forEach((object, i) => {
+          const spy = i & 2 ? vi.spyOn : spyOn;
+          if (i & 1) {
+            spy(object, "method", "get");
+          } else {
+            const older = spy(object, "method");
+            object.method = () => older();
+          }
+          spy(object, "method");
+        });
+      });
+      test("second", () => {
+        const notRestored = objects.filter((object, i) => !Bun.deepEquals(Object.getOwnPropertyDescriptor(object, "method"), descriptors[i], true));
+        console.log(JSON.stringify({ notRestored: notRestored.length }));
+      });
+    `;
     const seen = async (
       module: string,
       options: Record<string, boolean>,
       through: "bunfig" | "setConfig" | "preload",
       args: string[] = [],
+      source = file,
     ) => {
       const setConfig = `vi.setConfig(${JSON.stringify(options)});`;
       const { stdout, stderr, exitCode } = await run(
         ["test", ...args, ...(through === "preload" ? ["--preload=./preload.ts"] : [])],
         {
-          "a.test.ts": file(module, through === "setConfig" ? setConfig : ""),
+          "a.test.ts": source(module, through === "setConfig" ? setConfig : ""),
           "preload.ts": `import { vi } from "bun:test"; ${setConfig}`,
           "bunfig.toml":
             through === "bunfig"
@@ -906,6 +930,16 @@ describe.concurrent("vi.setConfig", () => {
       test("clearMocks: false, in a file that imports from vitest", async () => {
         expect(await seen("vitest", { clearMocks: false }, through)).toEqual(nothing);
       });
+
+      test("restoreMocks: true, with two spies on each property", async () => {
+        expect(await seen("bun:test", { restoreMocks: true }, through, [], fileWithStackedSpies)).toEqual({
+          notRestored: 0,
+        });
+      });
+    });
+
+    test("by default, with two spies on each property", async () => {
+      expect(await seen("bun:test", {}, "bunfig", [], fileWithStackedSpies)).toEqual({ notRestored: 32 });
     });
 
     test("in --parallel workers", async () => {

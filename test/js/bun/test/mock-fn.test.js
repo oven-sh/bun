@@ -5090,6 +5090,205 @@ if (isBun) {
         expect(other.method()).toBe("original");
         expect(jest.isMockFunction(other.method)).toBe(false);
       });
+
+      // Jest 30 and Vitest 5 go oldest first, which leaves the function that the test assigned. Vitest 3 went newest first.
+      describe("undoes the spies stacked on one property newest first", () => {
+        // Many properties, because without a fixed order each one had an even chance to come out right.
+        const count = 16;
+        const original = () => "original";
+        const symbol = Symbol("method");
+        const each = make => () => Array.from({ length: count }, () => make());
+        const own = (target, key) => ({ target, key, holder: target });
+        // Each makes `count` properties that hold a method. A spy goes on `target[key]`, and `holder` is the object that then has it.
+        const properties = [
+          ["of an object", each(() => own({ method: original }, "method"))],
+          ["with a symbol key", each(() => own({ [symbol]: original }, symbol))],
+          ["with an index key", each(() => own([original], 0))],
+          ["that is inherited", each(() => own(Object.create({ method: original }), "method"))],
+          ["of a class", each(() => own(class { static method() {} }, "method"))], // prettier-ignore
+          ["behind a Proxy", each(() => behindTrap((property, define) => define()))],
+          [
+            "of the sandbox of a node:vm context",
+            () => {
+              const holder = Object.fromEntries(Array.from({ length: count }, (_, i) => ["method" + i, original]));
+              const target = vm.runInContext("this", vm.createContext(holder));
+              return Object.keys(holder).map(key => ({ target, key, holder }));
+            },
+          ],
+        ];
+        // A property whose spies are installed and restored through the defineProperty trap of a Proxy.
+        function behindTrap(onDefine) {
+          const holder = { method: original };
+          const property = { key: "method", holder };
+          property.target = new Proxy(holder, {
+            defineProperty: (target, key, descriptor) =>
+              onDefine(property, () => Reflect.defineProperty(target, key, descriptor)),
+          });
+          return property;
+        }
+        const read = ({ key, holder }) => [Object.getOwnPropertyDescriptor(holder, key), holder[key]];
+        const changed = (made, before) =>
+          made.filter((property, i) => !util.isDeepStrictEqual(read(property), before[i])).length;
+
+        const wrapperBetween = wrap => (spy, target, key) => {
+          const first = spy(target, key);
+          target[key] = wrap(first);
+          return [first, spy(target, key)];
+        };
+        // Each stacks spies on `target[key]` and returns them, the oldest first.
+        const pairs = [
+          ["a getter spy, a method spy", (spy, target, key) => [spy(target, key, "get"), spy(target, key)]],
+          ["a method spy, a function that the test assigns, a method spy", wrapperBetween(() => () => "assigned")],
+          ["a method spy, a wrapper of it that the test assigns, a method spy", wrapperBetween(first => () => first())],
+        ];
+        const stacks = [
+          ...pairs,
+          [
+            "three method spies with a wrapper between them",
+            (spy, target, key) => {
+              const [first, second] = wrapperBetween(first => () => first())(spy, target, key);
+              target[key] = () => second();
+              return [first, second, spy(target, key)];
+            },
+          ],
+          [
+            "a getter spy, a setter spy, a method spy",
+            (spy, target, key) => [spy(target, key, "get"), spy(target, key, "set"), spy(target, key)],
+          ],
+          [
+            "a getter spy, a method spy, a getter spy",
+            (spy, target, key) => [spy(target, key, "get"), spy(target, key), spy(target, key, "get")],
+          ],
+        ];
+        const isStacked = layers => new Set(layers).size === layers.length && layers.every(jest.isMockFunction);
+
+        // For each stack, how many of the properties that `make` gives are not as they were once `restoreAll` has run.
+        const notRestored = (spy, make, restoreAll) =>
+          Object.fromEntries(
+            stacks.map(([name, stack]) => {
+              const made = make();
+              const before = made.map(read);
+              const spies = made.map(({ target, key }) => stack(spy, target, key));
+              restoreAll();
+              return [name, spies.every(isStacked) ? changed(made, before) : "the spies are not stacked"];
+            }),
+          );
+        const none = Object.fromEntries(stacks.map(([name]) => [name, 0]));
+
+        describe.each(flavors)("%s", (_, isVitest, fn, spy) => {
+          test.each(properties)("a method %s", (_, make) => {
+            expect(notRestored(spy, make, () => jest.restoreAllMocks())).toEqual(none);
+          });
+
+          test.each([
+            ["mock.restore()", () => mock.restore()],
+            ["vi.restoreAllMocks()", () => vi.restoreAllMocks()],
+          ])("through %s", (_, restoreAll) => {
+            expect(notRestored(spy, properties[0][1], restoreAll)).toEqual(none);
+          });
+        });
+
+        test.each(flavors)(
+          "%s: an export that its module assigns to between two spies",
+          async (_, isVitest, fn, spy) => {
+            const names = Array.from({ length: count }, (_, i) => "method" + i);
+            using dir = require("harness").tempDir("mock-fn-stacked-exports", {
+              "module.js":
+                names.map(name => `export let ${name} = () => "original";\n`).join("") +
+                `export function assign(name, value) { eval(name + " = value"); }\n`,
+            });
+            const namespace = await import(require("node:path").join(String(dir), "module.js"));
+            for (const wrap of [() => () => "assigned", first => () => first()]) {
+              const before = names.map(name => namespace[name]);
+              const spies = names.map(name => {
+                const first = spy(namespace, name);
+                namespace.assign(name, wrap(first));
+                return [first, spy(namespace, name)];
+              });
+              jest.restoreAllMocks();
+              // Also keeps the older spies alive until here. The function that the module assigned does not hold them.
+              expect(spies.map(isStacked)).not.toContain(false);
+              expect(names.map(name => namespace[name])).toEqual(before);
+            }
+          },
+        );
+
+        test.each(flavors)(
+          "%s: Proxy traps see unrelated spies newest first, also on a retry, and the newest spy's error is thrown",
+          (_, isVitest, fn, spy) => {
+            const seen = [];
+            let shouldThrow = false;
+            const made = Array.from({ length: 16 }, (_, index) =>
+              behindTrap((property, define) => {
+                seen.push(index);
+                if (shouldThrow) throw new Error("thrown for spy " + index);
+                return define();
+              }),
+            );
+            const before = made.map(read);
+            for (const { target, key } of made) spy(target, key);
+            seen.length = 0;
+
+            shouldThrow = true;
+            expect(() => jest.restoreAllMocks()).toThrow(new Error("thrown for spy 15"));
+            shouldThrow = false;
+            jest.restoreAllMocks();
+            const newestFirst = made.map((_, index) => index).reverse();
+            expect(seen).toEqual([...newestFirst, ...newestFirst]);
+            expect(changed(made, before)).toBe(0);
+          },
+        );
+
+        describe.each(pairs)("%s", (_, stack) => {
+          test.each(flavors)(
+            "%s: when restoring the newer spy throws, the older one waits for the retry",
+            (_, isVitest, fn, spy) => {
+              const made = each(() =>
+                behindTrap((property, define) => {
+                  if (!property.shouldThrow) return define();
+                  property.shouldThrow = false;
+                  throw new Error("thrown by the trap");
+                }),
+              )();
+              const before = made.map(read);
+              const spies = made.map(({ target, key }) => stack(spy, target, key));
+              for (const property of made) property.shouldThrow = true;
+
+              expect(() => jest.restoreAllMocks()).toThrow("thrown by the trap");
+              expect(made.map(({ key, holder }, i) => holder[key] === spies[i].at(-1))).not.toContain(false);
+              jest.restoreAllMocks();
+              // Also keeps the older spies alive until here. The function that the test assigned does not hold them.
+              expect(spies.map(isStacked)).not.toContain(false);
+              expect(changed(made, before)).toBe(0);
+            },
+          );
+        });
+
+        test.each(flavors)(
+          "%s: a spy that a Proxy trap makes while another spy is being installed is the newer one",
+          (_, isVitest, fn, spy) => {
+            const made = each(() =>
+              behindTrap((property, define) => {
+                const defined = define();
+                if (property.isInstalling) {
+                  property.isInstalling = false;
+                  property.inner = spy(property.holder, property.key);
+                }
+                return defined;
+              }),
+            )();
+            const before = made.map(read);
+            const spies = made.map(property => {
+              property.isInstalling = true;
+              return [spy(property.target, property.key, "get"), property.inner];
+            });
+            expect(spies.map(isStacked)).not.toContain(false);
+
+            jest.restoreAllMocks();
+            expect(changed(made, before)).toBe(0);
+          },
+        );
+      });
     });
 
     test("restoring a native accessor that was made non-configurable meanwhile", () => {

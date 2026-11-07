@@ -2996,6 +2996,42 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
+  // The older spy is a getter spy, or a method spy under a wrapper that the test assigns. Only undoing the newer spy first gives the original back.
+  test.each(modes)("two spies stacked on one property are restored: bun test %s", async flags => {
+    using dir = tempDir("spies-of-a-file", {
+      "shared.ts": `
+        export const objects = Array.from({ length: 32 }, () => ({ method: () => "original" }));
+        export const descriptors = objects.map(object => Object.getOwnPropertyDescriptor(object, "method"));
+      `,
+      "a.test.ts": `
+        import { expect, jest, spyOn, test, vi } from "bun:test";
+        import { objects } from "./shared.ts";
+        test("a", () => {
+          objects.forEach((object, i) => {
+            const spy = [spyOn, jest.spyOn, vi.spyOn][i % 3];
+            if (i & 1) {
+              spy(object, "method", "get");
+            } else {
+              const older = spy(object, "method");
+              object.method = () => older();
+            }
+            spy(object, "method");
+          });
+          expect(objects.map(object => jest.isMockFunction(object.method))).not.toContain(false);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { descriptors, objects } from "./shared.ts";
+        test("b", () => {
+          expect(objects.map(object => Object.getOwnPropertyDescriptor(object, "method"))).toEqual(descriptors);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), flags.split(" "), ["./a.test.ts", "./b.test.ts"]);
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
   test("spies of a file that fails to load are restored", async () => {
     using dir = tempDir("spies-of-a-file", {
       ...files,
@@ -3103,6 +3139,46 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       ["./a.test.ts", "./b.test.ts"],
     );
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  test("two spies that a preload stacks on one property are kept across files and then restored newest first", async () => {
+    using dir = tempDir("spies-of-a-preload", {
+      "preload.ts": `
+        import { spyOn, vi } from "bun:test";
+        globalThis.objects = Array.from({ length: 32 }, () => ({ method: () => "original" }));
+        globalThis.descriptors = objects.map(object => Object.getOwnPropertyDescriptor(object, "method"));
+        objects.forEach((object, i) => {
+          const spy = i & 2 ? vi.spyOn : spyOn;
+          if (i & 1) {
+            spy(object, "method", "get");
+          } else {
+            const older = spy(object, "method");
+            object.method = () => older();
+          }
+          spy(object, "method");
+        });
+      `,
+      "a.test.ts": `
+        import { expect, jest, test } from "bun:test";
+        test("a", () => {
+          expect(objects.map(object => jest.isMockFunction(object.method))).not.toContain(false);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, jest, mock, test } from "bun:test";
+        test("b", () => {
+          expect(objects.map(object => jest.isMockFunction(object.method))).not.toContain(false);
+          mock.restore();
+          expect(objects.map(object => Object.getOwnPropertyDescriptor(object, "method"))).toEqual(descriptors);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
   test("a preload's afterAll() sees the calls made in every file", async () => {

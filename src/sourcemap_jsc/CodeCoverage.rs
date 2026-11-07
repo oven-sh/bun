@@ -888,10 +888,6 @@ impl ByteRangeMapping {
                 !is_invented
             });
         }
-        let is_invented = |offset: u32| {
-            let after = invented.partition_point(|range| range.start <= offset);
-            after > 0 && offset < invented[after - 1].end
-        };
 
         let counts = ExecutionCounts::new(&blocks, &functions);
         let mut lines = LineCounts::default();
@@ -948,27 +944,14 @@ impl ByteRangeMapping {
         }
 
         if let Some(source_map) = source_map.as_deref() {
-            let mut previous_original = None;
-            source_map.for_each_mapping(|mapping| {
-                // The printer repeats a mapping at column 0 of a line that starts without one.
-                let original = (
-                    mapping.original.lines.zero_based(),
-                    mapping.original.columns.zero_based(),
-                );
-                if previous_original.replace(original) == Some(original) {
-                    return;
-                }
-                let (Ok(line), Some(offset)) = (
-                    usize::try_from(mapping.original.lines.zero_based()),
-                    self.offset_of(mapping.generated),
-                ) else {
-                    return;
-                };
-                if is_invented(offset) {
-                    return;
-                }
-                self.count_line(&counts, offset, line, &mut lines);
-            });
+            if invented.is_empty() {
+                self.count_lines_of_mappings(source_map, &counts, &mut lines, |_| false);
+            } else {
+                self.count_lines_of_mappings(source_map, &counts, &mut lines, |offset| {
+                    let after = invented.partition_point(|range| range.start <= offset);
+                    after > 0 && offset < invented[after - 1].end
+                });
+            }
         } else {
             for (line, &start) in self.line_starts.iter().enumerate() {
                 let end = self
@@ -1040,6 +1023,37 @@ impl ByteRangeMapping {
     /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: the `{`
     /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
     /// the `}` in a block of its own that never runs.
+    /// Counts the line of each mapping of `source_map`, but for the mappings whose place in the generated text `is_left_out` names.
+    fn count_lines_of_mappings(
+        &self,
+        source_map: &ParsedSourceMap,
+        counts: &ExecutionCounts,
+        lines: &mut LineCounts,
+        is_left_out: impl Fn(u32) -> bool,
+    ) {
+        let mut previous_original = None;
+        source_map.for_each_mapping(|mapping| {
+            // The printer repeats a mapping at column 0 of a line that starts without one.
+            let original = (
+                mapping.original.lines.zero_based(),
+                mapping.original.columns.zero_based(),
+            );
+            if previous_original.replace(original) == Some(original) {
+                return;
+            }
+            let (Ok(line), Some(offset)) = (
+                usize::try_from(mapping.original.lines.zero_based()),
+                self.offset_of(mapping.generated),
+            ) else {
+                return;
+            };
+            if is_left_out(offset) {
+                return;
+            }
+            self.count_line(counts, offset, line, lines);
+        });
+    }
+
     fn count_line(
         &self,
         counts: &ExecutionCounts,

@@ -798,6 +798,145 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
+  // The build loads a page together with the layouts above it, and pages share those layouts.
+  describe("routes that have layouts", () => {
+    const serverComponents = `serverComponents: { separateSSRGraph: true, serverRuntimeImportSource: "./server.ts", serverRegisterClientReferenceExport: "registerClientReference" },`;
+
+    /** A route file that exports its name. `button` is the path of the client component it imports. */
+    const routeFile = (name: string, button = "") =>
+      (button && `import { Button } from "${button}";\nexport const button = Button;\n`) +
+      `export const name = ${JSON.stringify(name)};`;
+
+    /** An app with a framework that prerenders, for each page, what the build passed for it. */
+    const appFiles = (style: string, { framework = "", router = "" } = {}) => ({
+      "server.ts": `
+        const files = meta => [meta.pageModule, ...meta.layouts].map(file => file.name);
+        export function render() {
+          return new Response("unused");
+        }
+        // The slug names the layouts that getParams got.
+        export function getParams(meta) {
+          return [{ slug: "under-" + files(meta).slice(1).join("-") }];
+        }
+        export async function prerender(meta) {
+          const page = { files: files(meta), modules: meta.modules.length, styles: meta.styles };
+          return { files: { "/index.html": JSON.stringify(page) } };
+        }
+        export function registerClientReference(value, file, name) {
+          return "client-" + name;
+        }
+      `,
+      "client.ts": `console.log("client");`,
+      "components/Button.ts": `"use client";\nexport function Button() {}`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "${style}", serverEntryPoint: "./server.ts", layouts: true, ${router} };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], ${framework} } } };
+      `,
+    });
+
+    /**
+     * Builds the app in `dir`. `pages` is what the framework wrote for each route. `styles` says
+     * for each stylesheet of a page whether the build wrote it.
+     */
+    async function prerender(dir: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const dist = path.join(dir, "dist");
+      const pages: Record<string, { files: string[]; modules: number; styles: boolean[] }> = {};
+      for (const file of existsSync(dist) ? new Bun.Glob("**/index.html").scanSync(dist) : []) {
+        const route = normalizePath(path.dirname(file));
+        const written = await Bun.file(path.join(dist, file)).json();
+        const styles = written.styles.map(
+          (url: unknown) => typeof url === "string" && existsSync(path.join(dist, url)),
+        );
+        pages[route === "." ? "/" : "/" + route] = { ...written, styles };
+      }
+      return { pages, exitCode, stderr };
+    }
+
+    test.concurrent.each([
+      ["nextjs-pages", "index.ts", "_layout.ts"],
+      ["nextjs-app-ui", "page.ts", "layout.ts"],
+    ])("a page is prerendered with its layouts, the inner-most first (%s)", async (style, pageFile, layoutFile) => {
+      using dir = tempDir("bake-production-layouts", {
+        ...appFiles(style),
+        "global.css": `body { color: red; }`,
+        [`routes/${layoutFile}`]: `import "../global.css";\n` + routeFile("root-layout"),
+        [`routes/${pageFile}`]: routeFile("home"),
+        [`routes/about/${pageFile}`]: routeFile("about"),
+        [`routes/docs/${layoutFile}`]: routeFile("docs-layout"),
+        [`routes/docs/${pageFile}`]: routeFile("docs"),
+        [`routes/docs/intro/${pageFile}`]: routeFile("intro"),
+        [`routes/docs/[slug]/${pageFile}`]: routeFile("post"),
+      });
+      const { pages, exitCode, stderr } = await prerender(String(dir));
+      // The root layout imports the only stylesheet, so every page gets it. The app has no client entry point.
+      const page = (...files: string[]) => ({ files, modules: 0, styles: [true] });
+      expect({ pages, exitCode }, stderr).toEqual({
+        pages: {
+          "/": page("home", "root-layout"),
+          "/about": page("about", "root-layout"),
+          "/docs": page("docs", "docs-layout", "root-layout"),
+          "/docs/intro": page("intro", "docs-layout", "root-layout"),
+          "/docs/under-docs-layout-root-layout": page("post", "docs-layout", "root-layout"),
+        },
+        exitCode: 0,
+      });
+    });
+
+    // Without server components no file is a client component, so every page gets the client entry point.
+    test.concurrent.each([
+      ["with server components", serverComponents, 0],
+      ["without server components", "", 1],
+    ])("a page is static only if it and every layout above it are (%s)", async (_, framework, ofStaticRoute) => {
+      using dir = tempDir("bake-production-layouts-client", {
+        ...appFiles("nextjs-pages", { framework, router: `clientEntryPoint: "./client.ts",` }),
+        "routes/index.ts": routeFile("home"),
+        "routes/blog/_layout.ts": routeFile("blog-layout"),
+        "routes/blog/index.ts": routeFile("blog"),
+        "routes/blog/post.ts": routeFile("post", "../../components/Button.ts"),
+        "routes/blog/plain/_layout.ts": routeFile("plain-layout"),
+        "routes/blog/plain/index.ts": routeFile("plain"),
+        "routes/blog/admin/_layout.ts": routeFile("admin-layout", "../../../components/Button.ts"),
+        "routes/blog/admin/index.ts": routeFile("admin"),
+        "routes/docs/_layout.ts": routeFile("docs-layout", "../../components/Button.ts"),
+        "routes/docs/index.ts": routeFile("docs"),
+        "routes/docs/intro.ts": routeFile("intro"),
+        "routes/docs/guide/_layout.ts": routeFile("guide-layout"),
+        "routes/docs/guide/index.ts": routeFile("guide"),
+      });
+      const { pages, exitCode, stderr } = await prerender(String(dir));
+      const modules = Object.fromEntries(Object.entries(pages).map(([route, written]) => [route, written.modules]));
+      expect({ modules, exitCode }, stderr).toEqual({
+        modules: {
+          // No layout, and the page imports no client component.
+          "/": ofStaticRoute,
+          // Neither the page nor its layout imports one.
+          "/blog": ofStaticRoute,
+          // Neither the page nor its two layouts import one.
+          "/blog/plain": ofStaticRoute,
+          // The page imports one.
+          "/blog/post": 1,
+          // The inner layout of two imports one.
+          "/blog/admin": 1,
+          // The layout of the route imports one.
+          "/docs": 1,
+          // The layout of the parent route imports one.
+          "/docs/intro": 1,
+          // The outer layout of two imports one.
+          "/docs/guide": 1,
+        },
+        exitCode: 0,
+      });
+    });
+  });
+
   test("a page can make a WebSocket while it is prerendered", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-websocket", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

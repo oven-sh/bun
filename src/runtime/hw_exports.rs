@@ -93,10 +93,37 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
 pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
+    key: &bun_core::String,
 ) {
-    if vm.pending_internal_promise().is_none() {
-        vm.set_pending_internal_promise(Some(promise));
+    if vm.pending_internal_promise().is_some() {
+        return;
     }
+    if vm.run_main_ran_entry_point && !key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME) {
+        // `Bun.main` gives the real path of the entry point, which is the key of its module also behind a symlink.
+        let main = crate::api::bun_object::get_main(vm.global());
+        let is_entry_point = main.is_string()
+            && bun_core::String::from_js(main, vm.global()).is_ok_and(|main| main.eql(key));
+        if !is_entry_point {
+            return;
+        }
+    }
+    vm.set_pending_internal_promise(Some(promise));
+}
+
+// HOST_EXPORT(Bun__VM__noteMainModuleOfRunMain, c)
+pub(crate) fn note_main_module_of_run_main(this: &mut VirtualMachine) {
+    // JSCommonJSModule.cpp calls this when a CommonJS module that `Module.runMain()` loaded is the main module.
+    if this.pending_internal_promise().is_none() {
+        this.run_main_ran_entry_point = true;
+    }
+}
+
+// HOST_EXPORT(Bun__VM__entryModuleLoad, c)
+pub(crate) fn entry_module_load(this: &mut VirtualMachine) -> u8 {
+    // Bit 0: the entry point is a file, not the text of `-e`, `-p` or stdin. Bit 1: a preload runs. Bit 2: a load read the entry file.
+    u8::from(this.module_loader.eval_source.is_none())
+        | (u8::from(this.is_in_preload) << 1)
+        | (u8::from(this.has_loaded) << 2)
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.

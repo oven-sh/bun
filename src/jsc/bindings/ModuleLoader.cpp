@@ -885,7 +885,8 @@ JSValue fetchCommonJSModule(
     JSValue specifierValue,
     String specifierWtfString,
     BunString* referrer,
-    BunString* typeAttribute)
+    BunString* typeAttribute,
+    bool asksExtensionHandlers)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
@@ -964,6 +965,8 @@ JSValue fetchCommonJSModule(
     if (cached)
         return cached;
 
+    if (!asksExtensionHandlers) [[unlikely]]
+        return fetchCommonJSModuleNonBuiltin<true>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
@@ -1052,6 +1055,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
             ASSERT_NOT_REACHED();
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
+        }
+        if (target->mainLoad == JSCommonJSModule::MainLoad::Pending) [[unlikely]] {
+            Bun::becomeMainModuleBeforeExtensionHandler(globalObject, target);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});

@@ -188,6 +188,8 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    /// An overridden `Module.runMain` ran a CommonJS module as the main module, with no promise. Then only a load of the entry point itself gives its promise.
+    pub run_main_ran_entry_point: bool,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
     pub bake_config_plugins: crate::strong::Optional,
@@ -3656,6 +3658,11 @@ impl VirtualMachine {
                 && crate::compiled_program::entry_point_is_commonjs(self.global()))
     }
 
+    /// A new entry load starts, or code assigns `Bun.main`: what `Module.runMain()` started before is not a main module.
+    pub fn forget_run_main_modules(&mut self) {
+        crate::cpp::Bun__forgetMainModuleOfRunMain(self.global());
+    }
+
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
@@ -3707,6 +3714,7 @@ impl VirtualMachine {
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();
+        self.forget_run_main_modules();
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -3811,12 +3819,14 @@ impl VirtualMachine {
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
+                    self.run_main_ran_entry_point = false;
                     let global_ref = self.global();
                     let run_main_path = match (self.main_entry_point, self.main()) {
                         (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
                         (_, Some(main)) => main,
                     };
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
+                    let mut returned = false;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3827,6 +3837,7 @@ impl VirtualMachine {
                                 if let Some(stored) = self.pending_internal_promise() {
                                     return Ok(stored);
                                 }
+                                returned = true;
                                 // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
                                 // which may throw.
                                 jsc::call_check_slow(global_ref, || {
@@ -3850,6 +3861,14 @@ impl VirtualMachine {
                             }
                         };
                     self.set_pending_internal_promise(Some(promise));
+                    // Nothing waits for a promise that is settled when the override returns, so this runs what the call queued. The caller reports a rejection.
+                    let status = crate::JSPromise::status_ptr(promise);
+                    if returned && status != crate::js_promise::Status::Pending {
+                        if status == crate::js_promise::Status::Rejected {
+                            crate::JSPromise::opaque_mut(promise).set_handled();
+                        }
+                        self.event_loop_mut().tick();
+                    }
                     return Ok(promise);
                 }
             }
@@ -6182,6 +6201,8 @@ impl VirtualMachine {
                 }
             }
         }
+        // After the preloads: a script that one of them started is not a main module of the test file either.
+        self.forget_run_main_modules();
 
         // Note: reshaped for borrowck.
         let global = self.global;
@@ -6481,6 +6502,7 @@ impl VirtualMachine {
         }
 
         self.overridden_main.deinit();
+        self.forget_run_main_modules();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;

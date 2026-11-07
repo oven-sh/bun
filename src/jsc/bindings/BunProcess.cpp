@@ -4852,6 +4852,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
+    visitor.append(thisObject->m_mainModuleBeforeRunMain);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -5648,6 +5649,8 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (auto* started = globalObject->m_mainModuleOfRunMain.get())
+        return JSValue::encode(started);
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
@@ -5660,6 +5663,38 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globa
         return false;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
+}
+
+bool Process::assignMainModule(VM& vm, JSObject* module, JSObject* previous)
+{
+    auto mainModule = Identifier::fromString(vm, "mainModule"_s);
+    unsigned attributes = 0;
+    JSValue own = getDirect(vm, mainModule, attributes);
+    // Nothing read or assigned the property. From now on it reads the main module of the moment, as under `bun test`.
+    if (!own)
+        putDirectCustomAccessor(vm, mainModule, CustomGetterSetter::create(vm, processMainModuleOfTestFile, setProcessMainModuleOfTestFile), PropertyAttribute::CustomValue | 0);
+    if (!own || own.isCustomGetterSetter())
+        return true;
+    if (attributes & PropertyAttribute::DontDelete)
+        return false;
+    if (own != JSValue(previous) && !own.isGetterSetter())
+        m_mainModuleBeforeRunMain.set(vm, this, own);
+    putDirect(vm, mainModule, module, 0);
+    return true;
+}
+
+void Process::forgetMainModule(VM& vm, JSObject* module)
+{
+    auto mainModule = Identifier::fromString(vm, "mainModule"_s);
+    if (getDirect(vm, mainModule) == JSValue(module))
+        putDirect(vm, mainModule, m_mainModuleBeforeRunMain ? m_mainModuleBeforeRunMain.get() : jsUndefined(), 0);
+    m_mainModuleBeforeRunMain.clear();
+}
+
+JSValue Process::mainModuleOfRequire(VM& vm, JSObject* module)
+{
+    JSValue own = getDirect(vm, Identifier::fromString(vm, "mainModule"_s));
+    return own && !own.isCustomGetterSetter() && !own.isGetterSetter() ? own : JSValue(module);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

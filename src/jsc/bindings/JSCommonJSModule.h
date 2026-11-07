@@ -86,6 +86,14 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // While Module.runMain() loads the module. Pending: not the main module yet. Assigned: it is, and has not run. LeftToESLoader: an ES module under a handler.
+    enum class MainLoad : uint8_t {
+        No,
+        Pending,
+        Assigned,
+        LeftToESLoader,
+    };
+    MainLoad mainLoad { MainLoad::No };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
@@ -199,6 +207,24 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 {
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
+
+// What Module.runMain() gave to the loader of import(), until the next entry load (Zig::GlobalObject::m_runMain). The first such call makes it.
+struct RunMainState {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RunMainState);
+
+public:
+    // The path of the entry module while the loader has not reached it: when that module runs, it takes the main module from a started script.
+    WTF::String entryThatTakesMainModuleBack;
+    // The started scripts by `import.meta.url`, where `import.meta.main` is true. True: a CommonJS module of that URL becomes the main module when it runs.
+    WTF::HashMap<WTF::String, bool> startedURLs;
+};
+
+// Module.runMain(path). True: a CommonJS script ran as the main module, or the require cache has the module. False: the caller loads `key` as import() does.
+bool loadMainModule(Zig::GlobalObject*, const WTF::String& key);
+// The load that the caller started after loadMainModule() returned false. Null: it threw. A load that fails leaves no started script behind.
+void didStartLoadOfMainModule(Zig::GlobalObject*, const WTF::String& key, JSC::JSPromise* load);
+// A require.extensions handler is asked next about a module that Module.runMain() loads: the module is the main module before the handler runs.
+void becomeMainModuleBeforeExtensionHandler(Zig::GlobalObject*, JSCommonJSModule*);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

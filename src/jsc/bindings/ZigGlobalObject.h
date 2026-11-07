@@ -41,6 +41,7 @@ class SecureContextCache;
 class GCProfilerObserver;
 
 struct ModuleGraphState;
+struct RunMainState;
 } // namespace Bun
 
 namespace v8 {
@@ -426,6 +427,11 @@ public:
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
+    /* Module.runMain() made this CommonJS module the main module in place of the entry module. */           \
+    V(public, WriteBarrier<JSObject>, m_mainModuleOfRunMain)                                                 \
+    /* The main module of each require function that was made while a started script was it. */              \
+    V(public, WriteBarrier<JSWeakMap>, m_requireMainOfRunMain)                                               \
+                                                                                                             \
     /* The innermost open handle scope (Node-API or V8), where new napi_values and V8 handles are */         \
     /* created. You must not pass any napi_values back to a NAPI function without putting them in the */     \
     /* handle scope, as the NAPI function may move them off the stack, and they would then be collected. */  \
@@ -698,6 +704,8 @@ public:
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
+
+    std::unique_ptr<Bun::RunMainState> m_runMain;
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

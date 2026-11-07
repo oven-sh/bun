@@ -813,7 +813,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise, const BunString* key);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -825,9 +825,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    // A CommonJS script runs inside the call, and what it throws leaves through the call.
+    bool isLoaded = Bun::loadMainModule(defaultGlobalObject(globalObject), key.string());
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
+    if (isLoaded)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    Bun::didStartLoadOfMainModule(defaultGlobalObject(globalObject), key.string(), scope.exception() ? nullptr : promise);
+    RETURN_IF_EXCEPTION(scope, {});
+    BunString keyString = Bun::toString(key.string());
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise, &keyString);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

@@ -4518,6 +4518,34 @@ pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
     module_type_of(&path, package_json) == ModuleType::Esm
 }
 
+/// What `require()` makes of `path`, by its name. 0: a script (also for no loader, or a `require.extensions` handler). 1: a JSON file. 2: another kind of file.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__kindOfRequiredFile(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> u8 {
+    use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
+    let path = path.to_utf8();
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
+    let vm = unsafe { &*global.bun_vm_ptr() };
+    let loader = match find_longest_registered_extension(vm, path.slice()) {
+        Some(CustomLoader::Custom(_)) => return 0,
+        Some(CustomLoader::Loader(loader)) => Some(*loader),
+        None => loader_for_path(
+            &Fs::Path::init(path.slice()),
+            &vm.transpiler.options.loaders,
+        ),
+    };
+    match loader {
+        None => 0,
+        Some(loader) if loader.is_java_script_like() => 0,
+        Some(Loader::Json) => 1,
+        // `loader_for_path` gives a package.json and a tsconfig.json this loader.
+        Some(Loader::Jsonc) if path.slice().ends_with(b".json") => 1,
+        Some(_) => 2,
+    }
+}
+
 thread_local! {
     /// Per-thread shared `BufferPrinter`. Lazy-init in [`Bun__transpileFile`];
     /// never freed (process-lifetime singleton —

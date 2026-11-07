@@ -464,6 +464,19 @@ const cases: Record<string, Case> = {
     prints:
       "<folder>/where.ts <folder> where.ts file://<folder>/where.ts false\n<folder>/where.cjs <folder> <folder>/where.cjs false\nthe stack names the file\n",
   },
+  // Module.runMain() makes the file that it starts the main module, as Node.js does. Compiled ahead of time, an executable has the main module that its build named, and the file is an ordinary module.
+  "a file that Module.runMain() starts": {
+    program: {
+      "main.ts": prelude + `require("node:module").runMain(at("tool.cjs"));`,
+    },
+    disk: {
+      "tool.cjs": `console.log(require.main === module, process.mainModule === module);
+        require("node:module").runMain(require("node:path").join(__dirname, "tool.mjs"));`,
+      "tool.mjs": `console.log(import.meta.main);`,
+    },
+    prints: "true true\ntrue\n",
+    differs: "false false\nfalse\n",
+  },
   "a config file in every form that tools look for": {
     program: {
       "main.ts":

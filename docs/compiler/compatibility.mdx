@@ -131,6 +131,7 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 - A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
 - `require.cache["fs"] = { exports: fake }` makes `require("fs")` answer with `fake`, as in `bun run`, if the build can read the key. Under a computed key that turns out to be `"fs"`, the store throws.
 - `Bun.main = path` changes what `require.main`, `require.main === module` and `import.meta.main` answer, as in `bun run`, if the build can see the assignment. One that it can't see throws a `TypeError`: `Bun[key] = path` with a computed key, or `Bun.main = path` in [code from a string](#code-from-strings).
+- `Module.runMain(path)` doesn't change the main module. `require.main` and `process.mainModule` keep naming the entry point that was compiled, and the build has answered `import.meta.main` in each compiled file. Under `bun run` and with `--no-aot`, the file that `Module.runMain(path)` starts becomes the main module.
 
 ## Packages
 

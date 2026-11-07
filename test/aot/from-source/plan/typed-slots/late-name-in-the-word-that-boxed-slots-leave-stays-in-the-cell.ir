@@ -1,0 +1,32 @@
+# two literals of texts, each stored one more name behind its allocation. Where boxed slots leave a word of the cell, the first late name of the layout lies there, and no field that lies in the cell with boxed slots leaves it because forms get narrower:
+# it counts like any slot where the chooser asks whether the cell gets smaller.
+# the pair: two boxed texts and the late name fill a cell of 48. With narrow texts the three need a cell of 48 again, so the texts stay boxed. Left out of the sums the late name lost its place: two narrow slots made a cell of 32, and every object paid an Extension and every read a stub.
+# the four: four boxed texts and the late name fill a cell of 64, with narrow texts one of 48: the texts are narrow, from 24 on, and the late name follows at the next multiple of eight in the form of its own.
+# -- source: late-name-in-the-word-that-boxed-slots-leave-stays-in-the-cell.js
+# function makePair(i) { const pair = { first: "a", second: "b" }; pair.late = i; return pair; }
+# function makeFour(i) { const four = { east: "e", north: "n", south: "s", west: "w" }; four.later = i; return four; }
+# let sum = 0;
+# for (let i = 0; i < 4; i++) {
+#     const pair = makePair(i), four = makeFour(i);
+#     sum += pair.first.length + pair.second.length + pair.late + four.east.length + four.north.length + four.south.length + four.west.length + four.later;
+# }
+# sink(sum);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=48
+# CHECK-NEXT: slot 0 "first" JSValue Inline offset=24
+# CHECK-NEXT: slot 1 "second" JSValue Inline offset=32
+# CHECK-NEXT: slot 2 "late" appended OptionalDouble Inline offset=40
+# CHECK-NEXT: extra-properties Cell32 Inline offset=16
+# CHECK: layout L1 CompiledObject size=48
+# CHECK-NEXT: slot 0 "east" Cell32 Inline offset=24
+# CHECK-NEXT: slot 1 "north" Cell32 Inline offset=28
+# CHECK-NEXT: slot 2 "south" Cell32 Inline offset=32
+# CHECK-NEXT: slot 3 "west" Cell32 Inline offset=36
+# CHECK-NEXT: slot 4 "later" appended OptionalDouble Inline offset=40
+# CHECK-NEXT: extra-properties Cell32 Inline offset=16
+# RUN(WITHHELD): plan layouts mechanisms=-TypedSlots
+# WITHHELD: layout L0 CompiledObject size=48
+# WITHHELD: slot 2 "late" appended JSValue Inline offset=40
+# WITHHELD: layout L1 CompiledObject size=64
+# WITHHELD: slot 4 "later" appended JSValue Inline offset=56

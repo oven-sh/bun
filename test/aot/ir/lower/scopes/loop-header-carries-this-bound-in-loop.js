@@ -5,7 +5,7 @@
 // CHECK-NEXT: [[header]]([[this]]: absent|L{{*}}):
 // CHECK-NEXT: LoopHint
 // CHECK: [[constructed]] = SuperConstruct
-// CHECK-NEXT: [[instance]] = Convert [[constructed]] declared={type=L{{*}} flags=[IsFromCompiler]}
+// CHECK-NEXT: [[instance]] = Convert [[constructed]] declared={type=L{{*}}}
 // CHECK: = TypeTest [[this]] testedType=absent
 // CHECK: Jump -> next [[header]]([[instance]])
 

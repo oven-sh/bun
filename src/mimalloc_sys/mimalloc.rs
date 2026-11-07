@@ -168,7 +168,6 @@ unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
     pub safe fn mi_option_set(option: Option, value: c_long);
-    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);

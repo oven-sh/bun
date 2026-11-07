@@ -1,0 +1,28 @@
+The namespace of a CSS file: by a statement, by import() written out, out of sight and of a list, and by require().
+#### a.css
+.a { color: red; }
+#### a.test.mjs
+import { test } from "bun:test"; import { say } from "./body.mjs"; test("t", say);
+#### b.css
+.b { color: red; }
+#### body.mjs
+import * as statement from "./a.css";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const shown = m => Reflect.ownKeys(m).filter(key => typeof key === "string").sort().map(key => key + "=" + JSON.stringify(m[key])).join();
+const name = text => process.env.NOBODY_SETS_THIS || text;
+export async function say() {
+  console.log("| CASE", "statement:", shown(statement));
+  console.log("| CASE", "written:", shown(await import("./b.css")));
+  console.log("| CASE", "out of sight:", shown(await import(name("./c.css"))));
+  console.log("| CASE", "of a list:", shown(await import("./" + ["d.css"][process.argv.length > 99 ? 1 : 0])));
+  console.log("| CASE", "required:", shown(require("./e.css")));
+}
+#### c.css
+.c { color: red; }
+#### d.css
+.d { color: red; }
+#### e.css
+.e { color: red; }
+#### package.json
+{ "name": "p", "type": "module" }

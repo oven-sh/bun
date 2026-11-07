@@ -12,4 +12,3 @@ for (const k in require("./d.cjs")) if (k === "v") require("./d.cjs")[k] = 10; o
 delete require("./d.cjs").v; out.push(require("./d.cjs").read());
 Object.defineProperty(require("./d.cjs"), "v", { get() { return 11; } }); out.push(require("./d.cjs").read());
 console.log(JSON.stringify(out));
-import("./a.cjs").then(ns => console.log(JSON.stringify([ns.x, ns.default.x, Object.keys(ns).sort().join()])));

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe.skipIf(Bun.semver.satisfies(Bun.version.split("-")[0], "< 1.3"))("CI restrictions", () => {
   describe("test.only restrictions", () => {
@@ -148,6 +150,12 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
       expect(stderr).toContain("Snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
       expect(stderr).toContain('Received: "this is new"');
+      expect(readFileSync(join(dir, "__snapshots__/test.test.js.snap"), "utf8")).toBe(
+        `// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[\`existing snapshot 1\`] = \`"hello world"\`;
+`,
+      );
     });
 
     test("toMatchSnapshot should fail for new snapshots when GITHUB_ACTIONS=1", async () => {
@@ -175,6 +183,8 @@ test("new snapshot", () => {
       expect(stderr).toContain("Snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
       expect(stderr).toContain('Received: "this is new"');
+      // The refused snapshot must not leave an empty .snap file or directory behind.
+      expect(existsSync(join(dir, "__snapshots__"))).toBe(false);
     });
 
     test("toMatchSnapshot should work for new snapshots when CI=false", async () => {

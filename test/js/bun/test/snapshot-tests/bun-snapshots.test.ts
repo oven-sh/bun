@@ -258,3 +258,61 @@ describe("a snapshot file that bun test can't write", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("snapshot file writes", () => {
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+
+  test("a .snap that fails to parse does not fail the next test file's snapshots", async () => {
+    const broken = header + "\nexports[`a 1`] = `hello`goodbye`;\n";
+    const stored = header + '\nexports[`b 1`] = `\n{\n  "b": 1,\n}\n`;\n';
+    using dir = tempDir("malformed-sibling-snapshot", {
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        test("a", () => expect({ a: 1 }).toMatchSnapshot());
+      `,
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        test("b", () => expect({ b: 1 }).toMatchSnapshot());
+      `,
+      "__snapshots__/a.test.js.snap": broken,
+      "__snapshots__/b.test.js.snap": stored,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.js", "b.test.js"],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass\n 1 fail\n");
+    expect(
+      ["a.test.js.snap", "b.test.js.snap"].map(name => readFileSync(join(String(dir), "__snapshots__", name), "utf8")),
+    ).toEqual([broken, stored]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an aborted --update-snapshots run leaves the .snap as it was", async () => {
+    const stored = header + '\nexports[`matches 1`] = `\n{\n  "a": 1,\n}\n`;\n';
+    using dir = tempDir("aborted-update-snapshots", {
+      "snap.test.js": `
+        import { expect, test } from "bun:test";
+        test("matches", () => {
+          expect({ a: 1 }).toMatchSnapshot();
+          process.exit(3);
+        });
+      `,
+      "__snapshots__/snap.test.js.snap": stored,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "snap.test.js", "--update-snapshots"],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await proc.exited;
+    expect(readFileSync(join(String(dir), "__snapshots__", "snap.test.js.snap"), "utf8")).toBe(stored);
+    expect(exitCode).toBe(3);
+  });
+});

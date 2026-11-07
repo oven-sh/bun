@@ -4483,6 +4483,53 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "true 1 true later" },
     });
   }
+
+  // `--no-bundle` emits no CommonJS wrapper, so nothing binds `exports`.
+  // A UMD header passes top-level `this` to its factory as the global object.
+  // https://github.com/oven-sh/bun/issues/48123
+  itBundled("edgecase/NoBundleKeepsTopLevelThis", {
+    files: {
+      "/entry.js": /* js */ `
+        (function (root, factory) {
+          root.myLib = factory();
+        })(this, function () {
+          return { hello: "world" };
+        });
+        var topLevel = this;
+        var arrow = () => this;
+        var obj = { value: this };
+        (class { static value = this; });
+        topLevel.sameThis = topLevel === arrow() && topLevel === obj.value;
+      `,
+    },
+    bundling: false,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import vm from "node:vm";
+        import fs from "node:fs";
+        const context = vm.createContext({});
+        vm.runInContext(fs.readFileSync(new URL("./out.js", import.meta.url), "utf8"), context);
+        console.log(JSON.stringify(context.myLib), context.sameThis);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports");
+    },
+    run: { file: "/test.js", stdout: '{"hello":"world"} true' },
+  });
+  // A file with ES module syntax is a module, so top-level `this` is still replaced.
+  itBundled("edgecase/NoBundleESMTopLevelThisIsNotKept", {
+    files: {
+      "/entry.js": /* js */ `
+        var topLevel = this;
+        export {};
+      `,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("this");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

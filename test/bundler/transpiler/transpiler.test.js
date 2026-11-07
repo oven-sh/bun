@@ -5303,6 +5303,19 @@ console.log(foo, array);
     });
   });
 
+  // The output has no CommonJS wrapper, so `this` must not become `exports`.
+  // https://github.com/oven-sh/bun/issues/48123
+  it("keeps top-level `this` in a file without ES module syntax", () => {
+    for (const target of ["browser", "bun", "node"]) {
+      const transpiler = new Bun.Transpiler({ loader: "js", target });
+      const out = transpiler.transformSync("var g = this;\nvar f = () => this;\n");
+      expect(out).toContain("var g = this");
+      expect(out).toContain("f = () => this");
+      expect(out).not.toContain("exports");
+      expect(transpiler.transformSync("var g = this;\nexport {};\n")).not.toContain("this");
+    }
+  });
+
   it("scan on empty file does not segfault", () => {
     new Bun.Transpiler().scan("");
   });

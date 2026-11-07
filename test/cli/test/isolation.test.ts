@@ -2354,10 +2354,10 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     return files;
   }
 
-  async function maxLiveGlobals(dir: string): Promise<number> {
+  async function maxLiveGlobals(dir: string, env: NodeJS.Dict<string> = bunEnv): Promise<number> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate"],
-      env: bunEnv,
+      env,
       cwd: dir,
       stdout: "pipe",
       stderr: "pipe",
@@ -2391,6 +2391,13 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
+  // BUN_DESTRUCT_VM_ON_EXIT, which the sanitizer lanes set for every child, waits for the thread pool at exit.
+  const exitsWhileThreadPoolWorks = {
+    ...bunEnv,
+    BUN_DESTRUCT_VM_ON_EXIT: "0",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  };
+
   test("a WebCrypto operation left under way", async () => {
     using dir = tempDir(
       "isolate-leak-webcrypto",
@@ -2400,7 +2407,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: new Uint8Array(8), iterations: 2 ** 31 - 1 }, key, 512);
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    expect(await maxLiveGlobals(String(dir), exitsWhileThreadPoolWorks)).toBeLessThanOrEqual(4);
   });
 
   test("a WebCrypto operation left under way in a ShadowRealm", async () => {
@@ -2415,7 +2422,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         await started.promise;
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    expect(await maxLiveGlobals(String(dir), exitsWhileThreadPoolWorks)).toBeLessThanOrEqual(4);
   });
 
   test("long setTimeout/setInterval left pending", async () => {

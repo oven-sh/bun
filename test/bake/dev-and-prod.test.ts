@@ -202,6 +202,250 @@ devTest("using runtime import", {
     );
   },
 });
+devAndProductionTest("a file with an ES import and module.exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import mixed from "./mixed.js";
+      console.log(JSON.stringify(mixed));
+    `,
+    "dep.js": `
+      export const value = 42;
+    `,
+    "mixed.js": `
+      import { value } from "./dep.js";
+      module.exports = { value };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage('{"value":42}');
+  },
+});
+devAndProductionTest("every import form in a file with module.exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import forms from "./forms.js";
+      import { fromExports } from "./exports-property.js";
+      import exportsObject, * as exportsNamespace from "./exports-object.js";
+      import fromExportEquals from "./export-equals.ts";
+      console.log(forms);
+      console.log({
+        fromExports,
+        exportsObject,
+        exportsNamespaceKeys: Object.keys(exportsNamespace).sort(),
+        fromExportEquals,
+      });
+    `,
+    "esm.js": `
+      export const named = "esm named";
+      export default "esm default";
+    `,
+    "cjs.js": `
+      module.exports = { named: "cjs named" };
+    `,
+    "side-effect.js": `
+      globalThis.sideEffect = "ran";
+    `,
+    "forms.js": `
+      // The import statements below are hoisted above this line.
+      const sideEffectBeforeBody = globalThis.sideEffect;
+      import esmDefault, { named as esmNamed } from "./esm.js";
+      import cjsDefault, { named as cjsNamed } from "./cjs.js";
+      import * as cjsNamespace from "./cjs.js";
+      import "./side-effect.js";
+      module.exports = {
+        esmDefault,
+        esmNamed,
+        cjsDefault,
+        cjsNamed,
+        cjsNamespaceDefaultIsDefault: cjsNamespace.default === cjsDefault,
+        cjsNamespaceKeys: Object.keys(cjsNamespace).sort(),
+        sideEffectBeforeBody,
+      };
+    `,
+    "exports-property.js": `
+      import { named } from "./esm.js";
+      exports.fromExports = named;
+    `,
+    // A read of the whole exports object keeps this file in a CommonJS wrapper in the production bundle.
+    "exports-object.js": `
+      import { named } from "./esm.js";
+      exports.viaObject = named;
+    `,
+    "export-equals.ts": `
+      import { named } from "./esm.js";
+      const value = { named };
+      export = value;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      {
+        esmDefault: "esm default",
+        esmNamed: "esm named",
+        cjsDefault: { named: "cjs named" },
+        cjsNamed: "cjs named",
+        cjsNamespaceDefaultIsDefault: true,
+        cjsNamespaceKeys: ["default", "named"],
+        sideEffectBeforeBody: "ran",
+      },
+      {
+        fromExports: "esm named",
+        exportsObject: { viaObject: "esm named" },
+        exportsNamespaceKeys: ["default", "viaObject"],
+        fromExportEquals: { named: "esm named" },
+      },
+    );
+  },
+});
+devAndProductionTest("JSX in a file with module.exports or require", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import Component from "./component.jsx";
+      import "./require-only.jsx";
+      console.log(Component());
+      console.log(globalThis.requireOnly);
+    `,
+    "component.jsx": `
+      module.exports = function Component() {
+        return <div>hello</div>;
+      };
+    `,
+    "require-only.jsx": `
+      const greeting = require("./greeting.cjs");
+      globalThis.requireOnly = <p>{greeting}</p>;
+    `,
+    "greeting.cjs": `
+      module.exports = "hi";
+    `,
+    "node_modules/react/package.json": JSON.stringify({ name: "react", version: "19.0.0" }),
+    "node_modules/react/jsx-dev-runtime.js": `
+      exports.jsxDEV = (type, props) => ({ type, children: props.children });
+    `,
+    "node_modules/react/jsx-runtime.js": `
+      exports.jsx = (type, props) => ({ type, children: props.children });
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({ type: "div", children: "hello" }, { type: "p", children: "hi" });
+  },
+});
+devAndProductionTest("a file with an ES import and module.exports runs once for import, require and import()", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import viaImport from "./mixed.js";
+      import viaRequire from "./require.cjs";
+      console.log("index");
+      import("./mixed.js").then(async ({ default: viaDynamic }) => {
+        const { default: lazy } = await import("./lazy.js");
+        console.log({ viaImport, sameForRequire: viaRequire === viaImport, sameForDynamic: viaDynamic === viaImport, lazy });
+      });
+    `,
+    "require.cjs": `
+      const mixed = require("./mixed.js");
+      module.exports = mixed;
+    `,
+    "mixed.js": `
+      import { value } from "./dep.js";
+      console.log("mixed");
+      module.exports = { value };
+    `,
+    "dep.js": `
+      console.log("dep");
+      export const value = 42;
+    `,
+    // Only import() reaches this file, so it and its import run after "index".
+    "lazy.js": `
+      import { value } from "./lazy-dep.js";
+      console.log("lazy");
+      module.exports = { value };
+    `,
+    "lazy-dep.js": `
+      console.log("lazy-dep");
+      export const value = "lazy value";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep", "mixed", "index", "lazy-dep", "lazy", {
+      viaImport: { value: 42 },
+      sameForRequire: true,
+      sameForDynamic: true,
+      lazy: { value: "lazy value" },
+    });
+  },
+});
+devAndProductionTest("import cycles below and through a file with an ES import and module.exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import above from "./above.js";
+      import { readThrough } from "./through-esm.js";
+      import first from "./first-mixed.js";
+      console.log({ below: above.read(), through: readThrough(), first: first.read() });
+    `,
+    // a.js and b.js import each other, below above.js.
+    "above.js": `
+      import { readBoth } from "./a.js";
+      module.exports = { read: () => readBoth() };
+    `,
+    "a.js": `
+      import { b, readA } from "./b.js";
+      export const a = "a";
+      export function readBoth() {
+        return [b, readA()];
+      }
+    `,
+    "b.js": `
+      import { a } from "./a.js";
+      export const b = "b";
+      export function readA() {
+        return a;
+      }
+    `,
+    // through-esm.js and through-mixed.js import each other. The page reaches through-esm.js first.
+    "through-esm.js": `
+      import mixed from "./through-mixed.js";
+      export const value = 1;
+      export function readThrough() {
+        return mixed.read();
+      }
+    `,
+    "through-mixed.js": `
+      import { value } from "./through-esm.js";
+      module.exports = { read: () => value };
+    `,
+    // first-mixed.js and first-esm.js import each other. The page reaches first-mixed.js first.
+    "first-mixed.js": `
+      import { value } from "./first-esm.js";
+      module.exports = { read: () => value };
+    `,
+    "first-esm.js": `
+      import "./first-mixed.js";
+      export const value = 2;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({ below: ["b", "a"], through: 1, first: 2 });
+  },
+});
 devTest("hmr handles rapid consecutive edits", {
   files: {
     "index.html": emptyHtmlFile({

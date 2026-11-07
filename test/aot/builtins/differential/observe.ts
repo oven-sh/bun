@@ -111,14 +111,23 @@ function release(value: unknown): void {
   } catch {}
 }
 
+/** A call that has returned or thrown, before its operands are looked at again and let go. */
+export type MadeCall = Pick<Run, "set" | "log" | "args" | "completion">;
+
 // `leavesOperandsAsMade`: whether the next call may have the operands of this one that take time to make.
-export type RunOptions = { lateDelay?: number; leavesOperandsAsMade?(run: Run): boolean };
+// `untilAnswered`: for a call that left its work with another thread, which has the operands until it answers.
+export type RunOptions = {
+  lateDelay?: number;
+  leavesOperandsAsMade?(run: Run): boolean;
+  untilAnswered?(call: MadeCall): Promise<void> | undefined;
+};
 
 function isRepeatable({ mode }: Invocation, { receiver, arguments: candidates }: OperandSet): boolean {
   if (mode === "Get") return true;
   if (mode !== "Call") return false;
   const hasPlainReceiver = receiver.name === "holder" || receiver.kind === "Primitive";
-  return hasPlainReceiver && candidates.every(candidate => candidate.kind === "Primitive");
+  // What a candidate holds is let go when the call is over, and nothing says when a second call is.
+  return hasPlainReceiver && candidates.every(candidate => candidate.kind === "Primitive" && !isHeldByCandidate(candidate));
 }
 
 // A store to a member of a built-in object would stay for every later call.
@@ -150,10 +159,10 @@ type Begun = Omit<Run, "after" | "repeated" | "yielded"> & { restoreMember: (() 
 function begin(realm: Realm, invocation: Invocation, set: OperandSet): Begun | undefined {
   const log = new Log();
   let receiver: unknown;
-  let args: unknown[];
+  const args: unknown[] = [];
   try {
     receiver = set.receiver.create(log, "this", { receiver: undefined });
-    args = set.arguments.map((candidate, index) => candidate.create(log, index, { receiver }));
+    for (const [index, candidate] of set.arguments.entries()) args.push(candidate.create(log, index, { receiver, args }));
   } catch (error) {
     if (error instanceof Unavailable) return undefined;
     throw error;
@@ -219,6 +228,10 @@ export async function runSets(
   for (const set of sets) for (const candidate of [set.receiver, ...set.arguments]) await candidate.prepare?.();
   const begun = sets.map(set => begin(realm, invocation, set));
   await waitForTasks(sets, options.lateDelay ?? 0);
+  for (const one of begun) {
+    const answered = one && options.untilAnswered?.(one);
+    if (answered) await answered;
+  }
   const runs: (Run | undefined)[] = [];
   for (const one of begun) {
     const ended = one && end(invocation, one, options);

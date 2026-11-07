@@ -129,6 +129,25 @@ and ran on 1689b23582 / edb9ce8f7a in the new container:
   Measure both again on main after the merge, and if #47183 is in main by then, drop the sentence
   and use plain mode.
 
+Since 2026-11-07 the container is reset between wakes (13:25Z to 17:30Z again). A wake that
+finds nothing changed runs only the remote checks. Work with builds has to reach its push in one
+turn.
+
+Main 2596ac5d39 (2026-11-07T21:21Z, #47942, "AOT: the Bun side of the rewritten ahead-of-time
+compiler", 35,875 files): no file of the cut. What matters for the PR on main:
+- src/runtime/node/quic/quic.bind.ts gets `writesState` (`writes: ["TypedArrayElements",
+  "ExternalState"]`) on `markBusy` and `initStreamingSource`: the AOT compiler reads what a host
+  function writes from the binding. A class member with `capability: "js"` counts as writing
+  everything (src/codegen/builtins/collect-bindgen.ts, `writes: columns.writes ?? (isOfClass &&
+  capability === "js" ? undefined : externalState)`), and `sendHeaders` has `...js`. The cut adds
+  no host function and no state write to a member without the js capability, so it needs no
+  annotation. #46528 changes the `initStreamingSource` line too, so the maintainer resolves it.
+- WEBKIT_VERSION 4d45755fed -> 5a61071f79: the first build on main downloads a new WebKit.
+- test/harness.ts gets `testThatMeasuresOwnMemory` (not used by the quic tests). Three source
+  lints changed their lists (no quic entry). scripts/build/ changed in 20 files (not
+  deps/lsquic.ts, not workarounds.ts): run tsc of both scripts projects on the main-based cut.
+- #47948 is CONFLICTING with main now.
+
 NOT run again on edb9ce8f7a: the release builds and the gdb counts of section 3. Their numbers
 below are of 2026-10-30 on 001958b155. Section 1 to 3 run in full on main after the merge.
 

@@ -3,7 +3,19 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  nodeExeAtLeast,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -88,23 +100,35 @@ it("process", () => {
   expect(cwd).toEqual(process.cwd());
 });
 
-it("each function of process has the length that Node gives it", async () => {
-  // What the script below prints under Node v26.3.0, in a child with an IPC channel. A function that process
-  // gains fails this test until it has a line here: take the number from Node.
-  const lengths = {
+describe("the length of each function of process", () => {
+  // What the script below prints under Node v26.12.1, in a child with an IPC channel. A function that process gains
+  // fails these tests until it has a line here: take the number from Node.
+  const inNode = {
     _debugEnd: 0,
     _debugProcess: 0,
+    _disconnect: 0,
     _fatalException: 2,
     _getActiveHandles: 0,
     _getActiveRequests: 0,
     _kill: 0,
     _linkedBinding: 1,
     _rawDebug: 0,
+    _send: 4,
     _startProfilerIdleNotifier: 0,
     _stopProfilerIdleNotifier: 0,
     _tickCallback: 0,
     abort: 0,
     addListener: 2,
+    addUncaughtExceptionCaptureCallback: 1,
+    "allowedNodeEnvironmentFlags.add": 0,
+    "allowedNodeEnvironmentFlags.clear": 0,
+    "allowedNodeEnvironmentFlags.constructor": 1,
+    "allowedNodeEnvironmentFlags.delete": 0,
+    "allowedNodeEnvironmentFlags.entries": 0,
+    "allowedNodeEnvironmentFlags.forEach": 1,
+    "allowedNodeEnvironmentFlags.has": 1,
+    "allowedNodeEnvironmentFlags.keys": 0,
+    "allowedNodeEnvironmentFlags.values": 0,
     availableMemory: 0,
     binding: 1,
     chdir: 1,
@@ -125,10 +149,17 @@ it("each function of process has the length that Node gives it", async () => {
     getActiveResourcesInfo: 0,
     getBuiltinModule: 1,
     getMaxListeners: 0,
+    getegid: 0,
+    geteuid: 0,
+    getgid: 0,
+    getgroups: 0,
+    getuid: 0,
     hasUncaughtExceptionCaptureCallback: 0,
     hrtime: 1,
     "hrtime.bigint": 0,
+    initgroups: 2,
     kill: 2,
+    listenerCount: 2,
     listeners: 1,
     loadEnvFile: 0,
     memoryUsage: 0,
@@ -152,38 +183,43 @@ it("each function of process has the length that Node gives it", async () => {
     setMaxListeners: 1,
     setSourceMapsEnabled: 1,
     setUncaughtExceptionCaptureCallback: 1,
+    setegid: 1,
+    seteuid: 1,
+    setgid: 1,
+    setgroups: 1,
+    setuid: 1,
     threadCpuUsage: 1,
     umask: 1,
     unref: 1,
     uptime: 0,
   };
   // Windows has no users and groups by number.
-  const posixOnly = {
-    getegid: 0,
-    geteuid: 0,
-    getgid: 0,
-    getgroups: 0,
-    getuid: 0,
-    initgroups: 2,
-    setegid: 1,
-    seteuid: 1,
-    setgid: 1,
-    setgroups: 1,
-    setuid: 1,
-  };
-  // Node v26.3.0 has no process.assert.
-  const notInNode = { assert: 1 };
-  // Node gives 2. Bun's listenerCount ignores the `listener` argument, and tsx reads this length to learn that:
-  // https://github.com/privatenumber/tsx/blob/2afc7bbcbd0bb77623737550aefdf816e4bf0a66/src/preflight.cts#L43-L48
-  const missingParameter = { listenerCount: 1 };
+  const posixOnly = [
+    "getegid",
+    "geteuid",
+    "getgid",
+    "getgroups",
+    "getuid",
+    "initgroups",
+    "setegid",
+    "seteuid",
+    "setgid",
+    "setgroups",
+    "setuid",
+  ];
+  const notInBun = ["_disconnect", "_send", "addUncaughtExceptionCaptureCallback"];
 
+  // Own properties of process and of each object above it, then one level down: the members of each function, of
+  // process.report, of process.finalization and of the class of process.allowedNodeEnvironmentFlags.
   const src = `
     const lengths = {};
     const add = (path, value) => {
       if (typeof value === "function") lengths[path] = value.length;
     };
     const addMembers = (path, holder) => {
-      for (const name of Object.getOwnPropertyNames(holder)) add(path + "." + name, holder[name]);
+      for (const name of Object.getOwnPropertyNames(holder)) {
+        add(path + "." + name, Object.getOwnPropertyDescriptor(holder, name).value);
+      }
     };
     for (let object = process; object !== Object.prototype; object = Object.getPrototypeOf(object)) {
       for (const name of Object.getOwnPropertyNames(object)) {
@@ -194,22 +230,52 @@ it("each function of process has the length that Node gives it", async () => {
     }
     addMembers("report", process.report);
     addMembers("finalization", process.finalization);
-    console.log(JSON.stringify(lengths));
+    addMembers("allowedNodeEnvironmentFlags", Object.getPrototypeOf(process.allowedNodeEnvironmentFlags));
+    process.on("length-probe", () => {});
+    const listenerCountFilters = process.listenerCount("length-probe", () => {}) === 0;
+    console.log(JSON.stringify({ lengths, listenerCountFilters }));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    // process.send and process.disconnect exist only in a child with an IPC channel.
-    ipc() {},
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ lengths: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-    lengths: { ...lengths, ...(isWindows ? {} : posixOnly), ...notInNode, ...missingParameter },
-    stderr: "",
-    exitCode: 0,
-  });
+
+  for (const [name, runtime] of [
+    ["bun", bunExe()],
+    ["node", nodeExeAtLeast("26.12.1")],
+  ]) {
+    it.skipIf(!runtime)(`is the one that Node gives it (${name})`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [runtime, "-e", src],
+        env: bunEnv,
+        // process.send and process.disconnect exist only in a child with an IPC channel.
+        ipc() {},
+        serialization: "json",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { lengths, listenerCountFilters } = JSON.parse(stdout || "{}");
+
+      const expected = { ...inNode };
+      if (isWindows) for (const path of posixOnly) delete expected[path];
+      if (name === "bun") {
+        for (const path of notInBun) delete expected[path];
+        Object.assign(expected, {
+          // Node v26.12.1 has no process.assert.
+          assert: 1,
+          // Node: 1. The class of Bun takes no array.
+          "allowedNodeEnvironmentFlags.constructor": 0,
+          // A length that a program reads to learn what the function can do waits until Bun can do it.
+          // tsx reads this one to learn if listenerCount(event, listener) counts that listener only:
+          // https://github.com/privatenumber/tsx/blob/2afc7bbcbd0bb77623737550aefdf816e4bf0a66/src/preflight.cts#L43-L48
+          listenerCount: listenerCountFilters ? 2 : 1,
+          // script-manager reads this one and then exits in the callback of its last send:
+          // https://github.com/pofider/node-script-manager/blob/192ff4b778ed025e3c21004f685f702c3ce64634/lib/worker-processes.js#L31-L47
+          // Bun loses that message where a waiter thread reaps the child (#46871), and it does not run the callback
+          // of a send that the channel still holds when it closes (#43000).
+          send: 1,
+        });
+      }
+      expect({ lengths, stderr, exitCode }).toEqual({ lengths: expected, stderr: "", exitCode: 0 });
+    });
+  }
 });
 
 it("process.title with UTF-16 characters", () => {

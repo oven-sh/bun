@@ -919,7 +919,7 @@ export function buildAllowedNodeEnvironmentFlags() {
       }
       return false;
     }
-    forEach(callback: (value: string, key: string, set: Set<string>) => void, thisArg?: unknown) {
+    forEach(callback: (value: string, key: string, set: Set<string>) => void, thisArg: unknown = undefined) {
       for (const flag of canonical) {
         callback.$call(thisArg, flag, flag, this);
       }

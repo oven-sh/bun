@@ -591,10 +591,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         if ((received == infinity && expected == infinity) || (received == -infinity && expected == -infinity)) {
             return AsymmetricMatcherResult::PASS;
         } else {
-            int32_t digits = digitsValue.toInt32(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-
-            double threshold = 0.5 * std::pow(10.0, -digits);
+            double threshold = 0.5 * std::pow(10.0, -digitsValue.asNumber());
             bool isClose = std::abs(expected - received) < threshold;
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }

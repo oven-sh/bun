@@ -387,6 +387,17 @@ b,
 }
 `;
 
+exports[`closeTo() > a precision that is not a 32-bit integer 1`] = `
+[
+  NumberCloseTo 1.5 (2.7 digits),
+  NumberNotCloseTo 7.25 (1.5 digits),
+  NumberCloseTo 2147483648 (4294967296 digits),
+  NumberCloseTo NaN (Infinity digits),
+  NumberNotCloseTo 1 (-Infinity digits),
+  NumberCloseTo 1 (NaN digits),
+]
+`;
+
 exports[`closeTo() 1`] = `
 [
   NumberCloseTo 0 (2 digits),

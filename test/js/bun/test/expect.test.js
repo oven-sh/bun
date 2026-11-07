@@ -5293,6 +5293,97 @@ describe("expect()", () => {
       test("notCloseTo return false if received is not number", () => {
         expect(expect.not.closeTo(1)).not.toEqual("a");
       });
+
+      // The threshold is `10 ** -precision / 2` for every number, as in Jest. A precision is not made an integer.
+      test.each([
+        [1, 1.1, 0.5],
+        [1, 2, -0.5],
+        [1, 1.01, 1.5],
+        [1, 1.005, 1.699],
+        [1, 1.0005, 2.7],
+        [0, 1e300, -Infinity],
+        [1, 100, -(2 ** 31)],
+        [1, 100, -(2 ** 32)],
+        [1, 100, -1e300],
+        [Infinity, Infinity, NaN],
+      ])("%p closeTo %p with precision %p return true", (expected, received, precision) => {
+        expect(received).toEqual(expect.closeTo(expected, precision));
+        expect(expect.closeTo(expected, precision)).toEqual(received);
+        expect({ a: received }).toMatchObject({ a: expect.closeTo(expected, precision) });
+        expect(received).not.toEqual(expect.not.closeTo(expected, precision));
+        expect(expect.not.closeTo(expected, precision)).not.toEqual(received);
+        expect({ a: received }).not.toMatchObject({ a: expect.not.closeTo(expected, precision) });
+      });
+
+      test.each([
+        [1, 1.4, 0.5],
+        [1, 4, -0.5],
+        [1, 1.04, 1.5],
+        [1, 1.03, 1.699],
+        [1, 1.003, 2.7],
+        [1, 1.4, NaN],
+        [1, 1, NaN],
+        [1, 1.4, Infinity],
+        [1, 1, Infinity],
+        [Infinity, 1, -Infinity],
+        [1, 1.4, 2 ** 31],
+        [1, 1.4, 2 ** 32],
+        [1, 1.001, 2 ** 32 + 2],
+        [1, 5, 2 ** 32 - 1],
+        [1, 1.4, 1e300],
+      ])("%p closeTo %p with precision %p return false", (expected, received, precision) => {
+        expect(received).not.toEqual(expect.closeTo(expected, precision));
+        expect(expect.closeTo(expected, precision)).not.toEqual(received);
+        expect({ a: received }).not.toMatchObject({ a: expect.closeTo(expected, precision) });
+        expect(received).toEqual(expect.not.closeTo(expected, precision));
+        expect(expect.not.closeTo(expected, precision)).toEqual(received);
+        expect({ a: received }).toMatchObject({ a: expect.not.closeTo(expected, precision) });
+      });
+
+      test("prints the number and the precision it was given", () => {
+        const printed = (/** @type {any} */ matcher) => (isBun ? Bun.inspect(matcher) : matcher.toAsymmetricMatcher());
+        expect(
+          [
+            expect.closeTo(1.5, 2),
+            expect.not.closeTo(1.5, 2),
+            expect.closeTo(1.5, 2.7),
+            expect.not.closeTo(-7.25, 1),
+            expect.closeTo(1, 1.5),
+            expect.closeTo(1e21, 3),
+            expect.closeTo(2 ** 31, 2 ** 32),
+            expect.closeTo(-0, -0),
+            expect.closeTo(NaN, NaN),
+            expect.closeTo(Infinity, -Infinity),
+            expect.not.closeTo(-Infinity, Infinity),
+          ].map(printed),
+        ).toEqual([
+          "NumberCloseTo 1.5 (2 digits)",
+          "NumberNotCloseTo 1.5 (2 digits)",
+          "NumberCloseTo 1.5 (2.7 digits)",
+          "NumberNotCloseTo -7.25 (1 digit)",
+          "NumberCloseTo 1 (1.5 digits)",
+          "NumberCloseTo 1e+21 (3 digits)",
+          "NumberCloseTo 2147483648 (4294967296 digits)",
+          "NumberCloseTo 0 (0 digits)",
+          "NumberCloseTo NaN (NaN digits)",
+          "NumberCloseTo Infinity (-Infinity digits)",
+          "NumberNotCloseTo -Infinity (Infinity digits)",
+        ]);
+      });
+
+      test("a failure prints the number and the precision it was given", () => {
+        const messageOf = (/** @type {() => void} */ assertion) => {
+          try {
+            assertion();
+          } catch (e) {
+            return stripVTControlCharacters(ANY(e).message);
+          }
+        };
+        expect(messageOf(() => expect(1.4).toEqual(expect.closeTo(1, 0.5)))).toContain("NumberCloseTo 1 (0.5 digits)");
+        expect(messageOf(() => expect({ a: 1.5 }).toEqual({ a: expect.not.closeTo(1.5, 2) }))).toContain(
+          "NumberNotCloseTo 1.5 (2 digits)",
+        );
+      });
     });
 
     describe("objects with an asymmetricMatch() method", () => {

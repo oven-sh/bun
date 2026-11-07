@@ -123,6 +123,46 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("does not use an entry of version 51 that holds `1.#x`", async () => {
+    // Version 51 printed `(1).#x` as `1.#x`, a SyntaxError, and cached that output.
+    //
+    // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+    //   0: cache_version u32, output_byte_offset @ 30, output_byte_length @ 38,
+    //   output_hash @ 46 (wyhash of the output with the seed 42).
+    const OUTPUT_BYTE_OFFSET_AT = 30;
+    const OUTPUT_BYTE_LENGTH_AT = 38;
+    const OUTPUT_HASH_AT = 46;
+
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    const file = join(temp_dir, "a.js");
+    writeFileSync(
+      file,
+      `class A { #x = 1; static t() { try { return (1).#x; } catch (e) { return e.name; } } }\nconsole.log(A.t());` +
+        filler,
+    );
+    expect(await bunRun(file, env)).toSpawn("TypeError");
+
+    // Give the entry the output of version 51.
+    const entries = readdirSync(cache_dir);
+    expect(entries).toHaveLength(1);
+    const entry = readFileSync(join(cache_dir, entries[0]));
+    const start = Number(entry.readBigUInt64LE(OUTPUT_BYTE_OFFSET_AT));
+    const output = entry.subarray(start, start + Number(entry.readBigUInt64LE(OUTPUT_BYTE_LENGTH_AT)));
+    const at = output.indexOf("1 .#x");
+    expect(at).toBeGreaterThan(-1);
+    output.write("1.#x ", at);
+    entry.writeBigUInt64LE(Bun.hash.wyhash(output, 42n), OUTPUT_HASH_AT);
+    writeFileSync(join(cache_dir, entries[0]), entry);
+
+    // Under the current version it is a valid entry, so its output is what runs.
+    const current = await bunRun(file, env);
+    expect(current.stderr).toContain("SyntaxError: Unexpected private name #x");
+    expect(current.exitCode).toBe(1);
+
+    entry.writeUInt32LE(51, 0);
+    writeFileSync(join(cache_dir, entries[0]), entry);
+    expect(await bunRun(file, env)).toSpawn("TypeError");
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

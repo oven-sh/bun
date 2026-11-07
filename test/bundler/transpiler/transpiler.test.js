@@ -4088,6 +4088,61 @@ console.log(resolve.length)
     );
   });
 
+  it("private name of a number literal", () => {
+    const cls = body => `class Foo { #x; static f() { ${body} } }`;
+    const printed = body => `class Foo {\n  #x;\n  static f() {\n    ${body};\n  }\n}`;
+
+    // "1.#x" is a syntax error, because the "." is a part of the number
+    expectPrinted_(cls("return (1).#x"), printed("return 1 .#x"));
+    expectPrinted_(cls("return 1 .#x"), printed("return 1 .#x"));
+    expectPrinted_(cls("return 1..#x"), printed("return 1 .#x"));
+    expectPrinted_(cls("return (1).#x()"), printed("return 1 .#x()"));
+    expectPrinted_(cls("(1).#x = 2"), printed("1 .#x = 2"));
+
+    const minify = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+    expect(minify.transformSync(cls("return (1).#x"))).toBe("class Foo{#x;static f(){return 1 .#x}}");
+
+    // A constant that is inlined prints as a number literal too, and so does a define
+    const inline = new Bun.Transpiler({ loader: "js", inline: true });
+    expect(inline.transformSync("const k = 1; " + cls("return k.#x"))).toBe(
+      "const k = 1;\n\n" + printed("return 1 .#x") + "\n",
+    );
+    const define = new Bun.Transpiler({ loader: "js", define: { "CFG.n": "10" } });
+    expect(define.transformSync(cls("return CFG.n.#x"))).toBe(printed("return 10 .#x") + "\n");
+
+    // Minified syntax folds "1 + 1" to a number, and drops the "?." that follows a number
+    expectPrintedMin_(cls("return (1 + 1).#x"), printed("return 2 .#x"));
+    expectPrintedMin_(cls("return (1)?.#x"), printed("return 1 .#x"));
+
+    // These parse without the space
+    expectPrinted_(cls("return (1)?.#x"), printed("return 1?.#x"));
+    expectPrinted_(cls("return (1n).#x"), printed("return 1n.#x"));
+    expectPrinted_(cls("return (-1).#x"), printed("return (-1).#x"));
+    expectPrinted_(cls("return (1)[0].#x"), printed("return 1[0].#x"));
+  });
+
+  it.concurrent("private name of a number literal loads under bun -e", async () => {
+    // Node prints the same line for this source.
+    const src = `
+      const k = 1;
+      class Foo {
+        #x = 1;
+        static literal() { try { return (1).#x; } catch (e) { return e.name; } }
+        static constant() { try { return k.#x; } catch (e) { return e.name; } }
+        static folded() { try { return (1 + 1).#x; } catch (e) { return e.name; } }
+        static optional() { try { return (1)?.#x; } catch (e) { return e.name; } }
+      }
+      console.log(Foo.literal(), Foo.constant(), Foo.folded(), Foo.optional());
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "TypeError TypeError TypeError TypeError\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("type only exports", () => {
     let { expectPrinted_, expectParseError } = ts;
     expectPrinted_("export type {foo, bar as baz} from 'bar'", "");

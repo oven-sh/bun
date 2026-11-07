@@ -274,7 +274,8 @@ impl Pattern {
             };
             // Only the `!` that starts a pattern excludes, and `expand` has taken that one off. `vite build` reads
             // every other `!` as a character too. Vitest negates one that comes first after the directory.
-            if bun_glob::detect_glob_syntax(strings::trim_leading_char(segment, b'!')) {
+            let bangs = segment.iter().take_while(|byte| **byte == b'!').count();
+            if bun_glob::detect_glob_syntax(&segment[bangs..]) {
                 return Some(Pattern {
                     negated,
                     dir: absolute_from(dir, &names)?,

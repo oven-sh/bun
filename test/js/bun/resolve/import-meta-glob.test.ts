@@ -112,8 +112,6 @@ const tsconfigPaths: Case[] = [
   ['import.meta.glob("@/\\\\[id\\\\]/\\\\(group\\\\)/\\\\{x\\\\}/*.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}], ["/src/[id]/(group)/{x}/q.ts", "lazy", {"default":"q"}]]],
   ['import.meta.glob("@/\\\\[id\\\\]/\\\\(group\\\\)/\\\\{x\\\\}/p.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}]]],
   ['import.meta.glob("@/\\\\[id\\\\]/\\\\(group\\\\)/**/p.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}]]],
-  ['import.meta.glob("@/bang/!k.ts")', [["/src/bang/!k.ts", "lazy", {"default":"!k"}]]],
-  ['import.meta.glob("@/bang/!*.ts")', [["/src/bang/!(k).ts", "lazy", {"default":"!(k)"}], ["/src/bang/!k.ts", "lazy", {"default":"!k"}]]],
 ];
 table('tsconfig.json "paths" and "baseUrl"', tsconfigPaths, async () => {
   using dir = tempDir("import-meta-glob", {

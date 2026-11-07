@@ -131,10 +131,10 @@ static void transformStreamErrorReadable(JSGlobalObject* globalObject, JSTransfo
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* readableController = transformReadableController(stream);
-    if (!readableController || readableController->m_algorithms.kind == SourceKind::TransformErrorWhenDrained)
+    if (!readableController)
         return;
-    if (stream->m_readsAhead && !readableController->m_queue.isEmpty() && !readableController->m_closeRequested) {
-        ASSERT(readableController->m_algorithms.kind == SourceKind::Transform);
+    if (stream->m_readsAhead && !readableController->m_queue.isEmpty()) {
+        ASSERT(readableController->m_algorithms.kind == SourceKind::Transform && !readableController->m_closeRequested);
         readableController->m_algorithms.kind = SourceKind::TransformErrorWhenDrained;
         readableController->m_algorithms.underlyingObject.set(vm, readableController, error);
         return;

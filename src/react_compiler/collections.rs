@@ -444,6 +444,10 @@ impl<K: Key> IndexSet<K> {
     pub(crate) fn shift_remove(&mut self, key: &K) -> bool {
         self.0.shift_remove(key).is_some()
     }
+    #[inline]
+    pub(crate) fn retain<F: FnMut(&K) -> bool>(&mut self, mut keep: F) {
+        self.0.retain(|key, _| keep(key));
+    }
 }
 
 impl<K: Key> Default for IndexSet<K> {

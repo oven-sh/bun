@@ -113,6 +113,19 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     await promise;
   });
 
+  it("--fetch-preconnect accepts a URL with no port", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--fetch-preconnect=http://localhost", "--eval", "console.log('ok')"],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
   // A preconnect that finds a pooled keep-alive socket for its origin used to
   // complete (and free the HTTP-thread request clone) synchronously inside the
   // connect call, whose caller then kept using the freed memory. Only the
@@ -224,6 +237,20 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     expect(connections).toBeGreaterThanOrEqual(1);
     expect(connections).toBeLessThan(10);
     expect(exitCode).toBe(0);
+  });
+
+  it("fetch.preconnect accepts a URL on the default port of its scheme", () => {
+    // The URL parser drops a default port, so all four reach the port check with no port.
+    for (const url of ["http://localhost", "http://localhost:80", "https://localhost", "https://localhost:443"]) {
+      expect(() => fetch.preconnect(url)).not.toThrow();
+    }
+  });
+
+  it("fetch.preconnect rejects an s3:// URL", () => {
+    // fetch() signs an s3:// URL into a request to the S3 endpoint. A preconnect would dial the bucket name.
+    for (const url of ["s3://bucket/key", "s3://bucket:9000/key"]) {
+      expect(() => fetch.preconnect(url)).toThrow("URL must be HTTP or HTTPS");
+    }
   });
 
   it("fetch.preconnect validates the URL", async () => {

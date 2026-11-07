@@ -6,7 +6,6 @@ const { MAX_STRING_LENGTH } = require("node:buffer").constants;
 const { spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
-const os = require("node:os");
 const tls = require("node:tls");
 const vm = require("node:vm");
 const { MessageChannel, MessagePort, moveMessagePortToContext } = require("node:worker_threads");
@@ -102,8 +101,8 @@ const producers = {
     zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING]: 42 } }),
 };
 
-// A small host can refuse to reserve the 2 GiB, as in test/js/node/buffer.test.js. The test drops the row too.
-if (os.totalmem() < 4 * 1024 ** 3) delete producers.ERR_STRING_TOO_LONG;
+// The rows named on the command line are left out: the test drops ERR_STRING_TOO_LONG on a small host.
+for (const row of process.argv.slice(2)) delete producers[row];
 
 function lineOf(err) {
   const string = String(err);

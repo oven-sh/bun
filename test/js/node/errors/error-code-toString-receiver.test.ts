@@ -278,10 +278,10 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
       ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
     ];
-    // The fixture drops ERR_STRING_TOO_LONG on a host that can refuse to reserve its 2 GiB.
-    const smallHost = totalmem() < 4 * 1024 ** 3;
+    // A small host can refuse to reserve the 2 GiB of ERR_STRING_TOO_LONG, as in buffer.test.js. Decided here once, for both runtimes.
+    const leftOut = totalmem() < 4 * 1024 ** 3 ? ["ERR_STRING_TOO_LONG"] : [];
     const expected = rows
-      .filter(([code]) => code !== "ERR_STRING_TOO_LONG" || !smallHost)
+      .filter(([code]) => !leftOut.includes(code))
       .map(([code, name]) =>
         JSON.stringify({ code, name, string: "name: message", inheritsToString: true, hasOwnToString: false }),
       );
@@ -300,7 +300,7 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
     ] as const) {
       test.skipIf(!runtime)(`inherit Error.prototype.toString (${name})`, async () => {
         await using proc = Bun.spawn({
-          cmd: [runtime!, ...runtimeFlags, fixture],
+          cmd: [runtime!, ...runtimeFlags, fixture, ...leftOut],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",

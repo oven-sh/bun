@@ -1,4 +1,4 @@
-//! Port of build_hir.rs lines 1–662 and 4362–5509 — see mod.rs.
+//! Port of build_hir.rs lines 1–662, 4362–5509 and 6514–6552 — see mod.rs.
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
 use crate::hir::*;

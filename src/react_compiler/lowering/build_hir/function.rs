@@ -1,4 +1,4 @@
-//! Port of build_hir.rs lines 5510–5984 and 6469–6552 — see mod.rs.
+//! Port of build_hir.rs lines 5510–5984 and 6469–6513 — see mod.rs.
 
 use crate::collections::IndexMap;
 use crate::diagnostics::{
@@ -9,12 +9,12 @@ use crate::hir::{
     ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
+use bun_ast::{self as ast, G, Loc, Ref};
 use std::rc::Rc;
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;
-use super::helpers::{lower_expression_to_temporary, lower_value_to_temporary};
+use super::helpers::{lower_object_property_key, lower_value_to_temporary};
 use super::{gather_captured_context, lower_inner};
 
 pub(super) fn lower_function_to_value(
@@ -350,83 +350,4 @@ pub(super) fn lower_object_method(
         property_type: ObjectPropertyType::Method,
         place: method_place,
     }))
-}
-
-fn lower_object_property_key(
-    builder: &mut HirBuilder<'_>,
-    key: &Expr,
-    computed: bool,
-) -> Result<Option<ObjectPropertyKey>, CompilerError> {
-    match &key.data {
-        // Upstream matches `StringLiteral` regardless of `computed`, so a
-        // constant string in a computed key (`{["foo"]: x}`) still lowers to
-        // the static-key path. Roped strings fall through to the
-        // computed/unsupported arms below.
-        Data::EString(s) if s.next.is_none() => {
-            let name = estring_to_store_str(s);
-            // Bun stores non-computed identifier keys as `EString`; classify as
-            // Identifier when the bytes form a valid identifier so the HIR
-            // matches upstream's `Expression::Identifier` arm.
-            if !computed && !s.is_utf16 && is_identifier(s.slice8()) {
-                Ok(Some(ObjectPropertyKey::Identifier { name }))
-            } else {
-                Ok(Some(ObjectPropertyKey::String { name }))
-            }
-        }
-        Data::ENumber(n) if !computed => {
-            let scratch = n.value().to_string();
-            Ok(Some(ObjectPropertyKey::Identifier {
-                name: super::helpers::arena_str(scratch.as_bytes()),
-            }))
-        }
-        Data::EIdentifier(id) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
-            name: StoreStr::new(builder.host().ref_name(id.ref_)),
-        })),
-        Data::EPrivateIdentifier(_) => {
-            builder.record_error(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "Unsupported key type in ObjectExpression".to_string(),
-                description: None,
-                loc: convert_loc(key.loc),
-                suggestions: None,
-            })?;
-            Ok(None)
-        }
-        _ if computed => {
-            let place = lower_expression_to_temporary(builder, key)?;
-            Ok(Some(ObjectPropertyKey::Computed { name: place }))
-        }
-        _ => {
-            builder.record_error(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "Unsupported key type in ObjectExpression".to_string(),
-                description: None,
-                loc: convert_loc(key.loc),
-                suggestions: None,
-            })?;
-            Ok(None)
-        }
-    }
-}
-
-fn estring_to_store_str(s: &E::EString) -> StoreStr {
-    debug_assert!(s.next.is_none());
-    if s.is_utf16 {
-        super::helpers::arena_str(bun_core::strings::to_utf8_alloc(s.slice16()).as_slice())
-    } else {
-        StoreStr::new(s.slice8())
-    }
-}
-
-fn is_identifier(s: &[u8]) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let first = s[0];
-    if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
-        return false;
-    }
-    s[1..]
-        .iter()
-        .all(|&c| c.is_ascii_alphanumeric() || c == b'_' || c == b'$')
 }

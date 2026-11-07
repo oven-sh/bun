@@ -11,10 +11,10 @@ use super::*;
 /// tier) so the bundler and runtime share ONE nominal type.
 pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 
-/// Scans routes for `bun build --app`. Counts invalid routes so the build can fail.
+/// Scans routes for `bun build --app`. Counts the route errors it prints so the build can fail.
 pub(super) struct RouteScan<'a> {
     pub(super) entry_points: &'a mut EntryPointMap,
-    pub(super) invalid_routes: usize,
+    pub(super) error_count: usize,
 }
 
 impl router::InsertionHandler for RouteScan<'_> {
@@ -36,7 +36,7 @@ impl router::InsertionHandler for RouteScan<'_> {
         fail: router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
         fail.print(rel_path);
-        self.invalid_routes += 1;
+        self.error_count += 1;
         Ok(())
     }
 
@@ -59,6 +59,7 @@ impl router::InsertionHandler for RouteScan<'_> {
             ))
         );
         Output::flush();
+        self.error_count += 1;
         Ok(())
     }
 }

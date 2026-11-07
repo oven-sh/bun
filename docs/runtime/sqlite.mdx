@@ -97,6 +97,22 @@ const notStrict = new Database(":memory:");
 notStrict.query("SELECT $message;").all({ messag: "Hello world" });
 ```
 
+With `strict: true`, `bun:sqlite` also throws an error such as `Missing parameter "message"` when you run a statement from `db.query()` or `db.prepare()` and one of its parameters has no value. That is the case before the first call with values, after a call with an empty array, and after a call whose values `bun:sqlite` rejected. Pass the values again. To bind `NULL`, pass `null`: `[null]`, `[1, null, 3]`. An `EXPLAIN` statement needs its values too, because the plan that SQLite reports can depend on them.
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+const strict = new Database(":memory:", { strict: true });
+const query = strict.query("SELECT $message;");
+
+// throws error because no values were bound yet:
+query.all();
+
+query.all({ message: "Hello world" });
+// does not throw error, reuses "Hello world":
+query.all();
+```
+
 ### Load via ES module import
 
 You can also load a database with an import attribute.
@@ -287,6 +303,15 @@ You can bind using positional parameters too:
 ```ts db.ts icon="/icons/typescript.svg"
 const query = db.query(`select ?1;`);
 query.all("Hello world");
+```
+
+A call without values runs the statement with the values it already has. Before the first call with values, each parameter is `NULL`. An empty array clears the values.
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query(`select ?1 as message;`);
+query.get("Hello world"); // { message: "Hello world" }
+query.get(); // { message: "Hello world" }
+query.get([]); // { message: null }
 ```
 
 #### Names with and without the prefix

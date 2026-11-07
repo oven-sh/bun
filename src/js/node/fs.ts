@@ -735,7 +735,7 @@ const realpathSync: RealpathSync =
         let encoding: string | null | undefined;
         if (options) {
           if (typeof options === "string") encoding = options;
-          else encoding = options?.encoding;
+          else if (!$isCallable(options)) encoding = options?.encoding;
           if (encoding) {
             ($bindgen("node_util_binding.bind.ts", "assertEncodingValid") as (encoding: unknown) => void)(encoding);
           }
@@ -983,7 +983,8 @@ const realpath: Realpath =
         }
       } as unknown as Realpath);
 realpath.native = function realpath(p, options, callback?) {
-  if ($isCallable(options)) {
+  // node takes `callback || options`: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2993
+  if (!$isCallable(callback)) {
     callback = options;
     options = undefined;
   }
@@ -1116,7 +1117,9 @@ class Dir {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
     validateInteger(handle, "handle", 0);
     if (options != null && typeof options !== "object" && typeof options !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+      if (!$isCallable(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+      // node's getOptions: a function means no options
+      options = undefined;
     }
     // node's getOptions: a string is encoding shorthand
     if (typeof options === "string") options = { encoding: options };

@@ -1510,7 +1510,7 @@ const realms = [];
 async function make(hasThread = true) {
   const realm = new ShadowRealm(), functions = {};
   for (const name of ["put", "look", "collect", "collect_in_a_thread", "start_servant", "ask"]) functions[name] = await realm.importValue("./state.py", name);
-  if (!hasThread) return;
+  if (!hasThread) return functions;
   realms.push(functions);
   functions.put(realms.length);
   functions.start_servant();
@@ -1518,6 +1518,16 @@ async function make(hasThread = true) {
   functions.ask("put", 10 * realms.length);
 }
 const look = () => console.log(realms.map(realm => String(realm.ask("look")) + ", " + String(realm.look())).join(" | "));
+const globalObjects = () => require("bun:jsc").heapStats().objectTypeCounts.GlobalObject;
+async function untilThereAre(count) {
+  for (let round = 0; round < 100 && globalObjects() > count; round++) {
+    Bun.gc(true);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log(globalObjects() - count);
+}
+// (In a property: a variable of a module that awaits is saved at an await while it is in use, and what was saved stays.)
+const held = { first: await make(false) };
 for (let i = 0; i < 3; i++) await make();
 for (let i = 0; i < 6; i++) {
   await make();
@@ -1528,17 +1538,18 @@ for (let i = 0; i < 6; i++) {
 realms[0].collect_in_a_thread();
 look();
 // Two that nothing keeps. Each thread has its turn, so that it waits with an entry for them, and then they go.
-const globalObjects = () => require("bun:jsc").heapStats().objectTypeCounts.GlobalObject;
 const before = globalObjects();
 await make(false);
 await make(false);
 console.log(globalObjects() - before);
 look();
-for (let round = 0; round < 100 && globalObjects() > before; round++) {
-  Bun.gc(true);
-  await new Promise(resolve => setImmediate(resolve));
-}
-console.log(globalObjects() - before);
+await untilThereAre(before);
+look();
+// The first of all, which is the one that says what is scanned with the stacks. Every thread waits with an entry for it in front.
+held.first = null;
+await untilThereAre(before - 1);
+look();
+realms[0].collect_in_a_thread();
 look();
 // Collections that come by themselves.
 let junk;
@@ -1552,7 +1563,7 @@ process.exit(0);
   const states = (count: number) =>
     Array.from({ length: count }, (_, i) => `${10 * (i + 1)} -${10 * (i + 1)} [True, True, True, True], ${i + 1} -${i + 1} [True, True, True, True]`).join(" | ") + "\n";
   expect(stderr).toBe("");
-  expect(stdout).toBe("None False\n".repeat(3) + [4, 5, 6, 7, 8, 9].map(count => "None False\n" + states(count)).join("") + states(9) + "2\n" + states(9) + "0\n" + states(9).repeat(2));
+  expect(stdout).toBe("None False\n".repeat(3) + [4, 5, 6, 7, 8, 9].map(count => "None False\n" + states(count)).join("") + states(9) + "2\n" + states(9) + "0\n" + states(9) + "0\n" + states(9).repeat(3));
   expect(exitCode).toBe(0);
 });
 

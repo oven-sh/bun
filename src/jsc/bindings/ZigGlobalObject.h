@@ -344,6 +344,7 @@ public:
     bool m_nodeWorkerEntrySettled { false };
 
     void resetOnEachMicrotaskTick();
+    void armNextTickQueueCheckAfterEntryPoint();
 
     // The function to hand to a promise for `handler`, one for each handler in a realm.
     JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
